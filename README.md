@@ -240,11 +240,33 @@ For automated weekly reports, you can use **Google Cloud Scheduler** to call the
 
 Simply configure a Cloud Scheduler job to make a POST request to your weekly analytics report endpoint at your preferred schedule.
 
-## 🛠️ Installation
+## 🛠️ Installation & Deployment
 
-To get started with Bigas, visit our GitHub repository for installation instructions, documentation, and contribution guidelines. Explore the Marketing Analytics Resource to see how it can transform your approach to data-driven decision-making. Join our community to collaborate, share ideas, and help shape the future of Bigas.
+Getting started with Bigas is straightforward. The primary method for deployment is using the provided `deploy.sh` script, which automates the process of building and deploying the application to Google Cloud Run.
 
-Together, let's build a virtual team that empowers solo entrepreneurs to achieve their biggest goals. Welcome to Bigas—your team, your success!
+### Quick Start with `deploy.sh`
+
+1.  **Clone the Repository**:
+    ```bash
+    git clone https://github.com/mckort/bigas.git
+    cd bigas
+    ```
+
+2.  **Configure Environment**:
+    Copy the example environment file and fill in your details. For detailed information on the required variables, please see the "Security & Environment Setup" section below.
+    ```bash
+    cp env.example .env
+    nano .env
+    ```
+
+3.  **Run the Deployment Script**:
+    Make the script executable and run it. The script handles building the Docker image, pushing it to your container registry, and deploying it to Google Cloud Run with the correct environment variables.
+    ```bash
+    chmod +x deploy.sh
+    ./deploy.sh
+    ```
+
+For more detailed information on prerequisites and manual deployment, please see the relevant sections further down in this README.
 
 ## 📄 License
 
