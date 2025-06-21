@@ -107,7 +107,85 @@ def get_trend_analysis(property_id, metrics, dimensions, time_frames=None):
         raw_trend_data[tf["name"]] = process_ga_response(response)
     return raw_trend_data
 
-# ... (Omitting format_trend_data and get_basic_analytics for brevity, but they are moved here)
+def convert_metric_name(metric_name: str) -> str:
+    """Convert common metric names from snake_case to camelCase for Google Analytics API."""
+    metric_mappings = {
+        'active_users': 'activeUsers',
+        'total_users': 'totalUsers',
+        'new_users': 'newUsers',
+        'sessions': 'sessions',
+        'page_views': 'screenPageViews',
+        'bounce_rate': 'bounceRate',
+        'session_duration': 'averageSessionDuration',
+        'pages_per_session': 'screenPageViewsPerSession',
+        'conversions': 'conversions',
+        'revenue': 'totalRevenue',
+        'transactions': 'transactions',
+        'ecommerce_purchases': 'ecommercePurchases'
+    }
+    
+    return metric_mappings.get(metric_name.lower(), metric_name)
+
+def format_trend_data_for_humans(raw_trend_data, time_frames):
+    """Format trend data in a more human-readable way."""
+    formatted_trends = {}
+    
+    for time_frame, data in raw_trend_data.items():
+        # Find the corresponding time frame config
+        tf_config = next((tf for tf in time_frames if tf["name"] == time_frame), {})
+        
+        # Group data by period (current vs previous)
+        current_period = []
+        previous_period = []
+        
+        for row in data:
+            if row.get('dateRange') == 'current_period':
+                current_period.append(row)
+            elif row.get('dateRange') == 'previous_period':
+                previous_period.append(row)
+        
+        # Calculate summary statistics
+        current_total = sum(int(row.get('activeUsers', 0)) for row in current_period)
+        previous_total = sum(int(row.get('activeUsers', 0)) for row in previous_period)
+        
+        # Calculate percentage change
+        percentage_change = 0
+        if previous_total > 0:
+            percentage_change = ((current_total - previous_total) / previous_total) * 100
+        
+        # Format top performers with better structure
+        top_performers = []
+        for row in data[:5]:  # Top 5 overall
+            top_performers.append({
+                "country": row.get('country', 'Unknown'),
+                "active_users": int(row.get('activeUsers', 0)),
+                "period": row.get('dateRange', 'unknown')
+            })
+        
+        formatted_trends[time_frame] = {
+            "period": time_frame,
+            "data_points": len(data),
+            "summary": {
+                "current_period_total": current_total,
+                "previous_period_total": previous_total,
+                "percentage_change": round(percentage_change, 1),
+                "trend_direction": "up" if percentage_change > 0 else "down" if percentage_change < 0 else "stable",
+                "date_range": {
+                    "current_start": tf_config.get("start_date"),
+                    "current_end": tf_config.get("end_date"),
+                    "comparison_start": tf_config.get("comparison_start_date"),
+                    "comparison_end": tf_config.get("comparison_end_date")
+                }
+            },
+            "top_performers": top_performers,
+            "insights": {
+                "total_countries": len(set(row.get('country') for row in data if row.get('country') != '(not set)')),
+                "has_growth": percentage_change > 0,
+                "growth_rate": f"{percentage_change:+.1f}%" if percentage_change != 0 else "0%"
+            }
+        }
+    
+    return formatted_trends
 
 @marketing_bp.route('/mcp/tools/fetch_analytics_report', methods=['POST'])
 def fetch_analytics_report():
@@ -161,13 +239,81 @@ def ask_analytics_question():
 
 @marketing_bp.route('/mcp/tools/analyze_trends', methods=['POST'])
 def analyze_trends():
-    data = request.json
-    metrics = data.get('metrics', ['activeUsers'])
+    data = request.json or {}
+    
+    # Handle different parameter formats
+    if 'metric' in data:
+        # Single metric format - convert to proper format
+        metric_name = convert_metric_name(data['metric'])
+        metrics = [metric_name]
+    else:
+        # Handle array of metrics
+        raw_metrics = data.get('metrics', ['activeUsers'])
+        metrics = [convert_metric_name(m) for m in raw_metrics]
+    
     dimensions = data.get('dimensions', ['country'])
+    
+    # Handle date range parameter
+    date_range = data.get('date_range', 'last_30_days')
+    
     try:
-        raw_trend_data = get_trend_analysis(GA4_PROPERTY_ID, metrics, dimensions)
-        # format_trend_data is complex and omitted for brevity, assuming it's moved
-        return jsonify({"status": "success", "data": "Trend data fetched, formatting logic to be applied."})
+        # Define time frames based on date_range parameter
+        today = datetime.now()
+        if date_range == 'last_7_days':
+            time_frames = [
+                {
+                    "name": "last_7_days", 
+                    "start_date": (today - timedelta(days=7)).strftime("%Y-%m-%d"), 
+                    "end_date": today.strftime("%Y-%m-%d"), 
+                    "comparison_start_date": (today - timedelta(days=14)).strftime("%Y-%m-%d"), 
+                    "comparison_end_date": (today - timedelta(days=8)).strftime("%Y-%m-%d")
+                }
+            ]
+        elif date_range == 'last_30_days':
+            time_frames = [
+                {
+                    "name": "last_30_days", 
+                    "start_date": (today - timedelta(days=30)).strftime("%Y-%m-%d"), 
+                    "end_date": today.strftime("%Y-%m-%d"), 
+                    "comparison_start_date": (today - timedelta(days=60)).strftime("%Y-%m-%d"), 
+                    "comparison_end_date": (today - timedelta(days=31)).strftime("%Y-%m-%d")
+                }
+            ]
+        else:
+            # Default to both time frames
+            time_frames = [
+                {
+                    "name": "last_7_days", 
+                    "start_date": (today - timedelta(days=7)).strftime("%Y-%m-%d"), 
+                    "end_date": today.strftime("%Y-%m-%d"), 
+                    "comparison_start_date": (today - timedelta(days=14)).strftime("%Y-%m-%d"), 
+                    "comparison_end_date": (today - timedelta(days=8)).strftime("%Y-%m-%d")
+                },
+                {
+                    "name": "last_30_days", 
+                    "start_date": (today - timedelta(days=30)).strftime("%Y-%m-%d"), 
+                    "end_date": today.strftime("%Y-%m-%d"), 
+                    "comparison_start_date": (today - timedelta(days=60)).strftime("%Y-%m-%d"), 
+                    "comparison_end_date": (today - timedelta(days=31)).strftime("%Y-%m-%d")
+                }
+            ]
+        
+        # Get actual trend data
+        raw_trend_data = get_trend_analysis(GA4_PROPERTY_ID, metrics, dimensions, time_frames)
+        
+        # Format the trend data for better presentation
+        formatted_trends = format_trend_data_for_humans(raw_trend_data, time_frames)
+        
+        return jsonify({
+            "status": "success", 
+            "data": formatted_trends,
+            "metadata": {
+                "metrics_analyzed": metrics,
+                "dimensions_analyzed": dimensions,
+                "date_range_requested": date_range,
+                "time_frames_analyzed": list(raw_trend_data.keys())
+            }
+        })
     except Exception as e:
         logger.error(f"Error in analyze_trends: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500

@@ -106,7 +106,7 @@ Ask questions about your analytics data in plain English:
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/ask_analytics_question \
   -H "Content-Type: application/json" \
-  -d '{"question": "Which country had the most active users last week?"}'
+  -d '{"question": "Which country had the most active users last week?"}' | jq
 ```
 
 This endpoint uses AI to interpret your question and return relevant analytics data in a natural, conversational format.
@@ -117,7 +117,7 @@ Generate comprehensive weekly reports and post them to Discord:
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report \
-  -H "Content-Type: application/json"
+  -H "Content-Type: application/json" | jq
 ```
 
 This endpoint automatically:
@@ -137,7 +137,7 @@ curl -X POST https://your-deployment-url.com/mcp/tools/fetch_custom_report \
     "dimensions": ["country", "device_category"],
     "metrics": ["active_users", "sessions"],
     "date_ranges": [{"start_date": "2024-01-01", "end_date": "2024-01-31"}]
-  }'
+  }' | jq
 ```
 
 ### Standard Analytics Reports
@@ -147,7 +147,7 @@ Get predefined analytics reports:
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/fetch_analytics_report \
   -H "Content-Type: application/json" \
-  -d '{"date_range": "last_7_days"}'
+  -d '{"date_range": "last_7_days"}' | jq
 ```
 
 ### Trend Analysis
@@ -157,7 +157,21 @@ Analyze data trends over time:
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/analyze_trends \
   -H "Content-Type: application/json" \
-  -d '{"metric": "active_users", "date_range": "last_30_days"}'
+  -d '{"metric": "active_users", "date_range": "last_30_days"}' | jq
+```
+
+**To show just the summary:**
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/analyze_trends \
+  -H "Content-Type: application/json" \
+  -d '{"metric": "active_users", "date_range": "last_30_days"}' | jq '.data.last_30_days.summary'
+```
+
+**To show top performers:**
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/analyze_trends \
+  -H "Content-Type: application/json" \
+  -d '{"metric": "active_users", "date_range": "last_30_days"}' | jq '.data.last_30_days.top_performers'
 ```
 
 ## 🧪 Testing Weekly Analytics Reports
@@ -672,4 +686,9 @@ For complete API documentation, visit `/openapi.json` after deployment.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+> If you don't have `jq` installed, you can install it with:
+> ```sh
+> brew install jq
+> ``` 
