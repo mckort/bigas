@@ -44,7 +44,9 @@ The initial focus of Bigas is a **Marketing Analytics Resource**, a powerful AI-
 
 ## 🏗️ Architecture
 
-Here is a high-level overview of the application architecture and data flow.
+The Bigas platform is designed as a **Modular Monolith**. This architecture provides the scalability benefits of microservices (like separation of concerns) without the initial operational complexity. A central API gateway routes requests to independent "AI Resources" that are managed within the same application.
+
+Here is a high-level overview of the current structure:
 
 ```text
 +--------------------------+
@@ -53,41 +55,45 @@ Here is a high-level overview of the application architecture and data flow.
 |  - Google Cloud Scheduler|
 +--------------------------+
              |
-             | HTTP POST Request (e.g., /weekly_analytics_report)
              v
 +--------------------------+
 |   Google Cloud Run       |
 |  (Hosting Environment)   |
 +--------------------------+
              |
-             | Forwards request
              v
-+--------------------------+
-|  Bigas Marketing Server  |
-|      (Flask App)         |
-+--------------------------+
-      |      |           |
-      |      |           +----------------------------------> [ Discord Webhook ]
-      |      |                                                 (Posts report)
-      |      |
-      |      +-------------------------> [ OpenAI API ]
-      |                                  (Processes questions, generates summaries)
-      |
-      +--------------------------------> [ Google Analytics API ]
-                                         (Fetches analytics data)
-
++-------------------------------------------------+
+|  Bigas Platform (app.py - Flask App)            |
+|                                                 |
+| +---------------------------------------------+ |
+| | API Gateway / Router                        | |
+| +---------------------------------------------+ |
+|   |                      |                      |
+|   | (/marketing/*)       | (/product/*)         |
+|   v                      v                      |
+| +----------------------+ +--------------------+ |
+| | Marketing Resource   | | Product Resource   | |
+| | (Connects to GA,     | | (Placeholder for   | |
+| |  OpenAI, Discord)    | |  Jira, Figma, etc) | |
+| +----------------------+ +--------------------+ |
+|                                                 |
++-------------------------------------------------+
 ```
 
 ### Data Flow Explained:
 
-1.  **Clients**: A user (via `curl` or a test client) or an automated service (like Google Cloud Scheduler) sends an HTTP request to an endpoint.
-2.  **Google Cloud Run**: The request is received by the Google Cloud Run service, which hosts the application.
-3.  **Bigas Marketing Server**: The Flask application processes the request.
-4.  **External APIs**: The server calls one or more external APIs to fulfill the request:
-    *   **Google Analytics API**: To fetch raw analytics data.
-    *   **OpenAI API**: To understand natural language questions or to summarize data.
-    *   **Discord Webhook**: To post the final report to a specified channel.
-5.  **Response**: The server sends a confirmation response back to the client. The main report content is delivered asynchronously (e.g., to Discord).
+1.  **Clients**: A user or automated service sends an HTTP request to an endpoint.
+2.  **Google Cloud Run**: The request is received by the hosting environment.
+3.  **Bigas Platform (`app.py`)**: The main Flask application receives the request.
+4.  **API Router**: The app's internal router inspects the URL and forwards the request to the appropriate resource module.
+    *   Requests to `/mcp/tools/ask_analytics_question` are routed to the **Marketing Resource**.
+    *   A future request to `/mcp/tools/get_sprint_summary` would be routed to the **Product Resource**.
+5.  **AI Resource**: The specific resource (e.g., Marketing) contains all the business logic to connect to external APIs (Google Analytics, OpenAI, etc.) and fulfill the request.
+6.  **Response**: The resource returns a response, which is sent back to the client.
+
+This structure allows you to easily add new resources (Sales, Support, etc.) by simply creating a new module in the `bigas/resources` directory, with minimal changes to the core application.
+
+---
 
 ## 📡 API Examples
 
@@ -334,13 +340,13 @@ We use GitHub Projects to manage our development roadmap. You can view our activ
 
 ---
 
-## 🧠 Analytics Agent Features
+## 🧠 Marketing Resource Features
 
 ### Natural Language Processing
-- **Smart Query Parsing**: Converts natural language to GA4 API parameters
-- **Field Mapping**: Automatically maps deprecated GA3 fields to GA4 equivalents
-- **Compatibility Handling**: Ensures metric/dimension combinations are valid
-- **Error Recovery**: Fallback mechanisms for failed queries
+- **Smart Query Parsing**: The `MarketingAnalyticsService` converts natural language to GA4 API parameters.
+- **Field Mapping**: Automatically maps deprecated GA3 fields to GA4 equivalents.
+- **Compatibility Handling**: Ensures metric/dimension combinations are valid.
+- **Error Recovery**: Fallback mechanisms for failed queries.
 
 ### Supported Analysis Types
 
@@ -561,7 +567,7 @@ Overall Success Rate: 80.0%
    cursor --version
    ```
 2. **Server Running**: Your Flask server must be running
-3. **Files Present**: Both `dynamic_test_client.py` and `bigas_marketing.py` must exist
+3. **Files Present**: Both `dynamic_test_client.py` and `app.py` must exist
 
 **Usage:**
 ```bash
@@ -602,7 +608,7 @@ Max Attempts: 5
 🔧 Attempting to fix 2 failures...
 
 🔧 Applying automatic fixes with Cursor CLI...
-Running: cursor chat --file bigas_marketing.py --prompt-file fix_prompt_20241201_143022.txt
+Running: cursor chat --file app.py --file bigas/resources/marketing/endpoints.py --prompt-file fix_prompt_... .txt
 ✅ Cursor CLI fix applied successfully
 
 ⏳ Waiting 10 seconds for server to restart...
@@ -634,7 +640,7 @@ Running: cursor chat --file bigas_marketing.py --prompt-file fix_prompt_20241201
 
 **Integration with Development:**
 ```bash
-# After making changes to bigas_marketing.py
+# After making changes to the application files
 python auto_fix_test_runner.py --max-attempts 3
 
 # For continuous integration

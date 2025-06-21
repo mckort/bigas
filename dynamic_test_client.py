@@ -19,6 +19,12 @@ import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import random
+import aiohttp
+import asyncio
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class DynamicMCPTestClient:
     def __init__(self, base_url: str = "http://localhost:5000", exclude_endpoints: List[str] = None, include_slow_tests: bool = False, interactive: bool = True):
@@ -60,7 +66,7 @@ class DynamicMCPTestClient:
     def should_test_endpoint(self, tool: Dict[str, Any]) -> bool:
         """Determine if an endpoint should be tested based on exclusions."""
         tool_name = tool.get('name', '').lower()
-        endpoint = tool.get('endpoint', '').lower()
+        endpoint = tool.get('path', '').lower()
         
         # Check if this endpoint is in the exclusion list
         for excluded in self.exclude_endpoints:
@@ -323,7 +329,7 @@ class DynamicMCPTestClient:
     def test_endpoint(self, tool: Dict[str, Any]) -> Dict[str, Any]:
         """Test a single endpoint and return results."""
         tool_name = tool.get('name', 'unknown')
-        endpoint = tool.get('endpoint', '')
+        endpoint = tool.get('path', '')
         method = tool.get('method', 'GET')
         parameters = tool.get('parameters', {})
         
@@ -340,6 +346,16 @@ class DynamicMCPTestClient:
             else:
                 for param_name, param_desc in parameters.items():
                     test_data[param_name] = self.generate_test_data(param_name, param_desc)
+        else:
+            # Handle endpoints that require specific data even without parameters
+            if tool_name == 'fetch_custom_report':
+                test_data = self.generate_custom_report_test_data()
+                print(f"   Using custom test data for fetch_custom_report")
+            elif tool_name == 'ask_analytics_question':
+                test_data = {
+                    'question': 'What are the top 5 countries by active users in the last 30 days?'
+                }
+                print(f"   Using test question for ask_analytics_question")
         
         print(f"   Test Data: {json.dumps(test_data, indent=2)}")
         
@@ -506,11 +522,11 @@ class DynamicMCPTestClient:
         if excluded_tools:
             print(f"\n🚫 Excluded tools:")
             for tool in excluded_tools:
-                print(f"   • {tool.get('name', 'unknown')} ({tool.get('method', 'GET')} {tool.get('endpoint', 'unknown')})")
+                print(f"   • {tool.get('name', 'unknown')} ({tool.get('method', 'GET')} {tool.get('path', 'unknown')})")
         
         print(f"\n🧪 Tools to test:")
         for i, tool in enumerate(tools_to_test, 1):
-            print(f"   {i}. {tool.get('name', 'unknown')} ({tool.get('method', 'GET')} {tool.get('endpoint', 'unknown')})")
+            print(f"   {i}. {tool.get('name', 'unknown')} ({tool.get('method', 'GET')} {tool.get('path', 'unknown')})")
         
         # Run tests one by one
         print(f"\n🧪 Running tests with auto-fix...")
@@ -602,9 +618,12 @@ def main():
     """Main entry point."""
     import argparse
     
+    # Get default server URL from environment or use localhost
+    default_server_url = os.getenv('SERVER_URL', 'http://localhost:5000')
+    
     parser = argparse.ArgumentParser(description='Dynamic MCP Test Client with Auto-Fix')
-    parser.add_argument('--url', default='http://localhost:5000', 
-                       help='Base URL of the MCP server (default: http://localhost:5000)')
+    parser.add_argument('--url', default=default_server_url, 
+                       help=f'Base URL of the MCP server (default: {default_server_url})')
     parser.add_argument('--timeout', type=int, default=30,
                        help='Request timeout in seconds (default: 30)')
     parser.add_argument('--exclude', nargs='+', default=[],

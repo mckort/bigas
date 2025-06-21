@@ -1,11 +1,15 @@
-flask==2.2.5
-werkzeug==2.2.3
-google-analytics-data
-google-auth
+# Add gunicorn for production deployment
 gunicorn==20.1.0
-requests==2.31.0
+
+# Core dependencies
+Flask==2.2.5
+google-analytics-data
+openai
+python-dotenv
+requests
+werkzeug==2.2.3
+google-auth
 aiohttp==3.8.5
 starlette
 uvicorn
-httpx
-openai 
+httpx 

@@ -15,9 +15,9 @@ import os
 from datetime import datetime, timedelta
 import logging
 
-class AnalyticsAgent:
+class MarketingAnalyticsService:
     def __init__(self, openai_api_key: str):
-        """Initialize the Analytics Agent with OpenAI API key."""
+        """Initialize the Marketing Analytics Service with OpenAI API key."""
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
         self.analytics_client = BetaAnalyticsDataClient()
         
