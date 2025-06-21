@@ -42,6 +42,53 @@ The initial focus of Bigas is a **Marketing Analytics Resource**, a powerful AI-
 - **Q&A Summaries**: AI-powered summaries of weekly report Q&A sections
 - **MCP Server**: Modern Model Context Protocol server for AI tool integration
 
+## 🏗️ Architecture
+
+Here is a high-level overview of the application architecture and data flow.
+
+```text
++--------------------------+
+|         Clients          |
+|  - Manual User (curl)    |
+|  - Google Cloud Scheduler|
++--------------------------+
+             |
+             | HTTP POST Request (e.g., /weekly_analytics_report)
+             v
++--------------------------+
+|   Google Cloud Run       |
+|  (Hosting Environment)   |
++--------------------------+
+             |
+             | Forwards request
+             v
++--------------------------+
+|  Bigas Marketing Server  |
+|      (Flask App)         |
++--------------------------+
+      |      |           |
+      |      |           +----------------------------------> [ Discord Webhook ]
+      |      |                                                 (Posts report)
+      |      |
+      |      +-------------------------> [ OpenAI API ]
+      |                                  (Processes questions, generates summaries)
+      |
+      +--------------------------------> [ Google Analytics API ]
+                                         (Fetches analytics data)
+
+```
+
+### Data Flow Explained:
+
+1.  **Clients**: A user (via `curl` or a test client) or an automated service (like Google Cloud Scheduler) sends an HTTP request to an endpoint.
+2.  **Google Cloud Run**: The request is received by the Google Cloud Run service, which hosts the application.
+3.  **Bigas Marketing Server**: The Flask application processes the request.
+4.  **External APIs**: The server calls one or more external APIs to fulfill the request:
+    *   **Google Analytics API**: To fetch raw analytics data.
+    *   **OpenAI API**: To understand natural language questions or to summarize data.
+    *   **Discord Webhook**: To post the final report to a specified channel.
+5.  **Response**: The server sends a confirmation response back to the client. The main report content is delivered asynchronously (e.g., to Discord).
+
 ## 📡 API Examples
 
 The Bigas Marketing Analytics Server provides a RESTful API for accessing Google Analytics data. Here are some examples of how to use the key endpoints:
@@ -264,309 +311,6 @@ We use GitHub Projects to manage our development roadmap. You can view our activ
 - **[View the Bigas Project Board](https://github.com/users/mckort/projects/1)**
 
 ---
-
-## 🏗️ Architecture
-
-Here is a high-level overview of the application architecture and data flow.
-
-```text
-+--------------------------+
-|         Clients          |
-|  - Manual User (curl)    |
-|  - Google Cloud Scheduler|
-+--------------------------+
-             |
-             | HTTP POST Request (e.g., /weekly_analytics_report)
-             v
-+--------------------------+
-|   Google Cloud Run       |
-|  (Hosting Environment)   |
-+--------------------------+
-             |
-             | Forwards request
-             v
-+--------------------------+
-|  Bigas Marketing Server  |
-|      (Flask App)         |
-+--------------------------+
-      |      |           |
-      |      |           +----------------------------------> [ Discord Webhook ]
-      |      |                                                 (Posts report)
-      |      |
-      |      +-------------------------> [ OpenAI API ]
-      |                                  (Processes questions, generates summaries)
-      |
-      +--------------------------------> [ Google Analytics API ]
-                                         (Fetches analytics data)
-
-```
-
-### Data Flow Explained:
-
-1.  **Clients**: A user (via `curl` or a test client) or an automated service (like Google Cloud Scheduler) sends an HTTP request to an endpoint.
-2.  **Google Cloud Run**: The request is received by the Google Cloud Run service, which hosts the application.
-3.  **Bigas Marketing Server**: The Flask application processes the request.
-4.  **External APIs**: The server calls one or more external APIs to fulfill the request:
-    *   **Google Analytics API**: To fetch raw analytics data.
-    *   **OpenAI API**: To understand natural language questions or to summarize data.
-    *   **Discord Webhook**: To post the final report to a specified channel.
-5.  **Response**: The server sends a confirmation response back to the client. The main report content is delivered asynchronously (e.g., to Discord).
-
----
-
-## 🚀 Features
-
-- **Natural Language Analytics**: Ask questions in plain English and get AI-powered insights
-- **Weekly Analytics Reports**: Automated Q&A reports posted to Discord
-- **Advanced GA4 Integration**: Comprehensive metric and dimension mapping
-- **OpenAPI Documentation**: Full API specification at `/openapi.json`
-- **Discord Integration**: Automated posting of analytics insights
-- **Smart Caching**: Optimized performance with intelligent caching
-- **Error Handling**: Robust error handling and fallback mechanisms
-- **GA4 Compatibility**: Handles GA4's metric/dimension compatibility restrictions
-
-## 🏗️ Architecture Overview
-
-The solution consists of:
-- **Flask Application** with MCP framework integration
-- **Analytics Agent** with OpenAI integration for natural language processing
-- **Google Analytics Data API** integration with comprehensive field mapping
-- **Discord Webhook** integration for automated reporting
-- **Docker containerization** for easy deployment
-- **Google Cloud Run** deployment with optimized configuration
-
-## 📋 Prerequisites
-
-1. **Google Cloud Platform (GCP)** project
-2. **Google Analytics 4** property with data
-3. **Service account** with access to the GA4 property
-4. **OpenAI API key** for natural language processing
-5. **Discord webhook URL** (optional, for automated reporting)
-6. **Docker** installed locally
-7. **Google Cloud SDK (gcloud)** installed locally
-
-## 🔐 Security & Environment Setup
-
-### ⚠️ IMPORTANT: Security First!
-
-**NEVER commit sensitive information to version control!** This includes:
-- API keys
-- Service account credentials
-- Property IDs
-- Webhook URLs
-- Any other secrets
-
-### 1. Environment Variables Setup
-
-1. **Copy the example environment file:**
-   ```bash
-   cp env.example .env
-   ```
-
-2. **Edit `.env` with your actual values:**
-   ```bash
-   # Google Analytics 4 Configuration
-   GA4_PROPERTY_ID=your_actual_ga4_property_id
-   
-   # OpenAI Configuration
-   OPENAI_API_KEY=your_actual_openai_api_key
-   
-   # Discord Integration (Optional)
-   DISCORD_WEBHOOK_URL=your_actual_discord_webhook_url
-   
-   # Google Cloud Configuration
-   GOOGLE_PROJECT_ID=your_actual_google_cloud_project_id
-   GOOGLE_SERVICE_ACCOUNT_EMAIL=your_actual_service_account_email
-   
-   # Application Configuration
-   FLASK_ENV=production
-   FLASK_DEBUG=false
-   PORT=5000
-   ```
-
-3. **Verify `.env` is in `.gitignore`:**
-   ```bash
-   # Check that .env is listed in .gitignore
-   grep -n "\.env" .gitignore
-   ```
-
-### 2. Required Environment Variables
-
-| Variable | Description | Required | Example |
-|----------|-------------|----------|---------|
-| `GA4_PROPERTY_ID` | Your Google Analytics 4 Property ID | ✅ | `473559548` |
-| `OPENAI_API_KEY` | Your OpenAI API key | ✅ | `sk-proj-...` |
-| `GOOGLE_PROJECT_ID` | Your Google Cloud Project ID | ✅ | `my-project-123` |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Service account email | ✅ | `analytics@project.iam.gserviceaccount.com` |
-| `DISCORD_WEBHOOK_URL` | Discord webhook for reports | ❌ | `https://discord.com/api/webhooks/...` |
-
-### 3. Service Account Setup
-
-1. Create a service account in your GCP project
-2. Download the service account key (JSON file)
-3. Grant the service account access to your GA4 property:
-   - Go to GA4 Admin
-   - Navigate to Property Access Management
-   - Add the service account email
-   - Grant at least "Viewer" permissions
-
-### 4. Local Development
-
-1. **Set up your environment:**
-   ```bash
-   # Copy example file
-   cp env.example .env
-   
-   # Edit with your values
-   nano .env
-   
-   # Install dependencies
-   pip install -r requirements.txt
-   ```
-
-2. **Run the application:**
-   ```bash
-   python bigas_marketing.py
-   ```
-
-### 5. Deployment
-
-**Using the deployment script:**
-```bash
-# Make sure .env is set up
-./deploy.sh
-```
-
-**Manual deployment:**
-```bash
-# Set environment variables
-export GA4_PROPERTY_ID=your_property_id
-export OPENAI_API_KEY=your_api_key
-export GOOGLE_PROJECT_ID=your_project_id
-export GOOGLE_SERVICE_ACCOUNT_EMAIL=your_service_account
-
-# Deploy
-gcloud run deploy bigas-marketing \
-  --image europe-north1-docker.pkg.dev/your-project-id/your-docker-repo/your-image-name:latest \
-  --platform managed \
-  --region europe-north1 \
-  --memory 2Gi \
-  --timeout 300 \
-  --concurrency 1 \
-  --set-env-vars GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY,DISCORD_WEBHOOK_URL=$DISCORD_WEBHOOK_URL
-```
-
-## 🔒 Security Best Practices
-
-> 📖 **For detailed security information, see [SECURITY.md](SECURITY.md)**
-
-### ✅ Do's
-- ✅ Use `.env` files for local development
-- ✅ Set environment variables in production
-- ✅ Use service accounts with minimal permissions
-- ✅ Rotate API keys regularly
-- ✅ Monitor API usage and costs
-- ✅ Use HTTPS for all webhook URLs
-
-### ❌ Don'ts
-- ❌ Never commit `.env` files to git
-- ❌ Never hardcode secrets in scripts
-- ❌ Never share API keys publicly
-- ❌ Never use admin/service accounts with excessive permissions
-- ❌ Never log sensitive information
-
-### 🔍 Security Checklist
-- [ ] `.env` file exists and contains all required variables
-- [ ] `.env` is listed in `.gitignore`
-- [ ] No secrets in `deploy.sh` or other scripts
-- [ ] Service account has minimal required permissions
-- [ ] API keys are valid and have appropriate scopes
-- [ ] Webhook URLs use HTTPS
-- [ ] Environment variables are set in production
-
-### 🚨 Security Documentation
-- **[SECURITY.md](SECURITY.md)** - Detailed security guide with incident response procedures
-- **Environment Setup** - See section above for environment variable configuration
-- **Deployment Security** - Use `deploy.sh` script which validates environment variables
-
-## 📊 API Endpoints
-
-### 1. Fetch Analytics Report
-**Endpoint:** `POST /mcp/tools/fetch_analytics_report`
-
-Fetches a Google Analytics report with intelligent field mapping and compatibility handling.
-
-**Parameters:**
-- `start_date`: (string, optional, default: 30 days ago)
-- `end_date`: (string, optional, default: today)
-- `metrics`: (list of strings, optional, default: `["activeUsers"]`)
-- `dimensions`: (list of strings, optional, default: `["country"]`)
-
-### 2. Fetch Custom Report
-**Endpoint:** `POST /mcp/tools/fetch_custom_report`
-
-Fetches custom reports with multiple date ranges for comparison.
-
-**Parameters:**
-- `dimensions`: (list of dimension names)
-- `metrics`: (list of metric names)
-- `date_ranges`: (list of dicts with `start_date`, `end_date`, and optional `name`)
-
-### 3. Ask Analytics Question ⭐
-**Endpoint:** `POST /mcp/tools/ask_analytics_question`
-
-**NEW**: Natural language analytics with AI-powered insights and recommendations.
-
-**Parameters:**
-- `question`: (string, required) - Ask any analytics question in plain English
-
-**Example Questions:**
-- "What are the primary traffic sources contributing to total sessions?"
-- "Which landing pages have the highest bounce rates?"
-- "How do blog posts contribute to conversions?"
-- "Are there pages with high traffic but low conversions?"
-
-**Features:**
-- Intelligent metric/dimension selection
-- GA4 compatibility handling
-- Human-readable analysis
-- Actionable recommendations
-
-### 4. Analyze Trends
-**Endpoint:** `POST /mcp/tools/analyze_trends`
-
-Analyzes trends across multiple time frames with period-over-period comparisons.
-
-**Parameters:**
-- `metrics`: (list of strings, optional)
-- `dimensions`: (list of strings, optional)
-- `time_frames`: (list of objects, optional)
-
-### 5. Weekly Analytics Report ⭐
-**Endpoint:** `POST /mcp/tools/weekly_analytics_report`
-
-**NEW**: Automated weekly analytics Q&A that posts results to Discord and returns a comprehensive summary.
-
-**Features:**
-- Runs 8 predefined analytics questions
-- Posts each Q&A to Discord
-- Generates AI-powered summary recommendations
-- Handles empty results gracefully
-- Fallback mechanisms for reliability
-
-**Required Environment Variables:**
-- `DISCORD_WEBHOOK_URL`
-- `OPENAI_API_KEY`
-
-### 6. OpenAPI Specification
-**Endpoint:** `GET /openapi.json`
-
-**NEW**: Complete OpenAPI 3.0 specification for all endpoints.
-
-### 7. MCP Manifest
-**Endpoint:** `GET /mcp/manifest`
-
-Returns the MCP tool manifest for Cursor CLI integration.
 
 ## 🧠 Analytics Agent Features
 
