@@ -1,4 +1,4 @@
-# Bigas - Your Virtual AI Team for Solo Entrepreneurs
+# Bigas - AI Team for Solo Founders, Built for Vibe Coding
 
 Welcome to Bigas, an open-source project hosted on GitHub, designed to empower solo entrepreneurs by providing a virtual team of AI-powered resources. The name Bigas is derived from Latin, meaning "team," and reflects our mission to create a collaborative ecosystem of AI tools to support entrepreneurs in building and scaling their ventures. Our vision is to make advanced AI capabilities accessible to individuals who are navigating the entrepreneurial journey solo, enabling them to achieve more with less.
 
