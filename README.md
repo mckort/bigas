@@ -4,7 +4,7 @@ Welcome to Bigas, an open-source project hosted on GitHub, designed to empower s
 
 ## Project Overview
 
-Bigas (available at bigas.me, meaning "my team") is a modular, open-source platform that leverages cutting-edge AI tools to simulate the expertise of a dedicated team. By integrating with coding tools like Cursor, Bigas enables solo entrepreneurs to streamline workflows, automate tasks, and gain actionable insights without the need for extensive technical expertise or a large team.
+Bigas (meaning "my team") is a modular, open-source platform that leverages cutting-edge AI tools to simulate the expertise of a dedicated team. By integrating with coding tools like Cursor, Bigas enables solo entrepreneurs to streamline workflows, automate tasks, and gain actionable insights without the need for extensive technical expertise or a large team.
 
 The initial focus of Bigas is a **Marketing Analytics Resource**, a powerful AI-driven tool that connects to Google Analytics to extract, analyze, and interpret data. This resource provides detailed observations and actionable recommendations to optimize marketing strategies, improve user engagement, and drive business growth. Whether you're looking to enhance your website's performance, refine your campaigns, or better understand your audience, Bigas equips you with the insights needed to make data-driven decisions.
 
@@ -257,11 +257,62 @@ SOFTWARE.
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on how to submit pull requests, report issues, and contribute to the project.
 
+### 🗺️ Project Roadmap
+
+We use GitHub Projects to manage our development roadmap. You can view our active project board to see what we're working on, what's planned, and where you can help.
+
+- **[View the Bigas Project Board](https://github.com/users/mckort/projects/1)**
+
 ---
 
-# Google Analytics MCP Server (Bigas Marketing)
+## 🏗️ Architecture
 
-A comprehensive Flask-based Google Analytics 4 (GA4) MCP server with natural language analytics capabilities, Discord integration, and advanced reporting features. Deployed on Google Cloud Run with full API documentation.
+Here is a high-level overview of the application architecture and data flow.
+
+```text
++--------------------------+
+|         Clients          |
+|  - Manual User (curl)    |
+|  - Google Cloud Scheduler|
++--------------------------+
+             |
+             | HTTP POST Request (e.g., /weekly_analytics_report)
+             v
++--------------------------+
+|   Google Cloud Run       |
+|  (Hosting Environment)   |
++--------------------------+
+             |
+             | Forwards request
+             v
++--------------------------+
+|  Bigas Marketing Server  |
+|      (Flask App)         |
++--------------------------+
+      |      |           |
+      |      |           +----------------------------------> [ Discord Webhook ]
+      |      |                                                 (Posts report)
+      |      |
+      |      +-------------------------> [ OpenAI API ]
+      |                                  (Processes questions, generates summaries)
+      |
+      +--------------------------------> [ Google Analytics API ]
+                                         (Fetches analytics data)
+
+```
+
+### Data Flow Explained:
+
+1.  **Clients**: A user (via `curl` or a test client) or an automated service (like Google Cloud Scheduler) sends an HTTP request to an endpoint.
+2.  **Google Cloud Run**: The request is received by the Google Cloud Run service, which hosts the application.
+3.  **Bigas Marketing Server**: The Flask application processes the request.
+4.  **External APIs**: The server calls one or more external APIs to fulfill the request:
+    *   **Google Analytics API**: To fetch raw analytics data.
+    *   **OpenAI API**: To understand natural language questions or to summarize data.
+    *   **Discord Webhook**: To post the final report to a specified channel.
+5.  **Response**: The server sends a confirmation response back to the client. The main report content is delivered asynchronously (e.g., to Discord).
+
+---
 
 ## 🚀 Features
 
