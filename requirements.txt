@@ -1,0 +1,11 @@
+flask==2.2.5
+werkzeug==2.2.3
+google-analytics-data
+google-auth
+gunicorn==20.1.0
+requests==2.31.0
+aiohttp==3.8.5
+starlette
+uvicorn
+httpx
+openai 
