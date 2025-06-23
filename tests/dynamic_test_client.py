@@ -19,7 +19,7 @@ import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import random
-import aiohttp
+import httpx
 import asyncio
 from dotenv import load_dotenv
 
@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class DynamicMCPTestClient:
-    def __init__(self, base_url: str = "http://localhost:5000", exclude_endpoints: List[str] = None, include_slow_tests: bool = False, interactive: bool = True):
+    def __init__(self, base_url: str = "https://mcp-marketing-919623369853.europe-north1.run.app", exclude_endpoints: List[str] = None, include_slow_tests: bool = False, interactive: bool = True):
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self.session.headers.update({
@@ -618,8 +618,8 @@ def main():
     """Main entry point."""
     import argparse
     
-    # Get default server URL from environment or use localhost
-    default_server_url = os.getenv('SERVER_URL', 'http://localhost:5000')
+    # Get default server URL from environment or use Google Cloud deployment
+    default_server_url = os.getenv('SERVER_URL', 'https://mcp-marketing-919623369853.europe-north1.run.app')
     
     parser = argparse.ArgumentParser(description='Dynamic MCP Test Client with Auto-Fix')
     parser.add_argument('--url', default=default_server_url, 

@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class AutoFixTestRunner:
-    def __init__(self, max_attempts: int = 5, server_url: str = "http://localhost:5000", exclude_endpoints: List[str] = None, include_slow_tests: bool = False, non_interactive: bool = False, wait_time: int = 10):
+    def __init__(self, max_attempts: int = 5, server_url: str = "https://mcp-marketing-919623369853.europe-north1.run.app", exclude_endpoints: List[str] = None, include_slow_tests: bool = False, non_interactive: bool = False, wait_time: int = 10):
         self.max_attempts = max_attempts
         self.server_url = server_url
         self.exclude_endpoints = exclude_endpoints or []
@@ -43,7 +43,7 @@ class AutoFixTestRunner:
         try:
             # Build command with all arguments
             cmd = [
-                sys.executable, "dynamic_test_client.py",
+                sys.executable, "tests/dynamic_test_client.py",
                 "--url", self.server_url,
                 "--timeout", "60"
             ]
@@ -572,7 +572,7 @@ Focus on the specific files mentioned and provide concrete code modifications.
 def main():
     """Main entry point."""
     # Get default server URL from environment or use localhost
-    default_server_url = os.getenv('SERVER_URL', 'http://localhost:5000')
+    default_server_url = os.getenv('SERVER_URL', 'https://mcp-marketing-919623369853.europe-north1.run.app')
     
     parser = argparse.ArgumentParser(description='Automated Test Runner with Auto-Fix')
     parser.add_argument('--url', default=default_server_url,
@@ -591,8 +591,8 @@ def main():
     args = parser.parse_args()
     
     # Check if required files exist
-    if not os.path.exists('dynamic_test_client.py'):
-        print("❌ Error: dynamic_test_client.py not found!")
+    if not os.path.exists('tests/dynamic_test_client.py'):
+        print("❌ Error: tests/dynamic_test_client.py not found!")
         sys.exit(1)
     
     if not os.path.exists('app.py'):

@@ -513,7 +513,7 @@ This project includes a `deploy.sh` script to automate the build and deployment 
 
 This project includes advanced automated testing and debugging tools that can automatically identify and fix issues in your MCP server.
 
-### Dynamic Test Client (`dynamic_test_client.py`)
+### Dynamic Test Client (`tests/dynamic_test_client.py`)
 
 A comprehensive MCP client that automatically discovers and tests all available endpoints.
 
@@ -527,13 +527,13 @@ A comprehensive MCP client that automatically discovers and tests all available 
 **Usage:**
 ```bash
 # Basic usage (assumes server at localhost:5000)
-python dynamic_test_client.py
+python tests/dynamic_test_client.py
 
 # Custom server URL
-python dynamic_test_client.py --url http://your-server:8080
+python tests/dynamic_test_client.py --url http://your-server:8080
 
 # Custom timeout
-python dynamic_test_client.py --timeout 60
+python tests/dynamic_test_client.py --timeout 60
 ```
 
 **Example Output:**
@@ -561,7 +561,7 @@ Total Tools Tested: 5
 Overall Success Rate: 80.0%
 ```
 
-### Auto-Fix Test Runner (`auto_fix_test_runner.py`) ⭐
+### Auto-Fix Test Runner (`tests/auto_fix_test_runner.py`) ⭐
 
 **NEW**: An intelligent automated debugging system that can automatically fix issues and re-run tests until everything works.
 
@@ -581,15 +581,15 @@ Overall Success Rate: 80.0%
    cursor --version
    ```
 2. **Server Running**: Your Flask server must be running
-3. **Files Present**: Both `dynamic_test_client.py` and `app.py` must exist
+3. **Files Present**: Both `tests/dynamic_test_client.py` and `app.py` must exist
 
 **Usage:**
 ```bash
 # Basic usage (5 attempts, localhost:5000)
-python auto_fix_test_runner.py
+python tests/auto_fix_test_runner.py
 
 # Custom configuration
-python auto_fix_test_runner.py \
+python tests/auto_fix_test_runner.py \
   --url http://your-server:8080 \
   --max-attempts 10 \
   --wait-time 15
@@ -648,17 +648,17 @@ Running: cursor chat --file app.py --file bigas/resources/marketing/endpoints.py
 ### Testing Workflow
 
 **Recommended Testing Workflow:**
-1. **Manual Testing**: Use `test_client.py` for quick manual tests
-2. **Comprehensive Testing**: Use `dynamic_test_client.py` for full endpoint coverage
-3. **Automated Debugging**: Use `auto_fix_test_runner.py` for automated issue resolution
+1. **Manual Testing**: Use `tests/test_client.py` for quick manual tests
+2. **Comprehensive Testing**: Use `tests/dynamic_test_client.py` for full endpoint coverage
+3. **Automated Debugging**: Use `tests/auto_fix_test_runner.py` for automated issue resolution
 
 **Integration with Development:**
 ```bash
 # After making changes to the application files
-python auto_fix_test_runner.py --max-attempts 3
+python tests/auto_fix_test_runner.py --max-attempts 3
 
 # For continuous integration
-python dynamic_test_client.py --url $PRODUCTION_URL
+python tests/dynamic_test_client.py --url $PRODUCTION_URL
 ```
 
 ## 🔮 Future Improvements
