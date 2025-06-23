@@ -469,6 +469,58 @@ class MarketingAnalyticsService:
             data = find_high_traffic_low_conversion(data)
         return data
 
+    def analyze_trends_with_insights(self, formatted_trends: dict, metrics: list, dimensions: list, date_range: str) -> dict:
+        """
+        Analyze trend data and generate AI-powered insights.
+        
+        Args:
+            formatted_trends: The formatted trend data from format_trend_data_for_humans
+            metrics: List of metrics that were analyzed
+            dimensions: List of dimensions that were analyzed
+            date_range: The date range that was analyzed
+            
+        Returns:
+            Dict containing the original data and AI-generated insights
+        """
+        try:
+            system_prompt = """You are an expert at analyzing Google Analytics trend data. 
+            Given the trend analysis data, provide actionable insights that:
+            1. Identify key trends and patterns
+            2. Highlight significant changes (positive or negative)
+            3. Suggest potential causes for the trends
+            4. Provide actionable recommendations
+            5. Focus on business impact and next steps
+            
+            Be concise but insightful. Focus on the most important findings."""
+            
+            analysis_data = {
+                "metrics_analyzed": metrics,
+                "dimensions_analyzed": dimensions,
+                "date_range": date_range,
+                "trend_data": formatted_trends
+            }
+            
+            completion = self.openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(analysis_data, indent=2)}
+                ],
+                max_tokens=800,
+                temperature=0.7
+            )
+            
+            ai_insights = completion.choices[0].message.content.strip()
+            
+        except Exception as e:
+            logging.error(f"Error generating AI insights for trends: {e}")
+            ai_insights = "Unable to generate AI insights due to an error."
+        
+        return {
+            "data": formatted_trends,
+            "ai_insights": ai_insights
+        }
+
     def answer_traffic_sources(self, date_range=None):
         data = self.run_template_query("traffic_sources", date_range)
         system_prompt = (

@@ -155,6 +155,10 @@ def analyze_trends():
     # Handle date range parameter
     date_range = data.get('date_range', 'last_30_days')
     
+    # Check if Discord webhook is available
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
+    post_to_discord_enabled = webhook_url is not None
+    
     try:
         # Define time frames based on date_range parameter
         today = datetime.now()
@@ -203,9 +207,39 @@ def analyze_trends():
         # Format the trend data for better presentation
         formatted_trends = format_trend_data_for_humans(raw_trend_data, time_frames)
         
+        # Generate AI insights using the service
+        service = MarketingAnalyticsService(OPENAI_API_KEY)
+        result = service.analyze_trends_with_insights(formatted_trends, metrics, dimensions, date_range)
+        
+        # Post to Discord if webhook is available
+        if post_to_discord_enabled:
+            # Create a summary message for Discord
+            discord_message = f"# 📈 Trend Analysis Report\n\n"
+            discord_message += f"**Metrics**: {', '.join(metrics)}\n"
+            discord_message += f"**Dimensions**: {', '.join(dimensions)}\n"
+            discord_message += f"**Date Range**: {date_range}\n\n"
+            
+            # Add key insights from the data
+            for time_frame, data in formatted_trends.items():
+                summary = data.get("summary", {})
+                discord_message += f"**{time_frame.replace('_', ' ').title()}**:\n"
+                discord_message += f"• Current Period: {summary.get('current_period_total', 0):,}\n"
+                discord_message += f"• Previous Period: {summary.get('previous_period_total', 0):,}\n"
+                discord_message += f"• Change: {summary.get('percentage_change', 0):+.1f}%\n"
+                discord_message += f"• Trend: {summary.get('trend_direction', 'stable')}\n\n"
+            
+            # Post the data summary
+            post_to_discord(webhook_url, discord_message)
+            
+            # Post AI insights separately
+            ai_insights_message = f"**🤖 AI Insights**:\n{result['ai_insights']}"
+            post_to_discord(webhook_url, ai_insights_message)
+        
         return jsonify({
             "status": "success", 
-            "data": formatted_trends,
+            "data": result["data"],
+            "ai_insights": result["ai_insights"],
+            "discord_posted": post_to_discord_enabled,
             "metadata": {
                 "metrics_analyzed": metrics,
                 "dimensions_analyzed": dimensions,
