@@ -338,7 +338,7 @@ def weekly_analytics_report():
     if not webhook_url:
         return jsonify({"error": "DISCORD_WEBHOOK_URL not set."}), 500
     
-    post_to_discord(webhook_url, "Weekly Analytics report on its way...")
+    post_to_discord(webhook_url, "# 📊 Weekly Analytics Report on its way...")
     
     questions = [
       "What are the primary traffic sources (e.g., organic search, direct, referral, paid search, social, email) contributing to total sessions, and what is their respective share?",

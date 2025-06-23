@@ -32,9 +32,7 @@ The initial focus of Bigas is a **Marketing Analytics Resource**, a powerful AI-
 
 **Extensible Framework**: Built to support additional AI resources in the future, allowing the virtual team to grow with your business needs.
 
-**Integration with Coding Tools**: Utilizes tools like Cursor to enable rapid development, customization, and automation for users who want to extend or tailor the platform.
-
-**Open-Source Collaboration**: Hosted on GitHub, Bigas invites developers, data scientists, and entrepreneurs to contribute to its growth, ensuring a community-driven approach to innovation.
+**Open-Source Collaboration**: Hosted on GitHub, Bigas invites developers, growth hackers, and entrepreneurs to contribute to its growth, ensuring a community-driven approach to innovation.
 
 ## 🚀 Features
 
@@ -43,7 +41,6 @@ The initial focus of Bigas is a **Marketing Analytics Resource**, a powerful AI-
 - **Natural Language Queries**: Ask analytics questions in plain English
 - **Trend Analysis**: Analyze data trends over time with detailed insights
 - **Weekly Reports**: Automated weekly analytics reports posted to Discord
-- **Q&A Summaries**: AI-powered summaries of weekly report Q&A sections
 - **MCP Server**: Modern Model Context Protocol server for AI tool integration
 
 ## 🏗️ Architecture
