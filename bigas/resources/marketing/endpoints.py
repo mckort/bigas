@@ -398,7 +398,7 @@ def weekly_analytics_report():
                 data = service.run_template_query(template_key)
                 answer = service._format_response_obj(data, q)
             
-            message = f"Q: {q}\nA: {answer}"
+            message = f"**Q: {q}**\nA: {answer}"
             post_to_discord(webhook_url, message)
             full_report += message + "\n\n"
         except Exception as e:
