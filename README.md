@@ -261,6 +261,40 @@ For automated weekly reports, you can use **Google Cloud Scheduler** to call the
 
 Simply configure a Cloud Scheduler job to make a POST request to your weekly analytics report endpoint at your preferred schedule.
 
+## Adding a New Analytics Question (Template-Driven)
+
+To add a new analytics question using the template-driven system:
+
+1. **Edit `bigas/resources/marketing/service.py`:**
+   - Add a new entry to the `QUESTION_TEMPLATES` dictionary at the top of the file. Use the existing entries as examples. Specify the GA4 metrics, dimensions, and (optionally) filters, order_by, or postprocess helpers.
+   - Example:
+     ```python
+     QUESTION_TEMPLATES = {
+         # ... existing templates ...
+         "my_new_question": {
+             "dimensions": ["pagePath"],
+             "metrics": ["sessions", "conversions"],
+             "filters": [{"field": "pagePath", "operator": "contains", "value": "landing"}],
+             "order_by": ["sessions"],
+             "postprocess": "my_custom_postprocess"  # Optional
+         }
+     }
+     ```
+2. **(Optional) Add a post-processing helper:**
+   - If your template uses a custom `postprocess`, define a function with that name in the same file. It should take the analytics data dict and return the processed data.
+   - Example:
+     ```python
+     def my_custom_postprocess(data):
+         # ... your logic ...
+         return data
+     ```
+3. **Call your new template:**
+   - In your endpoint or report logic, call `service.run_template_query("my_new_question")` or add a method like `answer_my_new_question()` if you want OpenAI-powered summarization.
+
+**Tip:**
+- Use the existing templates as a guide for GA4 field names and structure.
+- You can add as many templates as you need for different analytics questions.
+
 ## 🛠️ Installation & Deployment
 
 Getting started with Bigas is straightforward. The primary method for deployment is using the provided `deploy.sh` script, which automates the process of building and deploying the application to Google Cloud Run.

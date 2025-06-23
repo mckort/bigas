@@ -349,12 +349,30 @@ def weekly_analytics_report():
       "How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?"
     ]
     
+    # Map questions to template keys for robust, deterministic analytics
+    question_to_template = {
+        questions[0]: "traffic_sources",
+        questions[1]: "session_quality", 
+        questions[2]: "top_pages_conversions",
+        questions[3]: "engagement_pages",
+        questions[4]: "underperforming_pages",
+        questions[5]: "blog_conversion"
+    }
+    
     service = MarketingAnalyticsService(OPENAI_API_KEY)
     full_report = ""
 
     for q in questions:
         try:
-            answer = service.answer_question(GA4_PROPERTY_ID, q)
+            template_key = question_to_template[q]
+            # Use template-driven approach for reliability
+            if template_key == "traffic_sources":
+                answer = service.answer_traffic_sources()
+            else:
+                # For other templates, use the generic template runner with OpenAI summarization
+                data = service.run_template_query(template_key)
+                answer = service._format_response_obj(data, q)
+            
             message = f"Q: {q}\nA: {answer}"
             post_to_discord(webhook_url, message)
             full_report += message + "\n\n"
@@ -365,12 +383,14 @@ def weekly_analytics_report():
 
     try:
         summary_prompt = "Please summarize the following Q&A session about website analytics into a short, high-level executive summary with 5-7 key, actionable recommendations. Focus on the most critical insights a solo founder should act on this week:\n\n" + full_report
-        summary_response = openai.ChatCompletion.create(
+        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        summary_response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": summary_prompt}],
-            max_tokens=500
+            max_tokens=500,
+            temperature=0.7
         )
-        summary = summary_response.choices[0].message['content'].strip()
+        summary = summary_response.choices[0].message.content.strip()
         post_to_discord(webhook_url, f"Summary Recommendations:\n{summary}")
     except Exception as e:
         logger.error(f"Could not generate weekly summary: {e}")

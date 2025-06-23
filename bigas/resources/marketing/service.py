@@ -15,6 +15,76 @@ import os
 from datetime import datetime, timedelta
 import logging
 
+# Add after imports, before the class
+QUESTION_TEMPLATES = {
+    # 1. What are the primary traffic sources (e.g., organic search, direct, referral, paid search, social, email) contributing to total sessions, and what is their respective share?
+    "traffic_sources": {
+        "dimensions": ["sessionDefaultChannelGroup"],
+        "metrics": ["sessions"],
+        "postprocess": "calculate_session_share"
+    },
+    # 2. What is the average session duration and pages per session across all users?
+    "session_quality": {
+        "dimensions": [],
+        "metrics": ["averageSessionDuration", "screenPageViewsPerSession"]
+    },
+    # 3. Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?
+    "top_pages_conversions": {
+        "dimensions": ["pagePath"],
+        "metrics": ["sessions", "conversions"],
+        "order_by": ["sessions"]
+    },
+    # 4. Which pages or sections (e.g., blog, product pages, landing pages) drive the most engagement (e.g., time on page, low bounce rate)?
+    "engagement_pages": {
+        "dimensions": ["pagePath"],
+        "metrics": ["averageSessionDuration", "bounceRate"],
+        "order_by": ["averageSessionDuration"]
+    },
+    # 5. Are there underperforming pages with high traffic but low conversions?
+    "underperforming_pages": {
+        "dimensions": ["pagePath"],
+        "metrics": ["sessions", "conversions"],
+        "postprocess": "find_high_traffic_low_conversion"
+    },
+    # 6. How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?
+    "blog_conversion": {
+        "dimensions": ["pagePath", "sessionDefaultChannelGroup"],
+        "metrics": ["conversions", "sessions"],
+        "filters": [{"field": "pagePath", "operator": "contains", "value": "blog"}]
+    }
+}
+
+def calculate_session_share(data):
+    rows = data.get("rows", [])
+    if not rows:
+        return data
+    try:
+        total_sessions = sum(int(row["metric_values"][0]) for row in rows)
+        for row in rows:
+            sessions = int(row["metric_values"][0])
+            share = (sessions / total_sessions) * 100 if total_sessions else 0
+            row["session_share"] = round(share, 1)
+    except Exception as e:
+        logging.warning(f"Failed to calculate session share: {e}")
+    return data
+
+def find_high_traffic_low_conversion(data):
+    rows = data.get("rows", [])
+    if not rows:
+        return data
+    try:
+        sessions = [int(row["metric_values"][0]) for row in rows]
+        conversions = [int(row["metric_values"][1]) for row in rows]
+        avg_sessions = sum(sessions) / len(sessions) if sessions else 0
+        for i, row in enumerate(rows):
+            if sessions[i] > avg_sessions and conversions[i] == 0:
+                row["underperforming"] = True
+            else:
+                row["underperforming"] = False
+    except Exception as e:
+        logging.warning(f"Failed to flag underperforming pages: {e}")
+    return data
+
 class MarketingAnalyticsService:
     def __init__(self, openai_api_key: str):
         """Initialize the Marketing Analytics Service with OpenAI API key."""
@@ -125,8 +195,8 @@ class MarketingAnalyticsService:
         Only include fields that are relevant to the question. Use standard Google Analytics 4 metric and dimension names without the 'ga:' prefix."""
         
         response = self.openai_client.chat.completions.create(
-            model="o4-mini",
-            max_completion_tokens=2000,
+            model="gpt-4",
+            max_tokens=2000,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question}
@@ -349,8 +419,8 @@ class MarketingAnalyticsService:
         }
         
         completion = self.openai_client.chat.completions.create(
-            model="o4-mini",
-            max_completion_tokens=2000,
+            model="gpt-4",
+            max_tokens=2000,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(response_data)}
@@ -402,8 +472,8 @@ class MarketingAnalyticsService:
         
         try:
             completion = self.openai_client.chat.completions.create(
-                model="o4-mini",
-                max_completion_tokens=1500,
+                model="gpt-4",
+                max_tokens=1500,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(analysis_data)}
@@ -503,4 +573,49 @@ class MarketingAnalyticsService:
                 return self._format_response(response, question)
             
         except Exception as e:
-            return f"I encountered an error while processing your question: {str(e)}" 
+            return f"I encountered an error while processing your question: {str(e)}"
+
+    def run_template_query(self, template_key, date_range=None):
+        template = QUESTION_TEMPLATES[template_key]
+        metrics = template["metrics"]
+        dimensions = template["dimensions"]
+        if date_range is None:
+            date_range = self._get_consistent_date_range()
+        query_params = {
+            "metrics": metrics,
+            "dimensions": dimensions,
+            "date_range": date_range
+        }
+        request = self._build_report_request(os.environ["GA4_PROPERTY_ID"], query_params)
+        response = self.analytics_client.run_report(request)
+        data = self._convert_ga4_response_to_dict(response)
+        if template.get("postprocess") == "calculate_session_share":
+            data = calculate_session_share(data)
+        return data
+
+    def answer_traffic_sources(self, date_range=None):
+        data = self.run_template_query("traffic_sources", date_range)
+        system_prompt = (
+            "You are an expert at explaining Google Analytics traffic source data. "
+            "Given the raw analytics data and the original question, provide a natural language summary that: "
+            "1. Lists the primary traffic sources and their respective share of sessions\n"
+            "2. Highlights any notable trends or imbalances\n"
+            "3. Provides actionable recommendations for improving traffic diversity or volume\n"
+            "Format numbers as percentages where appropriate."
+        )
+        ai_data = {
+            "question": "What are the primary traffic sources (e.g., organic search, direct, referral, paid search, social, email) contributing to total sessions, and what is their respective share?",
+            "analytics_data": data
+        }
+        completion = self.openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(ai_data)}
+            ],
+            max_tokens=500,
+            temperature=0.7
+        )
+        summary = completion.choices[0].message.content.strip()
+        logging.info(f"[traffic_sources] OpenAI summary: {summary}")
+        return summary 
