@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/images/logo.png" alt="Bigas Logo" width="200">
+  <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200">
 </div>
 
 # Bigas - AI Team for Solo Founders, Built for Vibe Coding
