@@ -187,6 +187,32 @@ def format_trend_data_for_humans(raw_trend_data, time_frames):
     
     return formatted_trends
 
+def convert_dimension_name(dimension_name: str) -> str:
+    """Convert common dimension names from snake_case to camelCase for Google Analytics API."""
+    dimension_mappings = {
+        'device_category': 'deviceCategory',
+        'country': 'country',
+        'city': 'city',
+        'page_path': 'pagePath',
+        'page_title': 'pageTitle',
+        'landing_page': 'landingPage',
+        'session_default_channel_group': 'sessionDefaultChannelGroup',
+        'source': 'source',
+        'medium': 'medium',
+        'campaign': 'campaignName',
+        'hostname': 'hostName',
+        'browser': 'browser',
+        'operating_system': 'operatingSystem',
+        'content_group': 'contentGroup',
+    }
+    # Try mapping, else convert snake_case to camelCase
+    if dimension_name in dimension_mappings:
+        return dimension_mappings[dimension_name]
+    if '_' in dimension_name:
+        parts = dimension_name.split('_')
+        return parts[0] + ''.join(word.capitalize() for word in parts[1:])
+    return dimension_name
+
 @marketing_bp.route('/mcp/tools/fetch_analytics_report', methods=['POST'])
 def fetch_analytics_report():
     data = request.json
@@ -207,16 +233,15 @@ def fetch_analytics_report():
 def fetch_custom_report():
     data = request.json
     try:
-        dimensions = data['dimensions']
-        metrics = data['metrics']
+        # Normalize dimensions and metrics
+        dimensions = [convert_dimension_name(d) for d in data['dimensions']]
+        metrics = [convert_metric_name(m) for m in data['metrics']]
         date_ranges = data['date_ranges']
-        
         all_processed_data = {}
         for dr in date_ranges:
             ga_response = get_ga_report_with_cache(GA4_PROPERTY_ID, dr['start_date'], dr['end_date'], metrics, dimensions)
             processed_data = process_ga_response(ga_response)
             all_processed_data[dr.get('name', f"{dr['start_date']}_to_{dr['end_date']}")] = processed_data
-        
         return jsonify({"status": "success", "data": all_processed_data})
     except KeyError as e:
         return jsonify({"error": f"Missing required field: {e}"}), 400
