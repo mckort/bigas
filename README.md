@@ -272,28 +272,85 @@ To add a new analytics question using the template-driven system:
      QUESTION_TEMPLATES = {
          # ... existing templates ...
          "my_new_question": {
-             "dimensions": ["pagePath"],
-             "metrics": ["sessions", "conversions"],
-             "filters": [{"field": "pagePath", "operator": "contains", "value": "landing"}],
-             "order_by": ["sessions"],
-             "postprocess": "my_custom_postprocess"  # Optional
+             "dimensions": ["country", "deviceCategory"],
+             "metrics": ["activeUsers", "sessions"],
+             "postprocess": "my_custom_processor"  # Optional
          }
      }
      ```
-2. **(Optional) Add a post-processing helper:**
-   - If your template uses a custom `postprocess`, define a function with that name in the same file. It should take the analytics data dict and return the processed data.
+
+2. **Add a post-processing function (if needed):**
+   - Edit `bigas/resources/marketing/utils.py` and add your custom processing function
    - Example:
      ```python
-     def my_custom_postprocess(data):
-         # ... your logic ...
+     def my_custom_processor(data: Dict[str, Any]) -> Dict[str, Any]:
+         """Custom processing for my new question."""
+         # Your processing logic here
          return data
      ```
-3. **Call your new template:**
-   - In your endpoint or report logic, call `service.run_template_query("my_new_question")` or add a method like `answer_my_new_question()` if you want OpenAI-powered summarization.
 
-**Tip:**
-- Use the existing templates as a guide for GA4 field names and structure.
-- You can add as many templates as you need for different analytics questions.
+3. **Use the template in your code:**
+   - Call `service.run_template_query("my_new_question")` to get the data
+   - Or create a dedicated method like `answer_my_new_question()` in the service
+
+## Code Structure
+
+The project follows a clean, modular architecture:
+
+### **`bigas/resources/marketing/`**
+- **`endpoints.py`** - Flask route handlers (HTTP layer)
+- **`service.py`** - Core analytics service with OpenAI integration
+- **`utils.py`** - Pure utility functions for data processing
+
+### **Utility Functions (`utils.py`)**
+
+The `utils.py` module contains reusable helper functions:
+
+#### **Data Conversion**
+- `convert_metric_name()` - Convert snake_case to camelCase for GA4 metrics
+- `convert_dimension_name()` - Convert snake_case to camelCase for GA4 dimensions
+- `convert_ga4_response_to_dict()` - Convert GA4 API response to JSON-serializable dict
+
+#### **Date Range Helpers**
+- `get_default_date_range()` - Get last 30 days date range
+- `get_consistent_date_range()` - Get reproducible date range (ending yesterday)
+- `get_date_range_strings()` - Get start/end date strings for given days
+
+#### **Data Processing**
+- `process_ga_response()` - Process GA4 response into usable format
+- `calculate_session_share()` - Calculate percentage share of sessions
+- `find_high_traffic_low_conversion()` - Flag underperforming pages
+- `generate_basic_analysis()` - Fallback analysis when OpenAI fails
+
+#### **Trend Analysis**
+- `get_trend_analysis()` - Get trend data for multiple time frames
+- `format_trend_data_for_humans()` - Format trend data for human consumption
+
+### **Usage Examples**
+
+```python
+from bigas.resources.marketing.utils import (
+    convert_metric_name,
+    calculate_session_share,
+    generate_basic_analysis
+)
+
+# Convert metric names for API calls
+ga4_metric = convert_metric_name("active_users")  # Returns "activeUsers"
+
+# Process analytics data
+data = calculate_session_share(analytics_data)
+
+# Generate fallback analysis
+analysis = generate_basic_analysis(data, "What are my top pages?")
+```
+
+### **Benefits of This Structure**
+- ✅ **Separation of concerns** - HTTP, business logic, and utilities are separate
+- ✅ **Reusable functions** - Utilities can be imported by any module
+- ✅ **Easier testing** - Pure functions can be tested independently
+- ✅ **Better maintainability** - Clear organization makes code easier to find and update
+- ✅ **Reduced duplication** - Common functionality is centralized
 
 ## 🛠️ Installation & Deployment
 

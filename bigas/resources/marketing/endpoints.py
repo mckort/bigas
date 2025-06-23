@@ -17,6 +17,14 @@ import logging
 import json
 import traceback
 from bigas.resources.marketing.service import MarketingAnalyticsService
+from bigas.resources.marketing.utils import (
+    convert_metric_name,
+    convert_dimension_name,
+    format_trend_data_for_humans,
+    process_ga_response,
+    get_date_range_strings,
+    get_trend_analysis
+)
 import requests
 
 logger = logging.getLogger(__name__)
@@ -78,140 +86,6 @@ def get_ga_report_with_cache(property_id, start_date, end_date, metrics, dimensi
     except Exception as e:
         logger.error(f"Error in get_ga_report_with_cache: {str(e)}")
         raise
-
-def process_ga_response(response):
-    processed_data = []
-    dimension_names = [header.name for header in response.dimension_headers]
-    metric_names = [header.name for header in response.metric_headers]
-    for row in response.rows:
-        row_data = {dim_name: dim_val.value for dim_name, dim_val in zip(dimension_names, row.dimension_values)}
-        row_data.update({met_name: met_val.value for met_name, met_val in zip(metric_names, row.metric_values)})
-        processed_data.append(row_data)
-    return processed_data
-
-def get_date_range_strings(num_days: int) -> tuple[str, str]:
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=num_days)).strftime("%Y-%m-%d")
-    return start_date, end_date
-
-def get_trend_analysis(property_id, metrics, dimensions, time_frames=None):
-    if not time_frames:
-        today = datetime.now()
-        time_frames = [
-            {"name": "last_7_days", "start_date": (today - timedelta(days=7)).strftime("%Y-%m-%d"), "end_date": today.strftime("%Y-%m-%d"), "comparison_start_date": (today - timedelta(days=14)).strftime("%Y-%m-%d"), "comparison_end_date": (today - timedelta(days=8)).strftime("%Y-%m-%d")},
-            {"name": "last_30_days", "start_date": (today - timedelta(days=30)).strftime("%Y-%m-%d"), "end_date": today.strftime("%Y-%m-%d"), "comparison_start_date": (today - timedelta(days=60)).strftime("%Y-%m-%d"), "comparison_end_date": (today - timedelta(days=31)).strftime("%Y-%m-%d")}
-        ]
-    raw_trend_data = {}
-    for tf in time_frames:
-        response = get_ga_report_with_cache(property_id, tf["start_date"], tf["end_date"], metrics, dimensions, comparison_start_date=tf.get("comparison_start_date"), comparison_end_date=tf.get("comparison_end_date"))
-        raw_trend_data[tf["name"]] = process_ga_response(response)
-    return raw_trend_data
-
-def convert_metric_name(metric_name: str) -> str:
-    """Convert common metric names from snake_case to camelCase for Google Analytics API."""
-    metric_mappings = {
-        'active_users': 'activeUsers',
-        'total_users': 'totalUsers',
-        'new_users': 'newUsers',
-        'sessions': 'sessions',
-        'page_views': 'screenPageViews',
-        'bounce_rate': 'bounceRate',
-        'session_duration': 'averageSessionDuration',
-        'pages_per_session': 'screenPageViewsPerSession',
-        'conversions': 'conversions',
-        'revenue': 'totalRevenue',
-        'transactions': 'transactions',
-        'ecommerce_purchases': 'ecommercePurchases'
-    }
-    
-    return metric_mappings.get(metric_name.lower(), metric_name)
-
-def format_trend_data_for_humans(raw_trend_data, time_frames):
-    """Format trend data in a more human-readable way."""
-    formatted_trends = {}
-    
-    for time_frame, data in raw_trend_data.items():
-        # Find the corresponding time frame config
-        tf_config = next((tf for tf in time_frames if tf["name"] == time_frame), {})
-        
-        # Group data by period (current vs previous)
-        current_period = []
-        previous_period = []
-        
-        for row in data:
-            if row.get('dateRange') == 'current_period':
-                current_period.append(row)
-            elif row.get('dateRange') == 'previous_period':
-                previous_period.append(row)
-        
-        # Calculate summary statistics
-        current_total = sum(int(row.get('activeUsers', 0)) for row in current_period)
-        previous_total = sum(int(row.get('activeUsers', 0)) for row in previous_period)
-        
-        # Calculate percentage change
-        percentage_change = 0
-        if previous_total > 0:
-            percentage_change = ((current_total - previous_total) / previous_total) * 100
-        
-        # Format top performers with better structure
-        top_performers = []
-        for row in data[:5]:  # Top 5 overall
-            top_performers.append({
-                "country": row.get('country', 'Unknown'),
-                "active_users": int(row.get('activeUsers', 0)),
-                "period": row.get('dateRange', 'unknown')
-            })
-        
-        formatted_trends[time_frame] = {
-            "period": time_frame,
-            "data_points": len(data),
-            "summary": {
-                "current_period_total": current_total,
-                "previous_period_total": previous_total,
-                "percentage_change": round(percentage_change, 1),
-                "trend_direction": "up" if percentage_change > 0 else "down" if percentage_change < 0 else "stable",
-                "date_range": {
-                    "current_start": tf_config.get("start_date"),
-                    "current_end": tf_config.get("end_date"),
-                    "comparison_start": tf_config.get("comparison_start_date"),
-                    "comparison_end": tf_config.get("comparison_end_date")
-                }
-            },
-            "top_performers": top_performers,
-            "insights": {
-                "total_countries": len(set(row.get('country') for row in data if row.get('country') != '(not set)')),
-                "has_growth": percentage_change > 0,
-                "growth_rate": f"{percentage_change:+.1f}%" if percentage_change != 0 else "0%"
-            }
-        }
-    
-    return formatted_trends
-
-def convert_dimension_name(dimension_name: str) -> str:
-    """Convert common dimension names from snake_case to camelCase for Google Analytics API."""
-    dimension_mappings = {
-        'device_category': 'deviceCategory',
-        'country': 'country',
-        'city': 'city',
-        'page_path': 'pagePath',
-        'page_title': 'pageTitle',
-        'landing_page': 'landingPage',
-        'session_default_channel_group': 'sessionDefaultChannelGroup',
-        'source': 'source',
-        'medium': 'medium',
-        'campaign': 'campaignName',
-        'hostname': 'hostName',
-        'browser': 'browser',
-        'operating_system': 'operatingSystem',
-        'content_group': 'contentGroup',
-    }
-    # Try mapping, else convert snake_case to camelCase
-    if dimension_name in dimension_mappings:
-        return dimension_mappings[dimension_name]
-    if '_' in dimension_name:
-        parts = dimension_name.split('_')
-        return parts[0] + ''.join(word.capitalize() for word in parts[1:])
-    return dimension_name
 
 @marketing_bp.route('/mcp/tools/fetch_analytics_report', methods=['POST'])
 def fetch_analytics_report():

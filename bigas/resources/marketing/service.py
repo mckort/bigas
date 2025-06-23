@@ -14,6 +14,14 @@ import json
 import os
 from datetime import datetime, timedelta
 import logging
+from bigas.resources.marketing.utils import (
+    convert_ga4_response_to_dict,
+    generate_basic_analysis,
+    calculate_session_share,
+    find_high_traffic_low_conversion,
+    get_default_date_range,
+    get_consistent_date_range
+)
 
 # Add after imports, before the class
 QUESTION_TEMPLATES = {
@@ -54,37 +62,6 @@ QUESTION_TEMPLATES = {
     }
 }
 
-def calculate_session_share(data):
-    rows = data.get("rows", [])
-    if not rows:
-        return data
-    try:
-        total_sessions = sum(int(row["metric_values"][0]) for row in rows)
-        for row in rows:
-            sessions = int(row["metric_values"][0])
-            share = (sessions / total_sessions) * 100 if total_sessions else 0
-            row["session_share"] = round(share, 1)
-    except Exception as e:
-        logging.warning(f"Failed to calculate session share: {e}")
-    return data
-
-def find_high_traffic_low_conversion(data):
-    rows = data.get("rows", [])
-    if not rows:
-        return data
-    try:
-        sessions = [int(row["metric_values"][0]) for row in rows]
-        conversions = [int(row["metric_values"][1]) for row in rows]
-        avg_sessions = sum(sessions) / len(sessions) if sessions else 0
-        for i, row in enumerate(rows):
-            if sessions[i] > avg_sessions and conversions[i] == 0:
-                row["underperforming"] = True
-            else:
-                row["underperforming"] = False
-    except Exception as e:
-        logging.warning(f"Failed to flag underperforming pages: {e}")
-    return data
-
 class MarketingAnalyticsService:
     def __init__(self, openai_api_key: str):
         """Initialize the Marketing Analytics Service with OpenAI API key."""
@@ -93,22 +70,11 @@ class MarketingAnalyticsService:
         
     def _get_default_date_range(self) -> Dict[str, str]:
         """Get default date range for the last 30 days."""
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=30)
-        return {
-            "start_date": start_date.strftime("%Y-%m-%d"),
-            "end_date": end_date.strftime("%Y-%m-%d")
-        }
+        return get_default_date_range()
         
     def _get_consistent_date_range(self) -> Dict[str, str]:
         """Get a consistent date range for reproducible results."""
-        # Use a fixed 30-day period ending yesterday for consistency
-        end_date = datetime.now() - timedelta(days=1)  # Yesterday
-        start_date = end_date - timedelta(days=30)     # 30 days before yesterday
-        return {
-            "start_date": start_date.strftime("%Y-%m-%d"),
-            "end_date": end_date.strftime("%Y-%m-%d")
-        }
+        return get_consistent_date_range()
         
     def _parse_query(self, question: str) -> Dict[str, Any]:
         """Use OpenAI to parse the natural language question into structured query parameters."""
@@ -203,39 +169,19 @@ class MarketingAnalyticsService:
             ],
             response_format={"type": "json_object"}
         )
-        content = response.choices[0].message.content
-        if not content:
-            logging.error("OpenAI response content is empty.")
-            return {"error": "OpenAI returned an empty response."}
+        
         try:
-            query_params = json.loads(content)
+            query_params = json.loads(response.choices[0].message.content)
         except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse OpenAI response as JSON: {e} | Content: {content}")
-            return {"error": f"Failed to parse OpenAI response as JSON. {e}"}
+            logging.error(f"Failed to parse OpenAI response as JSON: {e}")
+            logging.error(f"Raw response: {response.choices[0].message.content}")
+            # Fallback to a basic query
+            query_params = {
+                "metrics": ["totalUsers", "sessions"],
+                "dimensions": ["date"],
+                "date_range": self._get_default_date_range()
+            }
         
-        # Validate that we have the required fields
-        if not isinstance(query_params, dict):
-            logging.error(f"OpenAI response is not a dictionary: {type(query_params)}")
-            return {"error": "OpenAI response is not in the expected format"}
-        
-        # Log the generated query parameters for debugging
-        logging.info(f"Generated query parameters for question '{question}': {json.dumps(query_params, indent=2)}")
-        
-        # Log the date range being used
-        date_range = query_params.get("date_range", {})
-        start_date = date_range.get("start_date", "30daysAgo")
-        end_date = date_range.get("end_date", "today")
-        logging.info(f"Using date range: {start_date} to {end_date}")
-        
-        # Ensure we have valid date range
-        if "date_range" not in query_params:
-            query_params["date_range"] = self._get_consistent_date_range()
-            logging.info("Using consistent date range for reproducibility")
-            
-        # Ensure we have metrics for user trends
-        if "metrics" not in query_params:
-            query_params["metrics"] = ["totalUsers", "newUsers"]
-            
         # Ensure we have date dimension for trends
         if "dimensions" not in query_params:
             query_params["dimensions"] = ["date"]
@@ -358,27 +304,10 @@ class MarketingAnalyticsService:
         
         return request
     
-    def _convert_ga4_response_to_dict(self, response: Any) -> Dict[str, Any]:
-        """Convert GA4 API response to a JSON-serializable dictionary."""
-        result = {
-            "dimension_headers": [header.name for header in response.dimension_headers],
-            "metric_headers": [header.name for header in response.metric_headers],
-            "rows": []
-        }
-        
-        for row in response.rows:
-            row_data = {
-                "dimension_values": [value.value for value in row.dimension_values],
-                "metric_values": [value.value for value in row.metric_values]
-            }
-            result["rows"].append(row_data)
-            
-        return result
-    
     def _format_response(self, response: Any, question: str) -> str:
         """Format the analytics response into a natural language answer."""
         # Convert GA4 response to JSON-serializable format
-        analytics_data = self._convert_ga4_response_to_dict(response)
+        analytics_data = convert_ga4_response_to_dict(response)
         
         # Check if we have any data
         if not analytics_data["rows"]:
@@ -483,62 +412,7 @@ class MarketingAnalyticsService:
         except Exception as e:
             logging.error(f"Error generating analysis for filtered data: {e}")
             # Fallback to basic analysis
-            return self._generate_basic_analysis(data, question)
-    
-    def _generate_basic_analysis(self, data: dict, question: str) -> str:
-        """Generate a basic human-readable analysis when OpenAI fails."""
-        rows = data.get("rows", [])
-        if not rows:
-            return "No data available for analysis."
-        
-        # Extract key metrics
-        page_views = []
-        conversions = []
-        
-        for row in rows:
-            if len(row.get("metric_values", [])) >= 2:
-                try:
-                    page_views.append(int(row["metric_values"][0]))
-                    conversions.append(int(row["metric_values"][1]))
-                except (ValueError, IndexError):
-                    continue
-        
-        if not page_views:
-            return "Unable to analyze the data due to format issues."
-        
-        # Calculate insights
-        total_page_views = sum(page_views)
-        total_conversions = sum(conversions)
-        avg_page_views = total_page_views / len(page_views)
-        
-        # Find pages with high traffic but low conversions
-        high_traffic_low_conversion = []
-        for i, row in enumerate(rows):
-            if len(row.get("metric_values", [])) >= 2:
-                try:
-                    pv = int(row["metric_values"][0])
-                    conv = int(row["metric_values"][1])
-                    if pv > avg_page_views and conv == 0:
-                        page_name = row.get("dimension_values", ["Unknown"])[1] if len(row.get("dimension_values", [])) > 1 else "Unknown"
-                        high_traffic_low_conversion.append((page_name, pv))
-                except (ValueError, IndexError):
-                    continue
-        
-        # Generate analysis
-        analysis = f"Based on the analytics data for '{question}':\n\n"
-        analysis += f"• **Total Pages Analyzed**: {len(rows)}\n"
-        analysis += f"• **Total Page Views**: {total_page_views:,}\n"
-        analysis += f"• **Total Conversions**: {total_conversions:,}\n"
-        analysis += f"• **Average Page Views per Page**: {avg_page_views:.1f}\n\n"
-        
-        if high_traffic_low_conversion:
-            analysis += "**Pages with High Traffic but No Conversions:**\n"
-            for page_name, page_views in sorted(high_traffic_low_conversion, key=lambda x: x[1], reverse=True):
-                analysis += f"• {page_name}: {page_views:,} page views, 0 conversions\n"
-        else:
-            analysis += "**Good News**: No pages with high traffic and zero conversions were found.\n"
-        
-        return analysis
+            return generate_basic_analysis(data, question)
     
     def answer_question(self, property_id: str, question: str) -> str:
         """Process a natural language question about analytics data and return a formatted answer."""
@@ -554,7 +428,7 @@ class MarketingAnalyticsService:
             filters = query_params.get("filters", [])
             if filters:
                 logging.warning(f"GA4 API filter not supported in this client version. Applying filters in post-processing: {filters}")
-                data = self._convert_ga4_response_to_dict(response)
+                data = convert_ga4_response_to_dict(response)
                 filtered_rows = data["rows"]
                 headers = data["dimension_headers"]
                 for f in filters:
@@ -588,9 +462,11 @@ class MarketingAnalyticsService:
         }
         request = self._build_report_request(os.environ["GA4_PROPERTY_ID"], query_params)
         response = self.analytics_client.run_report(request)
-        data = self._convert_ga4_response_to_dict(response)
+        data = convert_ga4_response_to_dict(response)
         if template.get("postprocess") == "calculate_session_share":
             data = calculate_session_share(data)
+        elif template.get("postprocess") == "find_high_traffic_low_conversion":
+            data = find_high_traffic_low_conversion(data)
         return data
 
     def answer_traffic_sources(self, date_range=None):
@@ -607,6 +483,7 @@ class MarketingAnalyticsService:
             "question": "What are the primary traffic sources (e.g., organic search, direct, referral, paid search, social, email) contributing to total sessions, and what is their respective share?",
             "analytics_data": data
         }
+        
         completion = self.openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -616,6 +493,5 @@ class MarketingAnalyticsService:
             max_tokens=500,
             temperature=0.7
         )
-        summary = completion.choices[0].message.content.strip()
-        logging.info(f"[traffic_sources] OpenAI summary: {summary}")
-        return summary 
+        
+        return completion.choices[0].message.content 

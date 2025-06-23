@@ -59,6 +59,7 @@ logs/
 !package.json
 !package-lock.json
 !tsconfig.json
+!mcp.json
 !openapi.json
 
 # Temporary files
