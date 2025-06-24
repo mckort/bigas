@@ -184,7 +184,6 @@ Required environment variables (see `env.example` for details):
 - `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
-- `GOOGLE_APPLICATION_CREDENTIALS` - Path to your GA4 service account key
 
 ### 4. Get Your First Weekly Report
 
