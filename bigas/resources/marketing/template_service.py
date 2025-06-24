@@ -24,13 +24,13 @@ QUESTION_TEMPLATES = {
     "top_pages_conversions": {
         "dimensions": ["pagePath"],
         "metrics": ["sessions", "conversions"],
-        "order_by": ["sessions"]
+        "order_by": [{"field": "sessions", "direction": "DESCENDING"}]
     },
     # 4. Which pages or sections (e.g., blog, product pages, landing pages) drive the most engagement (e.g., time on page, low bounce rate)?
     "engagement_pages": {
         "dimensions": ["pagePath"],
         "metrics": ["averageSessionDuration", "bounceRate"],
-        "order_by": ["averageSessionDuration"]
+        "order_by": [{"field": "averageSessionDuration", "direction": "DESCENDING"}]
     },
     # 5. Are there underperforming pages with high traffic but low conversions?
     "underperforming_pages": {
@@ -70,10 +70,17 @@ class TemplateService:
         # Get the raw data from GA4
         data = self.ga4_service.run_template_query(property_id, template, date_range)
         
+        # Debug logging
+        logger.info(f"Template {template_key}: Got data with {len(data.get('rows', []))} rows")
+        if data.get('rows'):
+            logger.info(f"Sample row structure: {data['rows'][0]}")
+        
         # Apply post-processing if specified
         if template.get("postprocess") == "calculate_session_share":
+            logger.info(f"Applying calculate_session_share to {template_key}")
             data = calculate_session_share(data)
         elif template.get("postprocess") == "find_high_traffic_low_conversion":
+            logger.info(f"Applying find_high_traffic_low_conversion to {template_key}")
             data = find_high_traffic_low_conversion(data)
         
         return data

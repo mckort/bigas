@@ -165,17 +165,39 @@ def calculate_session_share(data: Dict[str, Any]) -> Dict[str, Any]:
         return data
     
     try:
+        # Debug logging
+        logging.info(f"calculate_session_share: Processing {len(rows)} rows")
+        if rows:
+            logging.info(f"Sample row: {rows[0]}")
+        
         # Calculate total sessions across all rows
-        total_sessions = sum(int(row["metric_values"][0]) for row in rows)
+        total_sessions = 0
+        for row in rows:
+            try:
+                if "metric_values" in row and len(row["metric_values"]) > 0:
+                    total_sessions += int(row["metric_values"][0])
+                else:
+                    logging.warning(f"Row missing metric_values: {row}")
+            except (ValueError, TypeError, IndexError) as e:
+                logging.error(f"Error processing row {row}: {e}")
+                continue
         
         # Calculate percentage share for each row
         for row in rows:
-            sessions = int(row["metric_values"][0])
-            share = (sessions / total_sessions) * 100 if total_sessions else 0
-            row["session_share"] = round(share, 1)
+            try:
+                if "metric_values" in row and len(row["metric_values"]) > 0:
+                    sessions = int(row["metric_values"][0])
+                    share = (sessions / total_sessions) * 100 if total_sessions else 0
+                    row["session_share"] = round(share, 1)
+                else:
+                    row["session_share"] = 0
+            except (ValueError, TypeError, IndexError) as e:
+                logging.error(f"Error calculating share for row {row}: {e}")
+                row["session_share"] = 0
             
     except Exception as e:
-        logging.warning(f"Failed to calculate session share: {e}")
+        logging.error(f"Failed to calculate session share: {e}")
+        logging.error(f"Data structure: {data}")
     
     return data
 
@@ -202,22 +224,49 @@ def find_high_traffic_low_conversion(data: Dict[str, Any]) -> Dict[str, Any]:
         return data
     
     try:
+        # Debug logging
+        logging.info(f"find_high_traffic_low_conversion: Processing {len(rows)} rows")
+        if rows:
+            logging.info(f"Sample row: {rows[0]}")
+        
         # Extract sessions and conversions from each row
-        sessions = [int(row["metric_values"][0]) for row in rows]
-        conversions = [int(row["metric_values"][1]) for row in rows]
+        sessions = []
+        conversions = []
+        
+        for row in rows:
+            try:
+                if "metric_values" in row and len(row["metric_values"]) >= 2:
+                    sessions.append(int(row["metric_values"][0]))
+                    conversions.append(int(row["metric_values"][1]))
+                else:
+                    logging.warning(f"Row missing required metric_values: {row}")
+                    sessions.append(0)
+                    conversions.append(0)
+            except (ValueError, TypeError, IndexError) as e:
+                logging.error(f"Error processing row {row}: {e}")
+                sessions.append(0)
+                conversions.append(0)
         
         # Calculate average sessions to determine "high traffic" threshold
         avg_sessions = sum(sessions) / len(sessions) if sessions else 0
         
         # Flag rows with high traffic but no conversions
         for i, row in enumerate(rows):
-            if sessions[i] > avg_sessions and conversions[i] == 0:
-                row["underperforming"] = True
-            else:
+            try:
+                if i < len(sessions) and i < len(conversions):
+                    if sessions[i] > avg_sessions and conversions[i] == 0:
+                        row["underperforming"] = True
+                    else:
+                        row["underperforming"] = False
+                else:
+                    row["underperforming"] = False
+            except Exception as e:
+                logging.error(f"Error flagging row {i}: {e}")
                 row["underperforming"] = False
                 
     except Exception as e:
-        logging.warning(f"Failed to flag underperforming pages: {e}")
+        logging.error(f"Failed to flag underperforming pages: {e}")
+        logging.error(f"Data structure: {data}")
     
     return data
 
