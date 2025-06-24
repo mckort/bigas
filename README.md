@@ -138,7 +138,26 @@ Improve blog content to make it more engaging, shareable, and incorporate a 'Mic
 
 ## 🚀 Quick Start
 
-### 1. Deploy to Google Cloud Run
+### 1. Prerequisites Setup
+
+#### Google Cloud Setup
+Before deploying, you need to set up Google Cloud:
+
+- Install and authenticate with Google Cloud CLI (`gcloud`)
+- Create a Google Cloud project
+- Enable Cloud Run and Analytics APIs
+- Create a service account for Google Analytics 4 access
+
+See the [Google Cloud documentation](https://cloud.google.com/docs) for detailed setup instructions.
+
+#### Google Analytics Authentication
+You need to authenticate with Google Analytics 4:
+
+- Create a service account in your Google Cloud project
+- Grant the service account "Viewer" permissions to your GA4 property
+- Download the service account key file
+
+### 2. Deploy to Google Cloud Run
 
 ```bash
 # Clone the repository
@@ -149,23 +168,53 @@ cd bigas-marketing
 ./deploy.sh
 ```
 
-### 2. Configure Environment Variables
+### 3. Configure Environment Variables
 
-Set up these required environment variables:
+Copy the example environment file and configure your variables:
 
 ```bash
-GA4_PROPERTY_ID=your_ga4_property_id
-OPENAI_API_KEY=your_openai_api_key
-DISCORD_WEBHOOK_URL=your_discord_webhook_url
+# Copy the example environment file
+cp env.example .env
+
+# Edit the file with your actual values
+nano .env
 ```
 
-### 3. Get Your First Weekly Report
+Required environment variables (see `env.example` for details):
+- `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID
+- `OPENAI_API_KEY` - Your OpenAI API key
+- `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
+- `GOOGLE_APPLICATION_CREDENTIALS` - Path to your GA4 service account key
+
+### 4. Get Your First Weekly Report
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report
 ```
 
 That's it! You'll get a comprehensive AI-powered analysis posted to your Discord channel.
+
+### 5. Automate Weekly Reports (Recommended)
+
+For automated weekly reports, set up Google Cloud Scheduler:
+
+```bash
+# Create a Cloud Scheduler job for weekly reports
+gcloud scheduler jobs create http weekly-analytics-report \
+    --schedule="0 9 * * 1" \
+    --uri="https://your-deployment-url.com/mcp/tools/weekly_analytics_report" \
+    --http-method=POST \
+    --headers="Content-Type=application/json" \
+    --time-zone="America/New_York"
+```
+
+This will automatically post weekly analytics reports to your Discord channel every Monday at 9 AM. You can adjust the schedule using cron syntax.
+
+**Schedule Examples:**
+- `0 9 * * 1` - Every Monday at 9 AM
+- `0 9 * * 1,4` - Every Monday and Thursday at 9 AM  
+- `0 9 1 * *` - First day of every month at 9 AM
+- `0 */6 * * *` - Every 6 hours
 
 ## 🔧 Additional Features
 
