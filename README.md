@@ -157,18 +157,7 @@ You need to authenticate with Google Analytics 4:
 - Grant the service account "Viewer" permissions to your GA4 property
 - Download the service account key file
 
-### 2. Deploy to Google Cloud Run
-
-```bash
-# Clone the repository
-git clone https://github.com/your-username/bigas-marketing.git
-cd bigas-marketing
-
-# Deploy using the provided script
-./deploy.sh
-```
-
-### 3. Configure Environment Variables
+### 2. Configure Environment Variables
 
 Copy the example environment file and configure your variables:
 
@@ -184,6 +173,17 @@ Required environment variables (see `env.example` for details):
 - `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
+
+### 3. Deploy to Google Cloud Run
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/bigas-marketing.git
+cd bigas-marketing
+
+# Deploy using the provided script
+./deploy.sh
+```
 
 ### 4. Get Your First Weekly Report
 
