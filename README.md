@@ -311,39 +311,6 @@ The marketing analytics functionality is organized into focused services:
 - **`TrendAnalysisService`**: Orchestrates trend analysis workflows
 - **`MarketingAnalyticsService`**: Main orchestrator coordinating all services
 
-## 🛠️ Installation & Deployment
-
-### Prerequisites
-
-Before testing, ensure you have:
-- ✅ `GA4_PROPERTY_ID` configured
-- ✅ `OPENAI_API_KEY` configured  
-- ✅ `DISCORD_WEBHOOK_URL` configured
-- ✅ Valid Google Analytics data for the last 30 days
-
-### Automated Deployment
-
-The easiest way to deploy is using the provided `deploy.sh` script:
-
-```bash
-./deploy.sh
-```
-
-This script automates the entire deployment process to Google Cloud Run.
-
-### Manual Deployment
-
-If you prefer to deploy manually or to a different platform:
-
-1. **Build the Docker image**:
-   ```bash
-   docker build -t bigas-marketing .
-   ```
-
-2. **Deploy to your preferred platform** (AWS, Azure, DigitalOcean, etc.)
-
-3. **Set environment variables** in your deployment platform
-
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on how to submit pull requests, report issues, and contribute to the project.
