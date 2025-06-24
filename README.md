@@ -197,17 +197,29 @@ That's it! You'll get a comprehensive AI-powered analysis posted to your Discord
 
 For automated weekly reports, set up Google Cloud Scheduler:
 
-```bash
-# Create a Cloud Scheduler job for weekly reports
-gcloud scheduler jobs create http weekly-analytics-report \
-    --schedule="0 9 * * 1" \
-    --uri="https://your-deployment-url.com/mcp/tools/weekly_analytics_report" \
-    --http-method=POST \
-    --headers="Content-Type=application/json" \
-    --time-zone="America/New_York"
-```
+1. **Go to Google Cloud Console**
+   - Navigate to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler)
+   - Select your project
 
-This will automatically post weekly analytics reports to your Discord channel every Monday at 9 AM. You can adjust the schedule using cron syntax.
+2. **Create a new job**
+   - Click "Create Job"
+   - **Name**: `weekly-analytics-report`
+   - **Region**: Choose your preferred region
+   - **Description**: `Automated weekly analytics reports for Bigas`
+
+3. **Configure the schedule**
+   - **Frequency**: `0 9 * * 1` (Every Monday at 9 AM)
+   - **Timezone**: Choose your timezone (e.g., America/New_York)
+
+4. **Configure the target**
+   - **Target type**: HTTP
+   - **URL**: `https://your-deployment-url.com/mcp/tools/weekly_analytics_report`
+   - **HTTP method**: POST
+   - **Headers**: Add `Content-Type: application/json`
+
+5. **Save the job**
+
+This will automatically post weekly analytics reports to your Discord channel every Monday at 9 AM.
 
 **Schedule Examples:**
 - `0 9 * * 1` - Every Monday at 9 AM
