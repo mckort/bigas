@@ -30,16 +30,16 @@ Every week, you'll receive a comprehensive report like this:
 ```
 📊 Weekly Analytics Report on its way...
 
-Q: What are the key trends in our website performance over the last 30 days?
+**Q: What are the key trends in our website performance over the last 30 days?**
 A: 1. Key Trends and Patterns: Over the last 30 days, we've seen a significant decrease in both active users and sessions, with a total drop of 32.7%. The top-performing countries were the United States and Sweden, although both saw a decrease in active users during this period.
 
 Significant Changes: The total number of active users decreased from 52 to 35, a drop of nearly one-third. This is a negative change that suggests a decline in user engagement.
 
 Actionable Recommendations: 
-Investigate the cause of the drop in active users and sessions. Look into any changes in marketing strategies, competitor activities, or external factors that may have caused the decrease.
-Analyse the performance of the United States and Sweden more deeply to understand why they're top-performing countries and why they've seen a decrease in active users.
+• Investigate the cause of the drop in active users and sessions. Look into any changes in marketing strategies, competitor activities, or external factors that may have caused the decrease.
+• Analyse the performance of the United States and Sweden more deeply to understand why they're top-performing countries and why they've seen a decrease in active users.
 
-Q: What are the primary traffic sources contributing to total sessions?
+**Q: What are the primary traffic sources contributing to total sessions?**
 A: The primary traffic sources contributing to total sessions are as follows:
 
 Direct traffic is the highest source, contributing to 42.6% of total sessions.
@@ -50,14 +50,14 @@ Notably, there is a significant reliance on Direct and Organic Search traffic, w
 
 To improve traffic diversity, it is recommended to boost efforts in other channels. Organic Social, for instance, could be increased through a more robust social media strategy, while Referral traffic could be enhanced by partnering with other sites for link exchanges or guest posting.
 
-Q: What is the average session duration and pages per session across all users?
+**Q: What is the average session duration and pages per session across all users?**
 A: The average session duration across all users is approximately 73.18 seconds, meaning that typical users spend just over a minute on the site once they log in. Meanwhile, they view about 2.22 pages (or screens) during that session.
 
 These figures imply that users are somewhat engaged, as they spend enough time to possibly read or interact with the content and visit more than one page per session.
 
 However, if our site has a larger number of pages or complex content that may take longer to consume, this may suggest that users are not exploring the site thoroughly or that they're having a hard time finding what they need. The next step could be identifying ways to encourage longer sessions and more page views per session, such as improving site navigation, highlighting popular content, or introducing more engaging and relevant content.
 
-Q: Which pages are the most visited, and how do they contribute to conversions?
+**Q: Which pages are the most visited, and how do they contribute to conversions?**
 A: The most visited page on the website is the homepage ("/"), attracting 39 visits but unfortunately, these visits didn't lead to any conversions. The second and third most visited pages are "/get-in-touch-with-us" and "/about-us", with 14 and 10 visits respectively but also with zero conversions.
 
 The pages related to the business purpose like "/why-promotional-clothing" and "/why-green-promo-wear" have been visited lesser times, 4 and 5 times respectively and didn't contribute to conversions either. Meanwhile, the "/blog-posts-and-news" and individual blog post ("/post/the-truth-about-promotional-clothing-waste---why-sustainable-promo-wear-matters") have had very low visits and no conversions.
@@ -66,7 +66,7 @@ From our data, it seems none of the pages directly contributed to conversions. T
 
 To derive some actionable insights, a more detailed analysis may be required to understand why people visit different pages and why they are not converting, perhaps using additional data like time spent on page and bounce rates. It might be beneficial to focus on improving the content on the more frequented pages, like your homepage and "/get-in-touch-with-us", to encourage more conversions. And paying attention to the lower-visited pages and blogs with zero conversions to understand what might be missing or causing users not to convert.
 
-Q: Which pages or sections drive the most engagement?
+**Q: Which pages or sections drive the most engagement?**
 A: Based on the data from Google Analytics, the top three pages in terms of engagement on your website are:
 
 Blog post titled "The Truth about Promotional Clothing Waste & Why Sustainable Promo Wear Matters"
@@ -79,7 +79,7 @@ A noteworthy fact is that the homepage ("/") has a higher bounce rate (56.4%) an
 
 In light of these findings, I recommend focusing more on your blog and informational content—such as what you're doing with the "The Truth about Promotional Clothing Waste & Why Sustainable Promo Wear Matters" and "Eco Certifications" pages. Users seem to be interested in informative, value-added content, and this can be further leveraged to increase their engagement with your site. Additionally, it might be necessary to consider enhancing the homepage to make it more engaging.
 
-Q: Are there underperforming pages with high traffic but low conversions?
+**Q: Are there underperforming pages with high traffic but low conversions?**
 A: Yes, there are underperforming pages on your site with high traffic but low conversions. 
 
 The three pages with the most significant traffic yet no conversions are the Home page ("/"), "Get in Touch With Us" page, and the "About Us" page. Here are the numbers:
@@ -96,7 +96,7 @@ On the brighter side, pages like "Why Green Promo Wear" and "Why Promotional Clo
 
 Remember, even small improvements in conversion rates can lead to significant increases in revenue, especially on high traffic pages. It's definitely worth the time and effort to optimize these pages for better performance.
 
-Q: How do blog posts or content pages contribute to conversions?
+**Q: How do blog posts or content pages contribute to conversions?**
 A: According to the Google Analytics data, blog posts or content pages currently do not appear to directly contribute to any conversions, as none were recorded during the period evaluated. However, that does not mean they are not playing a part in the user's journey before they decide to make a conversion.
 
 There are a total of 31 records, indicating that various pages on your website are receiving traffic from various sources. The page that has the most traffic is '/get-in-touch-with-us' with a total of 15 sessions, followed by '/' (your homepage) and '/about-us' with a total of 39 and 10 sessions respectively. Most of the traffic to these pages comes from direct sources and organic searches.
@@ -117,16 +117,16 @@ The website performance over the last 30 days shows a downward trend in active u
 
 Actionable Recommendations:
 
-Investigate the reasons behind the decrease in active users and sessions.
-Amplify marketing efforts in the US and Sweden since they are the top-performing countries.
-Resolve any technical issues that may be causing a drop in active users and sessions.
-Conduct user surveys to understand user behavior and preferences.
-Increase efforts in Organic Social, Cross-Network, and Referral channels to diversify traffic sources.
-Improve site navigation and content to increase user engagement, time spent on site, and pages visited per session.
-Enhance the homepage content and layout to make it more engaging and reduce its high bounce rate.
-Review high traffic but low conversion pages (home, get in touch with us, about us) to ensure clear and appealing calls to action.
-Highlight topics of interest to your audience on high traffic pages.
-Improve blog content to make it more engaging, shareable, and incorporate a 'Micro Conversion' tracking to understand their role in the conversion journey.
+• Investigate the reasons behind the decrease in active users and sessions.
+• Amplify marketing efforts in the US and Sweden since they are the top-performing countries.
+• Resolve any technical issues that may be causing a drop in active users and sessions.
+• Conduct user surveys to understand user behavior and preferences.
+• Increase efforts in Organic Social, Cross-Network, and Referral channels to diversify traffic sources.
+• Improve site navigation and content to increase user engagement, time spent on site, and pages visited per session.
+• Enhance the homepage content and layout to make it more engaging and reduce its high bounce rate.
+• Review high traffic but low conversion pages (home, get in touch with us, about us) to ensure clear and appealing calls to action.
+• Highlight topics of interest to your audience on high traffic pages.
+• Improve blog content to make it more engaging, shareable, and incorporate a 'Micro Conversion' tracking to understand their role in the conversion journey.
 ```
 
 ### Perfect for Solo Founders
