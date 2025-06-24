@@ -20,7 +20,8 @@ from bigas.resources.marketing.utils import (
     calculate_session_share,
     find_high_traffic_low_conversion,
     get_default_date_range,
-    get_consistent_date_range
+    get_consistent_date_range,
+    process_ga_response
 )
 
 # Add after imports, before the class
@@ -468,6 +469,39 @@ class MarketingAnalyticsService:
         elif template.get("postprocess") == "find_high_traffic_low_conversion":
             data = find_high_traffic_low_conversion(data)
         return data
+
+    def get_trend_analysis(self, property_id, metrics, dimensions, time_frames=None):
+        """Get trend analysis data for multiple time frames."""
+        if not time_frames:
+            today = datetime.now()
+            time_frames = [
+                {"name": "last_7_days", "start_date": (today - timedelta(days=7)).strftime("%Y-%m-%d"), "end_date": today.strftime("%Y-%m-%d"), "comparison_start_date": (today - timedelta(days=14)).strftime("%Y-%m-%d"), "comparison_end_date": (today - timedelta(days=8)).strftime("%Y-%m-%d")},
+                {"name": "last_30_days", "start_date": (today - timedelta(days=30)).strftime("%Y-%m-%d"), "end_date": today.strftime("%Y-%m-%d"), "comparison_start_date": (today - timedelta(days=60)).strftime("%Y-%m-%d"), "comparison_end_date": (today - timedelta(days=31)).strftime("%Y-%m-%d")}
+            ]
+        
+        raw_trend_data = {}
+        for tf in time_frames:
+            try:
+                # Build request for trend analysis
+                request = RunReportRequest(
+                    property=f"properties/{property_id}",
+                    date_ranges=[
+                        DateRange(start_date=tf["start_date"], end_date=tf["end_date"], name="current_period"),
+                        DateRange(start_date=tf["comparison_start_date"], end_date=tf["comparison_end_date"], name="previous_period")
+                    ],
+                    metrics=[Metric(name=m) for m in metrics],
+                    dimensions=[Dimension(name=d) for d in dimensions]
+                )
+                
+                response = self.analytics_client.run_report(request)
+                # Convert to the format expected by format_trend_data_for_humans
+                raw_trend_data[tf["name"]] = {"rows": process_ga_response(response)}
+                
+            except Exception as e:
+                logging.error(f"Error getting trend data for {tf['name']}: {e}")
+                raw_trend_data[tf["name"]] = {"rows": []}
+        
+        return raw_trend_data
 
     def analyze_trends_with_insights(self, formatted_trends: dict, metrics: list, dimensions: list, date_range: str) -> dict:
         """

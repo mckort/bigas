@@ -22,8 +22,7 @@ from bigas.resources.marketing.utils import (
     convert_dimension_name,
     format_trend_data_for_humans,
     process_ga_response,
-    get_date_range_strings,
-    get_trend_analysis
+    get_date_range_strings
 )
 import requests
 
@@ -201,14 +200,14 @@ def analyze_trends():
                 }
             ]
         
-        # Get actual trend data
-        raw_trend_data = get_trend_analysis(GA4_PROPERTY_ID, metrics, dimensions, time_frames)
+        # Get actual trend data using the service
+        service = MarketingAnalyticsService(OPENAI_API_KEY)
+        raw_trend_data = service.get_trend_analysis(GA4_PROPERTY_ID, metrics, dimensions, time_frames)
         
-        # Format the trend data for better presentation
+        # Format the trend data for better presentation using utils
         formatted_trends = format_trend_data_for_humans(raw_trend_data, time_frames)
         
         # Generate AI insights using the service
-        service = MarketingAnalyticsService(OPENAI_API_KEY)
         result = service.analyze_trends_with_insights(formatted_trends, metrics, dimensions, date_range)
         
         # Post to Discord if webhook is available
@@ -274,6 +273,7 @@ def weekly_analytics_report():
     post_to_discord(webhook_url, "# 📊 Weekly Analytics Report on its way...")
     
     questions = [
+      "What are the key trends in our website performance over the last 30 days, including user growth, session patterns, and any significant changes?",
       "What are the primary traffic sources (e.g., organic search, direct, referral, paid search, social, email) contributing to total sessions, and what is their respective share?",
       "What is the average session duration and pages per session across all users?",
       "Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?",
@@ -284,12 +284,13 @@ def weekly_analytics_report():
     
     # Map questions to template keys for robust, deterministic analytics
     question_to_template = {
-        questions[0]: "traffic_sources",
-        questions[1]: "session_quality", 
-        questions[2]: "top_pages_conversions",
-        questions[3]: "engagement_pages",
-        questions[4]: "underperforming_pages",
-        questions[5]: "blog_conversion"
+        questions[0]: "trend_analysis",  # Special handling for trend analysis
+        questions[1]: "traffic_sources",
+        questions[2]: "session_quality", 
+        questions[3]: "top_pages_conversions",
+        questions[4]: "engagement_pages",
+        questions[5]: "underperforming_pages",
+        questions[6]: "blog_conversion"
     }
     
     service = MarketingAnalyticsService(OPENAI_API_KEY)
@@ -301,6 +302,28 @@ def weekly_analytics_report():
             # Use template-driven approach for reliability
             if template_key == "traffic_sources":
                 answer = service.answer_traffic_sources()
+            elif template_key == "trend_analysis":
+                # Special handling for trend analysis using service
+                
+                # Define time frames for trend analysis
+                today = datetime.now()
+                time_frames = [
+                    {
+                        "name": "last_30_days", 
+                        "start_date": (today - timedelta(days=30)).strftime("%Y-%m-%d"), 
+                        "end_date": today.strftime("%Y-%m-%d"), 
+                        "comparison_start_date": (today - timedelta(days=60)).strftime("%Y-%m-%d"), 
+                        "comparison_end_date": (today - timedelta(days=31)).strftime("%Y-%m-%d")
+                    }
+                ]
+                
+                # Get trend data using service
+                raw_trend_data = service.get_trend_analysis(GA4_PROPERTY_ID, ["activeUsers", "sessions"], ["country"], time_frames)
+                formatted_trends = format_trend_data_for_humans(raw_trend_data, time_frames)
+                
+                # Generate AI insights
+                result = service.analyze_trends_with_insights(formatted_trends, ["activeUsers", "sessions"], ["country"], "last_30_days")
+                answer = result["ai_insights"]
             else:
                 # For other templates, use the generic template runner with OpenAI summarization
                 data = service.run_template_query(template_key)

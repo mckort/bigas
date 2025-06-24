@@ -13,6 +13,7 @@ import time
 import json
 import logging
 from typing import Dict, List, Any, Optional
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -324,26 +325,143 @@ def generate_basic_analysis(data: dict, question: str) -> str:
     
     return analysis
 
-def get_trend_analysis(property_id, metrics, dimensions, time_frames=None, client=None):
-    """Get trend analysis data for multiple time frames."""
-    if not time_frames:
-        today = datetime.now()
-        time_frames = [
-            {"name": "last_7_days", "start_date": (today - timedelta(days=7)).strftime("%Y-%m-%d"), "end_date": today.strftime("%Y-%m-%d"), "comparison_start_date": (today - timedelta(days=14)).strftime("%Y-%m-%d"), "comparison_end_date": (today - timedelta(days=8)).strftime("%Y-%m-%d")},
-            {"name": "last_30_days", "start_date": (today - timedelta(days=30)).strftime("%Y-%m-%d"), "end_date": today.strftime("%Y-%m-%d"), "comparison_start_date": (today - timedelta(days=60)).strftime("%Y-%m-%d"), "comparison_end_date": (today - timedelta(days=31)).strftime("%Y-%m-%d")}
-        ]
+def normalize_metric_name(metric_name: str) -> str:
+    """Normalize metric names to GA4 format."""
+    # Remove common prefixes/suffixes
+    metric_name = metric_name.lower().strip()
     
-    raw_trend_data = {}
-    for tf in time_frames:
-        try:
-            from .endpoints import get_ga_report_with_cache
-            response = get_ga_report_with_cache(property_id, tf["start_date"], tf["end_date"], metrics, dimensions, comparison_start_date=tf.get("comparison_start_date"), comparison_end_date=tf.get("comparison_end_date"))
-            raw_trend_data[tf["name"]] = process_ga_response(response)
-        except Exception as e:
-            logger.error(f"Error getting trend data for {tf['name']}: {e}")
-            raw_trend_data[tf["name"]] = []
+    # Common mappings
+    mappings = {
+        'users': 'activeUsers',
+        'active users': 'activeUsers',
+        'total users': 'activeUsers',
+        'pageviews': 'screenPageViews',
+        'page views': 'screenPageViews',
+        'sessions': 'sessions',
+        'bounce rate': 'bounceRate',
+        'bounce': 'bounceRate',
+        'session duration': 'averageSessionDuration',
+        'avg session duration': 'averageSessionDuration',
+        'conversions': 'conversions',
+        'revenue': 'totalRevenue',
+        'transactions': 'transactions',
+        'ecommerce revenue': 'totalRevenue',
+        'purchases': 'transactions'
+    }
     
-    return raw_trend_data
+    return mappings.get(metric_name, metric_name)
+
+def normalize_dimension_name(dimension_name: str) -> str:
+    """Normalize dimension names to GA4 format."""
+    dimension_name = dimension_name.lower().strip()
+    
+    mappings = {
+        'country': 'country',
+        'device': 'deviceCategory',
+        'device category': 'deviceCategory',
+        'source': 'source',
+        'medium': 'medium',
+        'campaign': 'campaignName',
+        'campaign name': 'campaignName',
+        'page': 'pagePath',
+        'page path': 'pagePath',
+        'page title': 'pageTitle',
+        'date': 'date',
+        'hour': 'hour',
+        'day': 'date',
+        'month': 'date',
+        'year': 'date'
+    }
+    
+    return mappings.get(dimension_name, dimension_name)
+
+def format_ga4_data_for_humans(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Format GA4 data in a more human-readable way."""
+    if not data or 'rows' not in data:
+        return {"error": "No data available"}
+    
+    rows = data['rows']
+    if not rows:
+        return {"message": "No data found for the specified criteria"}
+    
+    # Extract metrics and dimensions from first row
+    metrics = list(rows[0].keys()) if rows else []
+    
+    # Format the data
+    formatted_data = {
+        "total_rows": len(rows),
+        "metrics": metrics,
+        "data": []
+    }
+    
+    for row in rows:
+        formatted_row = {}
+        for key, value in row.items():
+            # Try to convert numeric values
+            try:
+                if isinstance(value, str) and value.replace('.', '').replace(',', '').isdigit():
+                    formatted_row[key] = int(float(value.replace(',', '')))
+                else:
+                    formatted_row[key] = value
+            except (ValueError, TypeError):
+                formatted_row[key] = value
+        
+        formatted_data["data"].append(formatted_row)
+    
+    return formatted_data
+
+def extract_metrics_and_dimensions_from_question(question: str) -> tuple[List[str], List[str]]:
+    """Extract metrics and dimensions from a natural language question."""
+    question_lower = question.lower()
+    
+    # Default metrics and dimensions
+    metrics = ['activeUsers']
+    dimensions = ['country']
+    
+    # Extract metrics
+    if any(word in question_lower for word in ['pageview', 'page view', 'pageviews']):
+        metrics.append('screenPageViews')
+    if any(word in question_lower for word in ['session', 'sessions']):
+        metrics.append('sessions')
+    if any(word in question_lower for word in ['bounce', 'bounce rate']):
+        metrics.append('bounceRate')
+    if any(word in question_lower for word in ['duration', 'time']):
+        metrics.append('averageSessionDuration')
+    if any(word in question_lower for word in ['revenue', 'money', 'sales']):
+        metrics.append('totalRevenue')
+    if any(word in question_lower for word in ['conversion', 'conversions']):
+        metrics.append('conversions')
+    
+    # Extract dimensions
+    if any(word in question_lower for word in ['device', 'mobile', 'desktop', 'tablet']):
+        dimensions.append('deviceCategory')
+    if any(word in question_lower for word in ['source', 'traffic source']):
+        dimensions.append('source')
+    if any(word in question_lower for word in ['medium', 'channel']):
+        dimensions.append('medium')
+    if any(word in question_lower for word in ['campaign', 'campaigns']):
+        dimensions.append('campaignName')
+    if any(word in question_lower for word in ['page', 'url', 'path']):
+        dimensions.append('pagePath')
+    if any(word in question_lower for word in ['date', 'time', 'day', 'month']):
+        dimensions.append('date')
+    
+    return metrics, dimensions
+
+def create_ga4_request_body(property_id: str, metrics: List[str], dimensions: List[str], 
+                          start_date: str, end_date: str) -> Dict[str, Any]:
+    """Create a GA4 request body for the API."""
+    return {
+        "property": f"properties/{property_id}",
+        "dateRanges": [
+            {
+                "startDate": start_date,
+                "endDate": end_date
+            }
+        ],
+        "metrics": [{"name": metric} for metric in metrics],
+        "dimensions": [{"name": dimension} for dimension in dimensions]
+    }
 
 def format_trend_data_for_humans(raw_trend_data, time_frames):
     """Format trend data in a more human-readable way."""
@@ -357,7 +475,7 @@ def format_trend_data_for_humans(raw_trend_data, time_frames):
         current_period = []
         previous_period = []
         
-        for row in data:
+        for row in data.get("rows", []):
             if row.get('dateRange') == 'current_period':
                 current_period.append(row)
             elif row.get('dateRange') == 'previous_period':
@@ -374,7 +492,7 @@ def format_trend_data_for_humans(raw_trend_data, time_frames):
         
         # Format top performers with better structure
         top_performers = []
-        for row in data[:5]:  # Top 5 overall
+        for row in data.get("rows", [])[:5]:  # Top 5 overall
             top_performers.append({
                 "country": row.get('country', 'Unknown'),
                 "active_users": int(row.get('activeUsers', 0)),
@@ -383,7 +501,7 @@ def format_trend_data_for_humans(raw_trend_data, time_frames):
         
         formatted_trends[time_frame] = {
             "period": time_frame,
-            "data_points": len(data),
+            "data_points": len(data.get("rows", [])),
             "summary": {
                 "current_period_total": current_total,
                 "previous_period_total": previous_total,
@@ -398,7 +516,7 @@ def format_trend_data_for_humans(raw_trend_data, time_frames):
             },
             "top_performers": top_performers,
             "insights": {
-                "total_countries": len(set(row.get('country') for row in data if row.get('country') != '(not set)')),
+                "total_countries": len(set(row.get('country') for row in data.get("rows", []) if row.get('country') != '(not set)')),
                 "has_growth": percentage_change > 0,
                 "growth_rate": f"{percentage_change:+.1f}%" if percentage_change != 0 else "0%"
             }
