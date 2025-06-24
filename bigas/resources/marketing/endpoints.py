@@ -20,7 +20,6 @@ from bigas.resources.marketing.service import MarketingAnalyticsService
 from bigas.resources.marketing.utils import (
     convert_metric_name,
     convert_dimension_name,
-    format_trend_data_for_humans,
     process_ga_response,
     get_date_range_strings
 )
@@ -202,13 +201,12 @@ def analyze_trends():
         
         # Get actual trend data using the service
         service = MarketingAnalyticsService(OPENAI_API_KEY)
-        raw_trend_data = service.get_trend_analysis(GA4_PROPERTY_ID, metrics, dimensions, time_frames)
+        result = service.trend_analysis_service.analyze_trends_with_insights(
+            GA4_PROPERTY_ID, metrics, dimensions, date_range
+        )
         
-        # Format the trend data for better presentation using utils
-        formatted_trends = format_trend_data_for_humans(raw_trend_data, time_frames)
-        
-        # Generate AI insights using the service
-        result = service.analyze_trends_with_insights(formatted_trends, metrics, dimensions, date_range)
+        # The result already contains formatted data
+        formatted_trends = result["data"]
         
         # Post to Discord if webhook is available
         if post_to_discord_enabled:
@@ -243,7 +241,7 @@ def analyze_trends():
                 "metrics_analyzed": metrics,
                 "dimensions_analyzed": dimensions,
                 "date_range_requested": date_range,
-                "time_frames_analyzed": list(raw_trend_data.keys())
+                "time_frames_analyzed": list(result["data"].keys())
             }
         })
     except Exception as e:
@@ -304,30 +302,12 @@ def weekly_analytics_report():
                 answer = service.answer_traffic_sources()
             elif template_key == "trend_analysis":
                 # Special handling for trend analysis using service
-                
-                # Define time frames for trend analysis
-                today = datetime.now()
-                time_frames = [
-                    {
-                        "name": "last_30_days", 
-                        "start_date": (today - timedelta(days=30)).strftime("%Y-%m-%d"), 
-                        "end_date": today.strftime("%Y-%m-%d"), 
-                        "comparison_start_date": (today - timedelta(days=60)).strftime("%Y-%m-%d"), 
-                        "comparison_end_date": (today - timedelta(days=31)).strftime("%Y-%m-%d")
-                    }
-                ]
-                
-                # Get trend data using service
-                raw_trend_data = service.get_trend_analysis(GA4_PROPERTY_ID, ["activeUsers", "sessions"], ["country"], time_frames)
-                formatted_trends = format_trend_data_for_humans(raw_trend_data, time_frames)
-                
-                # Generate AI insights
-                result = service.analyze_trends_with_insights(formatted_trends, ["activeUsers", "sessions"], ["country"], "last_30_days")
+                result = service.trend_analysis_service.get_weekly_trend_analysis(GA4_PROPERTY_ID)
                 answer = result["ai_insights"]
             else:
-                # For other templates, use the generic template runner with OpenAI summarization
-                data = service.run_template_query(template_key)
-                answer = service._format_response_obj(data, q)
+                # For other templates, use the template service with OpenAI summarization
+                data = service.template_service.run_template_query(template_key, GA4_PROPERTY_ID)
+                answer = service.openai_service.format_response_obj(data, q)
             
             message = f"**Q: {q}**\nA: {answer}"
             post_to_discord(webhook_url, message)

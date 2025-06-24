@@ -299,19 +299,52 @@ The project follows a clean, modular architecture:
 
 ### **`bigas/resources/marketing/`**
 - **`endpoints.py`** - Flask route handlers (HTTP layer)
-- **`service.py`** - Core analytics service with OpenAI integration and business logic
+- **`service.py`** - Main orchestrator service that coordinates other services
+- **`ga4_service.py`** - Google Analytics 4 API interactions
+- **`openai_service.py`** - OpenAI API interactions and natural language processing
+- **`template_service.py`** - Template-driven analytics queries
+- **`trend_analysis_service.py`** - Trend analysis orchestration
 - **`utils.py`** - Pure utility functions for data processing and formatting
 
-### **Service Layer (`service.py`)**
+### **Service Layer Architecture**
 
-The `service.py` module contains the core business logic and API integrations:
+The application follows a clean service-oriented architecture with single responsibility principles:
 
-#### **Analytics Service**
-- `MarketingAnalyticsService` - Main service class for analytics operations
-- `get_trend_analysis()` - Get trend data for multiple time frames (API calls + business logic)
-- `analyze_trends_with_insights()` - Generate AI-powered trend insights
-- `answer_question()` - Process natural language analytics questions
-- `run_template_query()` - Execute template-driven analytics queries
+#### **Main Orchestrator (`service.py`)**
+- `MarketingAnalyticsService` - Main service that coordinates other specialized services
+- Provides a unified interface for endpoints
+- Handles dependency injection between services
+
+#### **GA4 Service (`ga4_service.py`)**
+- `GA4Service` - Handles all Google Analytics 4 API interactions
+- `build_report_request()` - Builds GA4 API requests with proper field mapping
+- `run_report()` - Executes GA4 API calls
+- `get_trend_analysis()` - Gets trend data for multiple time frames
+- `run_template_query()` - Runs template-based queries against GA4
+
+#### **OpenAI Service (`openai_service.py`)**
+- `OpenAIService` - Handles all OpenAI API interactions and natural language processing
+- `parse_query()` - Converts natural language questions to structured GA4 queries
+- `format_response()` - Formats GA4 responses into natural language answers
+- `generate_trend_insights()` - Generates AI-powered insights for trend analysis
+- `generate_traffic_sources_analysis()` - Analyzes traffic sources data
+
+#### **Template Service (`template_service.py`)**
+- `TemplateService` - Manages template-driven analytics queries
+- `run_template_query()` - Executes predefined analytics templates
+- `get_traffic_sources_data()` - Gets traffic sources analysis
+- `get_session_quality_data()` - Gets session quality metrics
+- `get_top_pages_conversions_data()` - Gets top pages by conversions
+- `get_engagement_pages_data()` - Gets engagement metrics by page
+- `get_underperforming_pages_data()` - Identifies high-traffic, low-conversion pages
+- `get_blog_conversion_data()` - Analyzes blog post conversion performance
+
+#### **Trend Analysis Service (`trend_analysis_service.py`)**
+- `TrendAnalysisService` - Orchestrates trend analysis workflows
+- `analyze_trends_with_insights()` - Combines GA4 data with AI insights
+- `get_weekly_trend_analysis()` - Specialized analysis for weekly reports
+- `get_time_frames_for_date_range()` - Manages time frame calculations
+- `analyze_trends()` - Core trend analysis functionality
 
 ### **Utility Functions (`utils.py`)**
 
@@ -336,31 +369,14 @@ The `utils.py` module contains pure helper functions for data processing:
 #### **Data Formatting**
 - `format_trend_data_for_humans()` - Format trend data for human consumption (pure data transformation)
 
-### **Usage Examples**
-
-```python
-from bigas.resources.marketing.utils import (
-    convert_metric_name,
-    calculate_session_share,
-    generate_basic_analysis
-)
-
-# Convert metric names for API calls
-ga4_metric = convert_metric_name("active_users")  # Returns "activeUsers"
-
-# Process analytics data
-data = calculate_session_share(analytics_data)
-
-# Generate fallback analysis
-analysis = generate_basic_analysis(data, "What are my top pages?")
-```
-
-### **Benefits of This Structure**
-- ✅ **Separation of concerns** - HTTP, business logic, and utilities are separate
-- ✅ **Reusable functions** - Utilities can be imported by any module
-- ✅ **Easier testing** - Pure functions can be tested independently
-- ✅ **Better maintainability** - Clear organization makes code easier to find and update
-- ✅ **Reduced duplication** - Common functionality is centralized
+### **Benefits of This Architecture**
+- ✅ **Single Responsibility Principle** - Each service has one clear purpose
+- ✅ **Dependency Injection** - Services are injected where needed
+- ✅ **Easier Testing** - Each service can be tested independently
+- ✅ **Better Maintainability** - Changes to one service don't affect others
+- ✅ **Clear Separation of Concerns** - API calls, NLP, templates, and orchestration are separate
+- ✅ **Reduced Coupling** - Services are loosely coupled through interfaces
+- ✅ **Scalability** - Easy to add new services or modify existing ones
 
 ## 🛠️ Installation & Deployment
 
