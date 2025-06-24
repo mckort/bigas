@@ -299,12 +299,23 @@ The project follows a clean, modular architecture:
 
 ### **`bigas/resources/marketing/`**
 - **`endpoints.py`** - Flask route handlers (HTTP layer)
-- **`service.py`** - Core analytics service with OpenAI integration
-- **`utils.py`** - Pure utility functions for data processing
+- **`service.py`** - Core analytics service with OpenAI integration and business logic
+- **`utils.py`** - Pure utility functions for data processing and formatting
+
+### **Service Layer (`service.py`)**
+
+The `service.py` module contains the core business logic and API integrations:
+
+#### **Analytics Service**
+- `MarketingAnalyticsService` - Main service class for analytics operations
+- `get_trend_analysis()` - Get trend data for multiple time frames (API calls + business logic)
+- `analyze_trends_with_insights()` - Generate AI-powered trend insights
+- `answer_question()` - Process natural language analytics questions
+- `run_template_query()` - Execute template-driven analytics queries
 
 ### **Utility Functions (`utils.py`)**
 
-The `utils.py` module contains reusable helper functions:
+The `utils.py` module contains pure helper functions for data processing:
 
 #### **Data Conversion**
 - `convert_metric_name()` - Convert snake_case to camelCase for GA4 metrics
@@ -322,9 +333,8 @@ The `utils.py` module contains reusable helper functions:
 - `find_high_traffic_low_conversion()` - Flag underperforming pages
 - `generate_basic_analysis()` - Fallback analysis when OpenAI fails
 
-#### **Trend Analysis**
-- `get_trend_analysis()` - Get trend data for multiple time frames
-- `format_trend_data_for_humans()` - Format trend data for human consumption
+#### **Data Formatting**
+- `format_trend_data_for_humans()` - Format trend data for human consumption (pure data transformation)
 
 ### **Usage Examples**
 
