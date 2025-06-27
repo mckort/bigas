@@ -11,4 +11,10 @@ werkzeug==2.2.3
 google-auth==2.23.0
 httpx==0.25.0
 starlette==0.27.0
-uvicorn==0.24.0 
+uvicorn==0.24.0
+
+# Google Cloud Storage for report storage
+google-cloud-storage==2.10.0
+
+# Web scraping for page analysis
+beautifulsoup4==4.12.2 

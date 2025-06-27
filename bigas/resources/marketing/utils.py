@@ -571,4 +571,126 @@ def format_trend_data_for_humans(raw_trend_data, time_frames):
             }
         }
     
-    return formatted_trends 
+    return formatted_trends
+
+def validate_date_range(start_date: str, end_date: str) -> tuple[bool, str]:
+    """
+    Validate date range for logical consistency.
+    
+    Args:
+        start_date: Start date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        end = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        if start > end:
+            return False, "Start date cannot be after end date"
+        
+        if end > datetime.now():
+            return False, "End date cannot be in the future"
+        
+        # Limit to reasonable range (e.g., max 2 years)
+        if (end - start).days > 730:
+            return False, "Date range cannot exceed 2 years"
+            
+        return True, ""
+        
+    except ValueError:
+        return False, "Invalid date format. Use YYYY-MM-DD"
+
+def validate_ga4_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> tuple[bool, str]:
+    """
+    Basic validation of GA4 metrics and dimensions.
+    
+    Args:
+        metrics: List of metric names
+        dimensions: List of dimension names
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    # Common GA4 metrics
+    valid_metrics = {
+        'activeUsers', 'sessions', 'screenPageViews', 'bounceRate', 
+        'averageSessionDuration', 'screenPageViewsPerSession', 'conversions',
+        'totalRevenue', 'transactions', 'ecommercePurchases'
+    }
+    
+    # Common GA4 dimensions
+    valid_dimensions = {
+        'country', 'city', 'deviceCategory', 'pagePath', 'pageTitle',
+        'sessionDefaultChannelGroup', 'hostName', 'browser', 'operatingSystem'
+    }
+    
+    # Check metrics
+    for metric in metrics:
+        if metric not in valid_metrics:
+            return False, f"Invalid metric: {metric}"
+    
+    # Check dimensions
+    for dimension in dimensions:
+        if dimension not in valid_dimensions:
+            return False, f"Invalid dimension: {dimension}"
+    
+    # Basic compatibility check
+    if len(metrics) > 10:
+        return False, "Too many metrics (max 10)"
+    
+    if len(dimensions) > 7:
+        return False, "Too many dimensions (max 7)"
+    
+    return True, ""
+
+def sanitize_error_message(error: str) -> str:
+    """
+    Remove sensitive information from error messages.
+    
+    Args:
+        error: Original error message
+        
+    Returns:
+        Sanitized error message
+    """
+    # Remove potential API keys
+    error = re.sub(r'sk-[a-zA-Z0-9]{20,}', '[API_KEY_HIDDEN]', error)
+    error = re.sub(r'AIza[a-zA-Z0-9_-]{35}', '[API_KEY_HIDDEN]', error)
+    
+    # Remove potential URLs with tokens
+    error = re.sub(r'https://[^\s]+/api/webhooks/[^\s]+', '[WEBHOOK_URL_HIDDEN]', error)
+    
+    # Remove potential file paths that might contain sensitive info
+    error = re.sub(r'/home/[^/]+/[^/]+', '[PATH_HIDDEN]', error)
+    error = re.sub(r'/Users/[^/]+/[^/]+', '[PATH_HIDDEN]', error)
+    
+    return error
+
+def validate_request_data(data: Dict[str, Any], required_fields: List[str] = None) -> tuple[bool, str]:
+    """
+    Validate and sanitize request data.
+    
+    Args:
+        data: Request data dictionary
+        required_fields: List of required field names
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not isinstance(data, dict):
+        return False, "Request data must be a JSON object"
+    
+    # Check required fields
+    if required_fields:
+        for field in required_fields:
+            if field not in data:
+                return False, f"Missing required field: {field}"
+    
+    # Basic size limits
+    if len(str(data)) > 10000:  # 10KB limit
+        return False, "Request data too large (max 10KB)"
+    
+    return True, "" 

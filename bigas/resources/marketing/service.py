@@ -4,6 +4,7 @@ from bigas.resources.marketing.ga4_service import GA4Service
 from bigas.resources.marketing.openai_service import OpenAIService
 from bigas.resources.marketing.template_service import TemplateService
 from bigas.resources.marketing.trend_analysis_service import TrendAnalysisService
+from bigas.resources.marketing.storage_service import StorageService
 import os
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class MarketingAnalyticsService:
         self.openai_service = OpenAIService(openai_api_key)
         self.template_service = TemplateService(self.ga4_service)
         self.trend_analysis_service = TrendAnalysisService(self.ga4_service, self.openai_service)
+        self.storage_service = StorageService()
     
     def answer_question(self, property_id: str, question: str) -> str:
         """Process a natural language question about analytics data and return a formatted answer."""

@@ -356,6 +356,18 @@ class DynamicMCPTestClient:
                     'question': 'What are the top 5 countries by active users in the last 30 days?'
                 }
                 print(f"   Using test question for ask_analytics_question")
+            elif tool_name == 'analyze_underperforming_pages':
+                # Add parameters to limit analysis for faster testing
+                test_data = {
+                    'max_pages': 1  # Only analyze 1 page for testing
+                }
+                print(f"   Using limited analysis for analyze_underperforming_pages")
+            elif tool_name == 'cleanup_old_reports':
+                # Add parameters to limit cleanup for faster testing
+                test_data = {
+                    'max_reports_to_delete': 5  # Only delete 5 reports for testing
+                }
+                print(f"   Using limited cleanup for cleanup_old_reports")
         
         print(f"   Test Data: {json.dumps(test_data, indent=2)}")
         
@@ -363,11 +375,17 @@ class DynamicMCPTestClient:
         url = f"{self.base_url}{endpoint}"
         start_time = time.time()
         
+        # Set timeout based on endpoint type
+        if tool_name in ['analyze_underperforming_pages', 'cleanup_old_reports']:
+            timeout = 60  # Longer timeout for slower endpoints
+        else:
+            timeout = 30  # Standard timeout for other endpoints
+        
         try:
             if method.upper() == "POST":
-                response = self.session.post(url, json=test_data, timeout=30)
+                response = self.session.post(url, json=test_data, timeout=timeout)
             elif method.upper() == "GET":
-                response = self.session.get(url, params=test_data, timeout=30)
+                response = self.session.get(url, params=test_data, timeout=timeout)
             else:
                 return {
                     'tool_name': tool_name,
@@ -424,7 +442,7 @@ class DynamicMCPTestClient:
                 'method': method,
                 'status': 'error',
                 'error': 'Request timeout',
-                'duration': 30
+                'duration': timeout
             }
         except requests.exceptions.RequestException as e:
             return {

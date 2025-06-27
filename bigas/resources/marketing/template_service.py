@@ -22,25 +22,25 @@ QUESTION_TEMPLATES = {
     },
     # 3. Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?
     "top_pages_conversions": {
-        "dimensions": ["pagePath"],
+        "dimensions": ["pagePath", "hostName", "eventName"],
         "metrics": ["sessions", "conversions"],
         "order_by": [{"field": "sessions", "direction": "DESCENDING"}]
     },
     # 4. Which pages or sections (e.g., blog, product pages, landing pages) drive the most engagement (e.g., time on page, low bounce rate)?
     "engagement_pages": {
-        "dimensions": ["pagePath"],
+        "dimensions": ["pagePath", "hostName"],
         "metrics": ["averageSessionDuration", "bounceRate"],
         "order_by": [{"field": "averageSessionDuration", "direction": "DESCENDING"}]
     },
     # 5. Are there underperforming pages with high traffic but low conversions?
     "underperforming_pages": {
-        "dimensions": ["pagePath"],
+        "dimensions": ["pagePath", "hostName"],
         "metrics": ["sessions", "conversions"],
         "postprocess": "find_high_traffic_low_conversion"
     },
     # 6. How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?
     "blog_conversion": {
-        "dimensions": ["pagePath", "sessionDefaultChannelGroup"],
+        "dimensions": ["pagePath", "hostName", "sessionDefaultChannelGroup"],
         "metrics": ["conversions", "sessions"],
         "filters": [{"field": "pagePath", "operator": "contains", "value": "blog"}]
     }

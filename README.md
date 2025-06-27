@@ -1,140 +1,78 @@
+# 🚀 Bigas - AI-Powered Marketing Analytics Platform
+
 <div align="center">
-  <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200">
+  <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
+  <br/>
+  <strong>Automated weekly analytics reports with AI-powered insights for solo founders</strong>
 </div>
 
-# Bigas - AI Team for Solo Founders, Built for Vibe Coding
+## 📊 Overview
 
-Welcome to Bigas, an open-source project designed to empower solo entrepreneurs with AI-powered analytics. The name Bigas is derived from Latin, meaning "team," and reflects our mission to create a collaborative ecosystem of AI tools to support entrepreneurs in building and scaling their ventures.
+Bigas is an AI-powered marketing analytics platform that automatically generates comprehensive weekly reports from your Google Analytics 4 data and posts them to Discord. It identifies underperforming pages and provides specific, actionable improvement suggestions.
 
-## 🎯 Key Feature: Weekly Analytics Reports
+### Key Features
+- 🤖 **AI-Powered Analysis**: Get intelligent insights, not just raw data
+- 📅 **Automated Weekly Reports**: Set up once, get reports every Monday
+- 🔗 **URL Extraction**: Automatically extracts actual page URLs from GA4 data
+- 💾 **Smart Storage**: Stores reports in Google Cloud Storage for analysis
+- 🎯 **Actionable Insights**: Specific improvement suggestions with priority rankings
+- 🌐 **Page Content Analysis**: Web scraping to analyze actual page content and provide concrete suggestions
+- 💰 **Cost-Effective**: Minimal storage and API costs (<$0.10/month)
 
-**The main function of Bigas is simple: Get weekly Google Analytics analysis and AI-powered recommendations automatically posted to Discord.**
+## 🏗️ Architecture
 
-### One Command, Complete Analysis
+Bigas is built as a **Modular Monolith** with a service-oriented architecture:
 
-```bash
-curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report \
-  -H "Content-Type: application/json"
+```text
++--------------------------+
+|         Clients          |
+|  - Manual User (curl)    |
+|  - Google Cloud Scheduler|
++--------------------------+
+             |
+             v
++--------------------------+
+|   Google Cloud Run       |
+|  (Hosting Environment)   |
++--------------------------+
+             |
+             v
++-------------------------------------------------+
+|  Bigas Platform (app.py - Flask App)            |
+|                                                 |
+| +---------------------------------------------+ |
+| | API Gateway / Router                        | |
+| +---------------------------------------------+ |
+|   |                      |                      |
+|   | (/marketing/*)       | (/product/*)         |
+|   v                      v                      |
+| +----------------------+ +--------------------+ |
+| | Marketing Resource   | | Product Resource   | |
+| | (Connects to GA,     | | (Placeholder for   | |
+| |  OpenAI, Discord,    | |  Jira, Figma, etc) | |
+| |  Google Cloud Storage)| |                    | |
+| +----------------------+ +--------------------+ |
+|                                                 |
++-------------------------------------------------+
 ```
 
-This single endpoint automatically:
-- 📊 Fetches the last 30 days of Google Analytics data
-- 🤖 Generates comprehensive AI-powered analysis
-- 💬 Posts detailed insights and recommendations to Discord
-- 📈 Provides actionable recommendations for improvement
+### Service Layer
 
-### What You Get in Discord
+The marketing analytics functionality is organized into focused services:
 
-Every week, you'll receive a comprehensive report like this:
+- **`GA4Service`**: Handles Google Analytics 4 API interactions
+- **`OpenAIService`**: Manages OpenAI API calls for analysis and summarization
+- **`TemplateService`**: Provides template-driven analytics queries
+- **`TrendAnalysisService`**: Orchestrates trend analysis workflows
+- **`StorageService`**: Manages weekly report storage in Google Cloud Storage
 
-```
-📊 Weekly Analytics Report on its way...
+### Data Flow
 
-**Q: What are the key trends in our website performance over the last 30 days?**
-A: 1. Key Trends and Patterns: Over the last 30 days, we've seen a significant decrease in both active users and sessions, with a total drop of 32.7%. The top-performing countries were the United States and Sweden, although both saw a decrease in active users during this period.
-
-Significant Changes: The total number of active users decreased from 52 to 35, a drop of nearly one-third. This is a negative change that suggests a decline in user engagement.
-
-Actionable Recommendations: 
-• Investigate the cause of the drop in active users and sessions. Look into any changes in marketing strategies, competitor activities, or external factors that may have caused the decrease.
-• Analyse the performance of the United States and Sweden more deeply to understand why they're top-performing countries and why they've seen a decrease in active users.
-
-**Q: What are the primary traffic sources contributing to total sessions?**
-A: The primary traffic sources contributing to total sessions are as follows:
-
-Direct traffic is the highest source, contributing to 42.6% of total sessions.
-Organic Search is the second highest, accounting for 38.3% of total sessions.
-Organic Social is third, contributing to 12.8% of total sessions.
-
-Notably, there is a significant reliance on Direct and Organic Search traffic, which together account for over 80% of the total traffic. This may indicate a strong brand presence and effective SEO strategies. However, it also suggests a potential vulnerability, as the site's traffic is heavily dependent on these sources.
-
-To improve traffic diversity, it is recommended to boost efforts in other channels. Organic Social, for instance, could be increased through a more robust social media strategy, while Referral traffic could be enhanced by partnering with other sites for link exchanges or guest posting.
-
-**Q: What is the average session duration and pages per session across all users?**
-A: The average session duration across all users is approximately 73.18 seconds, meaning that typical users spend just over a minute on the site once they log in. Meanwhile, they view about 2.22 pages (or screens) during that session.
-
-These figures imply that users are somewhat engaged, as they spend enough time to possibly read or interact with the content and visit more than one page per session.
-
-However, if our site has a larger number of pages or complex content that may take longer to consume, this may suggest that users are not exploring the site thoroughly or that they're having a hard time finding what they need. The next step could be identifying ways to encourage longer sessions and more page views per session, such as improving site navigation, highlighting popular content, or introducing more engaging and relevant content.
-
-**Q: Which pages are the most visited, and how do they contribute to conversions?**
-A: The most visited page on the website is the homepage ("/"), attracting 39 visits but unfortunately, these visits didn't lead to any conversions. The second and third most visited pages are "/get-in-touch-with-us" and "/about-us", with 14 and 10 visits respectively but also with zero conversions.
-
-The pages related to the business purpose like "/why-promotional-clothing" and "/why-green-promo-wear" have been visited lesser times, 4 and 5 times respectively and didn't contribute to conversions either. Meanwhile, the "/blog-posts-and-news" and individual blog post ("/post/the-truth-about-promotional-clothing-waste---why-sustainable-promo-wear-matters") have had very low visits and no conversions.
-
-From our data, it seems none of the pages directly contributed to conversions. This may indicate that there is potential for improving the website's content strategy or the user experience to increase engagement and conversions.
-
-To derive some actionable insights, a more detailed analysis may be required to understand why people visit different pages and why they are not converting, perhaps using additional data like time spent on page and bounce rates. It might be beneficial to focus on improving the content on the more frequented pages, like your homepage and "/get-in-touch-with-us", to encourage more conversions. And paying attention to the lower-visited pages and blogs with zero conversions to understand what might be missing or causing users not to convert.
-
-**Q: Which pages or sections drive the most engagement?**
-A: Based on the data from Google Analytics, the top three pages in terms of engagement on your website are:
-
-Blog post titled "The Truth about Promotional Clothing Waste & Why Sustainable Promo Wear Matters"
-The "Eco Certifications" page
-The "About Us" page
-
-These pages tend to retain users' attention for longer periods of time when compared to other parts of your website. The average session duration for these pages is 185.7 seconds, 90.4 seconds, and 76.2 seconds, respectively, which indicates that users tend to spend a lot more time on these pages. Furthermore, the bounce rates of these pages are all very low, standing at 0%, 0%, and 20%, respectively.
-
-A noteworthy fact is that the homepage ("/") has a higher bounce rate (56.4%) and a lesser average session duration (39.7 seconds). This could mean that while the homepage is bringing visitors in, it is not as successful in keeping them engaged.
-
-In light of these findings, I recommend focusing more on your blog and informational content—such as what you're doing with the "The Truth about Promotional Clothing Waste & Why Sustainable Promo Wear Matters" and "Eco Certifications" pages. Users seem to be interested in informative, value-added content, and this can be further leveraged to increase their engagement with your site. Additionally, it might be necessary to consider enhancing the homepage to make it more engaging.
-
-**Q: Are there underperforming pages with high traffic but low conversions?**
-A: Yes, there are underperforming pages on your site with high traffic but low conversions. 
-
-The three pages with the most significant traffic yet no conversions are the Home page ("/"), "Get in Touch With Us" page, and the "About Us" page. Here are the numbers:
-
-The Home page ("/") has had 39 sessions, but no conversions.
-The "Get in Touch With Us" page has had 14 sessions, but again, no conversions.
-The "About Us" page received 10 visits, but no conversions.
-
-These pages are getting the attention of your visitors, but they're not enticing them to take the next step. This suggests that while these pages can generate interest, they might lack a clear call to action or don't meet user's needs or expectations.
-
-You could improve the performance of these pages by reviewing their content and layout. Make sure the call to action is clear and appealing, and the information provided is useful and relevant. Test different versions of these pages to find what works best for your audience.
-
-On the brighter side, pages like "Why Green Promo Wear" and "Why Promotional Clothing" are not underperforming, despite having lower sessions. So, these topics might be of interest to your audience and might be worth highlighting more on your high traffic pages.
-
-Remember, even small improvements in conversion rates can lead to significant increases in revenue, especially on high traffic pages. It's definitely worth the time and effort to optimize these pages for better performance.
-
-**Q: How do blog posts or content pages contribute to conversions?**
-A: According to the Google Analytics data, blog posts or content pages currently do not appear to directly contribute to any conversions, as none were recorded during the period evaluated. However, that does not mean they are not playing a part in the user's journey before they decide to make a conversion.
-
-There are a total of 31 records, indicating that various pages on your website are receiving traffic from various sources. The page that has the most traffic is '/get-in-touch-with-us' with a total of 15 sessions, followed by '/' (your homepage) and '/about-us' with a total of 39 and 10 sessions respectively. Most of the traffic to these pages comes from direct sources and organic searches.
-
-However, it's interesting to note that your blog pages, such as '/blog-posts-and-news' and '/post/the-truth-about-promotional-clothing-waste---why-sustainable-promo-wear-matters', are attracting visitors not only through direct visits and organic searches but also through organic social means. This suggests that your content is being shared on social media platforms, which can play an important role in driving traffic to your site.
-
-Despite the lack of recorded conversions from these pages, it's key to remember that blog posts and content pages can play a critical role in the customer's journey. They can educate readers about your products or services, build trust with potential customers, and encourage them to visit other pages on your website - all of which can eventually lead to conversions.
-
-A recommendation to see the role of blog posts in the path to conversions would be to set up a goal in Google Analytics that treats a specific action as a 'Micro Conversion' e.g. clicking a 'learn more' link in your blog which can be tracked and may provide insight into the value of your blog content.
-
-Lastly, consider improving your blog content to make it more engaging, shareable, and incorporate a 'Micro Conversion' tracking to understand their role in the conversion journey.
-
-Summary Recommendations:
-
-Executive Summary:
-
-The website performance over the last 30 days shows a downward trend in active users and sessions with a decrease of 32.7%, primarily from the US and Sweden. The main traffic sources are Direct (42.6%) and Organic Search (38.3%). The average session duration is 73.2 seconds, with users viewing approximately 2.2 pages per session. The most visited page is the homepage, but none of the pages have translated to conversions. The highest engagement is on informational pages and blogs, but these also have not lead to conversions.
-
-Actionable Recommendations:
-
-• Investigate the reasons behind the decrease in active users and sessions.
-• Amplify marketing efforts in the US and Sweden since they are the top-performing countries.
-• Resolve any technical issues that may be causing a drop in active users and sessions.
-• Conduct user surveys to understand user behavior and preferences.
-• Increase efforts in Organic Social, Cross-Network, and Referral channels to diversify traffic sources.
-• Improve site navigation and content to increase user engagement, time spent on site, and pages visited per session.
-• Enhance the homepage content and layout to make it more engaging and reduce its high bounce rate.
-• Review high traffic but low conversion pages (home, get in touch with us, about us) to ensure clear and appealing calls to action.
-• Highlight topics of interest to your audience on high traffic pages.
-• Improve blog content to make it more engaging, shareable, and incorporate a 'Micro Conversion' tracking to understand their role in the conversion journey.
-```
-
-### Perfect for Solo Founders
-
-- **No Technical Knowledge Required**: Just run one command and get comprehensive insights
-- **AI-Powered Analysis**: Get intelligent recommendations, not just raw data
-- **Automated Workflow**: Set up once, get weekly reports automatically
-- **Actionable Insights**: Clear recommendations you can implement immediately
+1. **Weekly Reports**: Generated and stored in Google Cloud Storage
+2. **Analysis Jobs**: Retrieve stored reports to analyze underperforming pages
+3. **AI Insights**: Generate improvement suggestions using OpenAI
+4. **Discord Integration**: Post results to Discord for easy access
+5. **Storage Management**: Automatic cleanup of old reports to manage costs
 
 ## 🚀 Quick Start
 
@@ -173,6 +111,7 @@ Required environment variables (see `env.example` for details):
 - `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
+- `STORAGE_BUCKET_NAME` - Your Google Cloud Storage bucket (optional, defaults to 'bigas-analytics-reports')
 
 ### 3. Deploy to Google Cloud Run
 
@@ -215,7 +154,6 @@ For automated weekly reports, set up Google Cloud Scheduler:
    - **Target type**: HTTP
    - **URL**: `https://your-deployment-url.com/mcp/tools/weekly_analytics_report`
    - **HTTP method**: POST
-   - **Headers**: Add `Content-Type: application/json`
 
 5. **Save the job**
 
@@ -226,6 +164,303 @@ This will automatically post weekly analytics reports to your Discord channel ev
 - `0 9 * * 1,4` - Every Monday and Thursday at 9 AM  
 - `0 9 1 * *` - First day of every month at 9 AM
 - `0 */6 * * *` - Every 6 hours
+
+### 6. Analyze Underperforming Pages (New!)
+
+The weekly reports are now automatically stored in Google Cloud Storage, enabling you to analyze underperforming pages and get AI-powered improvement suggestions:
+
+#### Set up a second Cloud Scheduler job for page analysis:
+
+1. **Create another Cloud Scheduler job**
+   - **Name**: `analyze-underperforming-pages`
+   - **Frequency**: `0 10 * * 2` (Every Tuesday at 10 AM, after the weekly report)
+   - **URL**: `https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages`
+   - **HTTP method**: POST
+
+This will automatically analyze the latest weekly report, identify underperforming pages, and generate specific improvement suggestions.
+
+#### Manual analysis:
+
+```bash
+# Get a list of all stored reports
+curl -X GET https://your-deployment-url.com/mcp/tools/get_stored_reports
+
+# Get the latest report with summary
+curl -X GET https://your-deployment-url.com/mcp/tools/get_latest_report
+
+# Analyze underperforming pages from the latest report
+curl -X POST https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages
+
+# Analyze underperforming pages from a specific date
+curl -X POST https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages \
+  -H "Content-Type: application/json" \
+  -d '{"report_date": "2024-01-15"}'
+
+# Clean up old reports (keep last 30 days)
+curl -X POST https://your-deployment-url.com/mcp/tools/cleanup_old_reports \
+  -H "Content-Type: application/json" \
+  -d '{"keep_days": 30}'
+```
+
+The analysis will provide:
+- **Priority-ranked improvements** (High/Medium/Low)
+- **Effort estimates** (Quick/Easy/Complex)
+- **Expected impact** for each suggestion
+- **Specific action items** you can implement immediately
+- **Actual page URLs** for direct access to underperforming pages
+
+## 🔗 URL Extraction & Domain Detection
+
+### Overview
+
+The enhanced storage system automatically extracts actual page URLs from Google Analytics data, making underperforming pages analysis much more actionable.
+
+### How It Works
+
+#### 1. Weekly Report Generation
+When the weekly report runs, it now stores:
+- **AI-generated answers** (human-readable insights)
+- **Raw GA4 data** (structured data with URLs)
+
+#### 2. URL Extraction Process
+The system automatically:
+1. **Identifies** the underperforming pages question
+2. **Extracts** page paths from the raw GA4 data
+3. **Converts** paths to full URLs using actual domain from GA4
+4. **Calculates** conversion rates and metrics
+5. **Flags** underperforming pages
+
+#### 3. Analysis Enhancement
+The analysis endpoint now receives:
+- **Specific page URLs** instead of just page names
+- **Detailed metrics** for each page
+- **Conversion rates** for context
+
+### Example Output
+
+#### Before (Page Names Only)
+```
+"Are there underperforming pages with high traffic but low conversions?"
+Answer: "Yes, the Home page and About Us page have high traffic but no conversions."
+```
+
+#### After (With URLs and Metrics)
+```json
+{
+  "underperforming_pages": [
+    {
+      "question": "Are there underperforming pages with high traffic but low conversions?",
+      "answer": "Yes, the Home page and About Us page have high traffic but no conversions."
+    }
+  ],
+  "page_urls": [
+    {
+      "page_path": "/",
+      "hostname": "bigas.com",
+      "page_url": "https://bigas.com/",
+      "sessions": 39,
+      "conversions": 0,
+      "conversion_rate": 0.0,
+      "is_underperforming": true
+    },
+    {
+      "page_path": "/about-us",
+      "hostname": "bigas.com",
+      "page_url": "https://bigas.com/about-us",
+      "sessions": 10,
+      "conversions": 0,
+      "conversion_rate": 0.0,
+      "is_underperforming": true
+    }
+  ]
+}
+```
+
+### AI Analysis Enhancement
+
+With URLs, the AI can now provide much more specific suggestions:
+
+#### Before
+```
+"Improve the homepage to increase conversions."
+```
+
+#### After
+```
+"**Homepage (https://bigas.com/) - 39 sessions, 0 conversions**
+- Priority: High
+- Effort: Quick
+- Impact: High
+- Actions:
+  1. Add prominent CTA button above the fold
+  2. Include customer testimonials
+  3. Add trust signals (certifications, reviews)
+  4. Optimize page load speed
+  5. A/B test different headlines
+```
+
+### Technical Implementation
+
+#### Data Flow
+1. **GA4 Query** → Gets page paths and hostname from GA4
+2. **Storage** → Stores raw data alongside AI answers
+3. **Extraction** → Converts paths to URLs using actual domain
+4. **Analysis** → Uses URLs in AI prompts for specific suggestions
+5. **Output** → Provides clickable URLs in results
+
+#### URL Construction
+- **Automatic Domain Detection**: Extracts hostname from GA4 `hostName` dimension
+- **Relative paths** (e.g., `/about-us`) → `https://actualdomain.com/about-us`
+- **Absolute URLs** → Used as-is
+- **Fallback** → Uses path if hostname not available
+
+## 📊 Storage Features
+
+### Storage Architecture
+
+#### Google Cloud Storage Integration
+- **Automatic Storage**: Weekly reports are automatically stored in Google Cloud Storage
+- **Cost-Effective**: Only stores one report per week, overwriting previous reports
+- **Organized Structure**: Reports are stored with date-based organization
+- **Metadata Tracking**: Each report includes metadata for easy retrieval and analysis
+
+#### Storage Structure
+```
+bigas-analytics-reports/
+└── weekly_reports/
+    ├── 2024-01-15/
+    │   └── report.json
+    ├── 2024-01-22/
+    │   └── report.json
+    └── 2024-01-29/
+        └── report.json
+```
+
+### API Endpoints
+
+#### 1. Enhanced Weekly Analytics Report
+**Endpoint**: `POST /mcp/tools/weekly_analytics_report`
+
+**Changes**:
+- Now stores complete report data in Google Cloud Storage
+- Returns storage confirmation and path
+- Maintains Discord integration
+
+**Response**:
+```json
+{
+  "status": "Weekly report process completed and sent to Discord.",
+  "stored": true,
+  "storage_path": "weekly_reports/2024-01-29/report.json"
+}
+```
+
+#### 2. Get Stored Reports
+**Endpoint**: `GET /mcp/tools/get_stored_reports`
+
+**Purpose**: List all available weekly reports
+
+**Response**:
+```json
+{
+  "status": "success",
+  "reports": [
+    {
+      "date": "2024-01-29",
+      "blob_name": "weekly_reports/2024-01-29/report.json",
+      "size": 15420,
+      "updated": "2024-01-29T10:00:00Z"
+    }
+  ],
+  "total_reports": 1
+}
+```
+
+#### 3. Get Latest Report
+**Endpoint**: `GET /mcp/tools/get_latest_report`
+
+**Purpose**: Retrieve the most recent weekly report with summary
+
+#### 4. Analyze Underperforming Pages
+**Endpoint**: `POST /mcp/tools/analyze_underperforming_pages`
+
+**Purpose**: AI-powered analysis of underperforming pages with improvement suggestions
+
+#### 5. Cleanup Old Reports
+**Endpoint**: `POST /mcp/tools/cleanup_old_reports`
+
+**Purpose**: Manage storage costs by deleting old reports
+
+### AI-Powered Analysis Features
+
+#### Underperforming Pages Analysis
+The system automatically:
+1. **Extracts** underperforming pages data from stored reports
+2. **Analyzes** the issues using AI
+3. **Generates** specific improvement suggestions
+4. **Prioritizes** recommendations by impact and effort
+5. **Posts** results to Discord for easy access
+
+#### Improvement Suggestions Include:
+- **Priority Ranking**: High/Medium/Low
+- **Effort Estimates**: Quick/Easy/Complex
+- **Expected Impact**: Specific metrics improvements
+- **Action Items**: Concrete steps to implement
+
+### Setup Instructions
+
+#### 1. Google Cloud Permissions
+Ensure your service account has:
+- `storage.objects.create` - Create storage objects
+- `storage.objects.get` - Read storage objects
+- `storage.objects.list` - List storage objects
+- `storage.objects.delete` - Delete storage objects (for cleanup)
+
+#### 2. Automated Workflow Setup
+
+**Weekly Report Job (Monday 9 AM)**
+```bash
+# Cloud Scheduler Configuration
+Name: weekly-analytics-report
+Frequency: 0 9 * * 1
+URL: https://your-deployment-url.com/mcp/tools/weekly_analytics_report
+Method: POST
+```
+
+**Page Analysis Job (Tuesday 10 AM)**
+```bash
+# Cloud Scheduler Configuration
+Name: analyze-underperforming-pages
+Frequency: 0 10 * * 2
+URL: https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages
+Method: POST
+```
+
+**Cleanup Job (Monthly)**
+```bash
+# Cloud Scheduler Configuration
+Name: cleanup-old-reports
+Frequency: 0 2 1 * *
+URL: https://your-deployment-url.com/mcp/tools/cleanup_old_reports
+Method: POST
+Body: {"keep_days": 30}
+```
+
+### Cost Management
+
+#### Storage Costs
+- **Google Cloud Storage**: ~$0.02 per GB per month
+- **Typical Report Size**: ~15KB per report
+- **Monthly Cost**: ~$0.0003 for 30 reports
+
+#### API Costs
+- **OpenAI API**: ~$0.03 per analysis (GPT-4)
+- **Monthly Cost**: ~$0.06 for 2 analyses per month
+
+#### Total Estimated Cost
+- **Storage**: <$0.01/month
+- **Analysis**: ~$0.06/month
+- **Total**: <$0.10/month
 
 ## 🔧 Additional Features
 
@@ -265,64 +500,275 @@ curl -X POST https://your-deployment-url.com/mcp/tools/fetch_custom_report \
   }'
 ```
 
-## 🏗️ Architecture
+## 🌐 Enhanced Page Analysis with Web Scraping
 
-Bigas is built as a **Modular Monolith** with a service-oriented architecture:
+### Overview
 
-```text
-+--------------------------+
-|         Clients          |
-|  - Manual User (curl)    |
-|  - Google Cloud Scheduler|
-+--------------------------+
-             |
-             v
-+--------------------------+
-|   Google Cloud Run       |
-|  (Hosting Environment)   |
-+--------------------------+
-             |
-             v
-+-------------------------------------------------+
-|  Bigas Platform (app.py - Flask App)            |
-|                                                 |
-| +---------------------------------------------+ |
-| | API Gateway / Router                        | |
-| +---------------------------------------------+ |
-|   |                      |                      |
-|   | (/marketing/*)       | (/product/*)         |
-|   v                      v                      |
-| +----------------------+ +--------------------+ |
-| | Marketing Resource   | | Product Resource   | |
-| | (Connects to GA,     | | (Placeholder for   | |
-| |  OpenAI, Discord)    | |  Jira, Figma, etc) | |
-| +----------------------+ +--------------------+ |
-|                                                 |
-+-------------------------------------------------+
+Bigas now includes advanced web scraping capabilities to analyze the actual content of underperforming pages and provide specific, actionable improvement suggestions based on real page content rather than generic advice.
+
+### How It Works
+
+#### 1. Page Content Analysis
+When analyzing underperforming pages, the system:
+- **Scrapes the actual page content** using web scraping technology
+- **Analyzes page structure** including titles, headings, CTAs, forms, and content
+- **Identifies specific issues** based on the actual page content
+- **Provides concrete suggestions** tailored to what's actually on the page
+
+#### 2. Content Elements Analyzed
+The web scraper extracts and analyzes:
+- **Page Title & Meta Description**: SEO and messaging effectiveness
+- **Headings Structure**: Content hierarchy and messaging flow
+- **Call-to-Action Buttons**: Number, placement, and effectiveness
+- **Contact Forms**: Form fields, complexity, and conversion barriers
+- **Images & Media**: Visual content and alt text optimization
+- **Contact Information**: Phone numbers, emails, and accessibility
+- **Social Proof Elements**: Testimonials, reviews, trust signals
+- **Page Structure**: Navigation, footer, responsiveness
+
+#### 3. Specific Analysis Output
+Instead of generic advice, you get specific recommendations like:
+- **"Add a prominent CTA button after the 'About Our Services' heading"**
+- **"Simplify the contact form by removing the 'Company Size' field"**
+- **"Add customer testimonials after the pricing section"**
+- **"Include a phone number in the header for immediate contact"**
+
+### Example Enhanced Analysis
+
+#### Before (Generic Advice)
+```
+"Improve the homepage to increase conversions."
 ```
 
-### Service Layer
+#### After (Content-Specific)
+```
+**Page Analysis: https://bigas.com/**
 
-The marketing analytics functionality is organized into focused services:
+**Issues Found:**
+- Only 2 CTA buttons found (both in footer)
+- No contact information visible above the fold
+- Missing customer testimonials or social proof
+- Contact form has 6 fields (too many for conversion)
 
-- **`GA4Service`**: Handles Google Analytics 4 API interactions
-- **`OpenAIService`**: Manages OpenAI API calls for analysis and summarization
-- **`TemplateService`**: Provides template-driven analytics queries
-- **`TrendAnalysisService`**: Orchestrates trend analysis workflows
-- **`MarketingAnalyticsService`**: Main orchestrator coordinating all services
+**Specific Action Items:**
+1. Add "Get Started" CTA button after the main headline
+2. Move phone number from footer to header
+3. Add customer testimonials after the "Why Choose Us" section
+4. Reduce contact form to 3 essential fields
+5. Add trust badges near the pricing section
+```
+
+### Benefits
+
+1. **Actionable Insights**: Specific suggestions based on actual page content
+2. **No Generic Advice**: Every recommendation is tailored to your specific pages
+3. **Implementation Ready**: Clear, specific action items you can implement immediately
+4. **Content-Aware**: Understands your actual messaging and page structure
+5. **Conversion-Focused**: Recommendations based on proven conversion optimization principles
+
+## 🧪 Testing
+
+### Test Storage Functionality
+```bash
+python tests/test_storage.py
+```
+
+### Test Domain Extraction
+```bash
+python tests/test_domain_extraction.py
+```
+
+### Test Health Check
+```bash
+python tests/health_check.py
+```
+
+## 🔒 Security
+
+### Critical Security Requirements
+
+#### 1. Environment Variables
+**NEVER commit sensitive data to version control!**
+
+All sensitive information must be stored as environment variables:
+
+- `GA4_PROPERTY_ID` - Google Analytics 4 Property ID
+- `OPENAI_API_KEY` - OpenAI API key
+- `DISCORD_WEBHOOK_URL` - Discord webhook URL (optional)
+- `GOOGLE_PROJECT_ID` - Google Cloud Project ID
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL` - Service account email
+- `STORAGE_BUCKET_NAME` - Google Cloud Storage bucket (optional)
+
+#### 2. File Security
+- ✅ `.env` files are in `.gitignore`
+- ✅ No hardcoded secrets in scripts
+- ✅ Service account JSON files are excluded
+- ✅ API keys are never logged
+
+#### 3. Access Control
+- ✅ Service accounts have minimal required permissions
+- ✅ API keys have appropriate scopes
+- ✅ HTTPS for all external communications
+- ✅ Regular key rotation
+
+### Security Checklist
+
+#### Before Committing Code
+- [ ] No API keys in code
+- [ ] No hardcoded credentials
+- [ ] No sensitive URLs in comments
+- [ ] `.env` file is not tracked
+- [ ] Service account files are excluded
+
+#### Before Deployment
+- [ ] Environment variables are set
+- [ ] Service account has correct permissions
+- [ ] API keys are valid and active
+- [ ] HTTPS is used for webhooks
+- [ ] Logging excludes sensitive data
+
+#### Regular Maintenance
+- [ ] Rotate API keys quarterly
+- [ ] Review service account permissions
+- [ ] Monitor API usage and costs
+- [ ] Update dependencies for security patches
+- [ ] Audit access logs
+
+### Security Features
+
+#### Input Validation ✅
+- All API endpoints validate input parameters
+- Date ranges are validated for logical consistency (start before end, not in future, max 2 years)
+- Metric/dimension combinations are verified for GA4 compatibility
+- Request data size limits (max 10KB per request)
+- URL format validation for web scraping
+- Content size limits (max 5MB for page analysis)
+
+#### Error Handling ✅
+- Sensitive information is never exposed in error messages
+- API keys and webhook URLs are automatically redacted
+- Graceful degradation when services are unavailable
+- Proper HTTP status codes for different error types (400, 404, 429, 500)
+
+#### Rate Limiting ✅
+- Simple in-memory rate limiting (100 requests per hour per endpoint)
+- Automatic cleanup of old rate limit entries
+- HTTP 429 status code for rate limit exceeded
+- Per-endpoint rate limiting to prevent abuse
+
+#### Request Validation ✅
+- JSON request validation
+- Required field checking
+- Input sanitization
+- Size and length limits
+- URL security checks
+
+### Incident Response
+
+#### If API Keys are Compromised
+1. **Immediately rotate the compromised key**
+2. **Check for unauthorized usage**
+3. **Review access logs**
+4. **Update all environment variables**
+5. **Notify relevant stakeholders**
+
+#### If Service Account is Compromised
+1. **Disable the service account**
+2. **Create a new service account**
+3. **Update permissions and environment variables**
+4. **Review all access logs**
+5. **Audit all resources accessed**
+
+### Security Tools
+
+#### Recommended Tools
+- **GitGuardian** - Detect secrets in code
+- **Snyk** - Dependency vulnerability scanning
+- **Google Cloud Security Command Center** - Cloud security monitoring
+
+#### Code Scanning
+```bash
+# Check for secrets in code
+grep -r "sk-" . --exclude-dir=venv
+grep -r "AIza" . --exclude-dir=venv
+grep -r "discord.com/api/webhooks" . --exclude-dir=venv
+```
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on how to submit pull requests, report issues, and contribute to the project.
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+### Development Setup
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/your-username/bigas-marketing.git
+   cd bigas-marketing
+   ```
+
+2. **Set up virtual environment**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
+   ```
+
+3. **Configure environment**
+   ```bash
+   cp env.example .env
+   # Edit .env with your actual values
+   ```
+
+4. **Run tests**
+   ```bash
+   python tests/test_storage.py
+   python tests/test_domain_extraction.py
+   ```
+
+## 📞 Support
+
+For support:
+1. Check the [Issues](https://github.com/your-username/bigas-marketing/issues) page
+2. Create a new issue with detailed information
+3. Include your environment setup and error messages
+
+### Security Issues
+
+For security issues:
+1. **Do not create public issues** for security problems
+2. **Contact the maintainer directly** with security concerns
+3. **Include detailed information** about the security issue
+4. **Provide steps to reproduce** if applicable
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🔒 Security
+## 🔄 Changelog
 
-For security concerns, please see our [Security Policy](SECURITY.md).
+### v1.2.0
+- ✅ Added web scraping functionality for page content analysis
+- ✅ Enhanced underperforming pages analysis with actual page content
+- ✅ Improved Discord messaging with one message per page
+- ✅ Added specific, actionable suggestions based on real page structure
+- ✅ Implemented page content analysis (CTAs, forms, headings, etc.)
+
+### v1.1.0
+- ✅ Added Google Cloud Storage integration
+- ✅ Implemented URL extraction from GA4 data
+- ✅ Added underperforming pages analysis
+- ✅ Enhanced AI-powered improvement suggestions
+- ✅ Added automatic domain detection from GA4
+
+### v1.0.0
+- ✅ Initial release with weekly analytics reports
+- ✅ Discord integration
+- ✅ Google Analytics 4 integration
+- ✅ OpenAI-powered insights
 
 ---
 
-**Built with ❤️ for solo founders who want to scale like they have a team.**
+<div align="center">
+  <strong>Built with ❤️ for solo founders who need actionable marketing insights</strong>
+</div>

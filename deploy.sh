@@ -57,6 +57,12 @@ if [ ! -z "$DISCORD_WEBHOOK_URL" ]; then
     DISCORD_ENV_VAR=",DISCORD_WEBHOOK_URL=$DISCORD_WEBHOOK_URL"
 fi
 
+# Optional Storage bucket
+STORAGE_ENV_VAR=""
+if [ ! -z "$STORAGE_BUCKET_NAME" ]; then
+    STORAGE_ENV_VAR=",STORAGE_BUCKET_NAME=$STORAGE_BUCKET_NAME"
+fi
+
 echo "✅ All required environment variables are set"
 echo "📊 GA4 Property ID: $GA4_PROPERTY_ID"
 echo "🤖 OpenAI API Key: ${OPENAI_API_KEY:0:20}..."
@@ -65,6 +71,9 @@ echo "🔐 Service Account: $GOOGLE_SERVICE_ACCOUNT_EMAIL"
 echo "🐳 Docker Repo: $DOCKER_REPO"
 echo "📦 Image Name: $IMAGE_NAME"
 echo "🏷️  Image Tag: $IMAGE_TAG"
+if [ ! -z "$STORAGE_BUCKET_NAME" ]; then
+    echo "🗄️  Storage Bucket: $STORAGE_BUCKET_NAME"
+fi
 
 IMAGE="europe-north1-docker.pkg.dev/$GOOGLE_PROJECT_ID/$DOCKER_REPO/$IMAGE_NAME:$IMAGE_TAG"
 
@@ -82,6 +91,6 @@ gcloud run deploy mcp-marketing \
     --region europe-north1 \
     --allow-unauthenticated \
     --service-account=$GOOGLE_SERVICE_ACCOUNT_EMAIL \
-    --set-env-vars GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR
+    --set-env-vars GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$STORAGE_ENV_VAR
 
 echo "✅ Deployment completed successfully!"
