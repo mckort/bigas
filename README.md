@@ -394,18 +394,56 @@ bigas-analytics-reports/
 ### AI-Powered Analysis Features
 
 #### Underperforming Pages Analysis
-The system automatically:
-1. **Extracts** underperforming pages data from stored reports
-2. **Analyzes** the issues using AI
-3. **Generates** specific improvement suggestions
-4. **Prioritizes** recommendations by impact and effort
-5. **Posts** results to Discord for easy access
+The system can analyze underperforming pages from weekly reports and provide expert-level recommendations for improvement.
 
-#### Improvement Suggestions Include:
-- **Priority Ranking**: High/Medium/Low
-- **Effort Estimates**: Quick/Easy/Complex
-- **Expected Impact**: Specific metrics improvements
-- **Action Items**: Concrete steps to implement
+### Features:
+- **Expert Digital Marketing Analysis**: Uses an expert Digital Marketing Strategist specializing in CRO, SEO, and UX
+- **Comprehensive Page Analysis**: Analyzes actual page content, SEO elements, UX components, and performance indicators
+- **Actionable Recommendations**: Provides specific, implementable improvements across three key areas:
+  - **Conversion Rate Optimization (CRO)**: Critical issues, CTA optimization, trust building, value proposition, user journey
+  - **Search Engine Optimization (SEO)**: On-page SEO, keyword strategy, technical SEO, content quality, internal linking
+  - **User Experience (UX)**: Visual hierarchy, mobile experience, page speed, accessibility, user intent alignment
+- **Priority Action Plan**: Categorized by High/Medium/Low priority with expected impact and timeline
+- **Discord Integration**: Posts detailed analysis to Discord with comprehensive page metrics
+- **Error Handling**: Clear guidance when page analysis fails due to technical issues
+- **Report Date Tracking**: Shows when the analyzed report was generated, not when analysis runs
+
+### Analysis Includes:
+- **Page Content**: Title, meta description, headings, CTAs, forms, text content
+- **SEO Elements**: Title/meta length, heading structure, internal/external links, canonical URLs, Open Graph, schema markup
+- **UX Elements**: Hero sections, testimonials, pricing, FAQ, newsletter signup, live chat
+- **Performance**: Image optimization, link structure, inline styles, external scripts
+- **Page Structure**: Navigation, footer, responsiveness, paragraphs, lists, breadcrumbs, search functionality
+
+### Important Notes:
+- **Data-Driven Recommendations**: Analysis is only provided when page content can be successfully scraped
+- **No Generic Advice**: If page scraping fails, the system provides error guidance instead of generic recommendations
+- **Quality Over Quantity**: Ensures all recommendations are based on actual page content for maximum relevance
+
+### Usage:
+```bash
+# Analyze underperforming pages from the latest report
+curl -X POST https://your-server.com/mcp/tools/analyze_underperforming_pages \
+  -H "Content-Type: application/json" \
+  -d '{"max_pages": 3}'
+
+# Analyze pages from a specific report date
+curl -X POST https://your-server.com/mcp/tools/analyze_underperforming_pages \
+  -H "Content-Type: application/json" \
+  -d '{"report_date": "2024-01-15", "max_pages": 5}'
+```
+
+### Response:
+```json
+{
+  "status": "success",
+  "report_date": "2024-01-15",
+  "pages_analyzed": 3,
+  "max_pages_limit": 3,
+  "discord_posted": true,
+  "discord_messages_sent": 4
+}
+```
 
 ### Setup Instructions
 

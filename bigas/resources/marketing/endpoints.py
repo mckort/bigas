@@ -596,7 +596,7 @@ def analyze_underperforming_pages():
         if webhook_url:
             # Send header message
             header_message = f"# 🔧 Underperforming Pages Analysis\n\n"
-            header_message += f"📅 **Report Date**: {report_data.get('metadata', {}).get('report_date', 'Unknown')}\n"
+            header_message += f"📅 **Report Analyzed**: {report_data.get('metadata', {}).get('report_date', 'Unknown')} (when report was generated)\n"
             header_message += f"📊 **Pages to Analyze**: {len(underperforming_pages)} (limited to {max_pages} for performance)\n\n"
             header_message += "I'll analyze each page and provide specific improvement suggestions..."
             post_to_discord(webhook_url, header_message)
@@ -611,7 +611,7 @@ def analyze_underperforming_pages():
                         
                         # Create a detailed analysis prompt using the actual page content
                         page_analysis_prompt = f"""
-                        Analyze this specific underperforming page based on its actual content and provide concrete, actionable improvement suggestions.
+                        You are an expert Digital Marketing Strategist specializing in Conversion Rate Optimization (CRO), SEO, and User Experience (UX). Your goal is to analyze the provided webpage data and generate actionable recommendations to significantly increase both conversion rates and organic page visits.
 
                         Page Details:
                         - URL: {page.get('page_url', 'Unknown')}
@@ -630,15 +630,76 @@ def analyze_underperforming_pages():
                         - Word Count: {page_content.get('page_structure', {}).get('word_count', 0)}
                         - Main Content Preview: {page_content.get('text_content', '')[:200]}...
 
-                        Based on this actual page content, please provide:
-                        1. **Specific Issues Identified**: What specific problems do you see in the actual page content that are causing low conversions?
-                        2. **Concrete Action Items**: List 5-7 specific, implementable changes based on the actual page content
-                        3. **Priority Level**: High/Medium/Low based on impact and effort
-                        4. **Expected Impact**: What specific improvements in metrics can be expected
-                        5. **Implementation Tips**: Quick wins vs. longer-term improvements
+                        Page Structure:
+                        - Navigation: {page_content.get('page_structure', {}).get('has_navigation', False)}
+                        - Footer: {page_content.get('page_structure', {}).get('has_footer', False)}
+                        - Responsive: {page_content.get('page_structure', {}).get('is_responsive', False)}
+                        - Paragraphs: {page_content.get('page_structure', {}).get('paragraph_count', 0)}
+                        - Lists: {page_content.get('page_structure', {}).get('list_count', 0)}
+                        - Breadcrumbs: {page_content.get('page_structure', {}).get('has_breadcrumbs', False)}
+                        - Search: {page_content.get('page_structure', {}).get('has_search', False)}
 
-                        Focus on practical, tangible suggestions based on the actual page content you can see.
-                        Be specific about what to add, change, or remove from the page based on what's actually there.
+                        SEO Elements:
+                        - Title Length: {page_content.get('seo_elements', {}).get('title_length', 0)} chars
+                        - Meta Description Length: {page_content.get('seo_elements', {}).get('meta_desc_length', 0)} chars
+                        - H1 Count: {page_content.get('seo_elements', {}).get('h1_count', 0)}
+                        - H2 Count: {page_content.get('seo_elements', {}).get('h2_count', 0)}
+                        - H3 Count: {page_content.get('seo_elements', {}).get('h3_count', 0)}
+                        - Internal Links: {page_content.get('seo_elements', {}).get('internal_links', 0)}
+                        - External Links: {page_content.get('seo_elements', {}).get('external_links', 0)}
+                        - Canonical URL: {page_content.get('seo_elements', {}).get('has_canonical', False)}
+                        - Open Graph: {page_content.get('seo_elements', {}).get('has_open_graph', False)}
+                        - Schema Markup: {page_content.get('seo_elements', {}).get('has_schema_markup', False)}
+
+                        UX Elements:
+                        - Hero Section: {page_content.get('ux_elements', {}).get('has_hero_section', False)}
+                        - Testimonials: {page_content.get('ux_elements', {}).get('has_testimonials', False)}
+                        - Pricing: {page_content.get('ux_elements', {}).get('has_pricing', False)}
+                        - FAQ: {page_content.get('ux_elements', {}).get('has_faq', False)}
+                        - Newsletter Signup: {page_content.get('ux_elements', {}).get('has_newsletter_signup', False)}
+                        - Live Chat: {page_content.get('ux_elements', {}).get('has_live_chat', False)}
+
+                        Performance Indicators:
+                        - Total Images: {page_content.get('performance_indicators', {}).get('total_images', 0)}
+                        - Images Without Alt: {page_content.get('performance_indicators', {}).get('images_without_alt', 0)}
+                        - Total Links: {page_content.get('performance_indicators', {}).get('total_links', 0)}
+                        - Inline Styles: {page_content.get('performance_indicators', {}).get('inline_styles', 0)}
+                        - External Scripts: {page_content.get('performance_indicators', {}).get('external_scripts', 0)}
+
+                        Based on this comprehensive analysis of the actual page content, please provide:
+
+                        ## 🎯 CONVERSION RATE OPTIMIZATION (CRO)
+                        1. **Critical Issues**: What are the top 3-5 conversion killers on this page?
+                        2. **CTA Optimization**: Specific improvements for calls-to-action (placement, copy, design)
+                        3. **Trust & Credibility**: How to build trust and reduce friction
+                        4. **Value Proposition**: How to make the value clearer and more compelling
+                        5. **User Journey**: Optimize the path from visitor to conversion
+
+                        ## 🔍 SEARCH ENGINE OPTIMIZATION (SEO)
+                        1. **On-Page SEO**: Title, meta description, headings, and content optimization
+                        2. **Keyword Strategy**: Target keywords and content gaps
+                        3. **Technical SEO**: Page speed, mobile-friendliness, and technical issues
+                        4. **Content Quality**: How to improve content depth and relevance
+                        5. **Internal Linking**: Opportunities for better site structure
+
+                        ## 👥 USER EXPERIENCE (UX)
+                        1. **Visual Hierarchy**: How to improve content flow and readability
+                        2. **Mobile Experience**: Mobile-specific optimizations
+                        3. **Page Speed**: Performance improvements
+                        4. **Accessibility**: Making the page more accessible
+                        5. **User Intent**: Aligning content with user expectations
+
+                        ## 📊 PRIORITY ACTION PLAN
+                        - **High Priority** (Quick wins with high impact)
+                        - **Medium Priority** (Moderate effort, good impact)
+                        - **Low Priority** (Long-term improvements)
+
+                        ## 🎯 EXPECTED IMPACT
+                        - Specific metrics improvements to expect
+                        - Timeline for implementation
+                        - Resource requirements
+
+                        Focus on practical, implementable recommendations based on the actual page content. Be specific about what to change, add, or remove. Provide concrete examples and actionable steps.
                         """
                         
                         openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -647,17 +708,19 @@ def analyze_underperforming_pages():
                             messages=[{"role": "user", "content": page_analysis_prompt}],
                             max_tokens=800,
                             temperature=0.7,
-                            timeout=15  # Add timeout for OpenAI call
+                            timeout=30  # Increased timeout for OpenAI call
                         )
                         page_analysis = page_analysis_response.choices[0].message.content.strip()
                         
                         # Create a formatted Discord message for this page
                         page_message = f"## 📄 {page.get('page_url', 'Unknown Page')}\n\n"
-                        page_message += f"📊 **Metrics**: {page.get('sessions', 0)} sessions, {page.get('conversions', 0)} conversions ({page.get('conversion_rate', 0):.1%})\n"
+                        page_message += f"📊 **Analytics**: {page.get('sessions', 0)} sessions, {page.get('conversions', 0)} conversions ({page.get('conversion_rate', 0):.1%})\n"
                         page_message += f"📝 **Page Title**: {page_content.get('title', 'No title')}\n"
-                        page_message += f"🔗 **CTAs Found**: {len(page_content.get('cta_buttons', []))} | Forms: {len(page_content.get('forms', []))}\n\n"
-                        page_message += f"🎯 **Analysis & Recommendations**:\n\n{page_analysis}\n\n"
-                        page_message += "---\n💡 *This analysis is based on actual page content and conversion data*"
+                        page_message += f"🔗 **CTAs Found**: {len(page_content.get('cta_buttons', []))} | Forms: {len(page_content.get('forms', []))}\n"
+                        page_message += f"📈 **SEO Score**: H1: {page_content.get('seo_elements', {}).get('h1_count', 0)}, Internal Links: {page_content.get('seo_elements', {}).get('internal_links', 0)}\n"
+                        page_message += f"⚡ **Performance**: Images: {page_content.get('performance_indicators', {}).get('total_images', 0)}, Missing Alt: {page_content.get('performance_indicators', {}).get('images_without_alt', 0)}\n\n"
+                        page_message += f"🎯 **Expert Analysis & Recommendations**:\n\n{page_analysis}\n\n"
+                        page_message += "---\n💡 *This analysis is based on actual page content analysis by an expert Digital Marketing Strategist*"
                         
                         post_to_discord(webhook_url, page_message)
                         discord_messages_sent += 1
@@ -667,27 +730,84 @@ def analyze_underperforming_pages():
                         
                     except Exception as e:
                         logger.error(f"Error analyzing page {page.get('page_url')}: {e}")
-                        error_message = f"❌ **Error analyzing {page.get('page_url', 'Unknown Page')}**: {str(e)}"
+                        
+                        # Create clear error message with guidance on fixing coupling issues
+                        error_message = f"## ❌ Page Analysis Failed: {page.get('page_url', 'Unknown Page')}\n\n"
+                        error_message += f"📊 **Analytics Data Available**: {page.get('sessions', 0)} sessions, {page.get('conversions', 0)} conversions ({page.get('conversion_rate', 0):.1%})\n"
+                        error_message += f"⚠️ **Analysis Status**: FAILED - Insufficient data for expert recommendations\n"
+                        error_message += f"🔍 **Error Details**: {str(e)}\n\n"
+                        
+                        error_message += f"## 🚫 No Recommendations Available\n\n"
+                        error_message += f"**Why no recommendations?**\n"
+                        error_message += f"• Page content analysis failed due to timeout/access issues\n"
+                        error_message += f"• Without actual page content, recommendations would be generic and not actionable\n"
+                        error_message += f"• Expert analysis requires real data to provide specific, implementable improvements\n\n"
+                        
+                        error_message += f"## 🔧 How to Fix This Issue\n\n"
+                        error_message += f"**Immediate Actions**:\n"
+                        error_message += f"1. **Check Website Performance**: The site may be slow or experiencing issues\n"
+                        error_message += f"2. **Verify URL Accessibility**: Ensure the page is publicly accessible\n"
+                        error_message += f"3. **Check for Blocking**: The site may be blocking automated requests\n"
+                        error_message += f"4. **Test Manually**: Visit the page manually to confirm it loads\n\n"
+                        
+                        error_message += f"**Technical Solutions**:\n"
+                        error_message += f"• **Improve Site Speed**: Optimize page load times (current timeout: 10 seconds)\n"
+                        error_message += f"• **Remove Bot Blocking**: Allow legitimate analysis tools\n"
+                        error_message += f"• **Fix Server Issues**: Resolve any server-side problems\n"
+                        error_message += f"• **Update DNS**: Ensure proper domain resolution\n"
+                        error_message += f"• **CDN Optimization**: Use a CDN to improve global response times\n\n"
+                        
+                        error_message += f"**Alternative Analysis**:\n"
+                        error_message += f"• **Manual Review**: Analyze the page manually using the analytics data\n"
+                        error_message += f"• **Retry Later**: The issue may be temporary\n"
+                        error_message += f"• **Contact Support**: If the issue persists\n\n"
+                        
+                        error_message += f"---\n💡 *Expert recommendations require actual page content analysis. Generic advice without real data is not actionable.*"
+                        
                         post_to_discord(webhook_url, error_message)
                         discord_messages_sent += 1
             else:
                 # If no page URLs extracted, send a general analysis
                 general_analysis_prompt = f"""
-                Based on the following analytics data about underperforming pages, provide specific, actionable improvement suggestions.
-                Focus on practical recommendations that a solo founder can implement.
+                You are an expert Digital Marketing Strategist specializing in Conversion Rate Optimization (CRO), SEO, and User Experience (UX). Your goal is to analyze the provided analytics data and generate actionable recommendations to significantly increase both conversion rates and organic page visits.
 
                 Underperforming Pages Data:
                 {json.dumps(underperforming_data, indent=2)}
 
-                Please provide:
-                1. A summary of the main issues identified
-                2. Specific improvement suggestions for underperforming pages
-                3. Priority ranking of improvements (High/Medium/Low)
-                4. Estimated effort level for each improvement (Quick/Easy/Complex)
-                5. Expected impact of each improvement
-                6. Specific action items
+                Based on this analytics data, please provide:
 
-                Format your response as a structured analysis with clear action items.
+                ## 🎯 CONVERSION RATE OPTIMIZATION (CRO)
+                1. **Critical Issues**: What are the most common conversion killers across underperforming pages?
+                2. **CTA Strategy**: How to optimize calls-to-action for better conversion rates
+                3. **Trust Building**: Strategies to build credibility and reduce friction
+                4. **Value Communication**: How to make value propositions clearer and more compelling
+                5. **User Journey Optimization**: Improve the path from visitor to conversion
+
+                ## 🔍 SEARCH ENGINE OPTIMIZATION (SEO)
+                1. **Content Strategy**: How to improve content quality and relevance
+                2. **Keyword Optimization**: Target keyword opportunities and content gaps
+                3. **Technical Improvements**: Page speed, mobile-friendliness, and technical SEO
+                4. **On-Page SEO**: Title, meta description, and heading optimization
+                5. **Site Structure**: Internal linking and navigation improvements
+
+                ## 👥 USER EXPERIENCE (UX)
+                1. **Visual Design**: How to improve visual hierarchy and readability
+                2. **Mobile Experience**: Mobile-specific optimization strategies
+                3. **Performance**: Page speed and loading time improvements
+                4. **Accessibility**: Making pages more accessible to all users
+                5. **User Intent Alignment**: Better matching content with user expectations
+
+                ## 📊 PRIORITY ACTION PLAN
+                - **High Priority** (Quick wins with high impact)
+                - **Medium Priority** (Moderate effort, good impact)
+                - **Low Priority** (Long-term improvements)
+
+                ## 🎯 EXPECTED IMPACT
+                - Specific metrics improvements to expect
+                - Timeline for implementation
+                - Resource requirements
+
+                Format your response as a structured analysis with clear action items. Focus on practical recommendations that a solo founder or small team can implement.
                 """
                 
                 openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -696,7 +816,7 @@ def analyze_underperforming_pages():
                     messages=[{"role": "user", "content": general_analysis_prompt}],
                     max_tokens=800,
                     temperature=0.7,
-                    timeout=15  # Add timeout for OpenAI call
+                    timeout=30  # Increased timeout for OpenAI call
                 )
                 general_analysis = general_analysis_response.choices[0].message.content.strip()
                 
@@ -805,12 +925,55 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
                 'page_structure': {}
             }
         
-        # Fetch the page content with shorter timeout
+        # Fetch the page content with shorter timeout and better error handling
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
         }
-        response = requests.get(page_url, headers=headers, timeout=5)  # Reduced timeout
-        response.raise_for_status()
+        
+        try:
+            response = requests.get(page_url, headers=headers, timeout=10)  # Increased timeout to 10 seconds
+            response.raise_for_status()
+        except requests.exceptions.Timeout:
+            return {
+                'url': page_url,
+                'error': 'Page request timed out - website may be slow or blocking requests',
+                'title': 'Timeout Error',
+                'meta_description': '',
+                'headings': [],
+                'cta_buttons': [],
+                'forms': [],
+                'images': [],
+                'text_content': '',
+                'has_contact_info': False,
+                'has_social_proof': False,
+                'page_structure': {},
+                'seo_elements': {},
+                'ux_elements': {},
+                'performance_indicators': {}
+            }
+        except requests.exceptions.RequestException as e:
+            return {
+                'url': page_url,
+                'error': f'Failed to fetch page: {str(e)}',
+                'title': 'Fetch Error',
+                'meta_description': '',
+                'headings': [],
+                'cta_buttons': [],
+                'forms': [],
+                'images': [],
+                'text_content': '',
+                'has_contact_info': False,
+                'has_social_proof': False,
+                'page_structure': {},
+                'seo_elements': {},
+                'ux_elements': {},
+                'performance_indicators': {}
+            }
         
         # Check content size to prevent memory issues (reduced limit)
         if len(response.content) > 2 * 1024 * 1024:  # 2MB limit (reduced from 5MB)
@@ -844,13 +1007,32 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
             'text_content': '',
             'has_contact_info': False,
             'has_social_proof': False,
-            'page_structure': {}
+            'page_structure': {},
+            'seo_elements': {},
+            'ux_elements': {},
+            'performance_indicators': {}
         }
         
         # Extract meta description
         meta_desc = soup.find('meta', attrs={'name': 'description'})
         if meta_desc:
             analysis['meta_description'] = meta_desc.get('content', '')[:200]  # Limit length
+        
+        # Extract SEO elements
+        analysis['seo_elements'] = {
+            'has_canonical': bool(soup.find('link', attrs={'rel': 'canonical'})),
+            'has_robots_meta': bool(soup.find('meta', attrs={'name': 'robots'})),
+            'has_open_graph': bool(soup.find('meta', attrs={'property': 'og:title'})),
+            'has_twitter_card': bool(soup.find('meta', attrs={'name': 'twitter:card'})),
+            'has_schema_markup': bool(soup.find(attrs={'itemtype': True})),
+            'title_length': len(analysis['title']),
+            'meta_desc_length': len(analysis['meta_description']),
+            'h1_count': len(soup.find_all('h1')),
+            'h2_count': len(soup.find_all('h2')),
+            'h3_count': len(soup.find_all('h3')),
+            'internal_links': len([a for a in soup.find_all('a', href=True) if not a['href'].startswith(('http://', 'https://'))]),
+            'external_links': len([a for a in soup.find_all('a', href=True) if a['href'].startswith(('http://', 'https://'))])
+        }
         
         # Extract headings (limit to first 10)
         for heading in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])[:10]:
@@ -860,14 +1042,15 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
             })
         
         # Extract CTA buttons and links (limit to first 20)
-        cta_keywords = ['buy', 'shop', 'order', 'get', 'start', 'sign up', 'subscribe', 'download', 'learn more', 'contact', 'call']
+        cta_keywords = ['buy', 'shop', 'order', 'get', 'start', 'sign up', 'subscribe', 'download', 'learn more', 'contact', 'call', 'try', 'demo', 'free', 'now', 'today']
         for link in soup.find_all('a', href=True)[:20]:  # Limit to first 20 links
             link_text = link.get_text(strip=True).lower()
             if any(keyword in link_text for keyword in cta_keywords):
                 analysis['cta_buttons'].append({
                     'text': link.get_text(strip=True)[:50],  # Limit text length
                     'href': link.get('href'),
-                    'type': 'link'
+                    'type': 'link',
+                    'is_primary': any(primary in link_text for primary in ['buy', 'order', 'sign up', 'start', 'get'])
                 })
         
         # Extract buttons (limit to first 10)
@@ -876,7 +1059,8 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
             if any(keyword in button_text for keyword in cta_keywords):
                 analysis['cta_buttons'].append({
                     'text': button.get_text(strip=True)[:50],  # Limit text length
-                    'type': 'button'
+                    'type': 'button',
+                    'is_primary': any(primary in button_text for primary in ['buy', 'order', 'sign up', 'start', 'get'])
                 })
         
         # Extract forms (limit to first 5)
@@ -893,7 +1077,8 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
             analysis['forms'].append({
                 'action': form_action,
                 'method': form_method,
-                'fields': form_fields
+                'fields': form_fields,
+                'field_count': len(form_fields)
             })
         
         # Extract images (limit to first 10)
@@ -903,7 +1088,8 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
             if src:
                 analysis['images'].append({
                     'src': src,
-                    'alt': alt[:100]  # Limit alt text length
+                    'alt': alt[:100],  # Limit alt text length
+                    'has_alt': bool(alt.strip())
                 })
         
         # Extract main text content (reduced limit)
@@ -922,7 +1108,7 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
         analysis['has_contact_info'] = any(re.search(pattern, page_text) for pattern in contact_patterns)
         
         # Check for social proof elements (use smaller text sample)
-        social_proof_keywords = ['testimonial', 'review', 'customer', 'client', 'trust', 'certified', 'award', 'rating']
+        social_proof_keywords = ['testimonial', 'review', 'customer', 'client', 'trust', 'certified', 'award', 'rating', 'star', 'verified', 'guarantee', 'money-back']
         analysis['has_social_proof'] = any(keyword in page_text.lower() for keyword in social_proof_keywords)
         
         # Analyze page structure
@@ -931,7 +1117,35 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
             'has_footer': bool(soup.find('footer')),
             'has_sidebar': bool(soup.find('aside')),
             'is_responsive': 'viewport' in str(soup.find('meta', attrs={'name': 'viewport'})),
-            'word_count': len(page_text.split())
+            'word_count': len(page_text.split()),
+            'paragraph_count': len(soup.find_all('p')),
+            'list_count': len(soup.find_all(['ul', 'ol'])),
+            'has_breadcrumbs': bool(soup.find(attrs={'class': re.compile(r'breadcrumb', re.I)})),
+            'has_search': bool(soup.find('input', attrs={'type': 'search'})) or bool(soup.find(attrs={'class': re.compile(r'search', re.I)}))
+        }
+        
+        # UX Elements analysis
+        analysis['ux_elements'] = {
+            'has_hero_section': bool(soup.find(attrs={'class': re.compile(r'hero|banner|header', re.I)})),
+            'has_testimonials': bool(soup.find(attrs={'class': re.compile(r'testimonial|review', re.I)})),
+            'has_pricing': bool(soup.find(attrs={'class': re.compile(r'pricing|price', re.I)})),
+            'has_faq': bool(soup.find(attrs={'class': re.compile(r'faq|question', re.I)})),
+            'has_newsletter_signup': bool(soup.find(attrs={'class': re.compile(r'newsletter|subscribe', re.I)})),
+            'has_live_chat': bool(soup.find(attrs={'class': re.compile(r'chat|support', re.I)})),
+            'has_progress_indicators': bool(soup.find(attrs={'class': re.compile(r'progress|step', re.I)})),
+            'has_loading_states': bool(soup.find(attrs={'class': re.compile(r'loading|spinner', re.I)}))
+        }
+        
+        # Performance indicators
+        analysis['performance_indicators'] = {
+            'total_images': len(soup.find_all('img')),
+            'images_without_alt': len([img for img in soup.find_all('img') if not img.get('alt', '').strip()]),
+            'total_links': len(soup.find_all('a')),
+            'broken_links': 0,  # Would need to check each link
+            'inline_styles': len(soup.find_all(attrs={'style': True})),
+            'external_scripts': len(soup.find_all('script', attrs={'src': True})),
+            'has_compression_hints': 'gzip' in str(soup) or 'deflate' in str(soup),
+            'has_caching_hints': bool(soup.find('meta', attrs={'http-equiv': 'cache-control'}))
         }
         
         return analysis
