@@ -13,7 +13,21 @@ Follow us on X for the latest updates, feature announcements, and marketing insi
 
 ## 📊 Overview
 
-Bigas is an AI-powered marketing analytics platform that automatically generates comprehensive weekly reports from your Google Analytics 4 data and posts them to Discord. It identifies underperforming pages and provides specific, actionable improvement suggestions.
+**Bigas** is an AI team concept designed to provide virtual specialists for different business functions. We've started with our first virtual team member: **The Marketing Specialist**.
+
+### 🎯 Our Goal
+To build a comprehensive AI team that can handle various business functions, starting with marketing and expanding to other areas like sales, customer support, product development, and more.
+
+### 🚀 Current Implementation: Virtual Marketing Specialist
+
+Bigas is now an **AI-powered marketing analytics platform** that automatically generates comprehensive weekly reports from your Google Analytics 4 data and posts them to Discord. It identifies underperforming pages and provides specific, actionable improvement suggestions.
+
+**What our Virtual Marketing Specialist does:**
+- 📈 **Weekly Analytics Reports**: Automated GA4 analysis with AI-powered insights
+- 🔍 **Page Performance Analysis**: Identifies underperforming pages with high traffic but low conversions
+- 🎯 **Expert Recommendations**: Provides specific, actionable improvement suggestions based on actual page content
+- 📊 **Discord Integration**: Posts detailed reports and analysis directly to your Discord channel
+- 🗄️ **Data Storage**: Stores reports in Google Cloud Storage for historical analysis
 
 ### Key Features
 - 🤖 **AI-Powered Analysis**: Get intelligent insights, not just raw data
