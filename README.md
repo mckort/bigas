@@ -114,7 +114,33 @@ You need to authenticate with Google Analytics 4:
 - Grant the service account "Viewer" permissions to your GA4 property
 - Download the service account key file
 
-### 2. Configure Environment Variables
+### 1. Set Up Google Cloud Project
+
+1. **Create a Google Cloud Project** (if you don't have one)
+2. **Enable required APIs**:
+   - Google Analytics Data API
+   - Google Cloud Storage API
+3. **Create a service account** with the following roles:
+   - `roles/analyticsdata.reader` - Read GA4 data
+   - `roles/storage.objectAdmin` - Manage storage objects
+4. **Download the service account key file**
+
+### 2. Set Up Google Cloud Storage
+
+**⚠️ IMPORTANT**: Google Cloud Storage must be activated and a bucket must be created for report storage.
+
+1. **Activate Google Cloud Storage API** (if not already done in step 1)
+2. **Create a storage bucket**:
+   ```bash
+   # Create a bucket (replace with your preferred name)
+   gsutil mb gs://your-bucket-name
+   
+   # Or use the default name that will be created automatically
+   gsutil mb gs://bigas-analytics-reports
+   ```
+3. **Note the bucket name** - you'll need it for the `STORAGE_BUCKET_NAME` environment variable
+
+### 3. Configure Environment Variables
 
 Copy the example environment file and configure your variables:
 
@@ -134,7 +160,7 @@ nano .env
 
 **⚠️ IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
 
-### 3. Deploy to Google Cloud Run
+### 4. Deploy to Google Cloud Run
 
 ```bash
 # Clone the repository
@@ -149,7 +175,7 @@ cd bigas-marketing
 ./deploy.sh
 ```
 
-### 4. Get Your First Weekly Report
+### 5. Get Your First Weekly Report
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report
@@ -157,7 +183,7 @@ curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report
 
 That's it! You'll get a comprehensive AI-powered analysis posted to your Discord channel.
 
-### 5. Automate Weekly Reports (Recommended)
+### 6. Automate Weekly Reports (Recommended)
 
 For automated weekly reports, set up Google Cloud Scheduler:
 
@@ -190,7 +216,7 @@ This will automatically post weekly analytics reports to your Discord channel ev
 - `0 9 1 * *` - First day of every month at 9 AM
 - `0 */6 * * *` - Every 6 hours
 
-### 6. Analyze Underperforming Pages (New!)
+### 7. Analyze Underperforming Pages (New!)
 
 The weekly reports are now automatically stored in Google Cloud Storage, enabling you to analyze underperforming pages and get AI-powered improvement suggestions:
 
