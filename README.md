@@ -6,6 +6,11 @@
   <strong>Automated weekly analytics reports with AI-powered insights for solo founders</strong>
 </div>
 
+## 📱 Stay Updated
+
+Follow us on X for the latest updates, feature announcements, and marketing insights:
+**[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
+
 ## 📊 Overview
 
 Bigas is an AI-powered marketing analytics platform that automatically generates comprehensive weekly reports from your Google Analytics 4 data and posts them to Discord. It identifies underperforming pages and provides specific, actionable improvement suggestions.
