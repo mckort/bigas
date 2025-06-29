@@ -157,6 +157,7 @@ nano .env
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
 - `STORAGE_BUCKET_NAME` - Your Google Cloud Storage bucket (optional, defaults to 'bigas-analytics-reports')
+- `TARGET_KEYWORDS` - Colon-separated list of target keywords for SEO analysis (optional, e.g., "sustainable_swag:eco_friendly_clothing:green_promos")
 
 **⚠️ IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
 
@@ -470,6 +471,20 @@ The system can analyze underperforming pages from weekly reports and provide exp
 - **Data-Driven Recommendations**: Analysis is only provided when page content can be successfully scraped
 - **No Generic Advice**: If page scraping fails, the system provides error guidance instead of generic recommendations
 - **Quality Over Quantity**: Ensures all recommendations are based on actual page content for maximum relevance
+- **Target Keywords**: Optional parameter for specific SEO optimization based on your target search terms
+
+### Target Keywords Feature:
+When you configure target keywords in the `TARGET_KEYWORDS` environment variable, the analysis includes:
+- **Keyword Presence Analysis**: Checks if keywords appear in title, meta description, and content
+- **Keyword Position Analysis**: Identifies where keywords appear in title and meta description
+- **Specific SEO Recommendations**: Tailored suggestions for optimizing for your target keywords
+- **Content Gap Analysis**: Identifies missing content opportunities for your keywords
+- **Competitive Insights**: How well your page targets specific search terms vs. competitors
+
+**Configuration**: Add to your `.env` file:
+```bash
+TARGET_KEYWORDS=sustainable_swag:eco_friendly_clothing:green_promos
+```
 
 ### Usage:
 ```bash
@@ -483,6 +498,8 @@ curl -X POST https://your-server.com/mcp/tools/analyze_underperforming_pages \
   -H "Content-Type: application/json" \
   -d '{"report_date": "2024-01-15", "max_pages": 5}'
 ```
+
+**Note**: Target keywords are configured via the `TARGET_KEYWORDS` environment variable and will be automatically included in all analyses.
 
 ### Response:
 ```json

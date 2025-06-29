@@ -548,6 +548,10 @@ def analyze_underperforming_pages():
     report_date = data.get('report_date')  # Optional: specific date, otherwise uses latest
     max_pages = data.get('max_pages', 3)  # Limit number of pages to analyze to prevent timeouts
     
+    # Get target keywords from environment variable
+    target_keywords_str = os.environ.get('TARGET_KEYWORDS', '')
+    target_keywords = [kw.strip() for kw in target_keywords_str.split(':') if kw.strip()] if target_keywords_str else []
+    
     try:
         service = MarketingAnalyticsService(OPENAI_API_KEY)
         
@@ -597,8 +601,10 @@ def analyze_underperforming_pages():
             # Send header message
             header_message = f"# 🔧 Underperforming Pages Analysis\n\n"
             header_message += f"📅 **Report Analyzed**: {report_data.get('metadata', {}).get('report_date', 'Unknown')} (when report was generated)\n"
-            header_message += f"📊 **Pages to Analyze**: {len(underperforming_pages)} (limited to {max_pages} for performance)\n\n"
-            header_message += "I'll analyze each page and provide specific improvement suggestions..."
+            header_message += f"📊 **Pages to Analyze**: {len(underperforming_pages)} (limited to {max_pages} for performance)\n"
+            if target_keywords:
+                header_message += f"🎯 **Target Keywords**: {', '.join(target_keywords)}\n"
+            header_message += f"\nI'll analyze each page and provide specific improvement suggestions..."
             post_to_discord(webhook_url, header_message)
             discord_messages_sent += 1
             
@@ -618,6 +624,7 @@ def analyze_underperforming_pages():
                         - Sessions: {page.get('sessions', 0)}
                         - Conversions: {page.get('conversions', 0)}
                         - Conversion Rate: {page.get('conversion_rate', 0):.1%}
+                        {f"- Target Keywords: {', '.join(target_keywords)}" if target_keywords else ""}
 
                         Page Content Analysis:
                         - Title: {page_content.get('title', 'No title')}
@@ -650,6 +657,7 @@ def analyze_underperforming_pages():
                         - Canonical URL: {page_content.get('seo_elements', {}).get('has_canonical', False)}
                         - Open Graph: {page_content.get('seo_elements', {}).get('has_open_graph', False)}
                         - Schema Markup: {page_content.get('seo_elements', {}).get('has_schema_markup', False)}
+                        {f"- Keyword Analysis: {json.dumps(page_content.get('seo_elements', {}).get('keyword_analysis', {}), indent=2)}" if target_keywords and page_content.get('seo_elements', {}).get('keyword_analysis') else ""}
 
                         UX Elements:
                         - Hero Section: {page_content.get('ux_elements', {}).get('has_hero_section', False)}
@@ -677,7 +685,7 @@ def analyze_underperforming_pages():
 
                         ## 🔍 SEARCH ENGINE OPTIMIZATION (SEO)
                         1. **On-Page SEO**: Title, meta description, headings, and content optimization
-                        2. **Keyword Strategy**: Target keywords and content gaps
+                        {f"2. **Keyword Strategy**: How well does this page target the keywords '{', '.join(target_keywords)}'? What specific improvements are needed for these keywords?" if target_keywords else "2. **Keyword Strategy**: Target keywords and content gaps"}
                         3. **Technical SEO**: Page speed, mobile-friendliness, and technical issues
                         4. **Content Quality**: How to improve content depth and relevance
                         5. **Internal Linking**: Opportunities for better site structure
@@ -1033,6 +1041,28 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
             'internal_links': len([a for a in soup.find_all('a', href=True) if not a['href'].startswith(('http://', 'https://'))]),
             'external_links': len([a for a in soup.find_all('a', href=True) if a['href'].startswith(('http://', 'https://'))])
         }
+        
+        # Add keyword analysis if target keywords are configured
+        target_keywords_str = os.environ.get('TARGET_KEYWORDS', '')
+        target_keywords = [kw.strip() for kw in target_keywords_str.split(':') if kw.strip()] if target_keywords_str else []
+        
+        if target_keywords:
+            page_text = soup.get_text().lower()
+            title_text = analysis['title'].lower()
+            meta_text = analysis['meta_description'].lower()
+            
+            keyword_analysis = {}
+            for keyword in target_keywords:
+                keyword_lower = keyword.lower()
+                keyword_analysis[keyword] = {
+                    'in_title': keyword_lower in title_text,
+                    'in_meta': keyword_lower in meta_text,
+                    'in_content': keyword_lower in page_text,
+                    'title_position': title_text.find(keyword_lower) if keyword_lower in title_text else -1,
+                    'meta_position': meta_text.find(keyword_lower) if keyword_lower in meta_text else -1
+                }
+            
+            analysis['seo_elements']['keyword_analysis'] = keyword_analysis
         
         # Extract headings (limit to first 10)
         for heading in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])[:10]:
