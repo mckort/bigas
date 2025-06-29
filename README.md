@@ -126,11 +126,13 @@ cp env.example .env
 nano .env
 ```
 
-Required environment variables (see `env.example` for details):
+**Required environment variables** (see `env.example` for details):
 - `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
 - `STORAGE_BUCKET_NAME` - Your Google Cloud Storage bucket (optional, defaults to 'bigas-analytics-reports')
+
+**⚠️ IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
 
 ### 3. Deploy to Google Cloud Run
 
@@ -138,6 +140,10 @@ Required environment variables (see `env.example` for details):
 # Clone the repository
 git clone https://github.com/your-username/bigas-marketing.git
 cd bigas-marketing
+
+# ⚠️ IMPORTANT: Configure environment variables first!
+# Make sure you've set up your .env file with all required variables
+# See step 2 above for details on required environment variables
 
 # Deploy using the provided script
 ./deploy.sh
