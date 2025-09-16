@@ -1,0 +1,219 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Bigas Marketing MCP Tools API",
+    "version": "1.0.0",
+    "description": "API for Google Analytics reporting and analysis tools."
+  },
+  "paths": {
+    "/mcp/tools/fetch_analytics_report": {
+      "post": {
+        "summary": "Fetch Google Analytics report for the specified property.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "start_date": { "type": "string", "format": "date", "description": "Start date (YYYY-MM-DD)" },
+                  "end_date": { "type": "string", "format": "date", "description": "End date (YYYY-MM-DD)" },
+                  "metrics": { "type": "array", "items": { "type": "string" } },
+                  "dimensions": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Analytics data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "data": { "type": "array", "items": { "type": "object" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/tools/fetch_custom_report": {
+      "post": {
+        "summary": "Fetch a custom Google Analytics report.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "dimensions": { "type": "array", "items": { "type": "string" } },
+                  "metrics": { "type": "array", "items": { "type": "string" } },
+                  "date_ranges": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "start_date": { "type": "string", "format": "date" },
+                        "end_date": { "type": "string", "format": "date" },
+                        "name": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Custom analytics data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "data": { "type": "array", "items": { "type": "object" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/tools/ask_analytics_question": {
+      "post": {
+        "summary": "Ask a natural language analytics question.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": { "type": "string" }
+                },
+                "required": ["question"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Analytics answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "answer": { "type": "string" },
+                    "question": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/tools/analyze_trends": {
+      "post": {
+        "summary": "Analyze trends in analytics data.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metrics": { "type": "array", "items": { "type": "string" } },
+                  "dimensions": { "type": "array", "items": { "type": "string" } },
+                  "time_frames": { "type": "array", "items": { "type": "object" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Trend analysis data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "data": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/tools/weekly_analytics_report": {
+      "post": {
+        "summary": "Run the weekly analytics Q&A and post results to Discord.",
+        "description": "Posts a single headline, then each Q&A as a separate message to Discord. Returns a JSON summary of all Q&A pairs. Requires DISCORD_WEBHOOK_URL and OPENAI_API_KEY environment variables.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Weekly analytics Q&A results.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "question": { "type": "string" },
+                          "answer": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} 
