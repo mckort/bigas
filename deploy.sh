@@ -4,7 +4,9 @@ set -e
 # Load environment variables from .env file if it exists
 if [ -f .env ]; then
     echo "Loading environment variables from .env file..."
-    export $(cat .env | grep -v '^#' | xargs)
+    set -a  # automatically export all variables
+    source .env
+    set +a  # stop automatically exporting
 fi
 
 # Check required environment variables
@@ -100,6 +102,6 @@ gcloud run deploy mcp-marketing \
     --region europe-north1 \
     --allow-unauthenticated \
     --service-account=$GOOGLE_SERVICE_ACCOUNT_EMAIL \
-    --set-env-vars GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR
+    --set-env-vars "DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY,GOOGLE_PROJECT_ID=$GOOGLE_PROJECT_ID,STORAGE_BUCKET_NAME=$STORAGE_BUCKET_NAME$DISCORD_ENV_VAR$KEYWORDS_ENV_VAR"
 
 echo "✅ Deployment completed successfully!" 

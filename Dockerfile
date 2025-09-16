@@ -21,5 +21,5 @@ ENV FLASK_APP=app.py
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV PORT=8080
 
-# Run the application with Gunicorn
-CMD ["gunicorn", "--timeout", "300", "--bind", "0.0.0.0:8080", "app:create_app()"]
+# Run the application
+CMD ["python", "app.py"]
