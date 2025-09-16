@@ -49,49 +49,20 @@ Bigas is now a **comprehensive AI-powered marketing analytics platform** that au
 
 ### Environment Configuration
 
-Bigas-core supports two deployment modes with automatic credential handling:
-
-#### 1. **SaaS Deployment (Recommended for most users)**
+Bigas-core runs in standalone mode with direct Google Analytics 4 integration:
+#### **Standalone Deployment**
 ```bash
 # Copy the example environment file
 cp env.example .env
-
-# Deploy with dummy placeholders (will be overridden by SaaS UI)
-./deploy.sh
-```
-- ✅ **No configuration needed** - dummy values work for deployment
-- ✅ **SaaS UI handles real credentials** at runtime
-- ✅ **Perfect for SaaS integration**
-
-#### 2. **Standalone Deployment**
-```bash
-# Copy the example environment file
-cp env.example .env
-
-# Set deployment mode to standalone
-echo "DEPLOYMENT_MODE=standalone" >> .env
-
-# Edit .env and replace ALL dummy values with real credentials
+# Edit .env and configure your actual API keys and values
 nano .env
 
-# Deploy with real credentials
+# Deploy with your configured credentials
 ./deploy.sh
 ```
-- ⚠️ **Requires real credentials** in .env file
-- ✅ **Works independently** without SaaS UI
+- ✅ **Simple configuration** - just add your API keys
+- ✅ **No external dependencies** - fully self-contained
 - 🔧 **Full control** over all settings
-- 🎯 **Uses environment variables** for all company-specific settings
-
-### Deployment Modes
-
-Bigas-core automatically adapts its behavior based on the `DEPLOYMENT_MODE` environment variable:
-
-#### **SaaS Mode (`DEPLOYMENT_MODE=saas`)**
-- **Default mode** - works out of the box
-- **Company-specific credentials** come from SaaS UI at runtime
-- **Core infrastructure** (OpenAI, Google Cloud) comes from environment
-- **Dummy placeholders** are acceptable for company-specific values
-- **Perfect for** SaaS integration and multi-tenant deployments
 
 #### **Standalone Mode (`DEPLOYMENT_MODE=standalone`)**
 - **Company-specific credentials** come from environment variables
