@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Test script for the enhanced expert analysis feature.
 
 This script demonstrates the new expert Digital Marketing Strategist analysis
 that provides comprehensive CRO, SEO, and UX recommendations.
+Tests against the live Google Cloud deployment.
 """
 
 import requests
 import json
 import sys
+import os
 from datetime import datetime
 
 def test_expert_analysis():
     """Test the enhanced expert analysis feature."""
     
-    # Configuration
-    base_url = "https://mcp-marketing-919623369853.europe-north1.run.app"
+    # Configuration - Use environment variable or default
+    base_url = os.environ.get("BIGAS_SERVER_URL", "https://mcp-marketing-919623369853.europe-north1.run.app")
     
-    print("🧪 Testing Enhanced Expert Analysis Feature")
+    print("Testing Enhanced Expert Analysis Feature")
     print("=" * 50)
     
     # Test 1: Analyze underperforming pages with expert analysis
-    print("\n1️⃣ Testing Expert Analysis with Limited Pages")
+    print("\n1. Testing Expert Analysis with Limited Pages")
     print("-" * 40)
     
     try:

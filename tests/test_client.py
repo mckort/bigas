@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Test client for the Bigas Marketing Analytics server.
+Tests the fetch_analytics_report endpoint with proper error handling.
+"""
+
 import httpx
 import asyncio
 import json

@@ -1,643 +1,166 @@
 # 🚀 Bigas - AI-Powered Marketing Analytics Platform
 
-<div align="center">
-  <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
-  <br/>
-  <strong>Automated weekly analytics reports with AI-powered insights for solo founders</strong>
-</div>
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Flask](https://img.shields.io/badge/Flask-3.0-green.svg)](https://flask.palletsprojects.com/)
+[![Google Analytics 4](https://img.shields.io/badge/GA4-API-orange.svg)](https://developers.google.com/analytics/devguides/reporting/data/v1)
+[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4-purple.svg)](https://platform.openai.com/docs)
+[![MCP Compatible](https://img.shields.io/badge/MCP-2025%20Compliant-green.svg)](https://modelcontextprotocol.io/)
+
+**Automated weekly analytics reports with AI-powered insights for solo founders**
 
 ## 📱 Stay Updated
 
-Follow us on X for the latest updates, feature announcements, and marketing insights:
-**[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
+Follow us on X for the latest updates, feature announcements, and marketing insights: **@bigasmyaiteam**
 
 ## 📊 Overview
 
 **Bigas** is an AI team concept designed to provide virtual specialists for different business functions. We've started with our first virtual team member: **The Marketing Specialist**.
 
 ### 🎯 Our Goal
+
 To build a comprehensive AI team that can handle various business functions, starting with marketing and expanding to other areas like sales, customer support, product development, and more.
 
 ### 🚀 Current Implementation: Virtual Marketing Specialist
 
-Bigas is now an **AI-powered marketing analytics platform** that automatically generates comprehensive weekly reports from your Google Analytics 4 data and posts them to Discord. It identifies underperforming pages and provides specific, actionable improvement suggestions.
+Bigas is now an **AI-powered marketing analytics platform** that automatically generates comprehensive weekly reports with actionable insights. It combines Google Analytics 4 data with OpenAI's GPT-4 to provide intelligent marketing recommendations.
 
-**What our Virtual Marketing Specialist does:**
-- 📈 **Weekly Analytics Reports**: Automated GA4 analysis with AI-powered insights
-- 🔍 **Page Performance Analysis**: Identifies underperforming pages with high traffic but low conversions
-- 🎯 **Expert Recommendations**: Provides specific, actionable improvement suggestions based on actual page content
-- 📊 **Discord Integration**: Posts detailed reports and analysis directly to your Discord channel
-- 🗄️ **Data Storage**: Stores reports in Google Cloud Storage for historical analysis
+## 🔌 Model Context Protocol (MCP) Integration
 
-### Key Features
-- 🤖 **AI-Powered Analysis**: Get intelligent insights, not just raw data
-- 📅 **Automated Weekly Reports**: Set up once, get reports every Monday
-- 🔗 **URL Extraction**: Automatically extracts actual page URLs from GA4 data
-- 💾 **Smart Storage**: Stores reports in Google Cloud Storage for analysis
-- 🎯 **Actionable Insights**: Specific improvement suggestions with priority rankings
-- 🌐 **Page Content Analysis**: Web scraping to analyze actual page content and provide concrete suggestions
-- 💰 **Cost-Effective**: Minimal storage and API costs (<$0.10/month)
+**✅ Fully MCP 2025 Compliant Server** - Ready for AI client integration
 
-## 🏗️ Architecture
+Bigas Core implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) specification, making it compatible with MCP-enabled AI clients like Claude and other LLM applications.
 
-Bigas is built as a **Modular Monolith** with a service-oriented architecture:
+### MCP Configuration
 
-```text
-+--------------------------+
-|         Clients          |
-|  - Manual User (curl)    |
-|  - Google Cloud Scheduler|
-+--------------------------+
-             |
-             v
-+--------------------------+
-|   Google Cloud Run       |
-|  (Hosting Environment)   |
-+--------------------------+
-             |
-             v
-+-------------------------------------------------+
-|  Bigas Platform (app.py - Flask App)            |
-|                                                 |
-| +---------------------------------------------+ |
-| | API Gateway / Router                        | |
-| +---------------------------------------------+ |
-|   |                      |                      |
-|   | (/marketing/*)       | (/product/*)         |
-|   v                      v                      |
-| +----------------------+ +--------------------+ |
-| | Marketing Resource   | | Product Resource   | |
-| | (Connects to GA,     | | (Placeholder for   | |
-| |  OpenAI, Discord,    | |  Jira, Figma, etc) | |
-| |  Google Cloud Storage)| |                    | |
-| +----------------------+ +--------------------+ |
-|                                                 |
-+-------------------------------------------------+
-```
-
-### Service Layer
-
-The marketing analytics functionality is organized into focused services:
-
-- **`GA4Service`**: Handles Google Analytics 4 API interactions
-- **`OpenAIService`**: Manages OpenAI API calls for analysis and summarization
-- **`TemplateService`**: Provides template-driven analytics queries
-- **`TrendAnalysisService`**: Orchestrates trend analysis workflows
-- **`StorageService`**: Manages weekly report storage in Google Cloud Storage
-
-### Data Flow
-
-1. **Weekly Reports**: Generated and stored in Google Cloud Storage
-2. **Analysis Jobs**: Retrieve stored reports to analyze underperforming pages
-3. **AI Insights**: Generate improvement suggestions using OpenAI
-4. **Discord Integration**: Post results to Discord for easy access
-5. **Storage Management**: Automatic cleanup of old reports to manage costs
-
-## 🚀 Quick Start
-
-### 1. Prerequisites Setup
-
-#### Google Cloud Setup
-Before deploying, you need to set up Google Cloud:
-
-- Install and authenticate with Google Cloud CLI (`gcloud`)
-- Create a Google Cloud project
-- Enable Cloud Run and Analytics APIs
-- Create a service account for Google Analytics 4 access
-
-See the [Google Cloud documentation](https://cloud.google.com/docs) for detailed setup instructions.
-
-#### Google Analytics Authentication
-You need to authenticate with Google Analytics 4:
-
-- Create a service account in your Google Cloud project
-- Grant the service account "Viewer" permissions to your GA4 property
-- Download the service account key file
-
-### 1. Set Up Google Cloud Project
-
-1. **Create a Google Cloud Project** (if you don't have one)
-2. **Enable required APIs**:
-   - Google Analytics Data API
-   - Google Cloud Storage API
-3. **Create a service account** with the following roles:
-   - `roles/analyticsdata.reader` - Read GA4 data
-   - `roles/storage.objectAdmin` - Manage storage objects
-4. **Download the service account key file**
-
-### 2. Set Up Google Cloud Storage
-
-**⚠️ IMPORTANT**: Google Cloud Storage must be activated and a bucket must be created for report storage.
-
-1. **Activate Google Cloud Storage API** (if not already done in step 1)
-2. **Create a storage bucket**:
-   ```bash
-   # Create a bucket (replace with your preferred name)
-   gsutil mb gs://your-bucket-name
-   
-   # Or use the default name that will be created automatically
-   gsutil mb gs://bigas-analytics-reports
-   ```
-3. **Note the bucket name** - you'll need it for the `STORAGE_BUCKET_NAME` environment variable
-
-### 3. Configure Environment Variables
-
-Copy the example environment file and configure your variables:
-
-```bash
-# Copy the example environment file
-cp env.example .env
-
-# Edit the file with your actual values
-nano .env
-```
-
-**Required environment variables** (see `env.example` for details):
-- `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID
-- `OPENAI_API_KEY` - Your OpenAI API key
-- `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
-- `STORAGE_BUCKET_NAME` - Your Google Cloud Storage bucket (optional, defaults to 'bigas-analytics-reports')
-- `TARGET_KEYWORDS` - Colon-separated list of target keywords for SEO analysis (optional, e.g., "sustainable_swag:eco_friendly_clothing:green_promos")
-
-**⚠️ IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
-
-### 4. Deploy to Google Cloud Run
-
-```bash
-# Clone the repository
-git clone https://github.com/your-username/bigas-marketing.git
-cd bigas-marketing
-
-# ⚠️ IMPORTANT: Configure environment variables first!
-# Make sure you've set up your .env file with all required variables
-# See step 2 above for details on required environment variables
-
-# Deploy using the provided script
-./deploy.sh
-```
-
-### 5. Get Your First Weekly Report
-
-```bash
-curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report
-```
-
-That's it! You'll get a comprehensive AI-powered analysis posted to your Discord channel.
-
-### 6. Automate Weekly Reports (Recommended)
-
-For automated weekly reports, set up Google Cloud Scheduler:
-
-1. **Go to Google Cloud Console**
-   - Navigate to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler)
-   - Select your project
-
-2. **Create a new job**
-   - Click "Create Job"
-   - **Name**: `weekly-analytics-report`
-   - **Region**: Choose your preferred region
-   - **Description**: `Automated weekly analytics reports for Bigas`
-
-3. **Configure the schedule**
-   - **Frequency**: `0 9 * * 1` (Every Monday at 9 AM)
-   - **Timezone**: Choose your timezone (e.g., America/New_York)
-
-4. **Configure the target**
-   - **Target type**: HTTP
-   - **URL**: `https://your-deployment-url.com/mcp/tools/weekly_analytics_report`
-   - **HTTP method**: POST
-
-5. **Save the job**
-
-This will automatically post weekly analytics reports to your Discord channel every Monday at 9 AM.
-
-**Schedule Examples:**
-- `0 9 * * 1` - Every Monday at 9 AM
-- `0 9 * * 1,4` - Every Monday and Thursday at 9 AM  
-- `0 9 1 * *` - First day of every month at 9 AM
-- `0 */6 * * *` - Every 6 hours
-
-### 7. Analyze Underperforming Pages (New!)
-
-The weekly reports are now automatically stored in Google Cloud Storage, enabling you to analyze underperforming pages and get AI-powered improvement suggestions:
-
-#### Set up a second Cloud Scheduler job for page analysis:
-
-1. **Create another Cloud Scheduler job**
-   - **Name**: `analyze-underperforming-pages`
-   - **Frequency**: `0 10 * * 2` (Every Tuesday at 10 AM, after the weekly report)
-   - **URL**: `https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages`
-   - **HTTP method**: POST
-
-This will automatically analyze the latest weekly report, identify underperforming pages, and generate specific improvement suggestions.
-
-#### Manual analysis:
-
-```bash
-# Get a list of all stored reports
-curl -X GET https://your-deployment-url.com/mcp/tools/get_stored_reports
-
-# Get the latest report with summary
-curl -X GET https://your-deployment-url.com/mcp/tools/get_latest_report
-
-# Analyze underperforming pages from the latest report
-curl -X POST https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages
-
-# Analyze underperforming pages from a specific date
-curl -X POST https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages \
-  -H "Content-Type: application/json" \
-  -d '{"report_date": "2024-01-15"}'
-
-# Clean up old reports (keep last 30 days)
-curl -X POST https://your-deployment-url.com/mcp/tools/cleanup_old_reports \
-  -H "Content-Type: application/json" \
-  -d '{"keep_days": 30}'
-```
-
-The analysis will provide:
-- **Priority-ranked improvements** (High/Medium/Low)
-- **Effort estimates** (Quick/Easy/Complex)
-- **Expected impact** for each suggestion
-- **Specific action items** you can implement immediately
-- **Actual page URLs** for direct access to underperforming pages
-
-## 🔗 URL Extraction & Domain Detection
-
-### Overview
-
-The enhanced storage system automatically extracts actual page URLs from Google Analytics data, making underperforming pages analysis much more actionable.
-
-### How It Works
-
-#### 1. Weekly Report Generation
-When the weekly report runs, it now stores:
-- **AI-generated answers** (human-readable insights)
-- **Raw GA4 data** (structured data with URLs)
-
-#### 2. URL Extraction Process
-The system automatically:
-1. **Identifies** the underperforming pages question
-2. **Extracts** page paths from the raw GA4 data
-3. **Converts** paths to full URLs using actual domain from GA4
-4. **Calculates** conversion rates and metrics
-5. **Flags** underperforming pages
-
-#### 3. Analysis Enhancement
-The analysis endpoint now receives:
-- **Specific page URLs** instead of just page names
-- **Detailed metrics** for each page
-- **Conversion rates** for context
-
-### Example Output
-
-#### Before (Page Names Only)
-```
-"Are there underperforming pages with high traffic but low conversions?"
-Answer: "Yes, the Home page and About Us page have high traffic but no conversions."
-```
-
-#### After (With URLs and Metrics)
 ```json
 {
-  "underperforming_pages": [
-    {
-      "question": "Are there underperforming pages with high traffic but low conversions?",
-      "answer": "Yes, the Home page and About Us page have high traffic but no conversions."
-    }
-  ],
-  "page_urls": [
-    {
-      "page_path": "/",
-      "hostname": "bigas.com",
-      "page_url": "https://bigas.com/",
-      "sessions": 39,
-      "conversions": 0,
-      "conversion_rate": 0.0,
-      "is_underperforming": true
-    },
-    {
-      "page_path": "/about-us",
-      "hostname": "bigas.com",
-      "page_url": "https://bigas.com/about-us",
-      "sessions": 10,
-      "conversions": 0,
-      "conversion_rate": 0.0,
-      "is_underperforming": true
-    }
-  ]
+    "manifestUrl": "https://mcp-marketing-919623369853.europe-north1.run.app/mcp/manifest",
+    "openapiUrl": "https://mcp-marketing-919623369853.europe-north1.run.app/openapi.json"
 }
 ```
 
-### AI Analysis Enhancement
+### MCP Features
+- **10 MCP Tools**: Complete analytics toolkit accessible via natural language
+- **JSON-RPC 2.0**: Standard MCP transport protocol
+- **Secure HTTPS**: Production-ready with proper authentication
+- **Tool Categories**: Analytics queries, report generation, storage management, page optimization
 
-With URLs, the AI can now provide much more specific suggestions:
+### Quick MCP Integration
+1. Add the above configuration to your MCP client
+2. Access tools via natural language: *"Generate a weekly analytics report"*
+3. Use storage tools: *"Get the latest stored report"* 
+4. Analyze pages: *"Find underperforming pages and suggest improvements"*
 
-#### Before
-```
-"Improve the homepage to increase conversions."
-```
+> **Note**: Live analytics tools require application context. Storage and report analysis tools work directly via MCP.
 
-#### After
-```
-"**Homepage (https://bigas.com/) - 39 sessions, 0 conversions**
-- Priority: High
-- Effort: Quick
-- Impact: High
-- Actions:
-  1. Add prominent CTA button above the fold
-  2. Include customer testimonials
-  3. Add trust signals (certifications, reviews)
-  4. Optimize page load speed
-  5. A/B test different headlines
-```
+## 🏗️ Architecture Overview
 
-### Technical Implementation
-
-#### Data Flow
-1. **GA4 Query** → Gets page paths and hostname from GA4
-2. **Storage** → Stores raw data alongside AI answers
-3. **Extraction** → Converts paths to URLs using actual domain
-4. **Analysis** → Uses URLs in AI prompts for specific suggestions
-5. **Output** → Provides clickable URLs in results
-
-#### URL Construction
-- **Automatic Domain Detection**: Extracts hostname from GA4 `hostName` dimension
-- **Relative paths** (e.g., `/about-us`) → `https://actualdomain.com/about-us`
-- **Absolute URLs** → Used as-is
-- **Fallback** → Uses path if hostname not available
-
-## 📊 Storage Features
-
-### Storage Architecture
-
-#### Google Cloud Storage Integration
-- **Automatic Storage**: Weekly reports are automatically stored in Google Cloud Storage
-- **Cost-Effective**: Only stores one report per week, overwriting previous reports
-- **Organized Structure**: Reports are stored with date-based organization
-- **Metadata Tracking**: Each report includes metadata for easy retrieval and analysis
-
-#### Storage Structure
-```
-bigas-analytics-reports/
-└── weekly_reports/
-    ├── 2024-01-15/
-    │   └── report.json
-    ├── 2024-01-22/
-    │   └── report.json
-    └── 2024-01-29/
-        └── report.json
-```
-
-### API Endpoints
-
-#### 1. Enhanced Weekly Analytics Report
-**Endpoint**: `POST /mcp/tools/weekly_analytics_report`
-
-**Changes**:
-- Now stores complete report data in Google Cloud Storage
-- Returns storage confirmation and path
-- Maintains Discord integration
-
-**Response**:
-```json
-{
-  "status": "Weekly report process completed and sent to Discord.",
-  "stored": true,
-  "storage_path": "weekly_reports/2024-01-29/report.json"
-}
+```mermaid
+graph TB
+    subgraph "External Services"
+        GA4[Google Analytics 4]
+        OpenAI[OpenAI GPT-4]
+        GCS[Google Cloud Storage]
+        Discord[Discord Webhooks]
+    end
+    
+    subgraph "Bigas Core API"
+        App[Flask App<br/>app.py]
+        
+        subgraph "Marketing Resource"
+            ME[Marketing Endpoints<br/>endpoints.py]
+            MS[Marketing Service<br/>service.py]
+            
+            subgraph "Core Services"
+                GA4S[GA4 Service<br/>ga4_service.py]
+                OAIS[OpenAI Service<br/>openai_service.py]
+                TS[Template Service<br/>template_service.py]
+                TAS[Trend Analysis Service<br/>trend_analysis_service.py]
+                SS[Storage Service<br/>storage_service.py]
+                EAS[Enhanced AI Service<br/>enhanced_ai_service.py]
+            end
+        end
+        
+        subgraph "Product Resource"
+            PE[Product Endpoints<br/>endpoints.py]
+        end
+        
+        subgraph "Utilities"
+            Utils[Utils<br/>utils.py]
+        end
+    end
+    
+    subgraph "Data Flow"
+        Query[Natural Language Query] --> ME
+        ME --> MS
+        MS --> GA4S
+        GA4S --> GA4
+        GA4 --> GA4S
+        GA4S --> OAIS
+        OAIS --> OpenAI
+        OpenAI --> OAIS
+        OAIS --> SS
+        SS --> GCS
+        ME --> Discord
+    end
 ```
 
-#### 2. Get Stored Reports
-**Endpoint**: `GET /mcp/tools/get_stored_reports`
+## 🚀 Core Features
 
-**Purpose**: List all available weekly reports
+### 📊 **Natural Language Analytics**
+Transform questions like "What are my top traffic sources?" into structured GA4 queries and receive AI-powered insights.
 
-**Response**:
-```json
-{
-  "status": "success",
-  "reports": [
-    {
-      "date": "2024-01-29",
-      "blob_name": "weekly_reports/2024-01-29/report.json",
-      "size": 15420,
-      "updated": "2024-01-29T10:00:00Z"
-    }
-  ],
-  "total_reports": 1
-}
-```
+### 📈 **Automated Trend Analysis**
+Compare current and previous periods with intelligent trend detection and business impact analysis.
 
-#### 3. Get Latest Report
-**Endpoint**: `GET /mcp/tools/get_latest_report`
+### 📄 **Weekly Reports**
+Comprehensive automated reports with 7 predefined analytics questions, stored in Google Cloud Storage.
 
-**Purpose**: Retrieve the most recent weekly report with summary
+### 🔍 **Underperforming Page Analysis**
+AI-powered deep dive into pages with high traffic but low conversions, including content scraping and optimization recommendations.
 
-#### 4. Analyze Underperforming Pages
-**Endpoint**: `POST /mcp/tools/analyze_underperforming_pages`
+### ⚡ **Real-time Caching**
+1-hour intelligent caching system to optimize GA4 API usage and response times.
 
-**Purpose**: AI-powered analysis of underperforming pages with improvement suggestions
+### 🔒 **Enterprise Security**
+Rate limiting, input validation, and secure credential management for production environments.
 
-#### 5. Cleanup Old Reports
-**Endpoint**: `POST /mcp/tools/cleanup_old_reports`
+## 🎯 Enhanced Underperforming Page Analysis
 
-**Purpose**: Manage storage costs by deleting old reports
-
-### AI-Powered Analysis Features
-
-#### Underperforming Pages Analysis
-The system can analyze underperforming pages from weekly reports and provide expert-level recommendations for improvement.
-
-### Features:
-- **Expert Digital Marketing Analysis**: Uses an expert Digital Marketing Strategist specializing in CRO, SEO, and UX
-- **Comprehensive Page Analysis**: Analyzes actual page content, SEO elements, UX components, and performance indicators
-- **Actionable Recommendations**: Provides specific, implementable improvements across three key areas:
-  - **Conversion Rate Optimization (CRO)**: Critical issues, CTA optimization, trust building, value proposition, user journey
-  - **Search Engine Optimization (SEO)**: On-page SEO, keyword strategy, technical SEO, content quality, internal linking
-  - **User Experience (UX)**: Visual hierarchy, mobile experience, page speed, accessibility, user intent alignment
-- **Priority Action Plan**: Categorized by High/Medium/Low priority with expected impact and timeline
-- **Discord Integration**: Posts detailed analysis to Discord with comprehensive page metrics
-- **Error Handling**: Clear guidance when page analysis fails due to technical issues
-- **Report Date Tracking**: Shows when the analyzed report was generated, not when analysis runs
-
-### Analysis Includes:
-- **Page Content**: Title, meta description, headings, CTAs, forms, text content
-- **SEO Elements**: Title/meta length, heading structure, internal/external links, canonical URLs, Open Graph, schema markup
-- **UX Elements**: Hero sections, testimonials, pricing, FAQ, newsletter signup, live chat
-- **Performance**: Image optimization, link structure, inline styles, external scripts
-- **Page Structure**: Navigation, footer, responsiveness, paragraphs, lists, breadcrumbs, search functionality
-
-### Important Notes:
-- **Data-Driven Recommendations**: Analysis is only provided when page content can be successfully scraped
-- **No Generic Advice**: If page scraping fails, the system provides error guidance instead of generic recommendations
-- **Quality Over Quantity**: Ensures all recommendations are based on actual page content for maximum relevance
-- **Target Keywords**: Optional parameter for specific SEO optimization based on your target search terms
-
-### Target Keywords Feature:
-When you configure target keywords in the `TARGET_KEYWORDS` environment variable, the analysis includes:
-- **Keyword Presence Analysis**: Checks if keywords appear in title, meta description, and content
-- **Keyword Position Analysis**: Identifies where keywords appear in title and meta description
-- **Specific SEO Recommendations**: Tailored suggestions for optimizing for your target keywords
-- **Content Gap Analysis**: Identifies missing content opportunities for your keywords
-- **Competitive Insights**: How well your page targets specific search terms vs. competitors
-
-**Configuration**: Add to your `.env` file:
-```bash
-TARGET_KEYWORDS=sustainable_swag:eco_friendly_clothing:green_promos
-```
-
-### Usage:
-```bash
-# Analyze underperforming pages from the latest report
-curl -X POST https://your-server.com/mcp/tools/analyze_underperforming_pages \
-  -H "Content-Type: application/json" \
-  -d '{"max_pages": 3}'
-
-# Analyze pages from a specific report date
-curl -X POST https://your-server.com/mcp/tools/analyze_underperforming_pages \
-  -H "Content-Type: application/json" \
-  -d '{"report_date": "2024-01-15", "max_pages": 5}'
-```
-
-**Note**: Target keywords are configured via the `TARGET_KEYWORDS` environment variable and will be automatically included in all analyses.
-
-### Response:
-```json
-{
-  "status": "success",
-  "report_date": "2024-01-15",
-  "pages_analyzed": 3,
-  "max_pages_limit": 3,
-  "discord_posted": true,
-  "discord_messages_sent": 4
-}
-```
-
-### Setup Instructions
-
-#### 1. Google Cloud Permissions
-Ensure your service account has:
-- `storage.objects.create` - Create storage objects
-- `storage.objects.get` - Read storage objects
-- `storage.objects.list` - List storage objects
-- `storage.objects.delete` - Delete storage objects (for cleanup)
-
-#### 2. Automated Workflow Setup
-
-**Weekly Report Job (Monday 9 AM)**
-```bash
-# Cloud Scheduler Configuration
-Name: weekly-analytics-report
-Frequency: 0 9 * * 1
-URL: https://your-deployment-url.com/mcp/tools/weekly_analytics_report
-Method: POST
-```
-
-**Page Analysis Job (Tuesday 10 AM)**
-```bash
-# Cloud Scheduler Configuration
-Name: analyze-underperforming-pages
-Frequency: 0 10 * * 2
-URL: https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages
-Method: POST
-```
-
-**Cleanup Job (Monthly)**
-```bash
-# Cloud Scheduler Configuration
-Name: cleanup-old-reports
-Frequency: 0 2 1 * *
-URL: https://your-deployment-url.com/mcp/tools/cleanup_old_reports
-Method: POST
-Body: {"keep_days": 30}
-```
-
-### Cost Management
-
-#### Storage Costs
-- **Google Cloud Storage**: ~$0.02 per GB per month
-- **Typical Report Size**: ~15KB per report
-- **Monthly Cost**: ~$0.0003 for 30 reports
-
-#### API Costs
-- **OpenAI API**: ~$0.03 per analysis (GPT-4)
-- **Monthly Cost**: ~$0.06 for 2 analyses per month
-
-#### Total Estimated Cost
-- **Storage**: <$0.01/month
-- **Analysis**: ~$0.06/month
-- **Total**: <$0.10/month
-
-## 🔧 Additional Features
-
-While the weekly report is the main feature, Bigas also provides:
-
-### Natural Language Analytics Questions
-
-Ask specific questions about your data:
-
-```bash
-curl -X POST https://your-deployment-url.com/mcp/tools/ask_analytics_question \
-  -H "Content-Type: application/json" \
-  -d '{"question": "Which country had the most active users last week?"}'
-```
-
-### Trend Analysis
-
-Analyze data trends over time:
-
-```bash
-curl -X POST https://your-deployment-url.com/mcp/tools/analyze_trends \
-  -H "Content-Type: application/json" \
-  -d '{"metric": "active_users", "date_range": "last_30_days"}'
-```
-
-### Custom Reports
-
-Create tailored reports with specific metrics:
-
-```bash
-curl -X POST https://your-deployment-url.com/mcp/tools/fetch_custom_report \
-  -H "Content-Type: application/json" \
-  -d '{
-    "dimensions": ["country", "device_category"],
-    "metrics": ["active_users", "sessions"],
-    "date_ranges": [{"start_date": "2024-01-01", "end_date": "2024-01-31"}]
-  }'
-```
-
-## 🌐 Enhanced Page Analysis with Web Scraping
-
-### Overview
-
-Bigas now includes advanced web scraping capabilities to analyze the actual content of underperforming pages and provide specific, actionable improvement suggestions based on real page content rather than generic advice.
+Our most advanced feature provides **specific, actionable improvement suggestions** based on real page content rather than generic advice.
 
 ### How It Works
 
 #### 1. Page Content Analysis
+
 When analyzing underperforming pages, the system:
-- **Scrapes the actual page content** using web scraping technology
-- **Analyzes page structure** including titles, headings, CTAs, forms, and content
-- **Identifies specific issues** based on the actual page content
-- **Provides concrete suggestions** tailored to what's actually on the page
+
+* **Scrapes the actual page content** using web scraping technology
+* **Analyzes page structure** including titles, headings, CTAs, forms, and content
+* **Identifies specific issues** based on the actual page content
+* **Provides concrete suggestions** tailored to what's actually on the page
 
 #### 2. Content Elements Analyzed
+
 The web scraper extracts and analyzes:
-- **Page Title & Meta Description**: SEO and messaging effectiveness
-- **Headings Structure**: Content hierarchy and messaging flow
-- **Call-to-Action Buttons**: Number, placement, and effectiveness
-- **Contact Forms**: Form fields, complexity, and conversion barriers
-- **Images & Media**: Visual content and alt text optimization
-- **Contact Information**: Phone numbers, emails, and accessibility
-- **Social Proof Elements**: Testimonials, reviews, trust signals
-- **Page Structure**: Navigation, footer, responsiveness
+
+* **Page Title & Meta Description**: SEO and messaging effectiveness
+* **Headings Structure**: Content hierarchy and messaging flow
+* **Call-to-Action Buttons**: Number, placement, and effectiveness
+* **Contact Forms**: Form fields, complexity, and conversion barriers
+* **Images & Media**: Visual content and alt text optimization
+* **Contact Information**: Phone numbers, emails, and accessibility
+* **Social Proof Elements**: Testimonials, reviews, trust signals
+* **Page Structure**: Navigation, footer, responsiveness
 
 #### 3. Specific Analysis Output
+
 Instead of generic advice, you get specific recommendations like:
-- **"Add a prominent CTA button after the 'About Our Services' heading"**
-- **"Simplify the contact form by removing the 'Company Size' field"**
-- **"Add customer testimonials after the pricing section"**
-- **"Include a phone number in the header for immediate contact"**
+
+* **"Add a prominent CTA button after the 'About Our Services' heading"**
+* **"Simplify the contact form by removing the 'Company Size' field"**
+* **"Add customer testimonials after the pricing section"**
+* **"Include a phone number in the header for immediate contact"**
 
 ### Example Enhanced Analysis
 
@@ -672,6 +195,35 @@ Instead of generic advice, you get specific recommendations like:
 4. **Content-Aware**: Understands your actual messaging and page structure
 5. **Conversion-Focused**: Recommendations based on proven conversion optimization principles
 
+## 📡 API Endpoints
+
+### Marketing Analytics Endpoints
+
+| Endpoint | Method | Description | Function |
+|----------|--------|-------------|----------|
+| `/mcp/tools/fetch_analytics_report` | POST | Standard GA4 report with basic metrics | `fetch_analytics_report()` |
+| `/mcp/tools/fetch_custom_report` | POST | Custom GA4 report with specified dimensions/metrics | `fetch_custom_report()` |
+| `/mcp/tools/ask_analytics_question` | POST | Natural language query processing | `ask_analytics_question()` |
+| `/mcp/tools/analyze_trends` | POST | Trend analysis with AI insights | `analyze_trends()` |
+| `/mcp/tools/weekly_analytics_report` | POST | Generate comprehensive weekly report | `weekly_analytics_report()` |
+| `/mcp/tools/get_stored_reports` | GET | List all stored weekly reports | `get_stored_reports()` |
+| `/mcp/tools/get_latest_report` | GET | Retrieve most recent weekly report | `get_latest_report()` |
+| `/mcp/tools/analyze_underperforming_pages` | POST | Deep analysis of underperforming pages | `analyze_underperforming_pages()` |
+| `/mcp/tools/cleanup_old_reports` | POST | Clean up old stored reports | `cleanup_old_reports()` |
+
+### System Endpoints
+
+| Endpoint | Method | Description | Function |
+|----------|--------|-------------|----------|
+| `/mcp/manifest` | GET | Combined MCP manifest | `combined_manifest()` |
+| `/openapi.json` | GET | OpenAPI specification | `openapi_spec()` |
+
+### Product Management Endpoints
+
+| Endpoint | Method | Description | Function |
+|----------|--------|-------------|----------|
+| `/mcp/tools/product_resource_placeholder` | POST | Placeholder for future product management features | `product_placeholder()` |
+
 ## 🧪 Testing
 
 ### Test Storage Functionality
@@ -689,89 +241,121 @@ python tests/test_domain_extraction.py
 python tests/health_check.py
 ```
 
+### Running All Tests
+```bash
+# Core functionality tests
+python tests/test_storage.py
+python tests/test_domain_extraction.py
+
+# Health check
+python tests/health_check.py
+
+# Integration tests
+python tests/test_client.py
+```
+
+### Available Test Modules
+
+- `test_storage.py`: Google Cloud Storage integration testing
+- `test_domain_extraction.py`: Domain and URL processing validation
+- `test_client.py`: API endpoint integration testing
+- `health_check.py`: System health validation
+- `auto_fix_test_runner.py`: Automated test execution with fixes
+
 ## 🔒 Security
 
 ### Critical Security Requirements
 
 #### 1. Environment Variables
+
 **NEVER commit sensitive data to version control!**
 
 All sensitive information must be stored as environment variables:
 
-- `GA4_PROPERTY_ID` - Google Analytics 4 Property ID
-- `OPENAI_API_KEY` - OpenAI API key
-- `DISCORD_WEBHOOK_URL` - Discord webhook URL (optional)
-- `GOOGLE_PROJECT_ID` - Google Cloud Project ID
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL` - Service account email
-- `STORAGE_BUCKET_NAME` - Google Cloud Storage bucket (optional)
+* `GA4_PROPERTY_ID` - Google Analytics 4 Property ID
+* `OPENAI_API_KEY` - OpenAI API key
+* `DISCORD_WEBHOOK_URL` - Discord webhook URL (optional)
+* `GOOGLE_PROJECT_ID` - Google Cloud Project ID
+* `GOOGLE_SERVICE_ACCOUNT_EMAIL` - Service account email
+* `STORAGE_BUCKET_NAME` - Google Cloud Storage bucket (optional)
 
 #### 2. File Security
-- ✅ `.env` files are in `.gitignore`
-- ✅ No hardcoded secrets in scripts
-- ✅ Service account JSON files are excluded
-- ✅ API keys are never logged
+
+* ✅ `.env` files are in `.gitignore`
+* ✅ No hardcoded secrets in scripts
+* ✅ Service account JSON files are excluded
+* ✅ API keys are never logged
 
 #### 3. Access Control
-- ✅ Service accounts have minimal required permissions
-- ✅ API keys have appropriate scopes
-- ✅ HTTPS for all external communications
-- ✅ Regular key rotation
+
+* ✅ Service accounts have minimal required permissions
+* ✅ API keys have appropriate scopes
+* ✅ HTTPS for all external communications
+* ✅ Regular key rotation
 
 ### Security Checklist
 
 #### Before Committing Code
-- [ ] No API keys in code
-- [ ] No hardcoded credentials
-- [ ] No sensitive URLs in comments
-- [ ] `.env` file is not tracked
-- [ ] Service account files are excluded
+
+* No API keys in code
+* No hardcoded credentials
+* No sensitive URLs in comments
+* `.env` file is not tracked
+* Service account files are excluded
 
 #### Before Deployment
-- [ ] Environment variables are set
-- [ ] Service account has correct permissions
-- [ ] API keys are valid and active
-- [ ] HTTPS is used for webhooks
-- [ ] Logging excludes sensitive data
+
+* Environment variables are set
+* Service account has correct permissions
+* API keys are valid and active
+* HTTPS is used for webhooks
+* Logging excludes sensitive data
 
 #### Regular Maintenance
-- [ ] Rotate API keys quarterly
-- [ ] Review service account permissions
-- [ ] Monitor API usage and costs
-- [ ] Update dependencies for security patches
-- [ ] Audit access logs
+
+* Rotate API keys quarterly
+* Review service account permissions
+* Monitor API usage and costs
+* Update dependencies for security patches
+* Audit access logs
 
 ### Security Features
 
 #### Input Validation ✅
-- All API endpoints validate input parameters
-- Date ranges are validated for logical consistency (start before end, not in future, max 2 years)
-- Metric/dimension combinations are verified for GA4 compatibility
-- Request data size limits (max 10KB per request)
-- URL format validation for web scraping
-- Content size limits (max 5MB for page analysis)
+
+* All API endpoints validate input parameters
+* Date ranges are validated for logical consistency (start before end, not in future, max 2 years)
+* Metric/dimension combinations are verified for GA4 compatibility
+* Request data size limits (max 10KB per request)
+* URL format validation for web scraping
+* Content size limits (max 5MB for page analysis)
 
 #### Error Handling ✅
-- Sensitive information is never exposed in error messages
-- API keys and webhook URLs are automatically redacted
-- Graceful degradation when services are unavailable
-- Proper HTTP status codes for different error types (400, 404, 429, 500)
+
+* Sensitive information is never exposed in error messages
+* API keys and webhook URLs are automatically redacted
+* Graceful degradation when services are unavailable
+* Proper HTTP status codes for different error types (400, 404, 429, 500)
 
 #### Rate Limiting ✅
-- Simple in-memory rate limiting (100 requests per hour per endpoint)
-- Automatic cleanup of old rate limit entries
-- HTTP 429 status code for rate limit exceeded
-- Per-endpoint rate limiting to prevent abuse
+
+* Simple in-memory rate limiting (100 requests per hour per endpoint)
+* Automatic cleanup of old rate limit entries
+* HTTP 429 status code for rate limit exceeded
+* Per-endpoint rate limiting to prevent abuse
 
 #### Request Validation ✅
-- JSON request validation
-- Required field checking
-- Input sanitization
-- Size and length limits
-- URL security checks
+
+* JSON request validation
+* Required field checking
+* Input sanitization
+* Size and length limits
+* URL security checks
 
 ### Incident Response
 
 #### If API Keys are Compromised
+
 1. **Immediately rotate the compromised key**
 2. **Check for unauthorized usage**
 3. **Review access logs**
@@ -779,6 +363,7 @@ All sensitive information must be stored as environment variables:
 5. **Notify relevant stakeholders**
 
 #### If Service Account is Compromised
+
 1. **Disable the service account**
 2. **Create a new service account**
 3. **Update permissions and environment variables**
@@ -788,11 +373,13 @@ All sensitive information must be stored as environment variables:
 ### Security Tools
 
 #### Recommended Tools
-- **GitGuardian** - Detect secrets in code
-- **Snyk** - Dependency vulnerability scanning
-- **Google Cloud Security Command Center** - Cloud security monitoring
+
+* **GitGuardian** - Detect secrets in code
+* **Snyk** - Dependency vulnerability scanning
+* **Google Cloud Security Command Center** - Cloud security monitoring
 
 #### Code Scanning
+
 ```bash
 # Check for secrets in code
 grep -r "sk-" . --exclude-dir=venv
@@ -802,46 +389,48 @@ grep -r "discord.com/api/webhooks" . --exclude-dir=venv
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Please see our Contributing Guide for details.
 
 ### Development Setup
 
-1. **Clone the repository**
+1. **Clone the repository**  
    ```bash
-   git clone https://github.com/your-username/bigas-marketing.git
-   cd bigas-marketing
+   git clone https://github.com/mckort/bigas.git  
+   cd bigas
    ```
 
-2. **Set up virtual environment**
+2. **Set up virtual environment**  
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
+   python -m venv venv  
+   source venv/bin/activate  # On Windows: venv\Scripts\activate  
+   pip install -r requirements.txt  
    pip install -r requirements-dev.txt
    ```
 
-3. **Configure environment**
+3. **Configure environment**  
    ```bash
-   cp env.example .env
+   cp env.example .env  
    # Edit .env with your actual values
    ```
 
-4. **Run tests**
+4. **Run tests**  
    ```bash
-   python tests/test_storage.py
+   python tests/test_storage.py  
    python tests/test_domain_extraction.py
    ```
 
 ## 📞 Support
 
 For support:
-1. Check the [Issues](https://github.com/your-username/bigas-marketing/issues) page
+
+1. Check the Issues page
 2. Create a new issue with detailed information
 3. Include your environment setup and error messages
 
 ### Security Issues
 
 For security issues:
+
 1. **Do not create public issues** for security problems
 2. **Contact the maintainer directly** with security concerns
 3. **Include detailed information** about the security issue
@@ -849,32 +438,48 @@ For security issues:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## 🔄 Changelog
 
 ### v1.2.0
-- ✅ Added web scraping functionality for page content analysis
-- ✅ Enhanced underperforming pages analysis with actual page content
-- ✅ Improved Discord messaging with one message per page
-- ✅ Added specific, actionable suggestions based on real page structure
-- ✅ Implemented page content analysis (CTAs, forms, headings, etc.)
+
+* ✅ Added web scraping functionality for page content analysis
+* ✅ Enhanced underperforming pages analysis with actual page content
+* ✅ Improved Discord messaging with one message per page
+* ✅ Added specific, actionable suggestions based on real page structure
+* ✅ Implemented page content analysis (CTAs, forms, headings, etc.)
 
 ### v1.1.0
-- ✅ Added Google Cloud Storage integration
-- ✅ Implemented URL extraction from GA4 data
-- ✅ Added underperforming pages analysis
-- ✅ Enhanced AI-powered improvement suggestions
-- ✅ Added automatic domain detection from GA4
+
+* ✅ Added Google Cloud Storage integration
+* ✅ Implemented URL extraction from GA4 data
+* ✅ Added underperforming pages analysis
+* ✅ Enhanced AI-powered improvement suggestions
+* ✅ Added automatic domain detection from GA4
 
 ### v1.0.0
-- ✅ Initial release with weekly analytics reports
-- ✅ Discord integration
-- ✅ Google Analytics 4 integration
-- ✅ OpenAI-powered insights
+
+* ✅ Initial release with weekly analytics reports
+* ✅ Discord integration
+* ✅ Google Analytics 4 integration
+* ✅ OpenAI-powered insights
 
 ---
 
-<div align="center">
-  <strong>Built with ❤️ for solo founders who need actionable marketing insights</strong>
-</div>
+**Built with ❤️ for solo founders who need actionable marketing insights**
+
+## About
+
+Bigas means team in latin. The purpose of this open source project is to create a virtual team of resources to assist solo founders. The resources could be any, starting with marketing. The intent is to keep it simple, for non-professional developers to be able to contribute.
+
+### Resources
+
+- [Readme](README.md)
+- [Contributing](CONTRIBUTING.md)
+
+---
+
+**Version**: 1.1  
+**Last Updated**: September 2025  
+**Compatibility**: Google Analytics 4, OpenAI GPT-4, Python 3.11+, MCP 2025

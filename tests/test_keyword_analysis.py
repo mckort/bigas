@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Test script for the target keywords feature in page analysis.
+Tests against the live Google Cloud deployment.
 """
 
 import asyncio
 import httpx
 import json
+import os
 from datetime import datetime
 
-# Configuration
-SERVER_URL = "https://mcp-marketing-xxxxx-ew.a.run.app"  # Replace with your actual URL
+# Configuration - Use environment variable or default to the correct server
+SERVER_URL = os.environ.get("BIGAS_SERVER_URL", "https://mcp-marketing-919623369853.europe-north1.run.app")
 TIMEOUT = httpx.Timeout(60.0)
 
 async def test_keyword_analysis():
     """Test the target keywords feature."""
-    print("🎯 Testing Target Keywords Feature")
+    print("Testing Target Keywords Feature")
     print("=" * 50)
     
     timeout = httpx.Timeout(TIMEOUT)
