@@ -24,6 +24,22 @@ class GA4Service:
     
     def __init__(self):
         """Initialize the GA4 service with the analytics client."""
+        # Debug: Print service account information
+        import os
+        import google.auth
+        try:
+            credentials, project = google.auth.default()
+            print(f"🔍 GA4 Service Account Debug:")
+            print(f"   Project: {project}")
+            print(f"   Credentials type: {type(credentials)}")
+            if hasattr(credentials, 'service_account_email'):
+                print(f"   Service Account Email: {credentials.service_account_email}")
+            else:
+                print(f"   Service Account Email: Not available in credentials object")
+            print(f"   GOOGLE_SERVICE_ACCOUNT_EMAIL env: {os.environ.get('GOOGLE_SERVICE_ACCOUNT_EMAIL', 'Not set')}")
+        except Exception as e:
+            print(f"🔍 Error getting service account info: {e}")
+        
         self.analytics_client = BetaAnalyticsDataClient()
     
     def get_default_date_range(self) -> Dict[str, str]:

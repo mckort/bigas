@@ -17,7 +17,6 @@ import logging
 import json
 import traceback
 from bigas.resources.marketing.service import MarketingAnalyticsService
-from bigas.resources.marketing.enhanced_ai_service import EnhancedAIService
 from bigas.resources.marketing.utils import (
     convert_metric_name,
     convert_dimension_name,
@@ -129,6 +128,7 @@ def get_ga_report_with_cache(property_id, start_date, end_date, metrics, dimensi
     except Exception as e:
         logger.error(f"Error in get_ga_report_with_cache: {str(e)}")
         raise
+
 @marketing_bp.route('/mcp/tools/fetch_analytics_report', methods=['POST'])
 def fetch_analytics_report():
     # Rate limiting check
@@ -387,6 +387,7 @@ def get_manifest():
             {"name": "cleanup_old_reports", "description": "Cleans up old weekly reports to manage storage costs.", "path": "/mcp/tools/cleanup_old_reports", "method": "POST"},
         ]
     }
+
 @marketing_bp.route('/mcp/tools/weekly_analytics_report', methods=['POST'])
 def weekly_analytics_report():
     import os  # Import os at function level to avoid UnboundLocalError
@@ -405,21 +406,7 @@ def weekly_analytics_report():
             return jsonify({"error": "GA4_PROPERTY_ID not provided in request credentials."}), 400
             
         # Override environment variables with SaaS credentials
-        print(f"🔍 SaaS Mode Debug:")
-        print(f"   Original GA4_PROPERTY_ID: {os.environ.get('GA4_PROPERTY_ID', 'Not set')}")
-        print(f"   New GA4_PROPERTY_ID from SaaS: {property_id}")
-        print(f"   GOOGLE_SERVICE_ACCOUNT_EMAIL: {os.environ.get('GOOGLE_SERVICE_ACCOUNT_EMAIL', 'Not set')}")
-        
         os.environ["GA4_PROPERTY_ID"] = str(property_id)
-        print(f"🔍 After override - GA4_PROPERTY_ID: {os.environ.get('GA4_PROPERTY_ID', 'Not set')}")
-        
-        # Update global variables to use the new property ID
-        global GA4_PROPERTY_ID, GA4_API_PROPERTY_ID
-        GA4_PROPERTY_ID = str(property_id)
-        GA4_API_PROPERTY_ID = f"properties/{GA4_PROPERTY_ID}"
-        print(f"🔍 Updated global GA4_PROPERTY_ID: {GA4_PROPERTY_ID}")
-        print(f"🔍 Updated global GA4_API_PROPERTY_ID: {GA4_API_PROPERTY_ID}")
-        
         if webhook_url:
             os.environ["DISCORD_WEBHOOK_URL"] = webhook_url
     else:
@@ -466,28 +453,27 @@ def weekly_analytics_report():
         "total_questions": len(questions)
     }
 
+    # Get the current property ID (could be from SaaS request or environment)
+    current_property_id = os.environ.get("GA4_PROPERTY_ID")
+
     for q in questions:
         try:
             template_key = question_to_template[q]
-            current_property_id = os.environ.get("GA4_PROPERTY_ID")
-            print(f"🔍 Processing question '{template_key}' with GA4_PROPERTY_ID: {current_property_id}")
             # Use template-driven approach for reliability
             if template_key == "traffic_sources":
-                # Get both answer and raw data for traffic sources
-                raw_data = service.template_service.get_traffic_sources_data(current_property_id)
-                answer = service.openai_service.generate_traffic_sources_analysis(raw_data)
+                answer = service.answer_traffic_sources()
+                raw_data = None  # Traffic sources doesn't need raw data
             elif template_key == "trend_analysis":
-                # Special handling for trend analysis using service
+                # Special handling for trend analysis using service - use current property ID
                 result = service.trend_analysis_service.get_weekly_trend_analysis(current_property_id)
                 answer = result["ai_insights"]
                 raw_data = result.get("data", {})  # Store trend data
             else:
-                # For other templates, use the template service with OpenAI summarization
+                # For other templates, use the template service with OpenAI summarization - use current property ID
                 raw_data = service.template_service.run_template_query(template_key, current_property_id)
                 answer = service.openai_service.format_response_obj(raw_data, q)
             
             # Generate enhanced recommendation for this specific question
-            recommendation = None
             try:
                 # Get target keywords and company context based on deployment mode
                 if deployment_mode == "saas":
@@ -526,6 +512,9 @@ def weekly_analytics_report():
                 
             except Exception as e:
                 print(f"⚠️ Failed to generate recommendation for question: {e}")
+                print(f"⚠️ Full error traceback:")
+                import traceback
+                traceback.print_exc()
                 recommendation = None
             
             message = f"**Q: {q}**\nA: {answer}"
@@ -533,7 +522,7 @@ def weekly_analytics_report():
                 post_to_discord(webhook_url, message)
             full_report += message + "\n\n"
             
-            # Store question and answer in report data with recommendation
+            # Store question and answer in report data with raw data for URL extraction
             report_data["questions"].append({
                 "question": q,
                 "answer": answer,
@@ -548,10 +537,10 @@ def weekly_analytics_report():
             if should_post_to_discord:
                 post_to_discord(webhook_url, error_message)
             
-            # Store error in report data - no fallback answer
+            # Store error in report data
             report_data["questions"].append({
                 "question": q,
-                "answer": None,  # No fallback answer
+                "answer": f"Error: {str(e)}",
                 "template_key": question_to_template.get(q, "unknown"),
                 "error": True,
                 "raw_data": None
@@ -567,17 +556,15 @@ def weekly_analytics_report():
             temperature=0.7
         )
         summary = summary_response.choices[0].message.content.strip()
-        if should_post_to_discord:
-            post_to_discord(webhook_url, f"Summary Recommendations:\n{summary}")
+        post_to_discord(webhook_url, f"Summary Recommendations:\n{summary}")
         
         # Store summary in report data
         report_data["summary"] = summary
         
     except Exception as e:
         logger.error(f"Could not generate weekly summary: {e}")
-        if should_post_to_discord:
-            post_to_discord(webhook_url, "Could not generate weekly summary.")
-        report_data["summary"] = None  # No fallback summary
+        post_to_discord(webhook_url, "Could not generate weekly summary.")
+        report_data["summary"] = f"Error generating summary: {str(e)}"
 
     # Store the report in Google Cloud Storage
     try:
@@ -587,40 +574,11 @@ def weekly_analytics_report():
         logger.error(f"Failed to store weekly report: {e}")
         # Don't fail the entire request if storage fails
 
-    # Prepare response based on deployment mode
-    if deployment_mode == "saas":
-        # Collect all individual question recommendations into structured_recommendations
-        structured_recommendations = []
-        questions = report_data.get("questions", [])
-        
-        for question in questions:
-            if isinstance(question, dict) and "recommendation" in question and question["recommendation"]:
-                recommendation = question["recommendation"]
-                if isinstance(recommendation, dict):
-                    structured_recommendations.append(recommendation)
-        
-        # Return full report data for SaaS consumption wrapped in "report" field
-        return jsonify({
-            "status": "Weekly report process completed successfully.",
-            "stored": True,
-            "storage_path": stored_path if 'stored_path' in locals() else None,
-            "report": {
-                "summary": report_data.get("summary", ""),
-                "questions": questions,
-                "structured_recommendations": structured_recommendations,  # Populated from individual question recommendations
-                "generated_at": report_data.get("generated_at", ""),
-                "generated_at_readable": datetime.now().strftime("%B %d, %Y at %I:%M %p"),
-                "generated_timestamp": str(int(datetime.now().timestamp())),
-                "metrics_summary": {}
-            }
-        })
-    else:
-        # Standalone mode - minimal response
-        return jsonify({
-            "status": "Weekly report process completed and sent to Discord.",
-            "stored": True,
-            "storage_path": stored_path if 'stored_path' in locals() else None
-        })
+    return jsonify({
+        "status": "Weekly report process completed and sent to Discord.",
+        "stored": True,
+        "storage_path": stored_path if 'stored_path' in locals() else None
+    })
 
 @marketing_bp.route('/mcp/tools/get_stored_reports', methods=['GET'])
 def get_stored_reports():
@@ -1315,7 +1273,3 @@ def analyze_page_content(page_url: str) -> Dict[str, Any]:
             'has_social_proof': False,
             'page_structure': {}
         }
-
-
-
-

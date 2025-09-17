@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Any
 import openai
 import json
 import logging
-from bigas.resources.marketing.utils import generate_basic_analysis
+# Removed fallback function import - no fallbacks allowed
 
 logger = logging.getLogger(__name__)
 
@@ -233,8 +233,8 @@ class OpenAIService:
             return completion.choices[0].message.content
         except Exception as e:
             logger.error(f"Error generating analysis for filtered data: {e}")
-            # Fallback to basic analysis
-            return generate_basic_analysis(data, question)
+            # No fallback - return None
+            return None
     
     def generate_trend_insights(self, formatted_trends: dict, metrics: list, dimensions: list, date_range: str) -> str:
         """Generate AI-powered insights for trend analysis."""
