@@ -2,7 +2,9 @@ from typing import Dict, List, Optional, Any
 import logging
 from bigas.resources.marketing.utils import (
     calculate_session_share,
-    find_high_traffic_low_conversion
+    find_high_traffic_low_conversion,
+    calculate_session_quality,
+    calculate_engagement_metrics
 )
 
 logger = logging.getLogger(__name__)
@@ -18,7 +20,8 @@ QUESTION_TEMPLATES = {
     # 2. What is the average session duration and pages per session across all users?
     "session_quality": {
         "dimensions": [],
-        "metrics": ["averageSessionDuration", "screenPageViewsPerSession"]
+        "metrics": ["sessions", "screenPageViews", "engagedSessions"],
+        "postprocess": "calculate_session_quality"
     },
     # 3. Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?
     "top_pages_conversions": {
@@ -29,8 +32,9 @@ QUESTION_TEMPLATES = {
     # 4. Which pages or sections (e.g., blog, product pages, landing pages) drive the most engagement (e.g., time on page, low bounce rate)?
     "engagement_pages": {
         "dimensions": ["pagePath", "hostName"],
-        "metrics": ["averageSessionDuration", "bounceRate"],
-        "order_by": [{"field": "averageSessionDuration", "direction": "DESCENDING"}]
+        "metrics": ["sessions", "engagedSessions", "screenPageViews"],
+        "order_by": [{"field": "engagedSessions", "direction": "DESCENDING"}],
+        "postprocess": "calculate_engagement_metrics"
     },
     # 5. Are there underperforming pages with high traffic but low conversions?
     "underperforming_pages": {
@@ -82,6 +86,12 @@ class TemplateService:
         elif template.get("postprocess") == "find_high_traffic_low_conversion":
             logger.info(f"Applying find_high_traffic_low_conversion to {template_key}")
             data = find_high_traffic_low_conversion(data)
+        elif template.get("postprocess") == "calculate_session_quality":
+            logger.info(f"Applying calculate_session_quality to {template_key}")
+            data = calculate_session_quality(data)
+        elif template.get("postprocess") == "calculate_engagement_metrics":
+            logger.info(f"Applying calculate_engagement_metrics to {template_key}")
+            data = calculate_engagement_metrics(data)
         
         return data
     

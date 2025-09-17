@@ -614,11 +614,11 @@ def validate_ga4_metrics_dimensions(metrics: List[str], dimensions: List[str]) -
     Returns:
         Tuple of (is_valid, error_message)
     """
-    # Common GA4 metrics
+    # Common GA4 metrics (using actual GA4 API metrics)
     valid_metrics = {
-        'activeUsers', 'sessions', 'screenPageViews', 'bounceRate', 
-        'averageSessionDuration', 'screenPageViewsPerSession', 'conversions',
-        'totalRevenue', 'transactions', 'ecommercePurchases'
+        'activeUsers', 'sessions', 'screenPageViews', 'sessionDuration', 
+        'engagedSessions', 'conversions', 'totalRevenue', 'transactions', 
+        'ecommercePurchases', 'eventCount', 'userEngagementDuration'
     }
     
     # Common GA4 dimensions
@@ -693,4 +693,108 @@ def validate_request_data(data: Dict[str, Any], required_fields: List[str] = Non
     if len(str(data)) > 10000:  # 10KB limit
         return False, "Request data too large (max 10KB)"
     
-    return True, "" 
+    return True, ""
+
+def calculate_session_quality(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Calculate session quality metrics from GA4 data.
+    
+    Args:
+        data: GA4 response data with sessions, screenPageViews, engagedSessions
+        
+    Returns:
+        Enhanced data with calculated metrics
+    """
+    try:
+        rows = data.get("rows", [])
+        if not rows:
+            return data
+            
+        # Calculate aggregate metrics
+        total_sessions = 0
+        total_page_views = 0
+        total_engaged_sessions = 0
+        
+        for row in rows:
+            metric_values = row.get("metric_values", [])
+            if len(metric_values) >= 3:
+                sessions = float(metric_values[0].get("value", 0))
+                page_views = float(metric_values[1].get("value", 0))
+                engaged_sessions = float(metric_values[2].get("value", 0))
+                
+                total_sessions += sessions
+                total_page_views += page_views
+                total_engaged_sessions += engaged_sessions
+        
+        # Calculate derived metrics
+        pages_per_session = total_page_views / total_sessions if total_sessions > 0 else 0
+        engagement_rate = total_engaged_sessions / total_sessions if total_sessions > 0 else 0
+        bounce_rate = 1 - engagement_rate  # Bounce rate is inverse of engagement rate
+        
+        # Add calculated metrics to the data
+        data["calculated_metrics"] = {
+            "screenPageViewsPerSession": pages_per_session,
+            "engagementRate": engagement_rate,
+            "bounceRate": bounce_rate,
+            "totalSessions": total_sessions,
+            "totalScreenPageViews": total_page_views,
+            "totalEngagedSessions": total_engaged_sessions
+        }
+        
+        return data
+        
+    except Exception as e:
+        logger.error(f"Error calculating session quality: {e}")
+        return data
+
+def calculate_engagement_metrics(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Calculate engagement metrics from GA4 data.
+    
+    Args:
+        data: GA4 response data with sessions, engagedSessions, screenPageViews
+        
+    Returns:
+        Enhanced data with calculated engagement metrics
+    """
+    try:
+        rows = data.get("rows", [])
+        if not rows:
+            return data
+            
+        # Calculate aggregate metrics
+        total_sessions = 0
+        total_engaged_sessions = 0
+        total_page_views = 0
+        
+        for row in rows:
+            metric_values = row.get("metric_values", [])
+            if len(metric_values) >= 3:
+                sessions = float(metric_values[0].get("value", 0))
+                engaged_sessions = float(metric_values[1].get("value", 0))
+                page_views = float(metric_values[2].get("value", 0))
+                
+                total_sessions += sessions
+                total_engaged_sessions += engaged_sessions
+                total_page_views += page_views
+        
+        # Calculate derived metrics
+        engagement_rate = total_engaged_sessions / total_sessions if total_sessions > 0 else 0
+        bounce_rate = 1 - engagement_rate  # Bounce rate = 1 - engagement rate
+        pages_per_session = total_page_views / total_sessions if total_sessions > 0 else 0
+        
+        # Add calculated metrics to the data
+        data["calculated_metrics"] = {
+            "engagementRate": engagement_rate,
+            "bounceRate": bounce_rate,
+            "screenPageViewsPerSession": pages_per_session,
+            "totalSessions": total_sessions,
+            "totalEngagedSessions": total_engaged_sessions,
+            "totalScreenPageViews": total_page_views
+        }
+        
+        return data
+        
+    except Exception as e:
+        logger.error(f"Error calculating engagement metrics: {e}")
+        return data 
