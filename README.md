@@ -49,20 +49,49 @@ Bigas is now a **comprehensive AI-powered marketing analytics platform** that au
 
 ### Environment Configuration
 
-Bigas-core runs in standalone mode with direct Google Analytics 4 integration:
-#### **Standalone Deployment**
+Bigas-core supports two deployment modes with automatic credential handling:
+
+#### 1. **SaaS Deployment (Recommended for most users)**
 ```bash
 # Copy the example environment file
 cp env.example .env
-# Edit .env and configure your actual API keys and values
-nano .env
 
-# Deploy with your configured credentials
+# Deploy with dummy placeholders (will be overridden by SaaS UI)
 ./deploy.sh
 ```
-- ✅ **Simple configuration** - just add your API keys
-- ✅ **No external dependencies** - fully self-contained
+- ✅ **No configuration needed** - dummy values work for deployment
+- ✅ **SaaS UI handles real credentials** at runtime
+- ✅ **Perfect for SaaS integration**
+
+#### 2. **Standalone Deployment**
+```bash
+# Copy the example environment file
+cp env.example .env
+
+# Set deployment mode to standalone
+echo "DEPLOYMENT_MODE=standalone" >> .env
+
+# Edit .env and replace ALL dummy values with real credentials
+nano .env
+
+# Deploy with real credentials
+./deploy.sh
+```
+- ⚠️ **Requires real credentials** in .env file
+- ✅ **Works independently** without SaaS UI
 - 🔧 **Full control** over all settings
+- 🎯 **Uses environment variables** for all company-specific settings
+
+### Deployment Modes
+
+Bigas-core automatically adapts its behavior based on the `DEPLOYMENT_MODE` environment variable:
+
+#### **SaaS Mode (`DEPLOYMENT_MODE=saas`)**
+- **Default mode** - works out of the box
+- **Company-specific credentials** come from SaaS UI at runtime
+- **Core infrastructure** (OpenAI, Google Cloud) comes from environment
+- **Dummy placeholders** are acceptable for company-specific values
+- **Perfect for** SaaS integration and multi-tenant deployments
 
 #### **Standalone Mode (`DEPLOYMENT_MODE=standalone`)**
 - **Company-specific credentials** come from environment variables
@@ -362,27 +391,47 @@ This will automatically post weekly analytics reports to your Discord channel ev
 
 ### 9. Structured Recommendations Format
 
-The AI generates exactly 8 structured recommendations with this format:
+The weekly report generates **one focused recommendation per question** (7 questions = up to 7 recommendations):
 
 ```json
 {
   "recommendations": [
     {
-      "fact": "The data shows a 27.1% decrease in active users from 48 to 35 over the last 30 days",
-      "recommendation": "Investigate marketing strategy changes and evaluate recent campaign performance",
-      "category": "analytics",
+      "fact": "Direct traffic is 62.5% while organic search is only 25% of total sessions",
+      "recommendation": "Create 5 SEO-optimized blog posts targeting key product keywords",
+      "category": "seo",
       "priority": "high",
       "impact_score": 8
+    },
+    {
+      "fact": "Homepage has 0 CTA buttons and 48 sessions but 0% conversion rate",
+      "recommendation": "Add 'Contact Us' button in hero section and contact form",
+      "category": "conversion",
+      "priority": "high",
+      "impact_score": 9
     }
   ]
 }
 ```
 
+**Recommendation Features:**
+- ✅ **One per question**: Each of the 7 analytics questions generates one focused recommendation
+- ✅ **Specific numbers**: Every fact includes actual metrics (e.g., "62.5%", "48 sessions", "0 conversions")
+- ✅ **Concrete actions**: Recommendations are specific (e.g., "Create 5 SEO-optimized blog posts", not "Improve SEO")
+- ✅ **Page-content-aware**: Underperforming pages get recommendations based on actual scraped content
+
+**Page Scraping for Underperforming Pages:**
+When the weekly report detects underperforming pages (high traffic, low conversions):
+1. **Automatically scrapes** the most visited underperforming page
+2. **Analyzes content**: CTAs, forms, testimonials, social proof, H1 tags
+3. **Generates specific recommendation**: Based on what's actually missing (e.g., "Homepage has 0 CTA buttons")
+
 **Fact Requirements:**
-- ✅ **GOOD**: "Direct traffic accounts for 55.7% of sessions, Organic Social 31.1%, Organic Search only 8.2%"
-- ✅ **GOOD**: "The homepage has 36 sessions with 154 total events (4.3 events per session) showing good engagement"
+- ✅ **GOOD**: "Direct traffic is 62.5% while organic search is only 25% of total sessions"
+- ✅ **GOOD**: "Homepage has 48 sessions but 0 conversions (0% conversion rate)"
+- ✅ **GOOD**: "Homepage has 0 CTA buttons and no testimonials found"
 - ❌ **BAD**: "Traffic has been declining" (no specific numbers)
-- ❌ **BAD**: "Most traffic comes from social media" (no percentages)
+- ❌ **BAD**: "Homepage needs improvement" (too generic)
 
 **Event-Aware Analysis:**
 - Events (page_view, scroll, user_engagement, click) are considered **positive engagement signals**

@@ -477,7 +477,59 @@ def weekly_analytics_report():
                 raw_data = service.template_service.run_template_query(template_key, current_property_id)
                 answer = service.openai_service.format_response_obj(raw_data, q)
             
-            # Generate enhanced recommendation for this specific question
+            # Special handling for underperforming pages: scrape and analyze the page content
+            page_content_analysis = None
+            underperforming_page_url = None
+            max_sessions = 0
+            
+            if template_key == "underperforming_pages" and raw_data:
+                try:
+                    print(f"🔍 Processing underperforming pages data for scraping")
+                    # Extract the most underperforming page from raw_data
+                    
+                    # Look for page data in raw_data
+                    if isinstance(raw_data, dict) and "rows" in raw_data:
+                        print(f"🔍 Found {len(raw_data['rows'])} rows in raw_data")
+                        for row in raw_data["rows"]:
+                            try:
+                                # GA4 returns metric_values and dimension_values as arrays of strings
+                                metric_values = row.get("metric_values", [])
+                                dimension_values = row.get("dimension_values", [])
+                                
+                                if len(metric_values) >= 2 and len(dimension_values) >= 2:
+                                    sessions = int(metric_values[0])
+                                    conversions = int(metric_values[1])
+                                    
+                                    # Find page with most sessions but low/no conversions
+                                    if sessions > max_sessions and conversions == 0:
+                                        max_sessions = sessions
+                                        page_path = dimension_values[0]
+                                        hostname = dimension_values[1]
+                                        
+                                        # Construct full URL
+                                        if page_path and hostname:
+                                            underperforming_page_url = f"https://{hostname}{page_path}"
+                                            print(f"🎯 Found underperforming page: {underperforming_page_url} ({sessions} sessions, 0 conversions)")
+                            except (ValueError, IndexError, KeyError, TypeError) as e:
+                                print(f"⚠️ Error processing row: {e}")
+                                continue
+                    
+                    # If we found an underperforming page, scrape and analyze it
+                    if underperforming_page_url:
+                        print(f"🔍 Scraping underperforming page: {underperforming_page_url}")
+                        page_content_analysis = analyze_page_content(underperforming_page_url)
+                        print(f"✅ Page content scraped: {page_content_analysis.get('title', 'Unknown')}")
+                        print(f"   - CTAs: {len(page_content_analysis.get('cta_buttons', []))}, Forms: {len(page_content_analysis.get('forms', []))}")
+                    else:
+                        print(f"⚠️ No underperforming page URL found in raw_data")
+                        
+                except Exception as e:
+                    print(f"⚠️ Failed to scrape underperforming page: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    page_content_analysis = None
+            
+            # Generate focused recommendation for this specific question
             try:
                 # Get target keywords and company context based on deployment mode
                 if deployment_mode == "saas":
@@ -502,17 +554,156 @@ def weekly_analytics_report():
                         "description": "Business website requiring analytics optimization"
                     }
                 
-                # Generate specific recommendation for this question's data
-                enhanced_ai_service = EnhancedAIService(OPENAI_API_KEY)
-                question_data = {"questions": [{"question": q, "answer": answer, "raw_data": raw_data}]}
+                # Generate question-specific recommendation
+                recommendation = None
                 
-                recommendations = enhanced_ai_service.generate_enhanced_recommendations(
-                    question_data,
-                    company_context,
-                    target_keywords
-                )
-                
-                recommendation = recommendations[0] if recommendations else None
+                # Special handling for underperforming pages with page content analysis
+                if template_key == "underperforming_pages" and page_content_analysis and not page_content_analysis.get('error'):
+                    print(f"🔍 Using page content analysis for underperforming pages recommendation")
+                    
+                    # Extract page name from path for readability
+                    page_name = "Homepage" if underperforming_page_url.endswith("//") or underperforming_page_url.split("/")[-1] == "" else underperforming_page_url.split("/")[-1].replace("-", " ").title()
+                    if "/" in underperforming_page_url.rstrip("/"):
+                        page_path = "/" + "/".join(underperforming_page_url.rstrip("/").split("/")[3:])
+                    else:
+                        page_path = "/"
+                    
+                    # Generate page-content-aware recommendation using OpenAI
+                    page_analysis_prompt = f"""
+You are an expert Digital Marketing Strategist. Analyze this underperforming page and provide ONE specific recommendation.
+
+Page: {page_path} ({page_name})
+Full URL: {underperforming_page_url}
+Analytics: {max_sessions} sessions, 0 conversions (0% conversion rate)
+
+Page Content Analysis:
+- Title: {page_content_analysis.get('title', 'No title')}
+- Meta Description: {page_content_analysis.get('meta_description', 'None')}
+- H1 Tags: {page_content_analysis.get('seo_elements', {}).get('h1_count', 0)}
+- CTA Buttons: {len(page_content_analysis.get('cta_buttons', []))}
+- Forms: {len(page_content_analysis.get('forms', []))}
+- Contact Info: {page_content_analysis.get('has_contact_info', False)}
+- Testimonials: {page_content_analysis.get('ux_elements', {}).get('has_testimonials', False)}
+- Social Proof: {page_content_analysis.get('has_social_proof', False)}
+
+Generate ONE recommendation in this EXACT JSON format:
+{{{{
+  "fact": "Page path/name + what is wrong (include numbers: sessions, CTAs, forms, etc.)",
+  "recommendation": "Concrete action to fix it (specific and implementable)",
+  "category": "conversion",
+  "priority": "high"
+}}}}
+
+CRITICAL: The fact MUST start with the page identifier (e.g., "Homepage" or the page path)
+
+EXAMPLES:
+{{{{
+  "fact": "Homepage (/) has {max_sessions} sessions, 0 conversions, and 0 CTA buttons",
+  "recommendation": "Add prominent 'Contact Us' button in hero section",
+  "category": "conversion",
+  "priority": "high"
+}}}}
+
+{{{{
+  "fact": "/about-us page has {max_sessions} sessions, 0% conversion rate, no testimonials",
+  "recommendation": "Add customer testimonials section below company story",
+  "category": "conversion",
+  "priority": "high"
+}}}}
+
+Return ONLY the JSON, no explanation.
+"""
+                    
+                    try:
+                        response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
+                            model="gpt-4",
+                            messages=[{"role": "user", "content": page_analysis_prompt}],
+                            max_tokens=200,
+                            temperature=0.3
+                        )
+                        
+                        content = response.choices[0].message.content.strip()
+                        # Extract JSON from response
+                        if "```json" in content:
+                            content = content.split("```json")[1].split("```")[0].strip()
+                        elif "```" in content:
+                            content = content.split("```")[1].split("```")[0].strip()
+                        
+                        recommendation = json.loads(content)
+                        print(f"✅ Page-content-aware recommendation: {recommendation.get('fact', '')[:60]}...")
+                    except Exception as e:
+                        print(f"⚠️ Failed to generate page-content recommendation: {e}")
+                        recommendation = None
+                else:
+                    # Generate question-specific recommendation based on answer and raw data
+                    recommendation_prompt = f"""
+You are a marketing analyst. Based on this analytics question and answer, generate ONE specific, actionable recommendation.
+
+Question: {q}
+
+Answer: {answer[:500]}
+
+Raw Data Summary: {str(raw_data)[:300] if raw_data else 'No raw data'}
+
+Generate ONE recommendation in this EXACT JSON format:
+{{{{
+  "fact": "Specific finding from the data with actual numbers",
+  "recommendation": "Concrete, implementable action (max 80 chars)",
+  "category": "traffic|content|conversion|seo|engagement",
+  "priority": "high|medium|low"
+}}}}
+
+CRITICAL REQUIREMENTS:
+- Include SPECIFIC NUMBERS from the data in the fact (percentages, counts, durations)
+- If discussing specific pages, ALWAYS include the page name/path at the start of the fact
+- Make recommendation ACTIONABLE and CONCRETE (not generic)
+- Keep recommendation under 80 characters
+
+EXAMPLES:
+{{{{
+  "fact": "Direct traffic is 62.5% while organic search is only 25% of total sessions",
+  "recommendation": "Create 5 SEO-optimized blog posts targeting key product keywords",
+  "category": "seo",
+  "priority": "high"
+}}}}
+
+{{{{
+  "fact": "/about-us page has 11 sessions but 0 conversions (0% conversion rate)",
+  "recommendation": "Add customer testimonials and clear CTA in about section",
+  "category": "conversion",
+  "priority": "high"
+}}}}
+
+{{{{
+  "fact": "Average session duration is 129 seconds vs 135 second industry benchmark",
+  "recommendation": "Add FAQ section to high-traffic pages to increase engagement",
+  "category": "engagement",
+  "priority": "medium"
+}}}}
+
+Return ONLY the JSON, no explanation.
+"""
+                    
+                    try:
+                        response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
+                            model="gpt-4",
+                            messages=[{"role": "user", "content": recommendation_prompt}],
+                            max_tokens=200,
+                            temperature=0.3
+                        )
+                        
+                        content = response.choices[0].message.content.strip()
+                        # Extract JSON from response
+                        if "```json" in content:
+                            content = content.split("```json")[1].split("```")[0].strip()
+                        elif "```" in content:
+                            content = content.split("```")[1].split("```")[0].strip()
+                        
+                        recommendation = json.loads(content)
+                        print(f"✅ Question-specific recommendation: {recommendation.get('fact', '')[:60]}...")
+                    except Exception as e:
+                        print(f"⚠️ Failed to generate recommendation for question: {e}")
+                        recommendation = None
                 
             except Exception as e:
                 print(f"⚠️ Failed to generate recommendation for question: {e}")
