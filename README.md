@@ -1164,6 +1164,303 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - ✅ Google Analytics 4 integration
 - ✅ OpenAI-powered insights
 
+## 🤖 AI Prompts Reference
+
+This section documents all the AI prompts used in Bigas for generating analytics insights and recommendations.
+
+### 📊 Initial Analytics Questions
+
+The weekly report asks these 7 core questions to generate comprehensive insights:
+
+```python
+questions = [
+  "What are the key trends in our website performance over the last 30 days, including user growth, session patterns, and any significant changes?",
+  "What are the primary traffic sources (e.g., organic search, direct, referral, paid search, social, email) contributing to total sessions, and what is their respective share?",
+  "What is the average session duration and pages per session across all users?",
+  "Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?",
+  "Which pages or sections (e.g., blog, product pages, landing pages) drive the most engagement (e.g., time on page, low bounce rate)?",
+  "Are there underperforming pages with high traffic but low conversions?",
+  "How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?"
+]
+```
+
+### 🎯 Recommendation Generation Prompts
+
+#### 1. Page-Content-Aware Recommendation Prompt
+
+Used when analyzing underperforming pages with actual scraped content:
+
+```python
+page_analysis_prompt = f"""
+You are an expert Digital Marketing Strategist. Analyze this underperforming page and provide ONE specific recommendation.
+
+Page: {page_path} ({page_name})
+Full URL: {underperforming_page_url}
+Analytics: {max_sessions} sessions, 0 conversions (0% conversion rate)
+
+Page Content Analysis:
+- Title: {page_content_analysis.get('title', 'No title')}
+- Meta Description: {page_content_analysis.get('meta_description', 'None')}
+- H1 Tags: {page_content_analysis.get('seo_elements', {}).get('h1_count', 0)}
+- Forms: {len(page_content_analysis.get('forms', []))}
+- Contact Info: {page_content_analysis.get('has_contact_info', False)}
+- Testimonials: {page_content_analysis.get('ux_elements', {}).get('has_testimonials', False)}
+- Social Proof: {page_content_analysis.get('has_social_proof', False)}
+
+Generate ONE recommendation in this EXACT JSON format:
+{{
+  "fact": "Page path/name + what is wrong (include numbers: sessions, CTAs, forms, etc.)",
+  "recommendation": "Concrete action to fix it (specific and implementable)",
+  "category": "conversion",
+  "priority": "high"
+}}
+
+CRITICAL: The fact MUST start with the page identifier (e.g., "Homepage" or the page path)
+
+EXAMPLES:
+{{
+  "fact": "Homepage (/) has {max_sessions} sessions, 0 conversions, and 0 CTA buttons",
+  "recommendation": "Add prominent 'Contact Us' button in hero section",
+  "category": "conversion",
+  "priority": "high"
+}}
+
+{{
+  "fact": "/about-us page has {max_sessions} sessions, 0% conversion rate, no testimonials",
+  "recommendation": "Add customer testimonials section below company story",
+  "category": "conversion",
+  "priority": "high"
+}}
+
+Return ONLY the JSON, no explanation.
+"""
+```
+
+#### 2. General Recommendation Prompt
+
+Used for questions that don't involve specific page analysis:
+
+```python
+recommendation_prompt = f"""
+You are a marketing analyst. Based on this analytics question and answer, generate ONE specific, actionable recommendation.
+
+Question: {q}
+
+Answer: {answer[:500]}
+
+Raw Data Summary: {str(raw_data)[:300] if raw_data else 'No raw data'}
+
+Generate ONE recommendation in this EXACT JSON format:
+{{
+  "fact": "Specific finding from the data with actual numbers",
+  "recommendation": "Concrete, implementable action (max 80 chars)",
+  "category": "traffic|content|conversion|seo|engagement",
+  "priority": "high|medium|low"
+}}
+
+CRITICAL REQUIREMENTS:
+- Include SPECIFIC NUMBERS from the data in the fact (percentages, counts, durations)
+- If discussing specific pages, ALWAYS include the page name/path at the start of the fact
+- Make recommendation ACTIONABLE and CONCRETE (not generic)
+- Keep recommendation under 80 characters
+
+EXAMPLES:
+{{
+  "fact": "Direct traffic is 62.5% while organic search is only 25% of total sessions",
+  "recommendation": "Create 5 SEO-optimized blog posts targeting key product keywords",
+  "category": "seo",
+  "priority": "high"
+}}
+
+{{
+  "fact": "/about-us page has 11 sessions but 0 conversions (0% conversion rate)",
+  "recommendation": "Add customer testimonials and clear CTA in about section",
+  "category": "conversion",
+  "priority": "high"
+}}
+
+{{
+  "fact": "Average session duration is 129 seconds vs 135 second industry benchmark",
+  "recommendation": "Add internal links to keep users engaged longer",
+  "category": "engagement",
+  "priority": "medium"
+}}
+
+Return ONLY the JSON, no explanation.
+"""
+```
+
+### 🔍 Comprehensive Page Analysis Prompt
+
+Used for detailed underperforming page analysis with full content scraping:
+
+```python
+page_analysis_prompt = f"""
+You are an expert Digital Marketing Strategist specializing in Conversion Rate Optimization (CRO), SEO, and User Experience (UX). Your goal is to analyze the provided webpage data and generate actionable recommendations to significantly increase both conversion rates and organic page visits.
+
+Page Details:
+- URL: {page.get('page_url', 'Unknown')}
+- Sessions: {page.get('sessions', 0)}
+- Conversions: {page.get('conversions', 0)}
+- Conversion Rate: {page.get('conversion_rate', 0):.1%}
+{f"- Target Keywords: {', '.join(target_keywords)}" if target_keywords else ""}
+
+Page Content Analysis:
+- Title: {page_content.get('title', 'No title')}
+- Meta Description: {page_content.get('meta_description', 'No meta description')}
+- Main Headings: {[h['text'] for h in page_content.get('headings', [])[:5]]}
+- CTA Buttons Found: {len(page_content.get('cta_buttons', []))}
+- Forms Found: {len(page_content.get('forms', []))}
+- Has Contact Info: {page_content.get('has_contact_info', False)}
+- Has Social Proof: {page_content.get('has_social_proof', False)}
+- Word Count: {page_content.get('page_structure', {}).get('word_count', 0)}
+- Main Content Preview: {page_content.get('text_content', '')[:200]}...
+
+Page Structure:
+- Navigation: {page_content.get('page_structure', {}).get('has_navigation', False)}
+- Footer: {page_content.get('page_structure', {}).get('has_footer', False)}
+- Responsive: {page_content.get('page_structure', {}).get('is_responsive', False)}
+- Paragraphs: {page_content.get('page_structure', {}).get('paragraph_count', 0)}
+- Lists: {page_content.get('page_structure', {}).get('list_count', 0)}
+- Breadcrumbs: {page_content.get('page_structure', {}).get('has_breadcrumbs', False)}
+- Search: {page_content.get('page_structure', {}).get('has_search', False)}
+
+SEO Elements:
+- Title Length: {page_content.get('seo_elements', {}).get('title_length', 0)} chars
+- Meta Description Length: {page_content.get('seo_elements', {}).get('meta_desc_length', 0)} chars
+- H1 Count: {page_content.get('seo_elements', {}).get('h1_count', 0)}
+- H2 Count: {page_content.get('seo_elements', {}).get('h2_count', 0)}
+- H3 Count: {page_content.get('seo_elements', {}).get('h3_count', 0)}
+- Internal Links: {page_content.get('seo_elements', {}).get('internal_links', 0)}
+- External Links: {page_content.get('seo_elements', {}).get('external_links', 0)}
+- Canonical URL: {page_content.get('seo_elements', {}).get('has_canonical', False)}
+- Open Graph: {page_content.get('seo_elements', {}).get('has_open_graph', False)}
+- Schema Markup: {page_content.get('seo_elements', {}).get('has_schema_markup', False)}
+{f"- Keyword Analysis: {json.dumps(page_content.get('seo_elements', {}).get('keyword_analysis', {}), indent=2)}" if target_keywords and page_content.get('seo_elements', {}).get('keyword_analysis') else ""}
+
+UX Elements:
+- Hero Section: {page_content.get('ux_elements', {}).get('has_hero_section', False)}
+- Testimonials: {page_content.get('ux_elements', {}).get('has_testimonials', False)}
+- Pricing: {page_content.get('ux_elements', {}).get('has_pricing', False)}
+- FAQ: {page_content.get('ux_elements', {}).get('has_faq', False)}
+- Newsletter Signup: {page_content.get('ux_elements', {}).get('has_newsletter_signup', False)}
+- Live Chat: {page_content.get('ux_elements', {}).get('has_live_chat', False)}
+
+Performance Indicators:
+- Total Images: {page_content.get('performance_indicators', {}).get('total_images', 0)}
+- Images Without Alt: {page_content.get('performance_indicators', {}).get('images_without_alt', 0)}
+- Total Links: {page_content.get('performance_indicators', {}).get('total_links', 0)}
+- Inline Styles: {page_content.get('performance_indicators', {}).get('inline_styles', 0)}
+- External Scripts: {page_content.get('performance_indicators', {}).get('external_scripts', 0)}
+
+Based on this comprehensive analysis of the actual page content, please provide:
+
+## 🎯 CONVERSION RATE OPTIMIZATION (CRO)
+1. **Critical Issues**: What are the top 3-5 conversion killers on this page?
+2. **CTA Optimization**: Specific improvements for calls-to-action (placement, copy, design)
+3. **Trust & Credibility**: How to build trust and reduce friction
+4. **Value Proposition**: How to make the value clearer and more compelling
+5. **User Journey**: Optimize the path from visitor to conversion
+
+## 🔍 SEARCH ENGINE OPTIMIZATION (SEO)
+1. **On-Page SEO**: Title, meta description, headings, and content optimization
+{f"2. **Keyword Strategy**: How well does this page target the keywords '{', '.join(target_keywords)}'? What specific improvements are needed for these keywords?" if target_keywords else "2. **Keyword Strategy**: Target keywords and content gaps"}
+3. **Technical SEO**: Page speed, mobile-friendliness, and technical issues
+4. **Content Quality**: How to improve content depth and relevance
+5. **Internal Linking**: Opportunities for better site structure
+
+## 👥 USER EXPERIENCE (UX)
+1. **Visual Hierarchy**: How to improve content flow and readability
+2. **Mobile Experience**: Mobile-specific optimizations
+3. **Page Speed**: Performance improvements
+4. **Accessibility**: Making the page more accessible
+5. **User Intent**: Aligning content with user expectations
+
+## 📊 PRIORITY ACTION PLAN
+- **High Priority** (Quick wins with high impact)
+- **Medium Priority** (Moderate effort, good impact)
+- **Low Priority** (Long-term improvements)
+
+## 🎯 EXPECTED IMPACT
+- Specific metrics improvements to expect
+- Timeline for implementation
+- Resource requirements
+
+Focus on practical, implementable recommendations based on the actual page content. Be specific about what to change, add, or remove. Provide concrete examples and actionable steps.
+"""
+```
+
+### 📈 General Analysis Prompt
+
+Used when no specific page URLs can be extracted from the data:
+
+```python
+general_analysis_prompt = f"""
+You are an expert Digital Marketing Strategist specializing in Conversion Rate Optimization (CRO), SEO, and User Experience (UX). Your goal is to analyze the provided analytics data and generate actionable recommendations to significantly increase both conversion rates and organic page visits.
+
+Underperforming Pages Data:
+{json.dumps(underperforming_data, indent=2)}
+
+Based on this analytics data, please provide:
+
+## 🎯 CONVERSION RATE OPTIMIZATION (CRO)
+1. **Critical Issues**: What are the most common conversion killers across underperforming pages?
+2. **CTA Strategy**: How to optimize calls-to-action for better conversion rates
+3. **Trust Building**: Strategies to build credibility and reduce friction
+4. **Value Communication**: How to make value propositions clearer and more compelling
+5. **User Journey Optimization**: Improve the path from visitor to conversion
+
+## 🔍 SEARCH ENGINE OPTIMIZATION (SEO)
+1. **Content Strategy**: How to improve content quality and relevance
+2. **Keyword Optimization**: Target keyword opportunities and content gaps
+3. **Technical Improvements**: Page speed, mobile-friendliness, and technical SEO
+4. **On-Page SEO**: Title, meta description, and heading optimization
+5. **Site Structure**: Internal linking and navigation improvements
+
+## 👥 USER EXPERIENCE (UX)
+1. **Visual Design**: How to improve visual hierarchy and readability
+2. **Mobile Experience**: Mobile-specific optimization strategies
+3. **Performance**: Page speed and loading time improvements
+4. **Accessibility**: Making pages more accessible to all users
+5. **User Intent Alignment**: Better matching content with user expectations
+
+## 📊 PRIORITY ACTION PLAN
+- **High Priority** (Quick wins with high impact)
+- **Medium Priority** (Moderate effort, good impact)
+- **Low Priority** (Long-term improvements)
+
+## 🎯 EXPECTED IMPACT
+- Specific metrics improvements to expect
+- Timeline for implementation
+- Resource requirements
+
+Format your response as a structured analysis with clear action items. Focus on practical recommendations that a solo founder or small team can implement.
+"""
+```
+
+### 🎯 Prompt Design Principles
+
+All prompts follow these key principles:
+
+1. **Specificity**: Always include actual numbers and metrics from the data
+2. **Actionability**: Recommendations must be concrete and implementable
+3. **Page Context**: When discussing pages, always include the page name/path
+4. **Structured Output**: Consistent JSON format for recommendations
+5. **Character Limits**: Recommendations kept under 80 characters for conciseness
+6. **Category Classification**: Clear categorization (traffic, content, conversion, seo, engagement)
+7. **Priority Ranking**: High/medium/low priority classification
+8. **Real Content Analysis**: Based on actual scraped page content, not assumptions
+
+### 🔧 Customization
+
+These prompts can be customized by:
+
+- **Target Keywords**: Add specific keywords for SEO analysis
+- **Industry Context**: Modify prompts for specific industries
+- **Company Size**: Adjust recommendations for solo founders vs. teams
+- **Timeline**: Modify implementation timelines based on resources
+- **Metrics Focus**: Emphasize different KPIs based on business goals
+
 ---
 
 <div align="center">

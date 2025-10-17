@@ -10,9 +10,18 @@ def create_app():
     """Create and configure an instance of the Flask application."""
     app = Flask(__name__)
 
-    # Ensure environment variables are set
-    if not os.environ.get("GA4_PROPERTY_ID"):
-        raise ValueError("GA4_PROPERTY_ID environment variable not set.")
+    # Check deployment mode
+    deployment_mode = os.environ.get("DEPLOYMENT_MODE", "standalone")
+    
+    # Ensure environment variables are set based on deployment mode
+    if deployment_mode == "saas":
+        # In SaaS mode, GA4_PROPERTY_ID comes from the SaaS layer per-company
+        logger.info("Running in SaaS mode - GA4_PROPERTY_ID will be provided per-request")
+    else:
+        # In standalone/CLI mode, GA4_PROPERTY_ID must be set
+        if not os.environ.get("GA4_PROPERTY_ID"):
+            raise ValueError("GA4_PROPERTY_ID environment variable not set.")
+    
     if not os.environ.get("OPENAI_API_KEY"):
         logger.warning("OPENAI_API_KEY environment variable not set. LLM features will not work.")
 
@@ -27,6 +36,11 @@ def create_app():
         logger.info("Registered marketing blueprint.")
         logger.info("Registered product blueprint.")
 
+    @app.route('/', methods=['GET'])
+    def health_check():
+        """Health check endpoint for Cloud Run startup probes."""
+        return jsonify({"status": "healthy", "service": "bigas-core"})
+    
     @app.route('/mcp/manifest', methods=['GET'])
     def combined_manifest():
         """

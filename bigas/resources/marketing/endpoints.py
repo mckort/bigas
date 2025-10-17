@@ -38,15 +38,22 @@ logger = logging.getLogger(__name__)
 marketing_bp = Blueprint('marketing_bp', __name__)
 
 # This logic is moved from the original app file to be specific to this blueprint.
+DEPLOYMENT_MODE = os.environ.get("DEPLOYMENT_MODE", "standalone")
 GA4_PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID")
 GA4_API_PROPERTY_ID = f"properties/{GA4_PROPERTY_ID}" if GA4_PROPERTY_ID else None
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-try:
-    client = BetaAnalyticsDataClient()
-except Exception as e:
-    logger.error(f"Failed to initialize Google Analytics Data API client: {e}")
+# In SaaS mode, don't initialize client at module load
+# Client will be initialized per-request from SaaS layer
+if DEPLOYMENT_MODE == "saas":
+    logger.info("SaaS mode: Google Analytics client will be initialized per-request")
     client = None
+else:
+    try:
+        client = BetaAnalyticsDataClient()
+    except Exception as e:
+        logger.error(f"Failed to initialize Google Analytics Data API client: {e}")
+        client = None
 
 CACHE_DURATION = 3600
 analytics_cache = {}
