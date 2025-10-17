@@ -137,62 +137,24 @@ See the [Google Cloud documentation](https://cloud.google.com/docs) for detailed
 
 ### Environment Configuration
 
-Bigas-core supports two deployment modes with automatic credential handling:
+Configure your environment variables before deploying:
 
-#### 1. **SaaS Deployment (Recommended for most users)**
 ```bash
 # Copy the example environment file
 cp env.example .env
-
-# Deploy with dummy placeholders (will be overridden by SaaS UI)
-./deploy.sh
-```
-- ✅ **No configuration needed** - dummy values work for deployment
-- ✅ **SaaS UI handles real credentials** at runtime
-- ✅ **Perfect for SaaS integration**
-
-#### 2. **Standalone Deployment**
-```bash
-# Copy the example environment file
-cp env.example .env
-
-# Set deployment mode to standalone
-echo "DEPLOYMENT_MODE=standalone" >> .env
 
 # Edit .env and replace ALL dummy values with real credentials
 nano .env
-
-# Deploy with real credentials
-./deploy.sh
 ```
-- ⚠️ **Requires real credentials** in .env file
-- ✅ **Works independently** without SaaS UI
-- 🔧 **Full control** over all settings
-- 🎯 **Uses environment variables** for all company-specific settings
 
-### Deployment Modes
-
-Bigas-core automatically adapts its behavior based on the `DEPLOYMENT_MODE` environment variable:
-
-#### **SaaS Mode (`DEPLOYMENT_MODE=saas`)**
-- **Default mode** - works out of the box
-- **Company-specific credentials** come from SaaS UI at runtime
-- **Core infrastructure** (OpenAI, Google Cloud) comes from environment
-- **Dummy placeholders** are acceptable for company-specific values
-- **Perfect for** SaaS integration and multi-tenant deployments
-
-#### **Standalone Mode (`DEPLOYMENT_MODE=standalone`)**
-- **Company-specific credentials** come from environment variables
-- **Core infrastructure** (OpenAI, Google Cloud) comes from environment
-- **Real credentials required** for all company-specific values
-- **Perfect for** solo usage, custom integrations, or single-tenant deployments
+⚠️ **IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
 
 ### Environment Variables
 
-The `env.example` file contains dummy placeholder values that work for SaaS deployment. For standalone usage, you must replace them with real credentials:
+Configure these environment variables for your deployment:
 
 ```bash
-# Required for standalone usage:
+# Required:
 GA4_PROPERTY_ID=your_actual_ga4_property_id
 OPENAI_API_KEY=your_actual_openai_api_key
 GOOGLE_PROJECT_ID=your_actual_google_project_id
@@ -331,68 +293,70 @@ This will automatically post weekly analytics reports to your Discord channel ev
 
 The core functionality is available via HTTP API, making it easy to integrate with web applications or trigger reports remotely.
 
-### Start the API Server
-```bash
-# Option 1: Direct Python execution
-python run_core.py
+### API Endpoints
 
-# Option 2: Using Flask directly
-python app.py
-
-# Option 3: Using gunicorn for production
-gunicorn -w 4 -b 0.0.0.0:8080 app:create_app()
+After deploying to Google Cloud Run, your API will be available at:
+```
+https://your-service-name-<hash>.a.run.app
 ```
 
-### API Endpoints
+You can find your service URL by running:
+```bash
+gcloud run services describe bigas-core --region=your-region --format='value(status.url)'
+```
+
+### API Examples
+
+**Note**: Replace `https://your-deployment-url.com` with your actual Cloud Run service URL in the examples below.
 
 #### Generate Weekly Report
 ```bash
-curl -X POST http://localhost:8080/mcp/tools/weekly_analytics_report \
+curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
 
 #### Get Stored Reports
 ```bash
-curl http://localhost:8080/mcp/tools/get_stored_reports
+curl https://your-deployment-url.com/mcp/tools/get_stored_reports
 ```
 
 #### Get Latest Report
 ```bash
-curl http://localhost:8080/mcp/tools/get_latest_report
+curl https://your-deployment-url.com/mcp/tools/get_latest_report
 ```
 
 #### Analyze Underperforming Pages
 ```bash
-curl -X POST http://localhost:8080/mcp/tools/analyze_underperforming_pages \
+curl -X POST https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages \
   -H "Content-Type: application/json" \
   -d '{"max_pages": 3}'
 ```
 
 #### Cleanup Old Reports
 ```bash
-curl -X POST http://localhost:8080/mcp/tools/cleanup_old_reports \
+curl -X POST https://your-deployment-url.com/mcp/tools/cleanup_old_reports \
   -H "Content-Type: application/json" \
   -d '{"keep_days": 30}'
 ```
 
 #### Ask Analytics Question
 ```bash
-curl -X POST http://localhost:8080/mcp/tools/ask_analytics_question \
+curl -X POST https://your-deployment-url.com/mcp/tools/ask_analytics_question \
   -H "Content-Type: application/json" \
   -d '{"question": "Which country had the most active users last week?"}'
 ```
 
 #### Analyze Trends
 ```bash
-curl -X POST http://localhost:8080/mcp/tools/analyze_trends \
+curl -X POST https://your-deployment-url.com/mcp/tools/analyze_trends \
   -H "Content-Type: application/json" \
   -d '{"metric": "active_users", "date_range": "last_30_days"}'
 ```
 
 #### Custom Reports
 ```bash
-curl -X POST http://localhost:8080/mcp/tools/fetch_custom_report \
+curl -X POST https://your-deployment-url.com/mcp/tools/fetch_custom_report \
   -H "Content-Type: application/json" \
   -d '{
     "dimensions": ["country", "device_category"],
@@ -401,9 +365,27 @@ curl -X POST http://localhost:8080/mcp/tools/fetch_custom_report \
   }'
 ```
 
-#### API Documentation
-- OpenAPI spec: http://localhost:8080/openapi.json
-- Manifest: http://localhost:8080/mcp/manifest
+### API Documentation
+
+Once deployed, access your API documentation at:
+- **OpenAPI spec**: `https://your-deployment-url.com/openapi.json`
+- **Manifest**: `https://your-deployment-url.com/mcp/manifest`
+
+### Local Development
+
+For local testing, you can run the API server locally:
+```bash
+# Option 1: Direct Python execution
+python run_core.py
+
+# Option 2: Using Flask directly
+python app.py
+
+# Option 3: Using gunicorn
+gunicorn -w 4 -b 0.0.0.0:8080 app:create_app()
+```
+
+Then use `http://localhost:8080` in place of your Cloud Run URL.
 
 ## 📊 Storage & Reports
 
