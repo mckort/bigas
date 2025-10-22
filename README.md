@@ -928,6 +928,112 @@ questions = [
 ]
 ```
 
+### 🔄 Question Processing Flow
+
+For each question, the system follows this three-step process:
+
+#### Step 1: Query Parser Prompt (Natural Language → GA4 Query)
+
+First, the question is converted to a structured GA4 query:
+
+```python
+query_parser_prompt = """You are an expert at converting natural language questions about Google Analytics data into structured query parameters.
+Return a JSON object with the following fields:
+- metrics: list of metric names (e.g., ["totalUsers", "sessions", "screenPageViews", "conversions", "eventCount"])
+- dimensions: list of dimension names (e.g., ["date", "country", "deviceCategory", "landingPage", "pagePath", "source", "medium"])
+- date_range: object with start_date and end_date (must be in YYYY-MM-DD format)
+- filters: list of filter objects with field, operator, and value
+- order_by: list of order by objects with field and direction
+
+For date ranges:
+- Use YYYY-MM-DD format for specific dates
+- Use "today" for current date
+- Use "yesterday" for yesterday
+- Use "NdaysAgo" format (e.g., "7daysAgo") for relative dates
+- IMPORTANT: For consistent results, use a fixed date range like "30daysAgo" to "today" or "7daysAgo" to "today"
+
+For traffic source analysis, use these combinations:
+- Metrics: ["sessions", "totalUsers"]
+- Dimensions: ["sessionDefaultChannelGroup", "source", "medium"]
+- Order by: sessions (descending) to see highest traffic sources first
+
+For bounce rate analysis, ALWAYS use these combinations:
+- Metrics: ["bounceRate", "sessions", "totalUsers"]
+- Dimensions: ["landingPage", "pageTitle"]
+- Order by: bounceRate (descending) to see highest bounce rates first
+
+For content and conversion attribution analysis, use these combinations:
+- Metrics: ["conversions", "sessions", "totalUsers"]
+- Dimensions: ["pagePath", "pageTitle"]
+- Order by: conversions (descending) to see pages with most conversions
+
+IMPORTANT: GA4 has compatibility restrictions between metrics and dimensions. Use the recommended combinations above to avoid "incompatible" errors.
+
+Only include fields that are relevant to the question. Use standard Google Analytics 4 metric and dimension names without the 'ga:' prefix."""
+
+# Model: gpt-4
+# Input: Natural language question
+# Output: Structured JSON with metrics, dimensions, date_range, filters, order_by
+```
+
+**Example Transformation:**
+
+**Question**: "What are the primary traffic sources contributing to total sessions?"
+
+**Generated Query**:
+```json
+{
+  "metrics": ["sessions", "totalUsers"],
+  "dimensions": ["sessionDefaultChannelGroup"],
+  "date_range": {"start_date": "30daysAgo", "end_date": "today"},
+  "order_by": [{"field": "sessions", "direction": "descending"}]
+}
+```
+
+#### Step 2: Fetch Data from Google Analytics 4
+
+The structured query is sent to GA4 API to retrieve real analytics data.
+
+#### Step 3: Analytics Answer Prompt (GA4 Data → Natural Language Answer)
+
+Finally, the raw data is converted to a natural language answer:
+
+```python
+analytics_answer_prompt = """You are an expert at explaining Google Analytics data in a clear and concise way.
+Given the raw analytics data and the original question, provide a natural language response that:
+1. Directly answers the question
+2. Highlights key insights and trends
+3. Provides relevant context and comparisons
+4. Uses simple, non-technical language
+
+Format numbers appropriately (e.g., "1.2M" instead of "1,200,000").
+If the data shows no results or empty rows, explain what this means and suggest alternative approaches."""
+
+# Model: gpt-4
+# Max tokens: 2000
+# Input: JSON containing {question: "...", analytics_data: {...}}
+# Output: Natural language answer with insights and trends
+```
+
+**Example Input to GPT-4**:
+```json
+{
+  "question": "What are the primary traffic sources contributing to total sessions?",
+  "analytics_data": {
+    "dimension_headers": ["Channel Group"],
+    "metric_headers": ["Sessions", "Total Users"],
+    "rows": [
+      ["Organic Search", "15234", "8432"],
+      ["Direct", "9876", "6543"],
+      ["Referral", "2145", "1234"]
+    ]
+  }
+}
+```
+
+**Example Generated Answer**:
+> "Your website's primary traffic sources are Organic Search (15.2K sessions, 55%), Direct traffic (9.9K sessions, 36%), and Referral (2.1K sessions, 8%). Organic search is your strongest channel, indicating good SEO performance. Consider increasing efforts in referral marketing to diversify your traffic sources."
+
 ### 🎯 Recommendation Generation Prompts
 
 #### 1. Page-Content-Aware Recommendation Prompt
