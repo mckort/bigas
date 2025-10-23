@@ -930,73 +930,109 @@ questions = [
 
 ### 🔄 Question Processing Flow
 
-For each question, the system follows this three-step process:
+**IMPORTANT**: Weekly reports use **template-based queries** for consistent, comparable data across all report runs. This ensures week-over-week reliability and eliminates AI variability in metric selection.
 
-#### Step 1: Query Parser Prompt (Natural Language → GA4 Query)
+#### **Architecture: Template-Based System**
 
-First, the question is converted to a structured GA4 query:
+Weekly reports use **predefined query templates** that map each question to specific GA4 metrics and dimensions:
 
 ```python
-query_parser_prompt = """You are an expert at converting natural language questions about Google Analytics data into structured query parameters.
-Return a JSON object with the following fields:
-- metrics: list of metric names (e.g., ["totalUsers", "sessions", "screenPageViews", "conversions", "eventCount"])
-- dimensions: list of dimension names (e.g., ["date", "country", "deviceCategory", "landingPage", "pagePath", "source", "medium"])
-- date_range: object with start_date and end_date (must be in YYYY-MM-DD format)
-- filters: list of filter objects with field, operator, and value
-- order_by: list of order by objects with field and direction
+# Question-to-Template Mapping
+question_to_template = {
+    "What are the key trends...": "trend_analysis",
+    "What are the primary traffic sources...": "traffic_sources",
+    "What is the average session duration...": "session_quality",
+    "Which pages are the most visited...": "top_pages_conversions",
+    "Which pages drive the most engagement...": "engagement_pages",
+    "Are there underperforming pages...": "underperforming_pages",
+    "How do blog posts contribute...": "blog_conversion"
+}
 
-For date ranges:
-- Use YYYY-MM-DD format for specific dates
-- Use "today" for current date
-- Use "yesterday" for yesterday
-- Use "NdaysAgo" format (e.g., "7daysAgo") for relative dates
-- IMPORTANT: For consistent results, use a fixed date range like "30daysAgo" to "today" or "7daysAgo" to "today"
-
-For traffic source analysis, use these combinations:
-- Metrics: ["sessions", "totalUsers"]
-- Dimensions: ["sessionDefaultChannelGroup", "source", "medium"]
-- Order by: sessions (descending) to see highest traffic sources first
-
-For bounce rate analysis, ALWAYS use these combinations:
-- Metrics: ["bounceRate", "sessions", "totalUsers"]
-- Dimensions: ["landingPage", "pageTitle"]
-- Order by: bounceRate (descending) to see highest bounce rates first
-
-For content and conversion attribution analysis, use these combinations:
-- Metrics: ["conversions", "sessions", "totalUsers"]
-- Dimensions: ["pagePath", "pageTitle"]
-- Order by: conversions (descending) to see pages with most conversions
-
-IMPORTANT: GA4 has compatibility restrictions between metrics and dimensions. Use the recommended combinations above to avoid "incompatible" errors.
-
-Only include fields that are relevant to the question. Use standard Google Analytics 4 metric and dimension names without the 'ga:' prefix."""
-
-# Model: gpt-4
-# Input: Natural language question
-# Output: Structured JSON with metrics, dimensions, date_range, filters, order_by
-```
-
-**Example Transformation:**
-
-**Question**: "What are the primary traffic sources contributing to total sessions?"
-
-**Generated Query**:
-```json
-{
-  "metrics": ["sessions", "totalUsers"],
-  "dimensions": ["sessionDefaultChannelGroup"],
-  "date_range": {"start_date": "30daysAgo", "end_date": "today"},
-  "order_by": [{"field": "sessions", "direction": "descending"}]
+# Predefined Templates (Always Use the Same Metrics)
+QUESTION_TEMPLATES = {
+    "traffic_sources": {
+        "dimensions": ["sessionDefaultChannelGroup"],
+        "metrics": ["sessions"],
+        "postprocess": "calculate_session_share"
+    },
+    "session_quality": {
+        "dimensions": [],
+        "metrics": ["averageSessionDuration", "screenPageViewsPerSession"]
+    },
+    "top_pages_conversions": {
+        "dimensions": ["pagePath", "hostName", "eventName"],
+        "metrics": ["sessions", "conversions"],
+        "order_by": [{"field": "sessions", "direction": "DESCENDING"}]
+    },
+    "engagement_pages": {
+        "dimensions": ["pagePath", "hostName"],
+        "metrics": ["averageSessionDuration", "bounceRate"],
+        "order_by": [{"field": "averageSessionDuration", "direction": "DESCENDING"}]
+    },
+    "underperforming_pages": {
+        "dimensions": ["pagePath", "hostName"],
+        "metrics": ["sessions", "conversions"],
+        "postprocess": "find_high_traffic_low_conversion"
+    },
+    "blog_conversion": {
+        "dimensions": ["pagePath", "hostName", "sessionDefaultChannelGroup"],
+        "metrics": ["conversions", "sessions"],
+        "filters": [{"field": "pagePath", "operator": "contains", "value": "blog"}]
+    }
 }
 ```
 
-#### Step 2: Fetch Data from Google Analytics 4
+#### **Benefits of Template-Based Approach**
 
-The structured query is sent to GA4 API to retrieve real analytics data.
+✅ **100% Consistent Queries**: Same metrics and dimensions every week  
+✅ **Week-over-Week Comparability**: Guaranteed data consistency for trend analysis  
+✅ **No AI Variability**: Query structure is fixed, not AI-generated  
+✅ **Reliable Scheduling**: Perfect for automated weekly/monthly reports  
+✅ **Predictable Costs**: No variation in query complexity  
 
-#### Step 3: Analytics Answer Prompt (GA4 Data → Natural Language Answer)
+#### **Three-Step Process for Each Question**
 
-Finally, the raw data is converted to a natural language answer:
+##### Step 1: Template Lookup (Question → Fixed Query Structure)
+
+Each question is mapped to a predefined template with fixed metrics:
+
+```python
+# Example: Traffic sources question
+question = "What are the primary traffic sources..."
+template_key = question_to_template[question]  # → "traffic_sources"
+
+# Retrieve fixed template
+template = QUESTION_TEMPLATES["traffic_sources"]
+# {
+#   "dimensions": ["sessionDefaultChannelGroup"],
+#   "metrics": ["sessions"],
+#   "postprocess": "calculate_session_share"
+# }
+```
+
+**Result**: Always uses the **exact same GA4 query parameters** - no AI involved in query generation!
+
+##### Step 2: Fetch Data from Google Analytics 4
+
+The predefined query structure is sent to GA4 API to retrieve real analytics data:
+
+```python
+# Execute template query (always consistent)
+raw_data = template_service.run_template_query(template_key, property_id)
+
+# Example response:
+# {
+#   "rows": [
+#     {"dimensions": ["Organic Search"], "metrics": [15234]},
+#     {"dimensions": ["Direct"], "metrics": [9876]},
+#     {"dimensions": ["Referral"], "metrics": [2145]}
+#   ]
+# }
+```
+
+##### Step 3: AI Format Response (GA4 Data → Natural Language Answer)
+
+Finally, AI converts the **consistently structured data** into a natural language answer:
 
 ```python
 analytics_answer_prompt = """You are an expert at explaining Google Analytics data in a clear and concise way.
@@ -1033,6 +1069,33 @@ If the data shows no results or empty rows, explain what this means and suggest 
 
 **Example Generated Answer**:
 > "Your website's primary traffic sources are Organic Search (15.2K sessions, 55%), Direct traffic (9.9K sessions, 36%), and Referral (2.1K sessions, 8%). Organic search is your strongest channel, indicating good SEO performance. Consider increasing efforts in referral marketing to diversify your traffic sources."
+
+#### **What's Deterministic vs. Non-Deterministic?**
+
+| Component | Behavior | Consistency |
+|-----------|----------|-------------|
+| **GA4 Query** | ✅ Template-based (fixed metrics/dimensions) | 100% consistent |
+| **GA4 Data** | ✅ Real data from Google Analytics | Varies by actual performance |
+| **AI Formatting** | ⚠️ Natural language generation | ~95% consistent (wording may vary slightly) |
+
+**Key Point**: The **data you get is always identical** (same metrics, same dimensions), but the **AI's wording** may vary slightly between runs. For example:
+- Week 1: "Organic Search is your top source with 15.2K sessions..."
+- Week 2: "Your primary traffic driver is Organic Search, contributing 15.2K sessions..."
+
+Both answers contain the **exact same data** (15.2K sessions from Organic Search), just phrased differently.
+
+#### **Why Not Use AI Query Parser?**
+
+The `OpenAIService.parse_query()` method exists for **ad-hoc custom questions** but is **intentionally not used in weekly reports** because:
+
+❌ **Non-Deterministic Queries**: AI might choose different metrics each time  
+❌ **Incomparable Results**: Week-over-week trends become unreliable  
+❌ **Unpredictable Costs**: Query complexity varies  
+❌ **Quality Control Issues**: Hard to validate if metrics are appropriate  
+
+**Use Cases**:
+- ✅ **Weekly Reports**: Template-based (current implementation)
+- ⚠️ **Custom Ad-Hoc Questions**: AI parser (not currently exposed in weekly reports)
 
 ### 🎯 Recommendation Generation Prompts
 
