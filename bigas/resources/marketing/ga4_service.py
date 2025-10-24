@@ -26,18 +26,37 @@ class GA4Service:
     """Service for handling Google Analytics 4 API interactions."""
     
     def __init__(self):
-        """Initialize the GA4 service with the analytics client using proper service account credentials."""
+        """Initialize the GA4 service with the analytics service account.
+        
+        In SaaS mode: Uses explicit GA4 service account from GOOGLE_APPLICATION_CREDENTIALS_GA4
+        In Standalone mode: Uses Application Default Credentials (Cloud Run SA)
+        """
         try:
-            # In Cloud Run, use Application Default Credentials (ADC) which will use the service account
-            # that's configured via --service-account parameter
-            credentials, project = default()
+            # Check for explicit GA4 credentials (SaaS mode with dedicated analytics SA)
+            ga4_creds_env = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GA4")
+            
+            if ga4_creds_env and ga4_creds_env.strip().startswith('{'):
+                # SaaS mode: Use explicit GA4 service account (analytics@bigas-staging)
+                import json
+                creds_dict = json.loads(ga4_creds_env)
+                credentials = service_account.Credentials.from_service_account_info(creds_dict)
+                logger.info(f"Using explicit GA4 service account: {creds_dict.get('client_email')}")
+                
+                # CRITICAL: Remove the environment variable after loading credentials
+                # This prevents Google auth from interfering with other HTTP clients (httpx/OpenAI)
+                del os.environ["GOOGLE_APPLICATION_CREDENTIALS_GA4"]
+            else:
+                # Standalone mode: Use Application Default Credentials (Cloud Run service account)
+                # User must add this service account to their GA4 property
+                credentials, project = default()
+                logger.info(f"Using Application Default Credentials for project: {project}")
+            
+            # Initialize the analytics client with explicit credentials
             self.analytics_client = BetaAnalyticsDataClient(credentials=credentials)
-            logger.info(f"GA4Service initialized with credentials for project: {project}")
+            logger.info("GA4Service initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize GA4Service with credentials: {e}")
-            # Fallback to default initialization
-            self.analytics_client = BetaAnalyticsDataClient()
-            logger.warning("Using default GA4 client initialization")
+            logger.error(f"Failed to initialize GA4Service: {e}")
+            raise
     
     def get_default_date_range(self) -> Dict[str, str]:
         """Get default date range for the last 30 days."""

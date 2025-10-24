@@ -914,7 +914,7 @@ This section documents all the AI prompts used in Bigas for generating analytics
 
 ### 📊 Initial Analytics Questions
 
-The weekly report asks these 7 core questions to generate comprehensive insights:
+The weekly report asks these 8 core questions to generate comprehensive insights:
 
 ```python
 questions = [
@@ -924,7 +924,8 @@ questions = [
   "Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?",
   "Which pages or sections (e.g., blog, product pages, landing pages) drive the most engagement (e.g., time on page, low bounce rate)?",
   "Are there underperforming pages with high traffic but low conversions?",
-  "How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?"
+  "How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?",
+  "Where are new visitors coming from?"
 ]
 ```
 
@@ -945,7 +946,8 @@ question_to_template = {
     "Which pages are the most visited...": "top_pages_conversions",
     "Which pages drive the most engagement...": "engagement_pages",
     "Are there underperforming pages...": "underperforming_pages",
-    "How do blog posts contribute...": "blog_conversion"
+    "How do blog posts contribute...": "blog_conversion",
+    "Where are new visitors coming from?": "new_visitor_sources"
 }
 
 # Predefined Templates (Always Use the Same Metrics)
@@ -978,6 +980,11 @@ QUESTION_TEMPLATES = {
         "dimensions": ["pagePath", "hostName", "sessionDefaultChannelGroup"],
         "metrics": ["conversions", "sessions"],
         "filters": [{"field": "pagePath", "operator": "contains", "value": "blog"}]
+    },
+    "new_visitor_sources": {
+        "dimensions": ["firstUserSource", "firstUserMedium", "firstUserDefaultChannelGroup"],
+        "metrics": ["newUsers", "sessions"],
+        "order_by": [{"field": "newUsers", "direction": "DESCENDING"}]
     }
 }
 ```
