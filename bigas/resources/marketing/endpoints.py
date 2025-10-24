@@ -17,7 +17,6 @@ import logging
 import json
 import traceback
 from bigas.resources.marketing.service import MarketingAnalyticsService
-from bigas.resources.marketing.enhanced_ai_service import EnhancedAIService
 from bigas.resources.marketing.utils import (
     convert_metric_name,
     convert_dimension_name,
@@ -441,7 +440,8 @@ def weekly_analytics_report():
       "Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?",
       "Which pages or sections (e.g., blog, product pages, landing pages) drive the most engagement (e.g., time on page, low bounce rate)?",
       "Are there underperforming pages with high traffic but low conversions?",
-      "How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?"
+      "How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?",
+      "Where are new visitors coming from?"
     ]
     
     # Map questions to template keys for robust, deterministic analytics
@@ -452,10 +452,12 @@ def weekly_analytics_report():
         questions[3]: "top_pages_conversions",
         questions[4]: "engagement_pages",
         questions[5]: "underperforming_pages",
-        questions[6]: "blog_conversion"
+        questions[6]: "blog_conversion",
+        questions[7]: "new_visitor_sources"
     }
     
     service = MarketingAnalyticsService(OPENAI_API_KEY)
+    
     full_report = ""
     report_data = {
         "questions": [],
@@ -467,7 +469,8 @@ def weekly_analytics_report():
     # Get the current property ID (could be from SaaS request or environment)
     current_property_id = os.environ.get("GA4_PROPERTY_ID")
     
-    for q in questions:
+    for idx, q in enumerate(questions, 1):
+        logger.info(f"Processing question {idx}/{len(questions)}: {q}")
         try:
             template_key = question_to_template[q]
             # Use template-driven approach for reliability

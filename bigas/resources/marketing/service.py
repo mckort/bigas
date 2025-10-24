@@ -19,6 +19,7 @@ class MarketingAnalyticsService:
         self.template_service = TemplateService(self.ga4_service)
         self.trend_analysis_service = TrendAnalysisService(self.ga4_service, self.openai_service)
         self.storage_service = StorageService()
+        logger.info("MarketingAnalyticsService initialized successfully")
     
     def answer_question(self, property_id: str, question: str) -> str:
         """Process a natural language question about analytics data and return a formatted answer."""

@@ -10,8 +10,16 @@ class OpenAIService:
     """Service for handling OpenAI API interactions and natural language processing."""
     
     def __init__(self, openai_api_key: str):
-        """Initialize the OpenAI service with API key."""
+        """Initialize the OpenAI service with API key.
+        
+        Note: GA4Service should be initialized BEFORE this service, which removes
+        GOOGLE_APPLICATION_CREDENTIALS_GA4 to prevent httpx interference.
+        """
+        if not openai_api_key:
+            raise ValueError("OpenAI API key is required")
+        
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
+        logger.info("OpenAI client initialized successfully")
     
     def parse_query(self, question: str) -> Dict[str, Any]:
         """Use OpenAI to parse the natural language question into structured query parameters."""
@@ -156,16 +164,21 @@ class OpenAIService:
             "analytics_data": analytics_data
         }
         
-        completion = self.openai_client.chat.completions.create(
-            model="gpt-4",
-            max_tokens=2000,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(response_data)}
-            ]
-        )
-        
-        return completion.choices[0].message.content
+        print(f"🔧 DEBUG: Calling OpenAI API for question: {question[:50]}...")
+        try:
+            completion = self.openai_client.chat.completions.create(
+                model="gpt-4",
+                max_tokens=2000,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(response_data)}
+                ]
+            )
+            print(f"✅ DEBUG: OpenAI API call successful")
+            return completion.choices[0].message.content
+        except Exception as e:
+            print(f"❌ DEBUG: OpenAI API call failed: {e}")
+            raise
     
     def format_response_obj(self, data: dict, question: str) -> str:
         """Format the analytics response from a dict into a natural language answer."""

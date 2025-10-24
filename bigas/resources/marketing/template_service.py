@@ -43,6 +43,12 @@ QUESTION_TEMPLATES = {
         "dimensions": ["pagePath", "hostName", "sessionDefaultChannelGroup"],
         "metrics": ["conversions", "sessions"],
         "filters": [{"field": "pagePath", "operator": "contains", "value": "blog"}]
+    },
+    # 7. Where are new visitors coming from?
+    "new_visitor_sources": {
+        "dimensions": ["firstUserSource", "firstUserMedium", "firstUserDefaultChannelGroup"],
+        "metrics": ["newUsers", "sessions"],
+        "order_by": [{"field": "newUsers", "direction": "DESCENDING"}]
     }
 }
 
@@ -111,4 +117,8 @@ class TemplateService:
     
     def get_blog_conversion_data(self, property_id: str, date_range: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Get blog conversion data using the blog_conversion template."""
-        return self.run_template_query("blog_conversion", property_id, date_range) 
+        return self.run_template_query("blog_conversion", property_id, date_range)
+    
+    def get_new_visitor_sources_data(self, property_id: str, date_range: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Get new visitor sources data using the new_visitor_sources template."""
+        return self.run_template_query("new_visitor_sources", property_id, date_range) 

@@ -21,10 +21,18 @@ class StorageService:
     """Service for managing analytics report storage using Google Cloud Storage."""
     
     def __init__(self, bucket_name: Optional[str] = None):
-        """Initialize the storage service with Google Cloud Storage."""
+        """Initialize the storage service with Google Cloud Storage.
+        
+        Always uses Application Default Credentials (Cloud Run service account).
+        The Cloud Run SA must have storage.objectAdmin and storage.legacyBucketReader roles.
+        """
         self.bucket_name = bucket_name or os.environ.get("STORAGE_BUCKET_NAME", "bigas-analytics-reports")
-        self.client = storage.Client()
+        
+        # Always use Application Default Credentials (Cloud Run service account)
+        # This works in both Standalone and SaaS modes
+        self.client = storage.Client()  # Uses ADC automatically
         self.bucket = self._get_or_create_bucket()
+        logger.info(f"StorageService initialized with bucket: {self.bucket.name}")
         
     def _get_or_create_bucket(self):
         """Get or create the storage bucket."""
