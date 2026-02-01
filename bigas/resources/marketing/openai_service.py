@@ -203,14 +203,24 @@ class OpenAIService:
         Format numbers appropriately (e.g., "1.2M" instead of "1,200,000").
         Focus on the most important findings and provide actionable recommendations."""
         
-        # Prepare the data for analysis
+        # Prepare the data for analysis.
+        # IMPORTANT: keep payload small enough to stay within model context.
+        rows = data.get("rows", [])
+        max_rows_for_llm = 50
+        rows_truncated = False
+        if len(rows) > max_rows_for_llm:
+            rows = rows[:max_rows_for_llm]
+            rows_truncated = True
+
         analysis_data = {
             "question": question,
             "data_summary": {
                 "total_records": num_rows,
                 "dimensions": dimensions,
                 "metrics": metrics,
-                "rows": data["rows"]
+                "rows_included": len(rows),
+                "rows_truncated": rows_truncated,
+                "rows": rows,
             }
         }
         

@@ -232,5 +232,12 @@ class GA4Service:
             query_params["filters"] = template["filters"]
         
         request = self.build_report_request(property_id, query_params)
+        # Limit rows to keep responses (and downstream LLM prompts) bounded.
+        # GA4 RunReportRequest supports `limit` for row count.
+        if "limit" in template and template["limit"] is not None:
+            try:
+                request.limit = int(template["limit"])
+            except Exception:
+                logger.warning(f"Invalid template limit value: {template.get('limit')!r}")
         response = self.run_report(request)
         return convert_ga4_response_to_dict(response) 
