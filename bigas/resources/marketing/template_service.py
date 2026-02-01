@@ -22,33 +22,42 @@ QUESTION_TEMPLATES = {
     },
     # 3. Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?
     "top_pages_conversions": {
-        "dimensions": ["pagePath", "hostName", "eventName"],
+        # NOTE: Do NOT include eventName here. It explodes the row count (page x event),
+        # which can exceed the LLM context window and does not help answer
+        # "most visited pages and conversions" directly.
+        "dimensions": ["pagePath", "hostName"],
         "metrics": ["sessions", "conversions"],
-        "order_by": [{"field": "sessions", "direction": "DESCENDING"}]
+        "order_by": [{"field": "sessions", "direction": "DESCENDING"}],
+        # Keep payload small enough for LLM summarization
+        "limit": 50,
     },
     # 4. Which pages or sections (e.g., blog, product pages, landing pages) drive the most engagement (e.g., time on page, low bounce rate)?
     "engagement_pages": {
         "dimensions": ["pagePath", "hostName"],
         "metrics": ["averageSessionDuration", "bounceRate"],
-        "order_by": [{"field": "averageSessionDuration", "direction": "DESCENDING"}]
+        "order_by": [{"field": "averageSessionDuration", "direction": "DESCENDING"}],
+        "limit": 50,
     },
     # 5. Are there underperforming pages with high traffic but low conversions?
     "underperforming_pages": {
         "dimensions": ["pagePath", "hostName"],
         "metrics": ["sessions", "conversions"],
-        "postprocess": "find_high_traffic_low_conversion"
+        "postprocess": "find_high_traffic_low_conversion",
+        "limit": 200,
     },
     # 6. How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?
     "blog_conversion": {
         "dimensions": ["pagePath", "hostName", "sessionDefaultChannelGroup"],
         "metrics": ["conversions", "sessions"],
-        "filters": [{"field": "pagePath", "operator": "contains", "value": "blog"}]
+        "filters": [{"field": "pagePath", "operator": "contains", "value": "blog"}],
+        "limit": 50,
     },
     # 7. Where are new visitors coming from?
     "new_visitor_sources": {
         "dimensions": ["firstUserSource", "firstUserMedium", "firstUserDefaultChannelGroup"],
         "metrics": ["newUsers", "sessions"],
-        "order_by": [{"field": "newUsers", "direction": "DESCENDING"}]
+        "order_by": [{"field": "newUsers", "direction": "DESCENDING"}],
+        "limit": 50,
     }
 }
 
