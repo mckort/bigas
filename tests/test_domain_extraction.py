@@ -17,7 +17,7 @@ def test_domain_extraction():
     # Mock GA4 data with hostName dimension
     mock_ga4_data = {
         "dimension_headers": ["pagePath", "hostName"],
-        "metric_headers": ["sessions", "conversions"],
+        "metric_headers": ["sessions", "keyEvents"],
         "rows": [
             {
                 "dimension_values": ["/", "bigas.com"],
@@ -84,7 +84,7 @@ def test_domain_extraction():
     # Test with missing hostname
     edge_case_data = {
         "dimension_headers": ["pagePath", "hostName"],
-        "metric_headers": ["sessions", "conversions"],
+        "metric_headers": ["sessions", "keyEvents"],
         "rows": [
             {
                 "dimension_values": ["/test-page", ""],  # Empty hostname
@@ -100,7 +100,7 @@ def test_domain_extraction():
     # Test with different dimension order
     different_order_data = {
         "dimension_headers": ["hostName", "pagePath"],  # Swapped order
-        "metric_headers": ["sessions", "conversions"],
+        "metric_headers": ["sessions", "keyEvents"],
         "rows": [
             {
                 "dimension_values": ["bigas.com", "/test-page"],

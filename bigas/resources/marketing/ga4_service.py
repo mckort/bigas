@@ -68,12 +68,14 @@ class GA4Service:
     
     def build_report_request(self, property_id: str, query_params: Dict[str, Any]) -> RunReportRequest:
         """Build a Google Analytics report request from the parsed query parameters."""
-        # Map deprecated or invalid metrics to valid GA4 metrics
+        # Map deprecated or invalid metrics to valid GA4 metrics.
+        # GA4 renamed "conversions" to "keyEvents"; use keyEvents for API requests.
         metric_map = {
             "pageViews": "screenPageViews",
             "pageviews": "screenPageViews",
             "exitRate": "bounceRate",
-            "averageUserEngagementDuration": "userEngagementDuration"
+            "averageUserEngagementDuration": "userEngagementDuration",
+            "conversions": "keyEvents",
         }
         metrics = [metric_map.get(m, m) for m in query_params.get("metrics", ["totalUsers"])]
         
@@ -110,10 +112,10 @@ class GA4Service:
             "ga:operatingSystem": "operatingSystem",
             "attributionModel": "sessionDefaultChannelGroup",
             "ga:attributionModel": "sessionDefaultChannelGroup",
-            "assistedConversions": "conversions",
-            "ga:assistedConversions": "conversions",
-            "lastClickConversions": "conversions",
-            "ga:lastClickConversions": "conversions"
+            "assistedConversions": "keyEvents",
+            "ga:assistedConversions": "keyEvents",
+            "lastClickConversions": "keyEvents",
+            "ga:lastClickConversions": "keyEvents"
         }
         dimensions = [dimension_map.get(d, d) for d in query_params.get("dimensions", ["date"])]
         

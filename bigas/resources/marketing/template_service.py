@@ -20,13 +20,13 @@ QUESTION_TEMPLATES = {
         "dimensions": [],
         "metrics": ["averageSessionDuration", "screenPageViewsPerSession"]
     },
-    # 3. Which pages are the most visited, and how do they contribute to conversions (e.g., product pages, category pages, blog posts)?
+    # 3. Which pages are the most visited, and how do they contribute to key events (e.g., product pages, category pages, blog posts)?
     "top_pages_conversions": {
         # NOTE: Do NOT include eventName here. It explodes the row count (page x event),
         # which can exceed the LLM context window and does not help answer
-        # "most visited pages and conversions" directly.
+        # "most visited pages and key events" directly.
         "dimensions": ["pagePath", "hostName"],
-        "metrics": ["sessions", "conversions"],
+        "metrics": ["sessions", "keyEvents"],
         "order_by": [{"field": "sessions", "direction": "DESCENDING"}],
         # Keep payload small enough for LLM summarization
         "limit": 50,
@@ -38,17 +38,17 @@ QUESTION_TEMPLATES = {
         "order_by": [{"field": "averageSessionDuration", "direction": "DESCENDING"}],
         "limit": 50,
     },
-    # 5. Are there underperforming pages with high traffic but low conversions?
+    # 5. Are there underperforming pages with high traffic but low key events?
     "underperforming_pages": {
         "dimensions": ["pagePath", "hostName"],
-        "metrics": ["sessions", "conversions"],
+        "metrics": ["sessions", "keyEvents"],
         "postprocess": "find_high_traffic_low_conversion",
         "limit": 200,
     },
-    # 6. How do blog posts or content pages contribute to conversions (e.g., assisted conversions, last-click conversions)?
+    # 6. How do blog posts or content pages contribute to key events (e.g., assisted, last-click)?
     "blog_conversion": {
         "dimensions": ["pagePath", "hostName", "sessionDefaultChannelGroup"],
-        "metrics": ["conversions", "sessions"],
+        "metrics": ["keyEvents", "sessions"],
         "filters": [{"field": "pagePath", "operator": "contains", "value": "blog"}],
         "limit": 50,
     },

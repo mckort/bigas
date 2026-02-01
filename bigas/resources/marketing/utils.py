@@ -478,8 +478,8 @@ def extract_metrics_and_dimensions_from_question(question: str) -> tuple[List[st
         metrics.append('averageSessionDuration')
     if any(word in question_lower for word in ['revenue', 'money', 'sales']):
         metrics.append('totalRevenue')
-    if any(word in question_lower for word in ['conversion', 'conversions']):
-        metrics.append('conversions')
+    if any(word in question_lower for word in ['conversion', 'conversions', 'key event', 'key events']):
+        metrics.append('keyEvents')
     
     # Extract dimensions
     if any(word in question_lower for word in ['device', 'mobile', 'desktop', 'tablet']):
@@ -614,10 +614,10 @@ def validate_ga4_metrics_dimensions(metrics: List[str], dimensions: List[str]) -
     Returns:
         Tuple of (is_valid, error_message)
     """
-    # Common GA4 metrics
+    # Common GA4 metrics (keyEvents is GA4's current metric for conversions)
     valid_metrics = {
         'activeUsers', 'sessions', 'screenPageViews', 'bounceRate', 
-        'averageSessionDuration', 'screenPageViewsPerSession', 'conversions',
+        'averageSessionDuration', 'screenPageViewsPerSession', 'conversions', 'keyEvents',
         'totalRevenue', 'transactions', 'ecommercePurchases'
     }
     

@@ -1,10 +1,13 @@
 #!/bin/bash
 set -e
 
-# Load environment variables from .env file if it exists
+# Load environment variables from .env file if it exists (avoid xargs for portability)
 if [ -f .env ]; then
     echo "Loading environment variables from .env file..."
-    export $(cat .env | grep -v '^#' | xargs)
+    set -a
+    # shellcheck source=.env
+    source ./.env
+    set +a
 fi
 
 # Check required environment variables
