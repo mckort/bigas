@@ -383,7 +383,15 @@ The release notes are generated so **every Jira issue is included exactly once**
 - **Improvements**
 - **Bug Fixes**
 
-The response includes a customer-ready markdown string in `customer_markdown` with these headings.
+The response includes:
+- `sections.features|improvements|bug_fixes`: customer-friendly bullets (no Jira keys like `SCRUM-123`)
+- `customer_markdown`: customer-ready markdown with H2 headings: **New features**, **Improvements**, **Bug Fixes**
+- `blog_markdown`: longer blog-ready markdown draft
+- `social`: draft updates for:
+  - `x` (<= 280 chars)
+  - `linkedin`
+  - `facebook`
+  - `instagram`
 
 **HTTP**
 
