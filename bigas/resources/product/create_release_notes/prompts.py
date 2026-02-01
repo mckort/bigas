@@ -17,7 +17,18 @@ Rules:
 - Do not invent details. Stay faithful to the issue summary.
 - Each input issue must produce exactly ONE output bullet.
 - Keep bullets concise and written in past tense where reasonable (e.g., "Added…", "Improved…", "Fixed…").
-- Include the Jira key in parentheses at the end of each bullet, e.g. \"Added support for multiple logos (SCRUM-123)\".
+- Do NOT include Jira keys (e.g. SCRUM-123) or any internal tracking identifiers.
+- Return ONLY valid JSON for the requested schema.
+"""
+
+COMMS_PACK_SYSTEM_PROMPT = """You are a product communications specialist.
+Create customer-facing release notes and social drafts from provided Jira issues.
+
+Rules:
+- Do not invent details. Stay faithful to the issue summaries.
+- Do NOT include Jira keys (e.g. SCRUM-123) or any internal tracking identifiers.
+- Use customer-friendly language and explain value briefly.
+- Do not omit any issues. Every issue must appear exactly once across the three sections.
 - Return ONLY valid JSON for the requested schema.
 """
 
@@ -82,5 +93,34 @@ Return JSON with this schema (same counts as input; do not omit anything):
   "improvements": ["string", "..."],
   "bug_fixes": ["string", "..."]
 }}
+"""
+
+
+def build_comms_pack_user_prompt(*, fix_version: str, grouped_issues_json: str) -> str:
+    return f"""Create a customer communications pack for release {fix_version}.
+
+Input JSON (grouped by category, each item includes key+summary for reference only):
+{grouped_issues_json}
+
+Return JSON with this schema:
+{{
+  "sections": {{
+    "new_features": ["string", "..."],
+    "improvements": ["string", "..."],
+    "bug_fixes": ["string", "..."]
+  }},
+  "blog_markdown": "string",
+  "social": {{
+    "x": "string (<= 280 chars)",
+    "linkedin": "string",
+    "facebook": "string",
+    "instagram": "string"
+  }}
+}}
+
+Constraints:
+- The three lists in sections must have EXACTLY the same item counts as the input lists (no drops, no merges).
+- Blog markdown must include H2 headings: \"New features\", \"Improvements\", \"Bug Fixes\" and use bullet lists.
+- Social drafts should not contain keys; keep X within 280 chars; LinkedIn should be professional; Facebook/Instagram can be slightly warmer.
 """
 

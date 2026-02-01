@@ -30,6 +30,29 @@ def _post_to_discord(webhook_url: str, message: str) -> None:
         logger.error("Failed to post to Discord", exc_info=True)
 
 
+def _post_to_discord_in_chunks(webhook_url: str, message: str, *, chunk_size: int = 1900) -> None:
+    """
+    Post long content to Discord by splitting into multiple messages.
+    Discord hard limit is 2000 chars; we keep a margin.
+    """
+    if not message:
+        return
+    msg = message.strip()
+    if len(msg) <= 2000:
+        _post_to_discord(webhook_url, msg)
+        return
+
+    start = 0
+    while start < len(msg):
+        end = min(start + chunk_size, len(msg))
+        # try to split on a newline boundary for readability
+        nl = msg.rfind("\n", start, end)
+        if nl > start + 200:
+            end = nl
+        _post_to_discord(webhook_url, msg[start:end].strip())
+        start = end
+
+
 @product_bp.route('/product_resource_placeholder', methods=['POST'])
 def product_placeholder():
     """
@@ -78,7 +101,28 @@ def create_release_notes():
             lines.append("**Bug Fixes:**")
             lines.extend([f"- {x}" for x in bug_fixes] or ["- (None)"])
 
-            _post_to_discord(webhook_url, "\n".join(lines))
+            _post_to_discord_in_chunks(webhook_url, "\n".join(lines))
+
+            # Add comms pack: social drafts + blog draft (as additional messages)
+            social = result.get("social") or {}
+            social_msg = "\n".join(
+                [
+                    "## 📣 Social drafts",
+                    "",
+                    f"**X:** {social.get('x','')}".strip(),
+                    "",
+                    f"**LinkedIn:** {social.get('linkedin','')}".strip(),
+                    "",
+                    f"**Facebook:** {social.get('facebook','')}".strip(),
+                    "",
+                    f"**Instagram:** {social.get('instagram','')}".strip(),
+                ]
+            ).strip()
+            _post_to_discord_in_chunks(webhook_url, social_msg)
+
+            blog = result.get("blog_markdown") or ""
+            if blog:
+                _post_to_discord_in_chunks(webhook_url, "## 📝 Blog draft\n\n" + blog)
 
         return jsonify(result)
     except ReleaseNotesError as e:

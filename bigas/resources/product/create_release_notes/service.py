@@ -14,6 +14,8 @@ from bigas.resources.product.create_release_notes.prompts import (
     build_release_notes_user_prompt,
     CUSTOMER_COPY_SYSTEM_PROMPT,
     build_customer_copy_user_prompt,
+    COMMS_PACK_SYSTEM_PROMPT,
+    build_comms_pack_user_prompt,
 )
 from bigas.resources.product.create_release_notes.formatter import group_issues, render_customer_markdown
 
@@ -138,40 +140,66 @@ class CreateReleaseNotesService:
             ],
         }
 
-        # 2) Use the LLM to rewrite each issue into customer-friendly bullet copy (no omissions).
-        customer_lines = {"new_features": [], "improvements": [], "bug_fixes": []}
+        # 2) Create a customer communications pack (no omissions).
+        grouped_issues_json = json.dumps(grouped_input, ensure_ascii=False)
+        customer_sections = {"new_features": [], "improvements": [], "bug_fixes": []}
+        social = {"x": "", "linkedin": "", "facebook": "", "instagram": ""}
+        blog_markdown = ""
+
         try:
-            grouped_issues_json = json.dumps(grouped_input, ensure_ascii=False)
-            copy_prompt = build_customer_copy_user_prompt(
+            comms_prompt = build_comms_pack_user_prompt(
                 fix_version=fix_version,
                 grouped_issues_json=grouped_issues_json,
             )
             completion = self._openai_client.chat.completions.create(
                 model=self._model,
                 messages=[
-                    {"role": "system", "content": CUSTOMER_COPY_SYSTEM_PROMPT},
-                    {"role": "user", "content": copy_prompt},
+                    {"role": "system", "content": COMMS_PACK_SYSTEM_PROMPT},
+                    {"role": "user", "content": comms_prompt},
                 ],
-                max_tokens=1600,
-                temperature=0.2,
+                max_tokens=2200,
+                temperature=0.3,
             )
             content = (completion.choices[0].message.content or "").strip()
-            customer_lines = _extract_json(content)
+            pack = _extract_json(content)
+            customer_sections = (pack.get("sections") or customer_sections)
+            social = (pack.get("social") or social)
+            blog_markdown = (pack.get("blog_markdown") or "")
         except Exception as e:
-            logger.warning(f"Falling back to raw summaries for customer copy: {e}")
-            # Fallback: ensure we still include everything.
-            for key in ["new_features", "improvements", "bug_fixes"]:
-                customer_lines[key] = [
-                    f"{i['summary']} ({i['key']})"
-                    for i in grouped_input[key]
-                ]
+            logger.warning(f"Falling back to basic customer copy (no comms pack): {e}")
+
+            # Fallback: rewrite as simple bullets without keys.
+            try:
+                copy_prompt = build_customer_copy_user_prompt(
+                    fix_version=fix_version,
+                    grouped_issues_json=grouped_issues_json,
+                )
+                completion = self._openai_client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": CUSTOMER_COPY_SYSTEM_PROMPT},
+                        {"role": "user", "content": copy_prompt},
+                    ],
+                    max_tokens=1600,
+                    temperature=0.2,
+                )
+                content = (completion.choices[0].message.content or "").strip()
+                customer_sections = _extract_json(content)
+            except Exception:
+                # Last resort: raw summaries (still no keys).
+                customer_sections = {
+                    k: [i["summary"] for i in grouped_input[k]]
+                    for k in ["new_features", "improvements", "bug_fixes"]
+                }
 
         # Hard safety: if the model dropped items, fall back for that section.
         for key in ["new_features", "improvements", "bug_fixes"]:
-            if not isinstance(customer_lines.get(key), list) or len(customer_lines.get(key, [])) != len(grouped_input[key]):
-                customer_lines[key] = [f"{i['summary']} ({i['key']})" for i in grouped_input[key]]
+            if not isinstance(customer_sections.get(key), list) or len(customer_sections.get(key, [])) != len(grouped_input[key]):
+                customer_sections[key] = [i["summary"] for i in grouped_input[key]]
 
-        customer_markdown = render_customer_markdown(customer_lines)
+        customer_markdown = render_customer_markdown(customer_sections)
+        if not blog_markdown:
+            blog_markdown = customer_markdown
 
         # 3) Generate richer multi-channel artifacts (email/social/blog) from the full list.
         # We keep the old schema for compatibility, but ensure sections contain ALL items.
@@ -198,17 +226,23 @@ class CreateReleaseNotesService:
         result.setdefault("highlights", [])
         result.setdefault("sections", {})
         # Force full coverage sections from deterministic grouping.
-        result["sections"]["features"] = customer_lines["new_features"]
-        result["sections"]["improvements"] = customer_lines["improvements"]
-        result["sections"]["bug_fixes"] = customer_lines["bug_fixes"]
+        result["sections"]["features"] = customer_sections["new_features"]
+        result["sections"]["improvements"] = customer_sections["improvements"]
+        result["sections"]["bug_fixes"] = customer_sections["bug_fixes"]
         for k in ["breaking_changes", "known_issues"]:
             result["sections"].setdefault(k, [])
         result.setdefault("email", {"subject": f"Release {fix_version}", "body": ""})
-        result.setdefault("social", {"linkedin": "", "x": ""})
+        # Expand social drafts; keep keys-compatible fields.
+        result["social"] = {
+            "linkedin": (social.get("linkedin") or ""),
+            "x": (social.get("x") or ""),
+            "facebook": (social.get("facebook") or ""),
+            "instagram": (social.get("instagram") or ""),
+        }
         # Provide a customer-ready canonical markdown that won't miss items.
         result["customer_markdown"] = customer_markdown
         # Ensure blog_markdown uses the same headings expectation if caller uses it.
-        result.setdefault("blog_markdown", customer_markdown)
+        result["blog_markdown"] = blog_markdown
         result["issues_included"] = llm_issues
 
         return result
