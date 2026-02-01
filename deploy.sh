@@ -54,10 +54,31 @@ if [ -z "$IMAGE_TAG" ]; then
     exit 1
 fi
 
-# Optional Discord webhook
+# Optional Discord webhooks (marketing/product)
 DISCORD_ENV_VAR=""
-if [ ! -z "$DISCORD_WEBHOOK_URL" ]; then
-    DISCORD_ENV_VAR=",DISCORD_WEBHOOK_URL=$DISCORD_WEBHOOK_URL"
+if [ ! -z "$DISCORD_WEBHOOK_URL_MARKETING" ]; then
+    DISCORD_ENV_VAR="$DISCORD_ENV_VAR,DISCORD_WEBHOOK_URL_MARKETING=$DISCORD_WEBHOOK_URL_MARKETING"
+fi
+if [ ! -z "$DISCORD_WEBHOOK_URL_PRODUCT" ]; then
+    DISCORD_ENV_VAR="$DISCORD_ENV_VAR,DISCORD_WEBHOOK_URL_PRODUCT=$DISCORD_WEBHOOK_URL_PRODUCT"
+fi
+
+# Optional Jira env vars (required for create_release_notes functionality)
+JIRA_ENV_VAR=""
+if [ ! -z "$JIRA_BASE_URL" ]; then
+    JIRA_ENV_VAR="$JIRA_ENV_VAR,JIRA_BASE_URL=$JIRA_BASE_URL"
+fi
+if [ ! -z "$JIRA_EMAIL" ]; then
+    JIRA_ENV_VAR="$JIRA_ENV_VAR,JIRA_EMAIL=$JIRA_EMAIL"
+fi
+if [ ! -z "$JIRA_API_TOKEN" ]; then
+    JIRA_ENV_VAR="$JIRA_ENV_VAR,JIRA_API_TOKEN=$JIRA_API_TOKEN"
+fi
+if [ ! -z "$JIRA_PROJECT_KEY" ]; then
+    JIRA_ENV_VAR="$JIRA_ENV_VAR,JIRA_PROJECT_KEY=$JIRA_PROJECT_KEY"
+fi
+if [ ! -z "$JIRA_JQL_EXTRA" ]; then
+    JIRA_ENV_VAR="$JIRA_ENV_VAR,JIRA_JQL_EXTRA=$JIRA_JQL_EXTRA"
 fi
 
 # Optional Storage bucket
@@ -103,6 +124,6 @@ gcloud run deploy mcp-marketing \
     --region europe-north1 \
     --allow-unauthenticated \
     --service-account=$GOOGLE_SERVICE_ACCOUNT_EMAIL \
-    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR
+    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$JIRA_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR
 
 echo "✅ Deployment completed successfully!" 

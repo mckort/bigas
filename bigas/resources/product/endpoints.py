@@ -1,9 +1,34 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
+import logging
+import os
+import requests
+
+from bigas.resources.marketing.utils import sanitize_error_message, validate_request_data
+from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
 
 product_bp = Blueprint(
     'product_bp', __name__,
     url_prefix='/mcp/tools'
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _post_to_discord(webhook_url: str, message: str) -> None:
+    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placeholder") or webhook_url == "placeholder":
+        return
+
+    if len(message) > 2000:
+        message = message[:1997] + "..."
+
+    try:
+        resp = requests.post(webhook_url, json={"content": message}, timeout=20)
+        # Discord returns 204 No Content on success
+        if resp.status_code != 204:
+            logger.error(f"Failed to post to Discord: {resp.status_code} {resp.text[:300]}")
+    except Exception:
+        logger.error("Failed to post to Discord", exc_info=True)
+
 
 @product_bp.route('/product_resource_placeholder', methods=['POST'])
 def product_placeholder():
@@ -16,6 +41,58 @@ def product_placeholder():
         "details": "Potential integrations: Jira, Asana, Figma, etc."
     })
 
+@product_bp.route('/create_release_notes', methods=['POST'])
+def create_release_notes():
+    """
+    Create release notes by querying Jira issues for a Fix Version.
+
+    Request JSON:
+      { "fix_version": "1.1.0" }
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data, required_fields=["fix_version"])
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    fix_version = data.get("fix_version")
+    try:
+        service = CreateReleaseNotesService()
+        result = service.create(fix_version=fix_version)
+
+        # Optional: post the release notes to the product Discord channel
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_PRODUCT")
+        if webhook_url:
+            title = result.get("release_title") or f"Release {result.get('release_version', fix_version)}"
+            sections = result.get("sections") or {}
+            new_features = sections.get("features") or []
+            improvements = sections.get("improvements") or []
+            bug_fixes = sections.get("bug_fixes") or []
+
+            lines = [f"# 🚀 {title}", ""]
+            lines.append("**New features:**")
+            lines.extend([f"- {x}" for x in new_features] or ["- (None)"])
+            lines.append("")
+            lines.append("**Improvements:**")
+            lines.extend([f"- {x}" for x in improvements] or ["- (None)"])
+            lines.append("")
+            lines.append("**Bug Fixes:**")
+            lines.extend([f"- {x}" for x in bug_fixes] or ["- (None)"])
+
+            _post_to_discord(webhook_url, "\n".join(lines))
+
+        return jsonify(result)
+    except ReleaseNotesError as e:
+        # If it's our validation, treat as 400; otherwise 500.
+        msg = str(e)
+        status = 400 if any(
+            s in msg.lower()
+            for s in ["fix_version", "invalid", "missing required", "required"]
+        ) else 500
+        return jsonify({"error": sanitize_error_message(msg)}), status
+    except Exception as e:
+        logger.error("Error in create_release_notes", exc_info=True)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
 def get_manifest():
     """Returns the manifest for the product tools."""
     return {
@@ -27,6 +104,19 @@ def get_manifest():
                 "description": "Placeholder for a future Product Management AI Resource.",
                 "path": "/mcp/tools/product_resource_placeholder",
                 "method": "POST"
+            },
+            {
+                "name": "create_release_notes",
+                "description": "Query Jira by Fix Version and generate multi-channel release notes.",
+                "path": "/mcp/tools/create_release_notes",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "fix_version": {"type": "string", "description": "Jira Fix Version, e.g. 1.1.0"}
+                    },
+                    "required": ["fix_version"]
+                }
             }
         ]
     }

@@ -161,7 +161,8 @@ GOOGLE_PROJECT_ID=your_actual_google_project_id
 GOOGLE_SERVICE_ACCOUNT_EMAIL=your_actual_service_account_email
 
 # Optional:
-DISCORD_WEBHOOK_URL=your_actual_discord_webhook
+DISCORD_WEBHOOK_URL_MARKETING=your_actual_marketing_discord_webhook
+DISCORD_WEBHOOK_URL_PRODUCT=your_actual_product_discord_webhook
 STORAGE_BUCKET_NAME=your_actual_storage_bucket
 TARGET_KEYWORDS=your_actual_keywords
 ```
@@ -228,7 +229,8 @@ nano .env
 **Required environment variables** (see `env.example` for details):
 - `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID (found in GA4 Admin → Property Settings)
 - `OPENAI_API_KEY` - Your OpenAI API key
-- `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
+- `DISCORD_WEBHOOK_URL_MARKETING` - Your Discord webhook URL (marketing channel)
+- `DISCORD_WEBHOOK_URL_PRODUCT` - Your Discord webhook URL (product channel, for release notes)
 - `STORAGE_BUCKET_NAME` - Your Google Cloud Storage bucket (optional, defaults to 'bigas-analytics-reports')
 - `TARGET_KEYWORDS` - Colon-separated list of target keywords for SEO analysis (optional, e.g., "sustainable_swag:eco_friendly_clothing:green_promos")
 
@@ -363,6 +365,39 @@ curl -X POST https://your-deployment-url.com/mcp/tools/fetch_custom_report \
     "metrics": ["active_users", "sessions"],
     "date_ranges": [{"start_date": "2024-01-01", "end_date": "2024-01-31"}]
   }'
+```
+
+#### Create Release Notes (Jira Fix Version → multi-channel notes)
+
+Requires Jira + OpenAI env vars (see `env.example`):
+- `JIRA_BASE_URL`
+- `JIRA_EMAIL`
+- `JIRA_API_TOKEN`
+- `JIRA_PROJECT_KEY`
+- Optional: `JIRA_JQL_EXTRA`
+
+**Output format (no missed items)**
+
+The release notes are generated so **every Jira issue is included exactly once** under:
+- **New features**
+- **Improvements**
+- **Bug Fixes**
+
+The response includes a customer-ready markdown string in `customer_markdown` with these headings.
+
+**HTTP**
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/create_release_notes \
+  -H "Content-Type: application/json" \
+  -d '{"fix_version":"1.1.0"}'
+```
+
+**CLI**
+
+```bash
+cd bigas-core
+./create_release_notes 1.1.0
 ```
 
 ### API Documentation
