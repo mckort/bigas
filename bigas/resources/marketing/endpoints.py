@@ -284,8 +284,8 @@ def analyze_trends():
     if date_range not in valid_date_ranges:
         return jsonify({"error": f"Invalid date_range. Must be one of: {', '.join(valid_date_ranges)}"}), 400
     
-    # Check if Discord webhook is available
-    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
+    # Check if Discord webhook is available (marketing channel)
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
     post_to_discord_enabled = webhook_url is not None
     
     try:
@@ -418,12 +418,12 @@ def weekly_analytics_report():
         # Override environment variables with SaaS credentials
         os.environ["GA4_PROPERTY_ID"] = str(property_id)
         if webhook_url:
-            os.environ["DISCORD_WEBHOOK_URL"] = webhook_url
+            os.environ["DISCORD_WEBHOOK_URL_MARKETING"] = webhook_url
     else:
         # Standalone mode - use environment variables
-        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
         if not webhook_url:
-            return jsonify({"error": "DISCORD_WEBHOOK_URL not set."}), 500
+            return jsonify({"error": "DISCORD_WEBHOOK_URL_MARKETING not set."}), 500
         property_id = os.environ.get("GA4_PROPERTY_ID")
         if not property_id:
             return jsonify({"error": "GA4_PROPERTY_ID not set."}), 500
@@ -929,8 +929,8 @@ def analyze_underperforming_pages():
         # Limit the number of pages to analyze to prevent timeouts
         underperforming_pages = [p for p in page_urls_data if p.get('is_underperforming')][:max_pages]
         
-        # Post to Discord if webhook is available
-        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
+        # Post to Discord if webhook is available (marketing channel)
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
         discord_messages_sent = 0
         
         if webhook_url:

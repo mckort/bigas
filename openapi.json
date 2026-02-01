@@ -160,6 +160,57 @@
         }
       }
     },
+    "/mcp/tools/create_release_notes": {
+      "post": {
+        "summary": "Create multi-channel release notes from Jira Fix Version.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "fix_version": { "type": "string", "description": "Jira Fix Version, e.g. 1.1.0" }
+                },
+                "required": ["fix_version"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Release notes JSON output",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "error": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "error": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/mcp/tools/weekly_analytics_report": {
       "post": {
         "summary": "Run the weekly analytics Q&A and post results to Discord.",
