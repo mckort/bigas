@@ -1,9 +1,9 @@
-# 🚀 Bigas - AI-Powered Marketing Analytics Platform
+# 🚀 Bigas - AI-Powered Marketing + Product Platform
 
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>Automated weekly analytics reports with AI-powered insights for solo founders</strong>
+  <strong>Automated marketing analytics + product release communications with AI</strong>
 </div>
 
 ## 📱 Stay Updated
@@ -13,14 +13,18 @@ Follow us on X for the latest updates, feature announcements, and marketing insi
 
 ## 📊 Overview
 
-**Bigas** is an AI team concept designed to provide virtual specialists for different business functions. We've started with our first virtual team member: **The Senior Marketing Analyst**.
+**Bigas** is an AI team concept designed to provide virtual specialists for different business functions.
+
+Today it includes:
+- **The Senior Marketing Analyst** (GA4 → insights, weekly reports)
+- **The Product Release Manager** (Jira → customer-facing release notes + social/blog drafts)
 
 ### 🎯 Our Goal
 To build a comprehensive AI team that can handle various business functions, starting with marketing and expanding to other areas like sales, customer support, product development, and more.
 
-### 🚀 Current Implementation: Senior Marketing Analyst
+### 🚀 Current Implementations
 
-Bigas is a **comprehensive AI-powered marketing analytics platform** that automatically generates detailed weekly reports from your Google Analytics 4 data and posts them to Discord. It features advanced web scraping capabilities, comprehensive event analysis, and provides concrete, actionable improvement suggestions based on actual page content rather than generic advice.
+Bigas is a **modular AI platform** that exposes marketing analytics and product tooling over HTTP (MCP tools) and can post outputs to Discord.
 
 **What our Senior Marketing Analyst does:**
 - 📈 **Weekly Analytics Reports**: Automated GA4 analysis with AI-powered insights and comprehensive marketing analysis
@@ -31,6 +35,12 @@ Bigas is a **comprehensive AI-powered marketing analytics platform** that automa
 - 🌐 **Enhanced Web Scraping**: Analyzes actual page content (titles, CTAs, H1 tags) for page-specific optimization suggestions
 - 📊 **Event Analysis**: Captures and analyzes website events for comprehensive performance insights
 - 🎯 **Structured Recommendations**: Generates exactly 7 AI-powered recommendations (one per question) with facts, actions, categories, priorities, and impact scores
+
+**What our Product Release Manager does:**
+- 🗂️ **Jira release notes**: Queries Jira issues by Fix Version and generates customer-facing release notes
+- 📰 **Blog draft**: Produces a longer `blog_markdown` draft suitable for publishing
+- 📣 **Social drafts**: Produces drafts for X, LinkedIn, Facebook, and Instagram
+- ✅ **No missed items**: Ensures every Jira issue is included exactly once under **New features**, **Improvements**, **Bug Fixes**
 
 ### 🌟 Key Features
 
@@ -94,9 +104,8 @@ Bigas is built as a **Modular Monolith** with a service-oriented architecture:
 |   v                      v                      |
 | +----------------------+ +--------------------+ |
 | | Marketing Resource   | | Product Resource   | |
-| | (Connects to GA,     | | (Placeholder for   | |
-| |  OpenAI, Discord,    | |  Jira, Figma, etc) | |
-| |  Google Cloud Storage)| |                    | |
+| | (GA4, OpenAI,        | | (Jira, OpenAI,     | |
+| |  Discord, Storage)   | |  Discord)          | |
 | +----------------------+ +--------------------+ |
 |                                                 |
 +-------------------------------------------------+
@@ -112,6 +121,10 @@ The marketing analytics functionality is organized into focused services:
 - **`TrendAnalysisService`**: Orchestrates trend analysis workflows and underperforming page identification
 - **`StorageService`**: Manages weekly report storage in Google Cloud Storage with enhanced metadata
 - **`WebScrapingService`**: Analyzes actual page content for concrete, page-specific recommendations
+
+The product functionality is organized into focused services:
+
+- **`CreateReleaseNotesService`**: Fetches Jira issues by Fix Version and generates customer-facing release notes + comms pack
 
 ### Data Flow
 
