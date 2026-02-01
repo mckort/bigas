@@ -25,7 +25,7 @@ class OpenAIService:
         """Use OpenAI to parse the natural language question into structured query parameters."""
         system_prompt = """You are an expert at converting natural language questions about Google Analytics data into structured query parameters.
         Return a JSON object with the following fields:
-        - metrics: list of metric names (e.g., ["totalUsers", "sessions", "screenPageViews", "conversions", "eventCount"])
+        - metrics: list of metric names (e.g., ["totalUsers", "sessions", "screenPageViews", "keyEvents", "eventCount"])
         - dimensions: list of dimension names (e.g., ["date", "country", "deviceCategory", "landingPage", "pagePath", "source", "medium"])
         - date_range: object with start_date and end_date (must be in YYYY-MM-DD format)
         - filters: list of filter objects with field, operator, and value
@@ -50,8 +50,8 @@ class OpenAIService:
         - Order by: sessions (descending) to see highest traffic sources first
         - Use this simpler combination if the above causes compatibility issues
         
-        For conversion analysis, use these GA4 metrics:
-        - conversions: Number of conversions
+        For conversion/key-event analysis, use these GA4 metrics:
+        - keyEvents: Number of key events (GA4's current metric; replaces deprecated "conversions")
         - eventCount: Number of events
         - totalUsers: Total unique users
         - sessions: Number of sessions
@@ -71,15 +71,15 @@ class OpenAIService:
         - IMPORTANT: Note: GA4 doesn't have direct "exits" or "exitRate" metrics. Use page views, sessions, and engagement duration to identify potential exit rate issues.
         
         For content and conversion attribution analysis, use these combinations:
-        - Metrics: ["conversions", "sessions", "totalUsers"]
+        - Metrics: ["keyEvents", "sessions", "totalUsers"]
         - Dimensions: ["pagePath", "pageTitle", "sessionDefaultChannelGroup", "source", "medium"]
-        - Order by: conversions (descending) to see pages with most conversions
+        - Order by: keyEvents (descending) to see pages with most key events
         - IMPORTANT: Use compatible metric/dimension combinations. Avoid mixing incompatible fields.
         
         For basic content performance analysis, use these combinations:
-        - Metrics: ["conversions", "sessions", "totalUsers"]
+        - Metrics: ["keyEvents", "sessions", "totalUsers"]
         - Dimensions: ["pagePath", "pageTitle"]
-        - Order by: conversions (descending) to see pages with most conversions
+        - Order by: keyEvents (descending) to see pages with most key events
         - Use this simpler combination if the above causes compatibility issues
         
         For content analysis, use these GA4 dimensions:
@@ -93,7 +93,7 @@ class OpenAIService:
         - sessionDefaultChannelGroup: Channel grouping (for attribution analysis)
         
         Note: GA4 doesn't have separate "assisted conversions" or "last-click conversions" metrics like Universal Analytics.
-        Use "conversions" metric with "sessionDefaultChannelGroup" dimension to analyze conversion attribution by channel.
+        Use "keyEvents" metric with "sessionDefaultChannelGroup" dimension to analyze key-event attribution by channel.
         
         IMPORTANT: When the question mentions "bounce rate", you MUST include "bounceRate" in the metrics and "landingPage" in the dimensions.
         
