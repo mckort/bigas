@@ -491,6 +491,7 @@ def weekly_analytics_report():
             page_content_analysis = None
             underperforming_page_url = None
             max_sessions = 0
+            underperforming_metrics_snapshot = ""
             
             if template_key == "underperforming_pages" and raw_data:
                 try:
@@ -500,6 +501,30 @@ def weekly_analytics_report():
                     # Look for page data in raw_data
                     if isinstance(raw_data, dict) and "rows" in raw_data:
                         print(f"🔍 Found {len(raw_data['rows'])} rows in raw_data")
+                        # Build a small metrics snapshot for Discord (top pages by sessions)
+                        try:
+                            snapshot_rows = sorted(
+                                raw_data["rows"],
+                                key=lambda r: int((r.get("metric_values") or ["0"])[0] or 0),
+                                reverse=True,
+                            )[:5]
+                            snapshot_lines = []
+                            for r in snapshot_rows:
+                                metric_values = r.get("metric_values", []) or []
+                                dimension_values = r.get("dimension_values", []) or []
+                                if len(metric_values) >= 2 and len(dimension_values) >= 2:
+                                    sessions = int(metric_values[0])
+                                    key_events = int(metric_values[1])
+                                    page_path = dimension_values[0]
+                                    hostname = dimension_values[1]
+                                    page_url = f"https://{hostname}{page_path}" if (hostname and page_path) else (page_path or "")
+                                    per_100 = (key_events / sessions * 100) if sessions else 0
+                                    snapshot_lines.append(f"- {page_url} — {sessions} sessions, {key_events} key events ({per_100:.1f} per 100 sessions)")
+                            if snapshot_lines:
+                                underperforming_metrics_snapshot = "\n\n**Metrics snapshot (top pages)**\n" + "\n".join(snapshot_lines)
+                        except Exception:
+                            underperforming_metrics_snapshot = ""
+
                         for row in raw_data["rows"]:
                             try:
                                 # GA4 returns metric_values and dimension_values as arrays of strings
@@ -508,9 +533,11 @@ def weekly_analytics_report():
                                 
                                 if len(metric_values) >= 2 and len(dimension_values) >= 2:
                                     sessions = int(metric_values[0])
+                                    # Note: template uses keyEvents as the second metric.
+                                    # We keep the variable name for minimal changes, but it represents key events.
                                     conversions = int(metric_values[1])
                                     
-                                    # Find page with most sessions but low/no conversions
+                                    # Find page with most sessions but low/no key events
                                     if sessions > max_sessions and conversions == 0:
                                         max_sessions = sessions
                                         page_path = dimension_values[0]
@@ -519,7 +546,7 @@ def weekly_analytics_report():
                                         # Construct full URL
                                         if page_path and hostname:
                                             underperforming_page_url = f"https://{hostname}{page_path}"
-                                            print(f"🎯 Found underperforming page: {underperforming_page_url} ({sessions} sessions, 0 conversions)")
+                                            print(f"🎯 Found underperforming page: {underperforming_page_url} ({sessions} sessions, 0 key events)")
                             except (ValueError, IndexError, KeyError, TypeError) as e:
                                 print(f"⚠️ Error processing row: {e}")
                                 continue
@@ -723,6 +750,8 @@ Return ONLY the JSON, no explanation.
                 recommendation = None
             
             message = f"**Q: {q}**\nA: {answer}"
+            if template_key == "underperforming_pages" and underperforming_metrics_snapshot:
+                message += underperforming_metrics_snapshot
             if should_post_to_discord:
                 post_to_discord(webhook_url, message)
             full_report += message + "\n\n"
@@ -940,6 +969,22 @@ def analyze_underperforming_pages():
             header_message += f"📊 **Pages to Analyze**: {len(underperforming_pages)} (limited to {max_pages} for performance)\n"
             if target_keywords:
                 header_message += f"🎯 **Target Keywords**: {', '.join(target_keywords)}\n"
+            
+            # Metrics snapshot (top pages by sessions) so we can see sessions + key events in Discord
+            try:
+                snapshot = sorted(page_urls_data, key=lambda p: int(p.get("sessions", 0) or 0), reverse=True)[:8]
+                if snapshot:
+                    header_message += "\n\n## 📌 Metrics snapshot (top pages)\n"
+                    for p in snapshot:
+                        page_url = p.get("page_url", "")
+                        sessions = int(p.get("sessions", 0) or 0)
+                        key_events = int(p.get("key_events", 0) or 0)
+                        per_100 = (key_events / sessions * 100) if sessions else 0
+                        header_message += f"- {page_url} — {sessions} sessions, {key_events} key events ({per_100:.1f} per 100 sessions)\n"
+            except Exception:
+                # If snapshot fails, don't break the endpoint
+                pass
+
             header_message += f"\nI'll analyze each page and provide specific improvement suggestions..."
             post_to_discord(webhook_url, header_message)
             discord_messages_sent += 1

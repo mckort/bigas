@@ -297,8 +297,9 @@ class StorageService:
             page_urls = []
             rows = raw_data.get("rows", [])
             
-            # Get dimension headers to understand the data structure
+            # Get dimension/metric headers to understand the data structure
             dimension_headers = raw_data.get("dimension_headers", [])
+            metric_headers = raw_data.get("metric_headers", [])
             
             # Find the indices for pagePath and hostName
             page_path_index = None
@@ -323,9 +324,37 @@ class StorageService:
                         # Extract hostname (domain)
                         hostname = dimension_values[host_name_index] if host_name_index is not None and host_name_index < len(dimension_values) else ""
                         
-                        # Extract metrics (sessions, conversions, etc.)
-                        sessions = int(metric_values[0]) if len(metric_values) > 0 else 0
-                        conversions = int(metric_values[1]) if len(metric_values) > 1 else 0
+                    # Extract metrics by header name when possible (the templates may use keyEvents instead of conversions)
+                    sessions = 0
+                    key_events = 0
+                    conversions = 0
+
+                    def _metric_idx(name: str) -> Optional[int]:
+                        try:
+                            return metric_headers.index(name)
+                        except ValueError:
+                            return None
+
+                    idx_sessions = _metric_idx("sessions")
+                    idx_key_events = _metric_idx("keyEvents")
+                    idx_conversions = _metric_idx("conversions")
+
+                    if idx_sessions is not None and idx_sessions < len(metric_values):
+                        sessions = int(metric_values[idx_sessions])
+                    elif len(metric_values) > 0:
+                        # Fallback: first metric is usually sessions
+                        sessions = int(metric_values[0])
+
+                    if idx_key_events is not None and idx_key_events < len(metric_values):
+                        key_events = int(metric_values[idx_key_events])
+
+                    if idx_conversions is not None and idx_conversions < len(metric_values):
+                        conversions = int(metric_values[idx_conversions])
+
+                    # Back-compat: if template uses keyEvents as the "conversion-like" metric,
+                    # mirror it into conversions so older consumers don't show 0 incorrectly.
+                    if conversions == 0 and key_events > 0:
+                        conversions = key_events
                         
                         # Check if this page is underperforming (high traffic, low conversions)
                         is_underperforming = row.get("underperforming", False)
@@ -347,8 +376,11 @@ class StorageService:
                             "hostname": hostname,
                             "page_url": full_url,
                             "sessions": sessions,
-                            "conversions": conversions,
-                            "conversion_rate": (conversions / sessions * 100) if sessions > 0 else 0,
+                        # Keep both fields to avoid confusion between GA4 "key events" and legacy "conversions".
+                        "key_events": key_events,
+                        "conversions": conversions,
+                        "key_event_rate": (key_events / sessions * 100) if sessions > 0 else 0,
+                        "conversion_rate": (conversions / sessions * 100) if sessions > 0 else 0,
                             "is_underperforming": is_underperforming
                         })
                         
