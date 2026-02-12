@@ -1,6 +1,7 @@
 import os
 import logging
 from flask import Flask, jsonify
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -8,6 +9,10 @@ logger = logging.getLogger(__name__)
 
 def create_app():
     """Create and configure an instance of the Flask application."""
+    # Local development convenience: load `.env` if present.
+    # In Cloud Run / production, environment variables are typically injected by the platform.
+    load_dotenv(override=False)
+
     app = Flask(__name__)
 
     # Check deployment mode
