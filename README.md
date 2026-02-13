@@ -178,11 +178,6 @@ DISCORD_WEBHOOK_URL_MARKETING=your_actual_marketing_discord_webhook
 DISCORD_WEBHOOK_URL_PRODUCT=your_actual_product_discord_webhook
 STORAGE_BUCKET_NAME=your_actual_storage_bucket
 TARGET_KEYWORDS=your_actual_keywords
-
-# Optional (Paid Ads - Google Ads API):
-GOOGLE_ADS_DEVELOPER_TOKEN=your_google_ads_developer_token
-GOOGLE_ADS_LOGIN_CUSTOMER_ID=your_manager_customer_id_digits_only
-GOOGLE_ADS_CUSTOMER_ID=your_customer_id_digits_only
 ```
 
 ### Step-by-Step Setup
@@ -360,31 +355,6 @@ curl -X POST https://your-deployment-url.com/mcp/tools/cleanup_old_reports \
   -d '{"keep_days": 30}'
 ```
 
-#### Google Ads API Health Check (Paid Ads - Google Ads)
-
-This verifies:
-- your runtime identity (Cloud Run service account / local ADC user) can mint an access token
-- your `GOOGLE_ADS_DEVELOPER_TOKEN` is valid
-- the identity has access to at least one Google Ads account
-
-```bash
-curl https://your-deployment-url.com/mcp/tools/google_ads_health_check
-```
-
-#### Fetch Google Ads Daily Campaign Report (Paid Ads - Google Ads)
-
-Stores the raw response in GCS under `raw_ads/google_ads/{YYYY-MM-DD}/campaign_report.json`.
-
-```bash
-curl -X POST https://your-deployment-url.com/mcp/tools/fetch_google_ads_campaign_report \
-  -H "Content-Type: application/json" \
-  -d '{
-    "start_date": "2026-02-01",
-    "end_date": "2026-02-07",
-    "store_raw": true
-  }'
-```
-
 #### LinkedIn Ads API Health Check (Paid Ads - LinkedIn)
 
 Lists accessible ad accounts (requires LinkedIn app approval + scopes `r_ads`).
@@ -448,9 +418,9 @@ This pattern is implemented with:
 - `build_ads_cache_keys(...)` – computes the hash + blob names from an `AdsAnalyticsRequest`.
 - `StorageService.store_raw_ads_report_at_blob(...)` – writes the `{metadata, payload}` wrapper to GCS.
 
-The same pattern is reused for other platforms (Google Ads, Meta, Reddit) by:
+The same pattern can be reused for other platforms (e.g. Meta, Reddit) by:
 
-1. Constructing an `AdsAnalyticsRequest(platform="google_ads" | "meta" | "reddit", ...)`.
+1. Constructing an `AdsAnalyticsRequest(platform="meta" | "reddit", ...)`.
 2. Calling `build_ads_cache_keys(...)` to get `request_hash`, `blob_name`, and `enriched_blob_name`.
 3. Storing raw responses under `raw_ads/{platform}/...` via `StorageService`.
 

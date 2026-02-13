@@ -661,8 +661,6 @@ def get_manifest():
             {"name": "get_latest_report", "description": "Retrieves the most recent weekly analytics report with summary.", "path": "/mcp/tools/get_latest_report", "method": "GET"},
             {"name": "analyze_underperforming_pages", "description": "Analyzes underperforming pages from stored reports and generates AI-powered improvement suggestions.", "path": "/mcp/tools/analyze_underperforming_pages", "method": "POST"},
             {"name": "cleanup_old_reports", "description": "Cleans up old weekly reports to manage storage costs.", "path": "/mcp/tools/cleanup_old_reports", "method": "POST"},
-            {"name": "google_ads_health_check", "description": "Smoke test Google Ads API access using ADC + developer token.", "path": "/mcp/tools/google_ads_health_check", "method": "GET"},
-            {"name": "fetch_google_ads_campaign_report", "description": "Fetch a simple daily campaign performance report from Google Ads and store raw data in GCS.", "path": "/mcp/tools/fetch_google_ads_campaign_report", "method": "POST"},
             {"name": "linkedin_ads_health_check", "description": "Smoke test LinkedIn Ads API access by listing ad accounts.", "path": "/mcp/tools/linkedin_ads_health_check", "method": "GET"},
             {"name": "fetch_linkedin_ad_analytics_report", "description": "Fetch LinkedIn adAnalytics (account-level pivot) and store raw data in GCS.", "path": "/mcp/tools/fetch_linkedin_ad_analytics_report", "method": "POST"},
             {"name": "linkedin_exchange_code", "description": "Exchange a LinkedIn OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/linkedin_exchange_code", "method": "POST"},
@@ -2116,35 +2114,6 @@ def summarize_linkedin_ad_analytics():
         sanitized_error = sanitize_error_message(str(e))
         return jsonify({"error": sanitized_error}), 500
 
-@marketing_bp.route('/mcp/tools/google_ads_health_check', methods=['GET'])
-def google_ads_health_check():
-    """
-    Smoke test Google Ads API access.
-
-    Validates:
-    - GOOGLE_ADS_DEVELOPER_TOKEN is set
-    - ADC can mint an access token for the adwords scope
-    - Google Ads API is reachable
-    """
-    try:
-        from bigas.resources.marketing.google_ads_service import GoogleAdsService
-
-        service = GoogleAdsService()
-        resource_names = service.list_accessible_customers()
-        return jsonify(
-            {
-                "status": "success",
-                "accessible_customers_count": len(resource_names),
-                "accessible_customers": resource_names[:20],  # keep response small
-                "note": "If this is empty, your service account/user likely lacks Google Ads account access.",
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error in google_ads_health_check: {traceback.format_exc()}")
-        sanitized_error = sanitize_error_message(str(e))
-        return jsonify({"error": sanitized_error}), 500
-
-
 @marketing_bp.route('/mcp/tools/summarize_linkedin_creative_portfolio', methods=['POST'])
 def summarize_linkedin_creative_portfolio():
     """
@@ -2566,87 +2535,6 @@ def run_linkedin_portfolio_report():
         sanitized_error = sanitize_error_message(str(traceback.format_exc()))
         return jsonify({"error": sanitized_error}), 500
 
-
-@marketing_bp.route('/mcp/tools/fetch_google_ads_campaign_report', methods=['POST'])
-def fetch_google_ads_campaign_report():
-    """
-    Fetch a basic Google Ads daily campaign performance report via GAQL SearchStream.
-
-    Request JSON (all optional unless noted):
-      - customer_id: Google Ads customer id (required if not set in env)
-      - login_customer_id: manager account id (optional)
-      - start_date: YYYY-MM-DD (default: last 7 days)
-      - end_date: YYYY-MM-DD (default: today)
-      - store_raw: bool (default: true)
-    """
-    data = request.json or {}
-    is_valid, error_msg = validate_request_data(data)
-    if not is_valid:
-        return jsonify({"error": error_msg}), 400
-
-    # Defaults: last 7 days
-    default_end = datetime.utcnow().date()
-    default_start = default_end - timedelta(days=7)
-
-    customer_id = (data.get("customer_id") or os.environ.get("GOOGLE_ADS_CUSTOMER_ID") or "").strip()
-    login_customer_id = (data.get("login_customer_id") or os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "").strip() or None
-    start_date_s = (data.get("start_date") or default_start.isoformat()).strip()
-    end_date_s = (data.get("end_date") or default_end.isoformat()).strip()
-    store_raw = data.get("store_raw", True)
-
-    # Validate date range using existing helper
-    is_valid, error_msg = validate_date_range(start_date_s, end_date_s)
-    if not is_valid:
-        return jsonify({"error": error_msg}), 400
-
-    try:
-        from bigas.resources.marketing.google_ads_service import GoogleAdsService
-
-        service = GoogleAdsService(login_customer_id=login_customer_id)
-        query = service.build_campaign_daily_performance_query(date.fromisoformat(start_date_s), date.fromisoformat(end_date_s))
-        rows, raw_chunks = service.search_stream(customer_id=customer_id, query=query)
-
-        stored = False
-        storage_path = None
-        if store_raw:
-            # Store raw chunks (closest to wire payload) to GCS
-            from bigas.resources.marketing.storage_service import StorageService
-
-            storage = StorageService()
-            report_date = datetime.utcnow().strftime("%Y-%m-%d")
-            storage_path = storage.store_raw_ads_report(
-                platform="google_ads",
-                report_data={
-                    "request": {
-                        "customer_id": customer_id.replace("-", ""),
-                        "login_customer_id": (login_customer_id or "").replace("-", "") or None,
-                        "start_date": start_date_s,
-                        "end_date": end_date_s,
-                        "gaql": query,
-                        "api_version": "v23",
-                    },
-                    "response_chunks": raw_chunks,
-                },
-                report_date=report_date,
-                filename="campaign_report.json",
-            )
-            stored = True
-
-        return jsonify(
-            {
-                "status": "success",
-                "customer_id": customer_id.replace("-", ""),
-                "date_range": {"start_date": start_date_s, "end_date": end_date_s},
-                "rows_count": len(rows),
-                "rows_preview": rows[:25],  # keep response bounded
-                "stored": stored,
-                "storage_path": storage_path,
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error in fetch_google_ads_campaign_report: {traceback.format_exc()}")
-        sanitized_error = sanitize_error_message(str(e))
-        return jsonify({"error": sanitized_error}), 500
 
 @marketing_bp.route('/mcp/tools/weekly_analytics_report', methods=['POST'])
 def weekly_analytics_report():
