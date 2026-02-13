@@ -516,10 +516,6 @@ Behavior:
   - Sends it to OpenAI with a “senior B2B performance marketer” prompt.
   - Posts a structured summary (high-level summary, key insights, recommendations, caveats) to your Discord marketing channel.
 
-This endpoint is designed to be scheduled from **Google Cloud Scheduler**. A typical flow is:
-1. Schedule `fetch_linkedin_ad_analytics_report` daily with `relative_range` (for example `LAST_DAY` or `LAST_7_DAYS`) and `include_entity_names: true`.
-2. Schedule `summarize_linkedin_ad_analytics` shortly after, pointing it at the latest `enriched_storage_path`.
-
 #### One-command LinkedIn portfolio report
 
 A single endpoint runs discovery → fetch CREATIVE-level ad analytics → summarize with the same ad-analytics summarizer → post to Discord. No need to chain three calls or pass `enriched_storage_path` manually.
@@ -537,6 +533,8 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_linkedin_portfolio_re
 ```
 
 Response includes `creatives_discovered`, `had_data`, `discord_posted`, `enriched_storage_path`, `used_model`. Uses the same report structure and summarization logic as `fetch_linkedin_ad_analytics_report` + `summarize_linkedin_ad_analytics` (CREATIVE pivot).
+
+This endpoint is designed to be scheduled from **Google Cloud Scheduler**: a single job runs discovery, fetch, and summarize and posts the result to Discord.
 
 #### Ask Analytics Question
 ```bash
