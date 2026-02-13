@@ -93,6 +93,32 @@ if [ ! -z "$TARGET_KEYWORDS" ]; then
     KEYWORDS_ENV_VAR=",TARGET_KEYWORDS=$TARGET_KEYWORDS"
 fi
 
+# Optional LinkedIn Ads (Paid Ads reporting)
+LINKEDIN_ENV_VAR=""
+if [ ! -z "$LINKEDIN_CLIENT_ID" ]; then
+    LINKEDIN_ENV_VAR="$LINKEDIN_ENV_VAR,LINKEDIN_CLIENT_ID=$LINKEDIN_CLIENT_ID"
+fi
+if [ ! -z "$LINKEDIN_CLIENT_SECRET" ]; then
+    LINKEDIN_ENV_VAR="$LINKEDIN_ENV_VAR,LINKEDIN_CLIENT_SECRET=$LINKEDIN_CLIENT_SECRET"
+fi
+if [ ! -z "$LINKEDIN_ACCESS_TOKEN" ]; then
+    LINKEDIN_ENV_VAR="$LINKEDIN_ENV_VAR,LINKEDIN_ACCESS_TOKEN=$LINKEDIN_ACCESS_TOKEN"
+fi
+if [ ! -z "$LINKEDIN_REFRESH_TOKEN" ]; then
+    LINKEDIN_ENV_VAR="$LINKEDIN_ENV_VAR,LINKEDIN_REFRESH_TOKEN=$LINKEDIN_REFRESH_TOKEN"
+fi
+if [ ! -z "$LINKEDIN_AD_ACCOUNT_URN" ]; then
+    LINKEDIN_ENV_VAR="$LINKEDIN_ENV_VAR,LINKEDIN_AD_ACCOUNT_URN=$LINKEDIN_AD_ACCOUNT_URN"
+fi
+if [ ! -z "$LINKEDIN_VERSION" ]; then
+    LINKEDIN_ENV_VAR="$LINKEDIN_ENV_VAR,LINKEDIN_VERSION=$LINKEDIN_VERSION"
+fi
+if [ ! -z "$LINKEDIN_AD_ACCOUNT_URN" ]; then
+    echo "📌 LinkedIn Account URN: set (will be sent to Cloud Run)"
+else
+    echo "⚠️  LinkedIn Account URN: not set in .env (run_linkedin_portfolio_report will require account_urn in body)"
+fi
+
 echo "✅ All required environment variables are set"
 echo "📊 GA4 Property ID: $GA4_PROPERTY_ID"
 echo "🤖 OpenAI API Key: ${OPENAI_API_KEY:0:20}..."
@@ -124,6 +150,6 @@ gcloud run deploy mcp-marketing \
     --region europe-north1 \
     --allow-unauthenticated \
     --service-account=$GOOGLE_SERVICE_ACCOUNT_EMAIL \
-    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$JIRA_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR
+    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$JIRA_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR$LINKEDIN_ENV_VAR
 
 echo "✅ Deployment completed successfully!" 

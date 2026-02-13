@@ -87,6 +87,134 @@ class StorageService:
         
         logger.info(f"Stored weekly report for {report_date} at {blob_name}")
         return blob_name
+
+    def store_raw_ads_report(
+        self,
+        platform: str,
+        report_data: Dict[str, Any],
+        report_date: Optional[str] = None,
+        filename: str = "response.json",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Store raw ads API data (per platform) in Google Cloud Storage.
+
+        Storage layout:
+          raw_ads/{platform}/{YYYY-MM-DD}/{filename}
+
+        Args:
+            platform: e.g. "google_ads", "meta", "linkedin", "reddit"
+            report_data: Raw JSON data to store
+            report_date: Optional date string (YYYY-MM-DD). Defaults to today.
+            filename: Filename to use within the date folder
+            metadata: Optional metadata to store alongside the payload
+
+        Returns:
+            str: The blob name where the raw data was stored
+        """
+        if report_date is None:
+            report_date = datetime.now().strftime("%Y-%m-%d")
+
+        platform = (platform or "").strip().lower()
+        if not platform:
+            raise ValueError("platform is required for storing raw ads reports")
+
+        metadata_obj = {
+            "report_date": report_date,
+            "stored_at": datetime.now().isoformat(),
+            "report_type": "raw_ads",
+            "platform": platform,
+            "version": "1.0",
+        }
+        if metadata:
+            # Only merge shallowly; keep it simple and predictable.
+            metadata_obj.update(metadata)
+
+        full_data = {
+            "metadata": metadata_obj,
+            "payload": report_data,
+        }
+
+        safe_filename = filename or "response.json"
+        blob_name = f"raw_ads/{platform}/{report_date}/{safe_filename}"
+
+        blob = self.bucket.blob(blob_name)
+        blob.upload_from_string(json.dumps(full_data, indent=2), content_type="application/json")
+
+        logger.info(f"Stored raw ads report for {platform} ({report_date}) at {blob_name}")
+        return blob_name
+
+    def blob_exists(self, blob_name: str) -> bool:
+        """Check whether a blob exists in the bucket."""
+        if not blob_name or not blob_name.strip():
+            return False
+        try:
+            return self.bucket.blob(blob_name).exists()
+        except Exception:
+            return False
+
+    def store_raw_ads_report_at_blob(
+        self,
+        platform: str,
+        blob_name: str,
+        report_data: Dict[str, Any],
+        report_date: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Store raw ads payload at an explicit blob name, using the same {metadata,payload} wrapper
+        as store_raw_ads_report.
+        """
+        if report_date is None:
+            report_date = datetime.now().strftime("%Y-%m-%d")
+
+        platform = (platform or "").strip().lower()
+        if not platform:
+            raise ValueError("platform is required for storing raw ads reports")
+        if not blob_name or not blob_name.strip():
+            raise ValueError("blob_name is required")
+
+        metadata_obj = {
+            "report_date": report_date,
+            "stored_at": datetime.now().isoformat(),
+            "report_type": "raw_ads",
+            "platform": platform,
+            "version": "1.0",
+        }
+        if metadata:
+            metadata_obj.update(metadata)
+
+        full_data = {
+            "metadata": metadata_obj,
+            "payload": report_data,
+        }
+
+        return self.store_json(blob_name=blob_name, data=full_data)
+
+    def store_json(self, blob_name: str, data: Dict[str, Any]) -> str:
+        """
+        Store arbitrary JSON data at the given blob name.
+        """
+        if not blob_name or not blob_name.strip():
+            raise ValueError("blob_name is required")
+        blob = self.bucket.blob(blob_name)
+        blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json")
+        logger.info(f"Stored JSON at {blob_name}")
+        return blob_name
+
+    def get_json(self, blob_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Load JSON from a blob. Returns None if not found or invalid.
+        """
+        try:
+            blob = self.bucket.blob(blob_name)
+            if not blob.exists():
+                return None
+            content = blob.download_as_text()
+            return json.loads(content) if content else None
+        except Exception as e:
+            logger.warning(f"Failed to load JSON from {blob_name}: {e}")
+            return None
     
     def get_latest_weekly_report(self) -> Optional[Dict[str, Any]]:
         """
