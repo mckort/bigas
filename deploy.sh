@@ -119,6 +119,26 @@ else
     echo "⚠️  LinkedIn Account URN: not set in .env (run_linkedin_portfolio_report will require account_urn in body)"
 fi
 
+# Optional Reddit Ads
+REDDIT_ENV_VAR=""
+if [ ! -z "$REDDIT_CLIENT_ID" ]; then
+    REDDIT_ENV_VAR="$REDDIT_ENV_VAR,REDDIT_CLIENT_ID=$REDDIT_CLIENT_ID"
+fi
+if [ ! -z "$REDDIT_CLIENT_SECRET" ]; then
+    REDDIT_ENV_VAR="$REDDIT_ENV_VAR,REDDIT_CLIENT_SECRET=$REDDIT_CLIENT_SECRET"
+fi
+if [ ! -z "$REDDIT_REFRESH_TOKEN" ]; then
+    REDDIT_ENV_VAR="$REDDIT_ENV_VAR,REDDIT_REFRESH_TOKEN=$REDDIT_REFRESH_TOKEN"
+fi
+if [ ! -z "$REDDIT_AD_ACCOUNT_ID" ]; then
+    REDDIT_ENV_VAR="$REDDIT_ENV_VAR,REDDIT_AD_ACCOUNT_ID=$REDDIT_AD_ACCOUNT_ID"
+fi
+if [ ! -z "$REDDIT_AD_ACCOUNT_ID" ]; then
+    echo "📌 Reddit Ad Account ID: set (will be sent to Cloud Run)"
+else
+    echo "⚠️  Reddit Ad Account ID: not set in .env (run_reddit_portfolio_report will require account_id in body)"
+fi
+
 echo "✅ All required environment variables are set"
 echo "📊 GA4 Property ID: $GA4_PROPERTY_ID"
 echo "🤖 OpenAI API Key: ${OPENAI_API_KEY:0:20}..."
@@ -150,6 +170,6 @@ gcloud run deploy mcp-marketing \
     --region europe-north1 \
     --allow-unauthenticated \
     --service-account=$GOOGLE_SERVICE_ACCOUNT_EMAIL \
-    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$JIRA_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR$LINKEDIN_ENV_VAR
+    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$JIRA_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR$LINKEDIN_ENV_VAR$REDDIT_ENV_VAR
 
 echo "✅ Deployment completed successfully!" 

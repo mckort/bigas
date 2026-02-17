@@ -11,7 +11,7 @@ from google.analytics.data_v1beta.types import (
 )
 import os
 import openai
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import time
 import logging
 import json
@@ -33,9 +33,67 @@ import requests
 from bs4 import BeautifulSoup
 import re
 from typing import Dict, Any, Optional, List, Sequence, Tuple
-from datetime import date
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_reddit_spend(spend: Any, row: Optional[Dict[str, Any]] = None) -> Optional[float]:
+    """
+    Normalize Reddit report spend to a major-currency amount (e.g. EUR/USD).
+    Reddit Reports API returns SPEND in micro (divide by 1e6). Values >= 1000 are treated as micro.
+    """
+    if row and spend is None:
+        spend = row.get("amount_spent") or row.get("spend_amount")
+    if spend is None:
+        return None
+    if isinstance(spend, dict):
+        spend = spend.get("value") or spend.get("amount") or spend.get("value_micro") or spend.get("amount_micro")
+    if spend is None:
+        return None
+    try:
+        num = float(spend)
+    except (TypeError, ValueError):
+        return None
+    if num <= 0:
+        return num
+    # Reddit Reports API: SPEND is in micro (divide by 1 million)
+    if num >= 1000:
+        by_micro = num / 1e6
+        if by_micro < 1e5:
+            return round(by_micro, 2)
+    if num >= 1e6:
+        return round(num / 1e6, 2)
+    return round(num, 2)
+
+
+def _normalize_audience_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize Reddit audience report rows: spend (micro->EUR) and add ctr_pct, cpc per segment."""
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        row = dict(row)
+        if row.get("spend") is not None:
+            row["spend"] = _normalize_reddit_spend(row["spend"], row)
+        try:
+            imp = int(row.get("impressions") or 0)
+            clk = int(row.get("clicks") or 0)
+            spend = row.get("spend")
+            if imp > 0:
+                row["ctr_pct"] = round(100.0 * clk / imp, 2)
+            else:
+                row["ctr_pct"] = None
+            if clk > 0 and spend is not None:
+                row["cpc"] = round(float(spend) / clk, 2)
+            else:
+                row["cpc"] = None
+        except (TypeError, ValueError):
+            row["ctr_pct"] = None
+            row["cpc"] = None
+        out.append(row)
+    return out
+
 
 marketing_bp = Blueprint('marketing_bp', __name__)
 
@@ -51,6 +109,9 @@ DISCORD_HTTP_TIMEOUT = int(os.environ.get("DISCORD_HTTP_TIMEOUT", "10"))
 # Default demographic pivots for LinkedIn portfolio report (API allows max 3 per creative).
 # Full set of common options: MEMBER_JOB_TITLE, MEMBER_JOB_FUNCTION, MEMBER_SENIORITY, MEMBER_INDUSTRY, MEMBER_COUNTRY_V2, MEMBER_COMPANY_SIZE
 DEFAULT_LINKEDIN_PORTFOLIO_PIVOTS = ["MEMBER_JOB_TITLE", "MEMBER_JOB_FUNCTION", "MEMBER_SENIORITY"]
+
+# Pivots used by the one-command run_linkedin_portfolio_report (job title, function, country).
+LINKEDIN_PORTFOLIO_REPORT_PIVOTS = ["MEMBER_JOB_TITLE", "MEMBER_JOB_FUNCTION", "MEMBER_COUNTRY_V2"]
 
 # Simple prompt registry for ad analytics summarization.
 # Keyed by (platform, report_type).
@@ -98,6 +159,55 @@ AD_SUMMARY_PROMPTS: Dict[Tuple[str, str], Dict[str, str]] = {
             "3. Underperforming creatives or segments and what to change.\n"
             "4. Recommended experiments (new creatives, audiences, bids, or budgets).\n"
             "5. Risks / caveats.\n"
+        ),
+    },
+    (
+        "reddit",
+        "ad_analytics",
+    ): {
+        "system": (
+            "You are a senior performance marketing specialist. "
+            "You receive normalized ad performance data from Reddit Ads and must:\n"
+            "1) Summarize performance clearly for non-technical stakeholders.\n"
+            "2) Call out key insights by segment (campaign, ad, community/placement if present).\n"
+            "3) Recommend concrete next steps for budget allocation, targeting, and creative testing.\n"
+            "Note: Spend is in the currency reported (e.g. USD or EUR). Do not add spend across platforms or currencies without explicit conversion.\n"
+            "Be concise but insightful, and prefer clear lists over long paragraphs."
+        ),
+        "user_template": (
+            "Here is JSON analytics for {platform} ads (Option A: currencies as-reported; do not sum spend across currencies):\n\n"
+            "{payload}\n\n"
+            "Please respond in this structure:\n"
+            "1. High-level summary (3–6 bullet points).\n"
+            "2. Key insights (by campaign, ad, segment; highlight best & worst).\n"
+            "3. Recommendations (specific next steps for future spend, targeting, and tests).\n"
+            "4. Risks / caveats (anything missing or uncertain; note currency if comparing to other platforms).\n"
+        ),
+    },
+    (
+        "reddit",
+        "portfolio",
+    ): {
+        "system": (
+            "You are a senior performance marketing specialist. "
+            "You receive a combined Reddit Ads report: performance metrics (spend, impressions, clicks, CTR, CPC) plus audience breakdowns (interests, communities, country, region, DMA) with per-segment CTR and CPC. "
+            "All spend is in EUR only. Use performance.summary (total_spend, total_impressions, total_clicks, total_ctr_pct, total_cpc) and audience segment rows (clicks, impressions, spend, ctr_pct, cpc) exactly as in the payload. "
+            "discovered_campaigns lists all campaigns that had activity in the date range (active/paused/done), sorted by spend; audience_by_campaign gives per-campaign interests and communities for each of those campaigns (like LinkedIn per-creative). "
+            "Audience segments are ordered by clicks, highest first. Report them by the exact names and numbers in the payload; do not state zero clicks when the payload shows non-zero. "
+            "Call out specific interest and community names when present (e.g. 'News & Education', 'General Entertainment', or community names) with their clicks, CTR %, and CPC. "
+            "When audience_scope is 'campaign', the main audience object is for the top campaign by spend; use audience_by_campaign to report per-campaign breakdowns when available. "
+            "Never invent, estimate, or substitute numbers: use only the figures in the payload; if a value is missing or null, say so instead of using a placeholder. "
+            "Be structured, actionable, and suitable for posting to Discord."
+        ),
+        "user_template": (
+            "Here is a combined Reddit Ads portfolio (performance + audience). All spend in EUR. performance.summary includes total_spend, total_impressions, total_clicks, total_ctr_pct, total_cpc. "
+            "discovered_campaigns = list of campaigns in the date range (id, name, spend). audience_by_campaign = per-campaign interests and communities (each segment has clicks, impressions, spend, ctr_pct, cpc). Segments ordered by clicks, top first:\n\n"
+            "{payload}\n\n"
+            "Please respond in this structure:\n"
+            "**Facts** – 4–8 bullet points: discovered campaigns (names and spend); campaign totals (spend EUR, impressions, clicks, CTR %, CPC); top interests per campaign (exact names, e.g. News & Education, with clicks, CTR %, CPC); top communities (name, clicks, CTR %, CPC); geography.\n"
+            "**Summary** – 2–4 sentences on what’s working and what isn’t.\n"
+            "**Recommendations** – 3–6 concrete next steps (targeting, budget, creative, or audience tests).\n"
+            "**Risks / caveats** – Anything missing or uncertain (e.g. date range; account vs campaign scope).\n"
         ),
     },
 }
@@ -327,6 +437,73 @@ def linkedin_oauth_callback():
         200,
         {"Content-Type": "text/html; charset=utf-8"},
     )
+
+
+@marketing_bp.route('/reddit/callback', methods=['GET'])
+def reddit_oauth_callback():
+    """
+    OAuth redirect handler for Reddit Authorization Code flow.
+
+    Reddit redirects the user's browser to this endpoint with:
+      - code
+      - state
+      - error (if denied)
+
+    SECURITY:
+    - We intentionally do NOT log the query params to avoid leaking the auth code.
+    """
+    code = request.args.get("code")
+    state = request.args.get("state")
+    error = request.args.get("error")
+
+    if error:
+        return (
+            f"""<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Reddit OAuth Error</title></head>
+  <body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px;">
+    <h2>Reddit OAuth error</h2>
+    <p><b>error</b>: {error}</p>
+    <p>You can close this tab.</p>
+  </body>
+</html>""",
+            400,
+            {"Content-Type": "text/html; charset=utf-8"},
+        )
+
+    if not code:
+        return (
+            """<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Reddit OAuth Callback</title></head>
+  <body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px;">
+    <h2>Reddit OAuth callback</h2>
+    <p>No <code>code</code> query parameter was provided.</p>
+    <p>You can close this tab.</p>
+  </body>
+</html>""",
+            400,
+            {"Content-Type": "text/html; charset=utf-8"},
+        )
+
+    safe_state = state or ""
+    return (
+        f"""<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Reddit OAuth Callback</title></head>
+  <body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px;">
+    <h2>Reddit OAuth callback received</h2>
+    <p><b>state</b>: <code>{safe_state}</code></p>
+    <p><b>code</b> (copy this):</p>
+    <pre style="background:#f6f8fa; padding: 12px; border-radius: 8px; overflow:auto;">{code}</pre>
+    <p>Next, exchange this code for tokens using POST /mcp/tools/reddit_exchange_code (or Reddit's /api/v1/access_token).</p>
+    <p>You can close this tab.</p>
+  </body>
+</html>""",
+        200,
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
+
 
 def check_rate_limit(endpoint: str, client_ip: str = "default") -> bool:
     """
@@ -664,8 +841,3104 @@ def get_manifest():
             {"name": "linkedin_ads_health_check", "description": "Smoke test LinkedIn Ads API access by listing ad accounts.", "path": "/mcp/tools/linkedin_ads_health_check", "method": "GET"},
             {"name": "fetch_linkedin_ad_analytics_report", "description": "Fetch LinkedIn adAnalytics (account-level pivot) and store raw data in GCS.", "path": "/mcp/tools/fetch_linkedin_ad_analytics_report", "method": "POST"},
             {"name": "linkedin_exchange_code", "description": "Exchange a LinkedIn OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/linkedin_exchange_code", "method": "POST"},
+            {"name": "reddit_exchange_code", "description": "Exchange a Reddit OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/reddit_exchange_code", "method": "POST"},
+            {"name": "fetch_reddit_ad_analytics_report", "description": "Fetch Reddit Ads performance report and store raw + enriched in GCS.", "path": "/mcp/tools/fetch_reddit_ad_analytics_report", "method": "POST"},
+            {"name": "fetch_reddit_audience_report", "description": "Fetch Reddit Ads audience report: interests, communities, country, region, or DMA (reach and metrics per segment).", "path": "/mcp/tools/fetch_reddit_audience_report", "method": "POST"},
+            {"name": "summarize_reddit_ad_analytics", "description": "Summarize Reddit ads from enriched GCS blob; post to Discord.", "path": "/mcp/tools/summarize_reddit_ad_analytics", "method": "POST"},
+            {"name": "run_reddit_portfolio_report", "description": "One-command Reddit ads: fetch report, summarize, post to Discord.", "path": "/mcp/tools/run_reddit_portfolio_report", "method": "POST"},
+            {"name": "reddit_ads_health_check", "description": "Smoke test Reddit Ads API and list ad accounts (verify REDDIT_AD_ACCOUNT_ID).", "path": "/mcp/tools/reddit_ads_health_check", "method": "GET"},
         ]
     }
+
+@marketing_bp.route('/mcp/tools/linkedin_exchange_code', methods=['POST'])
+def linkedin_exchange_code():
+    """
+    Exchange LinkedIn OAuth authorization code for tokens.
+
+    This endpoint exists to avoid putting LINKEDIN_CLIENT_SECRET into a shell command
+    that ends up in terminal history. It uses:
+      - LINKEDIN_CLIENT_ID
+      - LINKEDIN_CLIENT_SECRET
+    from the server environment.
+
+    Request JSON:
+      - code: authorization code from /linkedin/callback (required)
+      - redirect_uri: optional; defaults to this service's /linkedin/callback URL
+
+    Request JSON (optional):
+      - include_access_token: bool (default false). If true, returns access_token in response.
+
+    Response:
+      - refresh_token (+ expiry) if provided by LinkedIn
+      - scope, expires_in
+      - access_token (only if include_access_token=true)
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data, required_fields=["code"])
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    code = (data.get("code") or "").strip()
+    if not code:
+        return jsonify({"error": "code is required"}), 400
+
+    include_access_token = bool(data.get("include_access_token", False))
+
+    redirect_uri = (data.get("redirect_uri") or "").strip()
+    if not redirect_uri:
+        # Derive from incoming request in a proxy-safe way.
+        # Cloud Run terminates TLS and forwards HTTP to the container; Flask may see http:// unless we use forwarded headers.
+        proto = (request.headers.get("X-Forwarded-Proto") or request.scheme or "https").split(",")[0].strip()
+        host = (request.headers.get("X-Forwarded-Host") or request.host).split(",")[0].strip()
+        redirect_uri = f"{proto}://{host}/linkedin/callback"
+
+    client_id = (os.environ.get("LINKEDIN_CLIENT_ID") or "").strip()
+    client_secret = (os.environ.get("LINKEDIN_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        return jsonify({"error": "LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET must be set on the server."}), 500
+
+    try:
+        # Use application/x-www-form-urlencoded, per LinkedIn docs.
+        # Add a User-Agent to reduce the chance of WAF/429 issues.
+        token_resp = requests.post(
+            "https://www.linkedin.com/oauth/v2/accessToken",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+                "User-Agent": "bigas-core/1.0 (Cloud Run)",
+            },
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=30,
+        )
+
+        if token_resp.status_code >= 400:
+            # Don't log the code. Log only status + truncated body.
+            body_preview = (token_resp.text or "")[:2000]
+            retry_after = token_resp.headers.get("Retry-After")
+            logger.error(
+                "LinkedIn accessToken exchange failed: status=%s retry_after=%s body=%s",
+                token_resp.status_code,
+                retry_after,
+                body_preview,
+            )
+
+            # Pass through rate limits so the caller can back off.
+            if token_resp.status_code == 429:
+                return (
+                    jsonify(
+                        {
+                            "error": "LinkedIn token exchange rate-limited (429). Try again later.",
+                            "retry_after": retry_after,
+                        }
+                    ),
+                    429,
+                )
+
+            return (
+                jsonify(
+                    {
+                        "error": f"LinkedIn token exchange failed ({token_resp.status_code})",
+                        "details_preview": body_preview,
+                    }
+                ),
+                502,
+            )
+
+        payload = token_resp.json() if token_resp.text else {}
+
+        # Best-effort: persist access_token to GCS so other endpoints can run without
+        # repeatedly calling the refresh-token mint endpoint (helps avoid 429s).
+        try:
+            access_token = (payload.get("access_token") or "").strip()
+            expires_in = int(payload.get("expires_in") or 0)
+            if access_token and expires_in > 0:
+                from bigas.resources.marketing.storage_service import StorageService
+
+                now_ts = int(time.time())
+                storage = StorageService()
+                storage.store_json(
+                    "secrets/linkedin/access_token.json",
+                    {
+                        "access_token": access_token,
+                        "obtained_at": now_ts,
+                        "expires_in": expires_in,
+                        "expires_at": now_ts + expires_in,
+                        "scope": payload.get("scope"),
+                        "note": "Stored by /mcp/tools/linkedin_exchange_code",
+                    },
+                )
+        except Exception:
+            # Don't fail the request if storage fails.
+            pass
+
+        # Return only the safer fields by default (omit access_token).
+        return jsonify(
+            {
+                "status": "success",
+                "expires_in": payload.get("expires_in"),
+                **({"access_token": payload.get("access_token")} if include_access_token else {}),
+                "refresh_token": payload.get("refresh_token"),
+                "refresh_token_expires_in": payload.get("refresh_token_expires_in"),
+                "scope": payload.get("scope"),
+                "redirect_uri_used": redirect_uri,
+                "note": "Set LINKEDIN_REFRESH_TOKEN to the refresh_token value (not the auth code).",
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in linkedin_exchange_code: {traceback.format_exc()}")
+        sanitized_error = sanitize_error_message(str(e))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/reddit_exchange_code', methods=['POST'])
+def reddit_exchange_code():
+    """
+    Exchange Reddit OAuth authorization code for tokens.
+
+    Uses REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET from the server environment.
+    Reddit requires HTTP Basic Auth (client_id as user, client_secret as password).
+
+    Request JSON:
+      - code: authorization code from /reddit/callback (required)
+      - redirect_uri: optional; defaults to this service's /reddit/callback URL
+      - include_access_token: bool (default false). If true, returns access_token in response.
+
+    Response:
+      - refresh_token (use duration=permanent in authorize URL to get one)
+      - access_token, expires_in, scope
+      - access_token only in response if include_access_token=true
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data, required_fields=["code"])
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    code = (data.get("code") or "").strip()
+    if not code:
+        return jsonify({"error": "code is required"}), 400
+
+    include_access_token = bool(data.get("include_access_token", False))
+
+    redirect_uri = (data.get("redirect_uri") or "").strip()
+    if not redirect_uri:
+        proto = (request.headers.get("X-Forwarded-Proto") or request.scheme or "https").split(",")[0].strip()
+        host = (request.headers.get("X-Forwarded-Host") or request.host).split(",")[0].strip()
+        redirect_uri = f"{proto}://{host}/reddit/callback"
+
+    client_id = (os.environ.get("REDDIT_CLIENT_ID") or "").strip()
+    client_secret = (os.environ.get("REDDIT_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        return jsonify({"error": "REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET must be set on the server."}), 500
+
+    try:
+        import base64
+        basic_auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        token_resp = requests.post(
+            "https://www.reddit.com/api/v1/access_token",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "bigas-core/1.0 (Cloud Run)",
+                "Authorization": f"Basic {basic_auth}",
+            },
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            timeout=30,
+        )
+
+        if token_resp.status_code >= 400:
+            body_preview = (token_resp.text or "")[:2000]
+            retry_after = token_resp.headers.get("Retry-After")
+            logger.error(
+                "Reddit access_token exchange failed: status=%s retry_after=%s body=%s",
+                token_resp.status_code,
+                retry_after,
+                body_preview,
+            )
+            if token_resp.status_code == 429:
+                return (
+                    jsonify(
+                        {
+                            "error": "Reddit token exchange rate-limited (429). Try again later.",
+                            "retry_after": retry_after,
+                        }
+                    ),
+                    429,
+                )
+            return (
+                jsonify(
+                    {
+                        "error": f"Reddit token exchange failed ({token_resp.status_code})",
+                        "details_preview": body_preview,
+                    }
+                ),
+                502,
+            )
+
+        payload = token_resp.json() if token_resp.text else {}
+
+        try:
+            access_token = (payload.get("access_token") or "").strip()
+            expires_in = int(payload.get("expires_in") or 0)
+            if access_token and expires_in > 0:
+                from bigas.resources.marketing.storage_service import StorageService
+
+                now_ts = int(time.time())
+                storage = StorageService()
+                storage.store_json(
+                    "secrets/reddit/access_token.json",
+                    {
+                        "access_token": access_token,
+                        "obtained_at": now_ts,
+                        "expires_in": expires_in,
+                        "expires_at": now_ts + expires_in,
+                        "scope": payload.get("scope"),
+                        "note": "Stored by /mcp/tools/reddit_exchange_code",
+                    },
+                )
+        except Exception:
+            pass
+
+        return jsonify(
+            {
+                "status": "success",
+                "expires_in": payload.get("expires_in"),
+                **({"access_token": payload.get("access_token")} if include_access_token else {}),
+                "refresh_token": payload.get("refresh_token"),
+                "scope": payload.get("scope"),
+                "redirect_uri_used": redirect_uri,
+                "note": "Set REDDIT_REFRESH_TOKEN to the refresh_token value (use duration=permanent when authorizing).",
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in reddit_exchange_code: {traceback.format_exc()}")
+        sanitized_error = sanitize_error_message(str(e))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/linkedin_ads_health_check', methods=['GET'])
+def linkedin_ads_health_check():
+    """
+    Smoke test LinkedIn Ads API:
+    - Mint access token from refresh token
+    - List ad accounts
+    """
+    try:
+        from bigas.resources.marketing.linkedin_ads_service import LinkedInAdsService
+
+        svc = LinkedInAdsService()
+        data = svc.list_ad_accounts(count=10)
+        elements = data.get("elements", []) or []
+        account_ids = []
+        account_urns = []
+        for el in elements:
+            # In /rest/adAccounts responses, `id` is typically a numeric sponsoredAccount id.
+            raw_id = el.get("id")
+            if raw_id is None:
+                raw_id = el.get("account") or el.get("urn")
+
+            if raw_id is None:
+                continue
+
+            # Normalize to sponsoredAccount URN for reporting usage.
+            if isinstance(raw_id, int) or (isinstance(raw_id, str) and raw_id.isdigit()):
+                account_id = int(raw_id)
+                account_ids.append(account_id)
+                account_urns.append(f"urn:li:sponsoredAccount:{account_id}")
+            elif isinstance(raw_id, str) and raw_id.startswith("urn:"):
+                account_urns.append(raw_id)
+
+        return jsonify(
+            {
+                "status": "success",
+                "ad_accounts_count": len(elements),
+                "ad_account_ids": account_ids[:20],
+                "ad_account_urns": account_urns[:20],
+                "raw_preview": elements[:5],
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in linkedin_ads_health_check: {traceback.format_exc()}")
+        sanitized_error = sanitize_error_message(str(e))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/reddit_ads_health_check', methods=['GET'])
+def reddit_ads_health_check():
+    """
+    Smoke test Reddit Ads API: mint access token, then Get Me and list ad accounts (v3 flow).
+    Use this to verify REDDIT_AD_ACCOUNT_ID or to discover your ad account IDs.
+    """
+    try:
+        from bigas.resources.marketing.reddit_ads_service import (
+            RedditAdsService,
+            RedditAuthError,
+            RedditApiError,
+        )
+
+        svc = RedditAdsService()
+        me = svc.get_me()
+        accounts = []
+        account_list = []
+        try:
+            data = svc.list_ad_accounts()
+            accounts = data.get("data") or data.get("ad_accounts") or data.get("results") or []
+            if isinstance(accounts, dict):
+                accounts = list(accounts.values()) if accounts else []
+            if not isinstance(accounts, list):
+                accounts = []
+            for acc in accounts[:20]:
+                if not isinstance(acc, dict):
+                    continue
+                acc_id = acc.get("id") or acc.get("ad_account_id") or acc.get("account_id")
+                name = acc.get("name") or acc.get("account_name") or ""
+                account_list.append({"id": acc_id, "name": name})
+        except RedditApiError as e:
+            if e.status_code == 404:
+                return jsonify(
+                    {
+                        "status": "success",
+                        "message": "Token works (Get Me succeeded). Listing ad accounts returned 404; paths may differ. Use REDDIT_AD_ACCOUNT_ID from Reddit Ads Manager.",
+                        "me_preview": me,
+                        "ad_accounts_count": 0,
+                        "ad_accounts": [],
+                    }
+                )
+            raise
+
+        return jsonify(
+            {
+                "status": "success",
+                "ad_accounts_count": len(accounts),
+                "ad_accounts": account_list,
+                "me_preview": me,
+                "raw_preview": accounts[:5] if accounts else [],
+            }
+        )
+    except RedditAuthError as e:
+        logger.error(f"Reddit auth error in reddit_ads_health_check: {e} detail={getattr(e, 'detail', None)}")
+        response_body = {"error": sanitize_error_message(str(e))}
+        if getattr(e, "detail", None):
+            response_body["reddit_error"] = e.detail
+        if getattr(e, "response_body", None):
+            response_body["reddit_response_body"] = e.response_body
+        return jsonify(response_body), 401
+    except Exception as e:
+        logger.error(f"Error in reddit_ads_health_check: {traceback.format_exc()}")
+        sanitized_error = sanitize_error_message(str(e))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/fetch_linkedin_ad_analytics_report', methods=['POST'])
+def fetch_linkedin_ad_analytics_report():
+    """
+    Fetch LinkedIn adAnalytics for a given ad account URN.
+
+    Request JSON:
+      - account_urn: urn:li:sponsoredAccount:XXXX (required if not set in env)
+      - start_date: YYYY-MM-DD (default: last 7 days)
+      - end_date: YYYY-MM-DD (default: today)
+      - relative_range: optional shortcut instead of explicit dates. One of:
+          * LAST_DAY       -> yesterday only
+          * LAST_7_DAYS    -> last 7 full days ending yesterday
+          * LAST_30_DAYS   -> last 30 full days ending yesterday
+        If start_date/end_date are provided, they TAKE PRECEDENCE over relative_range.
+      - time_granularity: DAILY|MONTHLY|ALL (default: DAILY)
+      - pivot: ACCOUNT|CAMPAIGN|CREATIVE|... (default: ACCOUNT). Used with the analytics finder (single pivot).
+      - pivots: optional list of pivots for the statistics finder (up to 3). Example: ["CREATIVE","MEMBER_JOB_TITLE"]
+      - campaign_ids: optional list of numeric campaign ids (e.g. [474442423])
+      - campaign_group_ids: optional list of numeric campaign group ids (e.g. [775062233])
+      - creative_ids: optional list of numeric creative/ad ids (e.g. [1165984713])
+      - fields: optional list of fields to request from LinkedIn (e.g. ["impressions","clicks","costInLocalCurrency"])
+      - store_raw: bool (default: true)
+      - force_refresh: bool (default: false). If true, bypass cache and refetch even if the exact report exists.
+      - include_entity_names: bool (default: false). If true, store an additional enriched JSON with IDs/URNs resolved where possible.
+
+    Raw report caching (option B):
+      - We compute a deterministic hash from the request parameters.
+      - If the blob already exists in GCS, we return it instead of refetching (unless force_refresh=true).
+      - Storage layout: raw_ads/linkedin/{end_date}/ad_analytics_{accountId}_{pivot}_{hashPrefix}.json
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    # Date handling: explicit dates win, otherwise relative_range, otherwise last 7 days.
+    today = datetime.utcnow().date()
+    default_end = today
+    default_start = default_end - timedelta(days=7)
+
+    account_urn = (data.get("account_urn") or os.environ.get("LINKEDIN_AD_ACCOUNT_URN") or "").strip()
+
+    relative_range_raw = (data.get("relative_range") or "").strip().upper()
+    start_date_s = (data.get("start_date") or "").strip()
+    end_date_s = (data.get("end_date") or "").strip()
+
+    if not start_date_s or not end_date_s:
+        # Only apply relative_range when explicit dates are not both provided.
+        if relative_range_raw:
+            if relative_range_raw == "LAST_DAY":
+                # Yesterday only.
+                end = today - timedelta(days=1)
+                start = end
+            elif relative_range_raw == "LAST_7_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=6)
+            elif relative_range_raw == "LAST_30_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=29)
+            else:
+                return jsonify({"error": "relative_range must be one of: LAST_DAY, LAST_7_DAYS, LAST_30_DAYS"}), 400
+
+            if not start_date_s:
+                start_date_s = start.isoformat()
+            if not end_date_s:
+                end_date_s = end.isoformat()
+
+    # Final fallback if nothing was provided / resolved.
+    if not start_date_s:
+        start_date_s = default_start.isoformat()
+    if not end_date_s:
+        end_date_s = default_end.isoformat()
+    time_granularity = (data.get("time_granularity") or "DAILY").strip().upper()
+    pivot = (data.get("pivot") or "ACCOUNT").strip().upper()
+    pivots = data.get("pivots")
+    if pivots is not None and not isinstance(pivots, list):
+        return jsonify({"error": "pivots must be a list of pivot names"}), 400
+    campaign_ids = data.get("campaign_ids") or []
+    campaign_group_ids = data.get("campaign_group_ids") or []
+    creative_ids = data.get("creative_ids") or []
+    fields = data.get("fields")
+    if fields is not None and not isinstance(fields, list):
+        return jsonify({"error": "fields must be a list of field names"}), 400
+    store_raw = data.get("store_raw", True)
+    force_refresh = bool(data.get("force_refresh", False))
+    include_entity_names = bool(data.get("include_entity_names", False))
+
+    is_valid, error_msg = validate_date_range(start_date_s, end_date_s)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    if not account_urn:
+        return jsonify({"error": "account_urn is required (or set LINKEDIN_AD_ACCOUNT_URN)."}), 400
+
+    # Accept either a sponsoredAccount URN or a numeric account id.
+    account_urn = account_urn.strip()
+    if account_urn.isdigit():
+        account_urn = f"urn:li:sponsoredAccount:{account_urn}"
+
+    try:
+        from bigas.resources.marketing.linkedin_ads_service import LinkedInAdsService
+        from bigas.resources.marketing.storage_service import StorageService
+
+        svc = LinkedInAdsService()
+        start_d = date.fromisoformat(start_date_s)
+        end_d = date.fromisoformat(end_date_s)
+
+        # Build optional filters using shared normalization helpers.
+        campaign_urns = normalize_ids_to_urns(
+            campaign_ids, urn_prefix="sponsoredCampaign"
+        )
+        campaign_group_urns = normalize_ids_to_urns(
+            campaign_group_ids, urn_prefix="sponsoredCampaignGroup"
+        )
+        creative_urns = normalize_ids_to_urns(
+            creative_ids, urn_prefix="sponsoredCreative"
+        )
+
+        cleaned_fields = None
+        if fields:
+            cleaned_fields = sorted({str(f).strip() for f in fields if str(f).strip()})
+
+        linkedin_version = os.environ.get("LINKEDIN_VERSION") or "202601"
+
+        # Always request these so results are attributable and include metrics (LinkedIn returns no elements without metric fields).
+        required_fields = {"dateRange", "pivotValues", "impressions", "clicks", "costInLocalCurrency"}
+        final_fields = (
+            sorted(set((cleaned_fields or [])) | required_fields)
+            if cleaned_fields is not None
+            else sorted(required_fields)
+        )
+
+        pivots_clean: Optional[List[str]] = None
+        if pivots:
+            pivots_clean = [str(p).strip().upper() for p in pivots if str(p).strip()]
+            if len(pivots_clean) > 3:
+                return (
+                    jsonify(
+                        {
+                            "error": "pivots supports up to 3 elements for LinkedIn adAnalytics statistics"
+                        }
+                    ),
+                    400,
+                )
+
+        # Build generic ads analytics request + cache keys for this LinkedIn report.
+        analytics_request = AdsAnalyticsRequest(
+            platform="linkedin",
+            endpoint="ad_analytics",
+            finder=("statistics" if pivots_clean else "analytics"),
+            account_urns=[account_urn],
+            start_date=start_date_s,
+            end_date=end_date_s,
+            time_granularity=time_granularity,
+            pivot=pivot,
+            pivots=pivots_clean,
+            campaign_urns=campaign_urns or None,
+            campaign_group_urns=campaign_group_urns or None,
+            creative_urns=creative_urns or None,
+            fields=final_fields,
+            version=linkedin_version,
+            include_entity_names=include_entity_names,
+        )
+
+        cache_info = build_ads_cache_keys(
+            request=analytics_request,
+            primary_account_urn=account_urn,
+        )
+        request_signature = cache_info["request_signature"]
+        request_hash = cache_info["request_hash"]
+        blob_name = cache_info["blob_name"]
+        enriched_blob_name = cache_info["enriched_blob_name"]
+
+        # Cache hit: if the exact report already exists, return it.
+        if store_raw and not force_refresh:
+            storage = StorageService()
+            if storage.blob_exists(blob_name):
+                cached = storage.get_json(blob_name) or {}
+                cached_payload = cached.get("payload") if isinstance(cached, dict) else None
+                cached_payload = cached_payload if isinstance(cached_payload, dict) else {}
+                cached_response = cached_payload.get("response") if isinstance(cached_payload, dict) else None
+
+                elements = cached_response.get("elements", []) if isinstance(cached_response, dict) else []
+                return jsonify(
+                    {
+                        "status": "success",
+                        "from_cache": True,
+                        "request_hash": request_hash,
+                        "account_urn": account_urn,
+                        "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+                        "elements_count": len(elements) if isinstance(elements, list) else None,
+                        "elements_preview": (elements[:10] if isinstance(elements, list) else None),
+                        "stored": True,
+                        "storage_path": blob_name,
+                    }
+                )
+
+        if pivots_clean:
+            raw = svc.ad_analytics_statistics(
+                start_date=start_d,
+                end_date=end_d,
+                time_granularity=time_granularity,
+                pivots=pivots_clean,
+                account_urns=[account_urn],
+                campaign_urns=campaign_urns or None,
+                campaign_group_urns=campaign_group_urns or None,
+                creative_urns=creative_urns or None,
+                fields=final_fields,
+            )
+        else:
+            raw = svc.ad_analytics(
+                start_date=start_d,
+                end_date=end_d,
+                time_granularity=time_granularity,
+                pivot=pivot,
+                account_urns=[account_urn],
+                campaign_urns=campaign_urns or None,
+                campaign_group_urns=campaign_group_urns or None,
+                creative_urns=creative_urns or None,
+                fields=final_fields,
+            )
+
+        stored = False
+        storage_path = None
+        if store_raw:
+            storage = StorageService()
+            storage_path = storage.store_raw_ads_report_at_blob(
+                platform="linkedin",
+                blob_name=blob_name,
+                report_data={
+                    "request": {
+                        "account_urn": account_urn,
+                        "start_date": start_date_s,
+                        "end_date": end_date_s,
+                        "time_granularity": time_granularity,
+                        "pivot": pivot,
+                        "pivots": pivots_clean,
+                        "campaign_urns": campaign_urns or None,
+                        "campaign_group_urns": campaign_group_urns or None,
+                        "creative_urns": creative_urns or None,
+                        "fields": final_fields,
+                        "version": linkedin_version,
+                        "request_hash": request_hash,
+                        "include_entity_names": include_entity_names,
+                    },
+                    "response": raw,
+                },
+                report_date=end_date_s,
+                metadata={"request_hash": request_hash},
+            )
+            stored = True
+
+            if include_entity_names:
+                try:
+                    safe_account_id = None
+                    try:
+                        safe_account_id = int(account_urn.split(":")[-1])
+                    except Exception:
+                        safe_account_id = None
+
+                    enriched = _enrich_linkedin_adanalytics_response(
+                        raw,
+                        account_id=safe_account_id,
+                        svc=svc,
+                        context={
+                            "creative_urns": creative_urns or None,
+                        },
+                    )
+                    storage.store_json(
+                        blob_name=enriched_blob_name,
+                        data={
+                            "metadata": {
+                                "platform": "linkedin",
+                                "report_date": end_date_s,
+                                "report_type": "raw_ads_enriched",
+                                "stored_at": datetime.utcnow().isoformat(),
+                                "version": "1.0",
+                                "request_hash": request_hash,
+                            },
+                            "payload": {
+                                "request_hash": request_hash,
+                                "source_blob": blob_name,
+                                "enriched_response": enriched,
+                            },
+                        },
+                    )
+                except Exception:
+                    # Best-effort enrichment only; never fail the report fetch because of it.
+                    logger.warning("LinkedIn enrichment failed: %s", traceback.format_exc())
+
+        elements = raw.get("elements", []) if isinstance(raw, dict) else []
+
+        return jsonify(
+            {
+                "status": "success",
+                "from_cache": False,
+                "request_hash": request_hash,
+                "account_urn": account_urn,
+                "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+                "elements_count": len(elements) if isinstance(elements, list) else None,
+                "elements_preview": (elements[:10] if isinstance(elements, list) else None),
+                "stored": stored,
+                "storage_path": storage_path,
+                "enriched_storage_path": (enriched_blob_name if (store_raw and include_entity_names) else None),
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in fetch_linkedin_ad_analytics_report: {traceback.format_exc()}")
+        sanitized_error = sanitize_error_message(str(e))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/fetch_reddit_ad_analytics_report', methods=['POST'])
+def fetch_reddit_ad_analytics_report():
+    """
+    Fetch Reddit Ads performance report for an ad account. Stores raw + enriched (normalized) in GCS.
+
+    Request JSON:
+      - account_id: Reddit ad account ID (required if not set in env REDDIT_AD_ACCOUNT_ID)
+      - start_date / end_date: YYYY-MM-DD, or use relative_range: LAST_7_DAYS | LAST_30_DAYS
+      - dimensions: optional list (default: campaign_id, ad_id, day)
+      - metrics: optional list (default: impressions, clicks, spend, ctr, ecpc)
+      - store_raw: bool (default: true)
+      - force_refresh: bool (default: false)
+    """
+    data = request.json or {}
+    today = datetime.utcnow().date()
+    default_end = today
+    default_start = default_end - timedelta(days=7)
+
+    account_id = (data.get("account_id") or os.environ.get("REDDIT_AD_ACCOUNT_ID") or "").strip()
+    relative_range_raw = (data.get("relative_range") or "").strip().upper()
+    start_date_s = (data.get("start_date") or "").strip()
+    end_date_s = (data.get("end_date") or "").strip()
+
+    if not start_date_s or not end_date_s:
+        if relative_range_raw:
+            if relative_range_raw == "LAST_7_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=6)
+            elif relative_range_raw == "LAST_30_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=29)
+            else:
+                return jsonify({"error": "relative_range must be one of: LAST_7_DAYS, LAST_30_DAYS"}), 400
+            start_date_s = start_date_s or start.isoformat()
+            end_date_s = end_date_s or end.isoformat()
+    if not start_date_s:
+        start_date_s = default_start.isoformat()
+    if not end_date_s:
+        end_date_s = default_end.isoformat()
+
+    dimensions = data.get("dimensions")
+    metrics_list = data.get("metrics")
+    if dimensions is not None and not isinstance(dimensions, list):
+        return jsonify({"error": "dimensions must be a list"}), 400
+    if metrics_list is not None and not isinstance(metrics_list, list):
+        return jsonify({"error": "metrics must be a list"}), 400
+    store_raw = data.get("store_raw", True)
+    force_refresh = bool(data.get("force_refresh", False))
+
+    is_valid, error_msg = validate_date_range(start_date_s, end_date_s)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+    if not account_id:
+        return jsonify({"error": "account_id is required (or set REDDIT_AD_ACCOUNT_ID)."}), 400
+
+    try:
+        from bigas.resources.marketing.reddit_ads_service import RedditAdsService, RedditApiError
+        from bigas.resources.marketing.storage_service import StorageService
+
+        svc = RedditAdsService()
+        start_d = date.fromisoformat(start_date_s)
+        end_d = date.fromisoformat(end_date_s)
+
+        analytics_request = AdsAnalyticsRequest(
+            platform="reddit",
+            endpoint="ad_performance",
+            finder="report",
+            account_urns=[account_id],
+            start_date=start_date_s,
+            end_date=end_date_s,
+            time_granularity="DAILY",
+            pivot="CAMPAIGN",
+            pivots=None,
+            fields=metrics_list,
+        )
+        cache_info = build_ads_cache_keys(
+            request=analytics_request,
+            primary_account_urn=account_id,
+        )
+        request_hash = cache_info["request_hash"]
+        blob_name = cache_info["blob_name"]
+        enriched_blob_name = cache_info["enriched_blob_name"]
+
+        if store_raw and not force_refresh:
+            storage = StorageService()
+            if storage.blob_exists(blob_name):
+                cached = storage.get_json(blob_name) or {}
+                payload = cached.get("payload") or {}
+                raw_data = payload.get("raw_response") or {}
+                data_rows = raw_data.get("data") if isinstance(raw_data, dict) else []
+                return jsonify(
+                    {
+                        "status": "success",
+                        "from_cache": True,
+                        "request_hash": request_hash,
+                        "account_id": account_id,
+                        "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+                        "elements_count": len(data_rows) if isinstance(data_rows, list) else None,
+                        "storage_path": blob_name,
+                        "enriched_storage_path": enriched_blob_name,
+                    }
+                )
+
+        report_result = svc.get_performance_report(
+            account_id=account_id,
+            start_date=start_d,
+            end_date=end_d,
+            dimensions=dimensions,
+            metrics=metrics_list,
+        )
+        raw_response = report_result.get("raw_response") or {}
+        data_rows = report_result.get("data") or []
+        if not isinstance(data_rows, list):
+            data_rows = []
+
+        # Normalize to Option A schema: segments, metrics (impressions, clicks, spend), spend_currency, derived (ctr_pct, avg_cpc)
+        # Reddit dashboard often shows a single currency (e.g. EUR) per account, but the API
+        # can return different or mixed currencies. We normalize spend to a major unit and
+        # track the per-row currency explicitly; the top-level context currency is derived
+        # from the set of row currencies below.
+        elements = []
+        # Default fallback if no currency information is present in rows.
+        default_currency = "EUR"
+        for row in data_rows:
+            if not isinstance(row, dict):
+                continue
+            seg_parts = []
+            for k in ["campaign_id", "campaign_name", "ad_id", "ad_name", "day", "country", "community"]:
+                v = row.get(k)
+                if v is not None and str(v).strip():
+                    seg_parts.append(f"{k}={v}")
+            segments = seg_parts if seg_parts else [str(row)]
+            imp = row.get("impressions")
+            clk = row.get("clicks")
+            spend = _normalize_reddit_spend(row.get("spend"), row)
+            ctr = row.get("ctr")
+            ecpc = row.get("ecpc")
+            row_currency = (
+                (row.get("currency") or row.get("spend_currency") or "")
+                .strip()
+                .upper()
+                or default_currency
+            )
+            elements.append({
+                "segments": segments,
+                "campaign_id": row.get("campaign_id"),
+                "campaign_name": row.get("campaign_name"),
+                "metrics": {
+                    "impressions": imp,
+                    "clicks": clk,
+                    "spend": spend,
+                    "spend_currency": row_currency,
+                },
+                "derived": {
+                    "ctr_pct": float(ctr) if ctr is not None else None,
+                    "avg_cpc": float(ecpc) if ecpc is not None else None,
+                },
+            })
+
+        # Derive a stable context currency for the enriched payload:
+        # - If all rows share the same currency, use that.
+        # - If there are no rows, fall back to the default.
+        # - If multiple currencies appear, mark as MIXED and expose the set for downstream tools.
+        currency_values = {
+            (el.get("metrics") or {}).get("spend_currency")
+            for el in elements
+            if isinstance(el, dict) and (el.get("metrics") or {}).get("spend_currency")
+        }
+        if not currency_values:
+            context_currency = default_currency
+            context_currencies = []
+        elif len(currency_values) == 1:
+            context_currency = next(iter(currency_values))
+            context_currencies = [context_currency]
+        else:
+            context_currency = "MIXED"
+            context_currencies = sorted({c for c in currency_values if c})
+
+        stored = False
+        storage_path = None
+        if store_raw:
+            storage = StorageService()
+            storage.store_raw_ads_report_at_blob(
+                platform="reddit",
+                blob_name=blob_name,
+                report_data={
+                    "request": {
+                        "account_id": account_id,
+                        "start_date": start_date_s,
+                        "end_date": end_date_s,
+                        "request_hash": request_hash,
+                    },
+                    "raw_response": raw_response,
+                    "data": data_rows,
+                },
+                report_date=end_date_s,
+                metadata={"request_hash": request_hash},
+            )
+            storage.store_json(
+                blob_name=enriched_blob_name,
+                data={
+                    "metadata": {
+                        "platform": "reddit",
+                        "report_date": end_date_s,
+                        "report_type": "raw_ads_enriched",
+                        "stored_at": datetime.utcnow().isoformat(),
+                        "version": "1.0",
+                        "request_hash": request_hash,
+                    },
+                    "payload": {
+                        "request_hash": request_hash,
+                        "source_blob": blob_name,
+                        "enriched_response": {
+                            "summary": {"total_rows": len(elements)},
+                            "context": {
+                                "account_id": account_id,
+                                "spend_currency": context_currency,
+                                "currencies": context_currencies,
+                            },
+                            "elements": elements,
+                        },
+                    },
+                },
+            )
+            stored = True
+            storage_path = blob_name
+
+        out = {
+            "status": "success",
+            "from_cache": False,
+            "request_hash": request_hash,
+            "account_id": account_id,
+            "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+            "elements_count": len(elements),
+            "stored": stored,
+            "storage_path": storage_path,
+            "enriched_storage_path": enriched_blob_name if store_raw else None,
+        }
+        if len(elements) == 0 and raw_response:
+            data = raw_response.get("data")
+            debug = {
+                "raw_response_keys": list(raw_response.keys()),
+                "data_type": type(data).__name__,
+                "data_keys": list(data.keys()) if isinstance(data, dict) else None,
+            }
+            if isinstance(data, dict) and "metrics" in data:
+                m = data["metrics"]
+                debug["metrics_type"] = type(m).__name__
+                if isinstance(m, list):
+                    debug["metrics_len"] = len(m)
+                    if m and isinstance(m[0], dict):
+                        debug["metrics_first_keys"] = list(m[0].keys())
+                elif isinstance(m, dict):
+                    debug["metrics_keys"] = list(m.keys())
+            out["_debug_reddit_response"] = debug
+        return jsonify(out)
+    except RedditApiError as e:
+        logger.error("Reddit API error in fetch_reddit_ad_analytics_report: %s", e.response_text)
+        out = {"error": sanitize_error_message(str(e))}
+        if e.response_text:
+            out["reddit_response"] = sanitize_error_message(e.response_text[:2000])
+        return jsonify(out), 500
+    except Exception as e:
+        logger.error(f"Error in fetch_reddit_ad_analytics_report: {traceback.format_exc()}")
+        sanitized_error = sanitize_error_message(str(e))
+        return jsonify({"error": sanitized_error}), 500
+
+
+# Reddit audience report types: breakdowns (up to 3; 4 for COUNTRY+REGION) + fields including REACH
+REDDIT_AUDIENCE_REPORT_TYPES = {
+    "interests": {"breakdowns": ["INTEREST"], "fields": ["REACH", "IMPRESSIONS", "CLICKS", "SPEND"]},
+    "communities": {"breakdowns": ["COMMUNITY"], "fields": ["REACH", "IMPRESSIONS", "CLICKS", "SPEND"]},
+    "country": {"breakdowns": ["COUNTRY"], "fields": ["REACH", "IMPRESSIONS", "CLICKS", "SPEND"]},
+    "region": {"breakdowns": ["COUNTRY", "REGION"], "fields": ["REACH", "IMPRESSIONS", "CLICKS", "SPEND"]},
+    "dma": {"breakdowns": ["DMA"], "fields": ["REACH", "IMPRESSIONS", "CLICKS", "SPEND"]},
+}
+
+
+@marketing_bp.route('/mcp/tools/fetch_reddit_audience_report', methods=['POST'])
+def fetch_reddit_audience_report():
+    """
+    Fetch Reddit Ads audience/demographics report: interests, communities, country, region, or DMA.
+    Returns reach and metrics per segment (e.g. per interest, per community, per country).
+
+    Request JSON:
+      - account_id: optional (default REDDIT_AD_ACCOUNT_ID)
+      - report_type: "interests" | "communities" | "country" | "region" | "dma" (required)
+      - start_date / end_date: YYYY-MM-DD, or relative_range: LAST_7_DAYS | LAST_30_DAYS
+      - store_raw: bool (default false) — store raw response in GCS under raw_ads/reddit/audience/
+    """
+    data = request.json or {}
+    today = datetime.utcnow().date()
+    default_end = today
+    default_start = default_end - timedelta(days=7)
+
+    account_id = (data.get("account_id") or os.environ.get("REDDIT_AD_ACCOUNT_ID") or "").strip()
+    if not account_id:
+        return jsonify({"error": "account_id is required (or set REDDIT_AD_ACCOUNT_ID)."}), 400
+
+    report_type = (data.get("report_type") or "").strip().lower()
+    if report_type not in REDDIT_AUDIENCE_REPORT_TYPES:
+        return jsonify({
+            "error": "report_type is required and must be one of: " + ", ".join(REDDIT_AUDIENCE_REPORT_TYPES),
+            "allowed": list(REDDIT_AUDIENCE_REPORT_TYPES.keys()),
+        }), 400
+
+    relative_range_raw = (data.get("relative_range") or "").strip().upper()
+    start_date_s = (data.get("start_date") or "").strip()
+    end_date_s = (data.get("end_date") or "").strip()
+    if not start_date_s or not end_date_s:
+        if relative_range_raw == "LAST_7_DAYS":
+            end = today - timedelta(days=1)
+            start = end - timedelta(days=6)
+            start_date_s = start_date_s or start.isoformat()
+            end_date_s = end_date_s or end.isoformat()
+        elif relative_range_raw == "LAST_30_DAYS":
+            end = today - timedelta(days=1)
+            start = end - timedelta(days=29)
+            start_date_s = start_date_s or start.isoformat()
+            end_date_s = end_date_s or end.isoformat()
+        else:
+            start_date_s = start_date_s or default_start.isoformat()
+            end_date_s = end_date_s or default_end.isoformat()
+    if not start_date_s:
+        start_date_s = default_start.isoformat()
+    if not end_date_s:
+        end_date_s = default_end.isoformat()
+
+    is_valid, error_msg = validate_date_range(start_date_s, end_date_s)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    try:
+        from bigas.resources.marketing.reddit_ads_service import RedditAdsService, RedditApiError
+        from bigas.resources.marketing.storage_service import StorageService
+
+        svc = RedditAdsService()
+        start_d = date.fromisoformat(start_date_s)
+        end_d = date.fromisoformat(end_date_s)
+        cfg = REDDIT_AUDIENCE_REPORT_TYPES[report_type]
+        campaign_id = (data.get("campaign_id") or "").strip() or None
+        result = svc.get_audience_report(
+            account_id=account_id,
+            start_date=start_d,
+            end_date=end_d,
+            breakdowns=cfg["breakdowns"],
+            fields=cfg.get("fields"),
+            campaign_id=campaign_id,
+        )
+        data_rows = result.get("data") or []
+        raw_response = result.get("raw_response") or {}
+        if not isinstance(data_rows, list):
+            data_rows = []
+
+        store_raw = bool(data.get("store_raw", False))
+        storage_path = None
+        if store_raw and data_rows:
+            storage = StorageService()
+            blob_name = f"raw_ads/reddit/audience/{end_date_s}/{report_type}_{account_id.replace(' ', '_')}.json"
+            storage.store_json(blob_name, {
+                "request": {"account_id": account_id, "report_type": report_type, "start_date": start_date_s, "end_date": end_date_s},
+                "raw_response": raw_response,
+                "data": data_rows,
+            })
+            storage_path = blob_name
+
+        out = {
+            "status": "success",
+            "account_id": account_id,
+            "report_type": report_type,
+            "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+            "breakdowns": cfg["breakdowns"],
+            "rows_count": len(data_rows),
+            "data": data_rows,
+            "storage_path": storage_path,
+        }
+        if data.get("include_raw_response"):
+            out["raw_response"] = raw_response
+        return jsonify(out)
+    except RedditApiError as e:
+        logger.error("Reddit API error in fetch_reddit_audience_report: %s", e.response_text)
+        out = {"error": sanitize_error_message(str(e))}
+        if e.response_text:
+            out["reddit_response"] = sanitize_error_message(e.response_text[:2000])
+        return jsonify(out), 500
+    except Exception as e:
+        logger.error(f"Error in fetch_reddit_audience_report: {traceback.format_exc()}")
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
+@marketing_bp.route('/mcp/tools/list_linkedin_creatives_for_period', methods=['POST'])
+def list_linkedin_creatives_for_period():
+    """
+    List LinkedIn creatives (ads) that had activity in a given discovery period.
+
+    This is intended as a discovery step for scheduled jobs (e.g. Cloud Scheduler),
+    so you don't have to hard-code creative IDs.
+
+    Request JSON:
+      - account_urn: urn:li:sponsoredAccount:XXXX (required if not set in env)
+      - discovery_start_date / discovery_end_date: YYYY-MM-DD (explicit period)
+      - discovery_relative_range: optional alternative to explicit dates, one of:
+          * LAST_7_DAYS
+          * LAST_30_DAYS
+          * LAST_90_DAYS
+        If explicit dates are provided, they take precedence.
+      - min_impressions: int (default: 1). Only creatives with at least this many
+        impressions in the discovery window are returned.
+      - store_raw: bool (default: true)
+      - force_refresh: bool (default: false)
+
+    Response JSON:
+      - status: "success"
+      - account_urn
+      - date_range
+      - creatives: list of { creative_id, creative_urn, impressions, clicks, costInLocalCurrency }
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    today = datetime.utcnow().date()
+
+    account_urn = (data.get("account_urn") or os.environ.get("LINKEDIN_AD_ACCOUNT_URN") or "").strip()
+    if not account_urn:
+        return jsonify({"error": "account_urn is required (or set LINKEDIN_AD_ACCOUNT_URN)."}), 400
+    account_urn = account_urn.strip()
+    if account_urn.isdigit():
+        account_urn = f"urn:li:sponsoredAccount:{account_urn}"
+
+    # Discovery period: explicit dates win, otherwise discovery_relative_range.
+    disc_start_s = (data.get("discovery_start_date") or "").strip()
+    disc_end_s = (data.get("discovery_end_date") or "").strip()
+    disc_rel = (data.get("discovery_relative_range") or "").strip().upper()
+
+    if not disc_start_s or not disc_end_s:
+        if disc_rel:
+            if disc_rel == "LAST_7_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=6)
+            elif disc_rel == "LAST_30_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=29)
+            elif disc_rel == "LAST_90_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=89)
+            else:
+                return jsonify(
+                    {"error": "discovery_relative_range must be one of: LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS"}
+                ), 400
+
+            if not disc_start_s:
+                disc_start_s = start.isoformat()
+            if not disc_end_s:
+                disc_end_s = end.isoformat()
+        else:
+            # Default discovery window: last 30 days ending yesterday
+            end = today - timedelta(days=1)
+            start = end - timedelta(days=29)
+            if not disc_start_s:
+                disc_start_s = start.isoformat()
+            if not disc_end_s:
+                disc_end_s = end.isoformat()
+
+    is_valid, error_msg = validate_date_range(disc_start_s, disc_end_s)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    min_impr = int(data.get("min_impressions") or 1)
+    store_raw = data.get("store_raw", True)
+    force_refresh = bool(data.get("force_refresh", False))
+
+    try:
+        from bigas.resources.marketing.linkedin_ads_service import LinkedInAdsService
+        from bigas.resources.marketing.storage_service import StorageService
+
+        svc = LinkedInAdsService()
+        storage = StorageService()
+
+        start_d = date.fromisoformat(disc_start_s)
+        end_d = date.fromisoformat(disc_end_s)
+
+        # Fields for creative rollup (fixed set)
+        required_fields = {"dateRange", "pivotValues", "impressions", "clicks", "costInLocalCurrency"}
+        final_fields = sorted(required_fields)
+
+        linkedin_version = os.environ.get("LINKEDIN_VERSION") or "202601"
+        safe_account = account_urn.split(":")[-1]
+
+        request_signature = {
+            "platform": "linkedin",
+            "endpoint": "adAnalytics",
+            "finder": "analytics",
+            "account_urns": [account_urn],
+            "start_date": disc_start_s,
+            "end_date": disc_end_s,
+            "time_granularity": "ALL",
+            "pivot": "CREATIVE",
+            "pivots": None,
+            "campaign_urns": None,
+            "campaign_group_urns": None,
+            "creative_urns": None,
+            "fields": final_fields,
+            "version": linkedin_version,
+            "include_entity_names": False,
+        }
+        signature_json = json.dumps(request_signature, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        request_hash = hashlib.sha256(signature_json.encode("utf-8")).hexdigest()
+        hash_prefix = request_hash[:12]
+        base_name = f"creative_rollup_{safe_account}"
+        blob_name = f"raw_ads/linkedin/{disc_end_s}/{base_name}_{hash_prefix}.json"
+
+        raw = None
+        from_cache = False
+
+        if store_raw and not force_refresh and storage.blob_exists(blob_name):
+            cached = storage.get_json(blob_name) or {}
+            payload = cached.get("payload") if isinstance(cached, dict) else {}
+            raw = payload.get("response") if isinstance(payload, dict) else {}
+            from_cache = True
+        else:
+            raw = svc.ad_analytics(
+                start_date=start_d,
+                end_date=end_d,
+                time_granularity="ALL",
+                pivot="CREATIVE",
+                account_urns=[account_urn],
+                campaign_urns=None,
+                campaign_group_urns=None,
+                creative_urns=None,
+                fields=final_fields,
+            )
+            if store_raw:
+                storage.store_raw_ads_report_at_blob(
+                    platform="linkedin",
+                    blob_name=blob_name,
+                    report_data={
+                        "request": request_signature,
+                        "response": raw,
+                    },
+                    report_date=disc_end_s,
+                    metadata={"request_hash": request_hash},
+                )
+
+        elements = raw.get("elements", []) if isinstance(raw, dict) else []
+
+        creatives_out = []
+        for el in elements:
+            if not isinstance(el, dict):
+                continue
+            pivot_vals = el.get("pivotValues") or []
+            if not pivot_vals:
+                continue
+            creative_urn = str(pivot_vals[0])
+            if not creative_urn.startswith("urn:li:sponsoredCreative:"):
+                continue
+
+            metrics = el
+            impr = metrics.get("impressions") or 0
+            clicks = metrics.get("clicks") or 0
+            cost = metrics.get("costInLocalCurrency")
+            try:
+                impr_i = int(impr)
+            except Exception:
+                impr_i = 0
+
+            if impr_i < min_impr:
+                continue
+
+            try:
+                clicks_i = int(clicks)
+            except Exception:
+                clicks_i = 0
+            try:
+                cost_d = Decimal(str(cost)) if cost is not None else Decimal("0")
+            except Exception:
+                cost_d = Decimal("0")
+
+            creative_id = creative_urn.split(":")[-1]
+
+            creatives_out.append(
+                {
+                    "creative_id": creative_id,
+                    "creative_urn": creative_urn,
+                    "impressions": impr_i,
+                    "clicks": clicks_i,
+                    "costInLocalCurrency": float(cost_d),
+                }
+            )
+
+        # Sort creatives by impressions descending for convenience
+        creatives_out.sort(key=lambda c: c["impressions"], reverse=True)
+
+        return jsonify(
+            {
+                "status": "success",
+                "account_urn": account_urn,
+                "date_range": {"start_date": disc_start_s, "end_date": disc_end_s},
+                "from_cache": from_cache,
+                "creatives": creatives_out,
+            }
+        )
+    except Exception:
+        logger.error("Error in list_linkedin_creatives_for_period: %s", traceback.format_exc())
+        sanitized_error = sanitize_error_message(str(traceback.format_exc()))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/fetch_linkedin_creative_demographics_portfolio', methods=['POST'])
+def fetch_linkedin_creative_demographics_portfolio():
+    """
+    Fetch LinkedIn demographic adAnalytics per creative and per dimension (pivot),
+    with rate-limit-friendly sequencing and strong caching in GCS.
+
+    This is intended for scheduled runs (e.g. Cloud Scheduler) to prepare
+    per-ad, per-dimension data that can later be summarized into a portfolio
+    report by another endpoint.
+
+    Request JSON:
+      - account_urn: urn:li:sponsoredAccount:XXXX (required if not set in env)
+      - start_date / end_date OR relative_range (same semantics as fetch_linkedin_ad_analytics_report)
+      - creative_ids: list of numeric creative ids (required)
+      - pivots: list of demographic pivots, e.g. ["MEMBER_JOB_TITLE","MEMBER_JOB_FUNCTION"]
+      - fields: optional list of fields (defaults similar to fetch_linkedin_ad_analytics_report)
+      - store_raw: bool (default: true)
+      - force_refresh: bool (default: false)
+      - include_entity_names: bool (default: true)
+      - max_creatives_per_run: int (default: 10)
+      - max_pivots_per_creative: int (default: 3)
+      - sleep_ms_between_calls: int (default: 300)
+
+    Returns:
+      - For each (creative, pivot), whether it was fetched or came from cache,
+        plus the storage paths for raw and enriched blobs (if created).
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    # Date handling: same semantics as fetch_linkedin_ad_analytics_report
+    today = datetime.utcnow().date()
+    default_end = today
+    default_start = default_end - timedelta(days=7)
+
+    account_urn = (data.get("account_urn") or os.environ.get("LINKEDIN_AD_ACCOUNT_URN") or "").strip()
+
+    relative_range_raw = (data.get("relative_range") or "").strip().upper()
+    start_date_s = (data.get("start_date") or "").strip()
+    end_date_s = (data.get("end_date") or "").strip()
+
+    if not start_date_s or not end_date_s:
+        if relative_range_raw:
+            if relative_range_raw == "LAST_DAY":
+                end = today - timedelta(days=1)
+                start = end
+            elif relative_range_raw == "LAST_7_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=6)
+            elif relative_range_raw == "LAST_30_DAYS":
+                end = today - timedelta(days=1)
+                start = end - timedelta(days=29)
+            else:
+                return jsonify({"error": "relative_range must be one of: LAST_DAY, LAST_7_DAYS, LAST_30_DAYS"}), 400
+
+            if not start_date_s:
+                start_date_s = start.isoformat()
+            if not end_date_s:
+                end_date_s = end.isoformat()
+
+    if not start_date_s:
+        start_date_s = default_start.isoformat()
+    if not end_date_s:
+        end_date_s = default_end.isoformat()
+
+    time_granularity = "ALL"
+    pivots = data.get("pivots") or []
+    if not isinstance(pivots, list) or not pivots:
+        return jsonify({"error": "pivots is required and must be a non-empty list"}), 400
+    creative_ids = data.get("creative_ids") or []
+    if not isinstance(creative_ids, list) or not creative_ids:
+        return jsonify({"error": "creative_ids is required and must be a non-empty list"}), 400
+
+    fields = data.get("fields")
+    if fields is not None and not isinstance(fields, list):
+        return jsonify({"error": "fields must be a list of field names"}), 400
+
+    store_raw = data.get("store_raw", True)
+    force_refresh = bool(data.get("force_refresh", False))
+    include_entity_names = bool(data.get("include_entity_names", True))
+
+    max_creatives_per_run = int(data.get("max_creatives_per_run") or 10)
+    max_pivots_per_creative = int(data.get("max_pivots_per_creative") or 3)
+    sleep_ms_between_calls = int(data.get("sleep_ms_between_calls") or 300)
+
+    is_valid, error_msg = validate_date_range(start_date_s, end_date_s)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    if not account_urn:
+        return jsonify({"error": "account_urn is required (or set LINKEDIN_AD_ACCOUNT_URN)."}), 400
+
+    account_urn = account_urn.strip()
+    if account_urn.isdigit():
+        account_urn = f"urn:li:sponsoredAccount:{account_urn}"
+
+    try:
+        from bigas.resources.marketing.linkedin_ads_service import LinkedInAdsService
+        from bigas.resources.marketing.storage_service import StorageService
+
+        svc = LinkedInAdsService()
+        storage = StorageService()
+        start_d = date.fromisoformat(start_date_s)
+        end_d = date.fromisoformat(end_date_s)
+
+        cleaned_fields = None
+        if fields:
+            cleaned_fields = sorted({str(f).strip() for f in fields if str(f).strip()})
+
+        linkedin_version = os.environ.get("LINKEDIN_VERSION") or "202601"
+
+        # Request metrics so the summarizer has impressions/clicks/cost per segment (required for portfolio insights).
+        required_fields = {"dateRange", "pivotValues", "impressions", "clicks", "costInLocalCurrency"}
+        final_fields = sorted(set((cleaned_fields or [])) | required_fields) if (cleaned_fields is not None) else sorted(required_fields)
+
+        safe_account = account_urn.split(":")[-1]
+
+        results = []
+
+        limited_creatives = creative_ids[:max_creatives_per_run]
+        limited_pivots = [str(p).strip().upper() for p in pivots if str(p).strip()][:max_pivots_per_creative]
+
+        total_calls = len(limited_creatives) * len(limited_pivots)
+        call_index = 0
+
+        for cid in limited_creatives:
+            cid_str = str(cid).strip()
+            if not cid_str:
+                continue
+            creative_urn = f"urn:li:sponsoredCreative:{cid_str}"
+
+            for pivot_name in limited_pivots:
+                call_index += 1
+
+                request_signature = {
+                    "platform": "linkedin",
+                    "endpoint": "adAnalytics",
+                    "finder": "analytics",
+                    "account_urns": [account_urn],
+                    "start_date": start_date_s,
+                    "end_date": end_date_s,
+                    "time_granularity": time_granularity,
+                    "pivot": pivot_name,
+                    "pivots": None,
+                    "campaign_urns": None,
+                    "campaign_group_urns": None,
+                    "creative_urns": [creative_urn],
+                    "fields": final_fields,
+                    "version": linkedin_version,
+                    "include_entity_names": include_entity_names,
+                }
+                signature_json = json.dumps(request_signature, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+                request_hash = hashlib.sha256(signature_json.encode("utf-8")).hexdigest()
+                hash_prefix = request_hash[:12]
+                base_name = f"ad_analytics_{safe_account}_{pivot_name}_{cid_str}"
+                blob_name = f"raw_ads/linkedin/{end_date_s}/{base_name}_{hash_prefix}.json"
+                enriched_blob_name = f"raw_ads/linkedin/{end_date_s}/{base_name}_{hash_prefix}.enriched.json"
+
+                from_cache = False
+                elements_count = None
+
+                if store_raw and not force_refresh and storage.blob_exists(blob_name):
+                    cached = storage.get_json(blob_name) or {}
+                    cached_payload = cached.get("payload") if isinstance(cached, dict) else {}
+                    cached_response = cached_payload.get("response") if isinstance(cached_payload, dict) else {}
+                    elements = cached_response.get("elements", []) if isinstance(cached_response, dict) else []
+                    elements_count = len(elements) if isinstance(elements, list) else None
+                    from_cache = True
+                    logger.info(
+                        "LinkedIn portfolio: cache hit for creative=%s pivot=%s (elements=%s)",
+                        cid_str,
+                        pivot_name,
+                        elements_count,
+                    )
+                    # Ensure enriched blob exists when we return enriched_storage_path (summarizer needs it).
+                    if include_entity_names and not storage.blob_exists(enriched_blob_name):
+                        try:
+                            safe_account_id = None
+                            try:
+                                safe_account_id = int(safe_account)
+                            except Exception:
+                                safe_account_id = None
+                            enriched = _enrich_linkedin_adanalytics_response(
+                                cached_response,
+                                account_id=safe_account_id,
+                                svc=svc,
+                                context={"creative_urns": [creative_urn]},
+                            )
+                            storage.store_json(
+                                blob_name=enriched_blob_name,
+                                data={
+                                    "metadata": {
+                                        "platform": "linkedin",
+                                        "report_date": end_date_s,
+                                        "report_type": "raw_ads_enriched",
+                                        "stored_at": datetime.utcnow().isoformat(),
+                                        "version": "1.0",
+                                        "request_hash": request_hash,
+                                    },
+                                    "payload": {
+                                        "request_hash": request_hash,
+                                        "source_blob": blob_name,
+                                        "enriched_response": enriched,
+                                    },
+                                },
+                            )
+                            logger.info(
+                                "LinkedIn portfolio: created missing enriched blob for creative=%s pivot=%s",
+                                cid_str,
+                                pivot_name,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "LinkedIn portfolio enrichment (on cache hit) failed for creative=%s pivot=%s: %s",
+                                cid_str,
+                                pivot_name,
+                                traceback.format_exc(),
+                            )
+                else:
+                    raw = svc.ad_analytics(
+                        start_date=start_d,
+                        end_date=end_d,
+                        time_granularity=time_granularity,
+                        pivot=pivot_name,
+                        account_urns=[account_urn],
+                        campaign_urns=None,
+                        campaign_group_urns=None,
+                        creative_urns=[creative_urn],
+                        fields=final_fields,
+                    )
+                    elements = raw.get("elements", []) if isinstance(raw, dict) else []
+                    elements_count = len(elements) if isinstance(elements, list) else None
+
+                    if store_raw:
+                        storage.store_raw_ads_report_at_blob(
+                            platform="linkedin",
+                            blob_name=blob_name,
+                            report_data={
+                                "request": request_signature,
+                                "response": raw,
+                            },
+                            report_date=end_date_s,
+                            metadata={"request_hash": request_hash},
+                        )
+
+                        if include_entity_names:
+                            try:
+                                safe_account_id = None
+                                try:
+                                    safe_account_id = int(safe_account)
+                                except Exception:
+                                    safe_account_id = None
+
+                                enriched = _enrich_linkedin_adanalytics_response(
+                                    raw,
+                                    account_id=safe_account_id,
+                                    svc=svc,
+                                    context={"creative_urns": [creative_urn]},
+                                )
+                                storage.store_json(
+                                    blob_name=enriched_blob_name,
+                                    data={
+                                        "metadata": {
+                                            "platform": "linkedin",
+                                            "report_date": end_date_s,
+                                            "report_type": "raw_ads_enriched",
+                                            "stored_at": datetime.utcnow().isoformat(),
+                                            "version": "1.0",
+                                            "request_hash": request_hash,
+                                        },
+                                        "payload": {
+                                            "request_hash": request_hash,
+                                            "source_blob": blob_name,
+                                            "enriched_response": enriched,
+                                        },
+                                    },
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "LinkedIn portfolio enrichment failed for creative=%s pivot=%s: %s",
+                                    cid_str,
+                                    pivot_name,
+                                    traceback.format_exc(),
+                                )
+
+                    # Gentle delay between LinkedIn calls
+                    if sleep_ms_between_calls > 0:
+                        time.sleep(sleep_ms_between_calls / 1000.0)
+
+                results.append(
+                    {
+                        "creative_id": cid_str,
+                        "pivot": pivot_name,
+                        "request_hash": request_hash,
+                        "from_cache": from_cache,
+                        "elements_count": elements_count,
+                        "storage_path": (blob_name if store_raw else None),
+                        "enriched_storage_path": (
+                            enriched_blob_name if (store_raw and include_entity_names) else None
+                        ),
+                    }
+                )
+
+        return jsonify(
+            {
+                "status": "success",
+                "account_urn": account_urn,
+                "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+                "total_calls": call_index,
+                "results": results,
+            }
+        )
+    except Exception:
+        logger.error("Error in fetch_linkedin_creative_demographics_portfolio: %s", traceback.format_exc())
+        sanitized_error = sanitize_error_message(str(traceback.format_exc()))
+        return jsonify({"error": sanitized_error}), 500
+
+
+def _enrich_linkedin_adanalytics_response(
+    raw: Any,
+    *,
+    account_id: Optional[int],
+    svc: Any,
+    context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Best-effort enrichment of adAnalytics response.
+
+    Adds:
+    - Stable structure: {dateRange, pivotValues, metrics}
+    - Best-effort URN resolution for common pivotValues:
+      - sponsoredCreative -> creative name (via /rest .../creatives) if available
+      - title/function/industry/seniority -> localized name (via /v2 standardized-data endpoints)
+    """
+    if not isinstance(raw, dict):
+        return {"elements": []}
+
+    elements = raw.get("elements", [])
+    if not isinstance(elements, list):
+        return {"elements": []}
+
+    # Local caches to keep enrichment fast.
+    creative_cache: Dict[str, Any] = {}
+    urn_cache: Dict[str, Any] = {}
+
+    def _resolve_urn(u: str) -> Optional[Dict[str, Any]]:
+        u = (u or "").strip()
+        if not u:
+            return None
+        if u in urn_cache:
+            return urn_cache[u]
+        try:
+            if u.startswith("urn:li:geo:"):
+                geo_id = u.split(":")[-1]
+                urn_cache[u] = svc.get_geo(geo_id)
+                return urn_cache[u]
+            if u.startswith("urn:li:title:"):
+                title_id = u.split(":")[-1]
+                urn_cache[u] = svc.get_title(title_id)
+                return urn_cache[u]
+            if u.startswith("urn:li:function:"):
+                fid = u.split(":")[-1]
+                urn_cache[u] = svc.get_function(fid)
+                return urn_cache[u]
+            if u.startswith("urn:li:industry:"):
+                iid = u.split(":")[-1]
+                urn_cache[u] = svc.get_industry(iid)
+                return urn_cache[u]
+            if u.startswith("urn:li:seniority:"):
+                sid = u.split(":")[-1]
+                urn_cache[u] = svc.get_seniority(sid)
+                return urn_cache[u]
+        except Exception:
+            urn_cache[u] = None
+            return None
+        urn_cache[u] = None
+        return None
+
+    def _resolve_creative(creative_urn: str) -> Optional[Dict[str, Any]]:
+        creative_urn = (creative_urn or "").strip()
+        if not creative_urn or not creative_urn.startswith("urn:li:sponsoredCreative:"):
+            return None
+        if creative_urn in creative_cache:
+            return creative_cache[creative_urn]
+        if not account_id:
+            creative_cache[creative_urn] = None
+            return None
+        try:
+            creative_cache[creative_urn] = svc.get_creative(ad_account_id=account_id, creative_urn=creative_urn)
+            return creative_cache[creative_urn]
+        except Exception:
+            creative_cache[creative_urn] = None
+            return None
+
+    out: Dict[str, Any] = {
+        "account_id": account_id,
+        "context": {},
+        "elements": [],
+        "paging": raw.get("paging"),
+    }
+
+    # Add explicit context about filters, so demographic pivots can still be attributed to a creative/campaign.
+    ctx = context or {}
+    creative_urns_ctx = ctx.get("creative_urns") if isinstance(ctx, dict) else None
+    if isinstance(creative_urns_ctx, list) and creative_urns_ctx:
+        resolved_creatives = []
+        for cu in creative_urns_ctx:
+            cu_s = str(cu).strip()
+            if not cu_s:
+                continue
+            c = _resolve_creative(cu_s)
+            if isinstance(c, dict):
+                resolved_creatives.append(
+                    {
+                        "urn": cu_s,
+                        "name": c.get("name"),
+                        "campaign": c.get("campaign"),
+                        "content": c.get("content"),
+                    }
+                )
+            else:
+                resolved_creatives.append({"urn": cu_s})
+        out["context"]["creative_urns"] = creative_urns_ctx
+        out["context"]["creatives"] = resolved_creatives
+
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+
+        pivot_values = el.get("pivotValues") if isinstance(el.get("pivotValues"), list) else []
+        resolved = []
+        for pv in pivot_values:
+            pv_s = str(pv)
+            item: Dict[str, Any] = {"urn": pv_s}
+
+            if pv_s.startswith("urn:li:sponsoredCreative:"):
+                c = _resolve_creative(pv_s)
+                if isinstance(c, dict):
+                    item["type"] = "creative"
+                    item["name"] = c.get("name")
+                    item["campaign"] = c.get("campaign")
+                    item["content"] = c.get("content")
+                else:
+                    item["type"] = "creative"
+            else:
+                info = _resolve_urn(pv_s)
+                if isinstance(info, dict):
+                    item["type"] = "standardized"
+                    # common shapes:
+                    # - {"name":{"localized":{"en_US":"..."}}}
+                    # - geo: {"defaultLocalizedName":{"value":"United States"}}
+                    name = None
+                    if isinstance(info.get("name"), dict):
+                        name = (((info.get("name") or {}).get("localized") or {}).get("en_US"))
+                    if not name and isinstance(info.get("defaultLocalizedName"), dict):
+                        name = (info.get("defaultLocalizedName") or {}).get("value")
+                    item["name"] = name
+                    item["raw"] = info
+
+            resolved.append(item)
+
+        def _to_decimal(v: Any) -> Optional[Decimal]:
+            if v is None:
+                return None
+            if isinstance(v, (int, float)):
+                try:
+                    return Decimal(str(v))
+                except Exception:
+                    return None
+            if isinstance(v, str):
+                s = v.strip()
+                if not s:
+                    return None
+                try:
+                    return Decimal(s)
+                except InvalidOperation:
+                    return None
+            return None
+
+        metrics = {k: v for k, v in el.items() if k not in {"dateRange", "pivotValues"}}
+        impressions = metrics.get("impressions")
+        clicks = metrics.get("clicks")
+        cost_local = metrics.get("costInLocalCurrency")
+
+        impressions_i = int(impressions) if isinstance(impressions, int) else None
+        clicks_i = int(clicks) if isinstance(clicks, int) else None
+        cost_d = _to_decimal(cost_local)
+
+        derived: Dict[str, Any] = {}
+        if impressions_i is not None and impressions_i > 0 and clicks_i is not None:
+            derived["ctr"] = float(Decimal(clicks_i) / Decimal(impressions_i))
+        if clicks_i is not None and clicks_i > 0 and cost_d is not None:
+            derived["avg_cpc_local"] = float(cost_d / Decimal(clicks_i))
+
+        out["elements"].append(
+            {
+                "dateRange": el.get("dateRange"),
+                "pivotValues": pivot_values,
+                "pivotValuesResolved": resolved,
+                "metrics": metrics,
+                "derived": derived,
+            }
+        )
+
+    # Add report-level totals and per-row shares (for UI-like % columns).
+    total_impr = 0
+    total_clicks = 0
+    total_cost: Optional[Decimal] = None
+    for row in out["elements"]:
+        m = row.get("metrics") if isinstance(row, dict) else None
+        if not isinstance(m, dict):
+            continue
+        if isinstance(m.get("impressions"), int):
+            total_impr += int(m["impressions"])
+        if isinstance(m.get("clicks"), int):
+            total_clicks += int(m["clicks"])
+        c = m.get("costInLocalCurrency")
+        cd = None
+        try:
+            cd = Decimal(str(c)) if c is not None else None
+        except Exception:
+            cd = None
+        if cd is not None:
+            total_cost = (total_cost or Decimal("0")) + cd
+
+    out["summary"] = {
+        "rows": len(out["elements"]),
+        "totals": {
+            "impressions": total_impr,
+            "clicks": total_clicks,
+            "costInLocalCurrency": (str(total_cost) if total_cost is not None else None),
+        },
+    }
+
+    for row in out["elements"]:
+        m = row.get("metrics") if isinstance(row, dict) else None
+        if not isinstance(m, dict):
+            continue
+        shares: Dict[str, Any] = {}
+        if total_impr > 0 and isinstance(m.get("impressions"), int):
+            shares["impressions_share"] = float(Decimal(int(m["impressions"])) / Decimal(total_impr))
+        if total_clicks > 0 and isinstance(m.get("clicks"), int):
+            shares["clicks_share"] = float(Decimal(int(m["clicks"])) / Decimal(total_clicks))
+        if total_cost is not None:
+            try:
+                cd = Decimal(str(m.get("costInLocalCurrency"))) if m.get("costInLocalCurrency") is not None else None
+            except Exception:
+                cd = None
+            if cd is not None and total_cost != 0:
+                shares["cost_share_local"] = float(cd / total_cost)
+        row["shares"] = shares
+
+    return out
+
+
+@marketing_bp.route('/mcp/tools/summarize_linkedin_ad_analytics', methods=['POST'])
+def summarize_linkedin_ad_analytics():
+    """
+    Generate an AI-written LinkedIn ads performance summary and post it to Discord.
+
+    This endpoint is designed to be triggered from e.g. Google Cloud Scheduler
+    after a raw/enriched report has been generated and stored in GCS.
+
+    Request JSON:
+      - enriched_storage_path: GCS path to the enriched LinkedIn report JSON
+          (e.g. raw_ads/linkedin/2026-02-09/ad_analytics_516183054_MEMBER_JOB_TITLE_xxx.enriched.json)
+      - llm_model: optional OpenAI model name (default: gpt-4)
+      - discord_webhook_env: optional env var name for Discord webhook.
+          Defaults to DISCORD_WEBHOOK_URL_MARKETING, then DISCORD_WEBHOOK_URL.
+
+    Behaviour:
+      - If the enriched report has no elements, a short "no data" message is posted to Discord.
+      - Otherwise, the endpoint sends a compact version of the report to OpenAI and
+        posts the resulting analysis to Discord.
+    """
+    data = request.json or {}
+    enriched_path = (data.get("enriched_storage_path") or "").strip()
+    if not enriched_path:
+        return jsonify({"error": "enriched_storage_path is required"}), 400
+
+    if not OPENAI_API_KEY:
+        return jsonify({"error": "OPENAI_API_KEY is not configured on the server"}), 500
+
+    # Resolve Discord webhook
+    webhook_env = (data.get("discord_webhook_env") or "").strip() or "DISCORD_WEBHOOK_URL_MARKETING"
+    webhook_url = os.environ.get(webhook_env) or os.environ.get("DISCORD_WEBHOOK_URL")
+
+    try:
+        from bigas.resources.marketing.storage_service import StorageService
+
+        storage = StorageService()
+        obj = storage.get_json(enriched_path)
+        if not isinstance(obj, dict):
+            return jsonify({"error": f"Enriched report at {enriched_path} is not a JSON object"}), 500
+
+        payload = obj.get("payload") or {}
+        enriched = payload.get("enriched_response") or {}
+        if not isinstance(enriched, dict):
+            return jsonify({"error": "enriched_response missing or invalid in enriched report"}), 500
+
+        elements = enriched.get("elements") or []
+        summary = enriched.get("summary") or {}
+        context = enriched.get("context") or {}
+
+        # If there is no data, post a simple no-data notice to Discord.
+        if not elements:
+            no_data_message = (
+                "## 📊 LinkedIn Ads Report\n\n"
+                "No LinkedIn ad data was available for the selected period.\n\n"
+                f"Source: `{enriched_path}`"
+            )
+            if webhook_url:
+                post_to_discord(webhook_url, no_data_message)
+            return jsonify(
+                {
+                    "status": "success",
+                    "had_data": False,
+                    "discord_posted": bool(webhook_url),
+                    "enriched_storage_path": enriched_path,
+                }
+            )
+
+        # Build a compact analytics payload for the LLM.
+        # To keep token usage reasonable, include:
+        #   - summary (totals)
+        #   - context (creative names etc.)
+        #   - a compact sample of rows as examples (names + key metrics only)
+        sample_limit = int(data.get("sample_limit") or 50)
+
+        compact_rows = []
+        for el in elements[:sample_limit]:
+            if not isinstance(el, dict):
+                continue
+            pivots_resolved = el.get("pivotValuesResolved") or []
+            seg_names = []
+            for pv in pivots_resolved:
+                if not isinstance(pv, dict):
+                    continue
+                name = pv.get("name") or pv.get("urn")
+                if name:
+                    seg_names.append(str(name))
+            metrics = el.get("metrics") or {}
+            derived = el.get("derived") or {}
+            compact_rows.append(
+                {
+                    "segments": seg_names,
+                    "metrics": {
+                        "impressions": metrics.get("impressions"),
+                        "clicks": metrics.get("clicks"),
+                        "costInLocalCurrency": metrics.get("costInLocalCurrency"),
+                    },
+                    "derived": {
+                        "ctr": derived.get("ctr"),
+                        "avg_cpc_local": derived.get("avg_cpc_local"),
+                    },
+                }
+            )
+
+        analytics_payload = {
+            "platform": "linkedin",
+            "source_blob": enriched_path,
+            "summary": summary,
+            "context": context,
+            "sample_rows": compact_rows,
+        }
+
+        # Use a smaller, more cost‑efficient model by default, and keep prompts compact.
+        model = (data.get("llm_model") or "gpt-4.1-mini").strip()
+
+        prompt_cfg = AD_SUMMARY_PROMPTS.get(("linkedin", "ad_analytics"))
+        if not prompt_cfg:
+            return jsonify({"error": "Prompt configuration missing for LinkedIn ad analytics"}), 500
+
+        system_prompt = prompt_cfg["system"]
+        user_prompt = prompt_cfg["user_template"].format(
+            platform="linkedin",
+            payload=json.dumps(analytics_payload, indent=2),
+        )
+
+        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        completion = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=900,
+            temperature=0.4,
+            timeout=40,
+        )
+        analysis_text = completion.choices[0].message.content.strip()
+
+        discord_message = (
+            "## 📊 LinkedIn Ads Performance Report\n\n"
+            f"{analysis_text}\n\n"
+            f"---\n_Source blob: `{enriched_path}`_"
+        )
+
+        if webhook_url:
+            post_long_to_discord(webhook_url, discord_message)
+
+        return jsonify(
+            {
+                "status": "success",
+                "had_data": True,
+                "discord_posted": bool(webhook_url),
+                "enriched_storage_path": enriched_path,
+                "used_model": model,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in summarize_linkedin_ad_analytics: {traceback.format_exc()}")
+        sanitized_error = sanitize_error_message(str(e))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/summarize_reddit_ad_analytics', methods=['POST'])
+def summarize_reddit_ad_analytics():
+    """
+    Summarize a Reddit ads report from an enriched GCS blob. Option A: currencies as-reported.
+
+    Request JSON:
+      - enriched_storage_path: GCS path to enriched blob (required)
+      - webhook_url or use DISCORD_WEBHOOK_URL_MARKETING
+      - llm_model: optional (default: gpt-4.1-mini)
+      - sample_limit: optional max rows to send to LLM (default: 50)
+    """
+    data = request.json or {}
+    enriched_path = (data.get("enriched_storage_path") or "").strip()
+    if not enriched_path:
+        return jsonify({"error": "enriched_storage_path is required"}), 400
+    if not OPENAI_API_KEY:
+        return jsonify({"error": "OPENAI_API_KEY is not configured on the server"}), 500
+
+    webhook_url = (
+        (data.get("webhook_url") or "").strip()
+        or os.environ.get("DISCORD_WEBHOOK_URL_MARKETING")
+        or os.environ.get("DISCORD_WEBHOOK_URL")
+    )
+
+    try:
+        from bigas.resources.marketing.storage_service import StorageService
+
+        storage = StorageService()
+        obj = storage.get_json(enriched_path)
+        if not obj or not isinstance(obj, dict):
+            return jsonify({"error": f"Enriched report not found or invalid: {enriched_path}"}), 404
+
+        payload = obj.get("payload") or {}
+        enriched = payload.get("enriched_response") or {}
+        if not isinstance(enriched, dict):
+            return jsonify({"error": "enriched_response missing or invalid in enriched report"}), 500
+
+        elements = enriched.get("elements") or []
+        summary = enriched.get("summary") or {}
+        context = enriched.get("context") or {}
+
+        if not elements:
+            no_data_message = (
+                "## 📊 Reddit Ads Report\n\n"
+                "No Reddit ad data was available for the selected period.\n\n"
+                f"Source: `{enriched_path}`"
+            )
+            if webhook_url:
+                post_to_discord(webhook_url, no_data_message)
+            return jsonify(
+                {
+                    "status": "success",
+                    "had_data": False,
+                    "discord_posted": bool(webhook_url),
+                    "enriched_storage_path": enriched_path,
+                }
+            )
+
+        sample_limit = int(data.get("sample_limit") or 50)
+        compact_rows = []
+        for el in elements[:sample_limit]:
+            if not isinstance(el, dict):
+                continue
+            compact_rows.append({
+                "segments": el.get("segments") or [],
+                "metrics": el.get("metrics") or {},
+                "derived": el.get("derived") or {},
+            })
+
+        analytics_payload = {
+            "platform": "reddit",
+            "source_blob": enriched_path,
+            "summary": summary,
+            "context": context,
+            "sample_rows": compact_rows,
+            "note": "Spend in context.spend_currency; do not sum across platforms/currencies.",
+        }
+
+        model = (data.get("llm_model") or "gpt-4.1-mini").strip()
+        prompt_cfg = AD_SUMMARY_PROMPTS.get(("reddit", "ad_analytics"))
+        if not prompt_cfg:
+            return jsonify({"error": "Prompt configuration missing for Reddit ad analytics"}), 500
+
+        system_prompt = prompt_cfg["system"]
+        user_prompt = prompt_cfg["user_template"].format(
+            platform="reddit",
+            payload=json.dumps(analytics_payload, indent=2),
+        )
+
+        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        completion = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=900,
+            temperature=0.4,
+            timeout=40,
+        )
+        analysis_text = completion.choices[0].message.content.strip()
+
+        discord_message = (
+            "## 📊 Reddit Ads Performance Report\n\n"
+            f"{analysis_text}\n\n"
+            f"---\n_Source blob: `{enriched_path}`_"
+        )
+
+        if webhook_url:
+            post_long_to_discord(webhook_url, discord_message)
+
+        return jsonify(
+            {
+                "status": "success",
+                "had_data": True,
+                "discord_posted": bool(webhook_url),
+                "enriched_storage_path": enriched_path,
+                "used_model": model,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in summarize_reddit_ad_analytics: {traceback.format_exc()}")
+        sanitized_error = sanitize_error_message(str(e))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/summarize_linkedin_creative_portfolio', methods=['POST'])
+def summarize_linkedin_creative_portfolio():
+    """
+    Summarize a LinkedIn creative portfolio: per-ad top segments + overall recommendations.
+
+    This expects enriched per-creative, per-pivot reports produced by
+    fetch_linkedin_creative_demographics_portfolio.
+
+    Request JSON:
+      - items: list of objects, each with:
+          * creative_id: string or int
+          * pivot: e.g. MEMBER_JOB_TITLE
+          * enriched_storage_path: GCS path to enriched blob
+      - llm_model: optional OpenAI model name (default: gpt-4.1-mini)
+
+    Behavior:
+      - Aggregates per-creative totals and per-dimension top segments (Top 5 by CTR, with a
+        small minimum impression threshold) from the provided enriched blobs.
+      - If there is no data across all items, posts a "no data" message to Discord and
+        skips OpenAI.
+      - Otherwise sends a compact portfolio payload to OpenAI and posts the structured
+        analysis to Discord.
+    """
+    data = request.json or {}
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "items is required and must be a non-empty list"}), 400
+
+    if not OPENAI_API_KEY:
+        return jsonify({"error": "OPENAI_API_KEY is not configured on the server"}), 500
+
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
+
+    try:
+        from bigas.resources.marketing.storage_service import StorageService
+
+        storage = StorageService()
+
+        # Aggregate: creatives -> dimensions -> segments
+        # Structure: { creative_id: { 'name': ..., 'pivots': { pivot_name: { segment_name: metrics } } } }
+        creatives: Dict[str, Dict[str, Any]] = {}
+
+        total_impr_all = 0
+        total_clicks_all = 0
+
+        for itm in items:
+            creative_id_raw = itm.get("creative_id")
+            pivot = (itm.get("pivot") or "").strip().upper()
+            enriched_path = (itm.get("enriched_storage_path") or "").strip()
+            if not creative_id_raw or not pivot or not enriched_path:
+                continue
+
+            cid = str(creative_id_raw).strip()
+            try:
+                obj = storage.get_json(enriched_path) or {}
+            except Exception:
+                logger.warning("Portfolio summarizer: failed to read %s", enriched_path)
+                continue
+
+            payload = obj.get("payload") or {}
+            enriched = payload.get("enriched_response") or {}
+            elements = enriched.get("elements") or []
+            context = enriched.get("context") or {}
+            logger.info(
+                "summarize_linkedin_creative_portfolio: read path=%s creative=%s pivot=%s elements=%s",
+                enriched_path,
+                cid,
+                pivot,
+                len(elements),
+            )
+
+            creatives.setdefault(cid, {"id": cid, "name": None, "context": context, "pivots": {}})
+
+            # Try to get ad name from context.creatives if present
+            if not creatives[cid].get("name"):
+                ctx_creatives = context.get("creatives") or []
+                for c in ctx_creatives:
+                    if not isinstance(c, dict):
+                        continue
+                    urn = c.get("urn") or ""
+                    if urn.endswith(f":{cid}"):
+                        creatives[cid]["name"] = c.get("name")
+                        break
+
+            pivot_map = creatives[cid]["pivots"].setdefault(pivot, {})
+
+            for el in elements:
+                if not isinstance(el, dict):
+                    continue
+                metrics = el.get("metrics") or {}
+                derived = el.get("derived") or {}
+                piv_resolved = el.get("pivotValuesResolved") or []
+
+                # Segment key: join resolved names or URNs
+                seg_parts = []
+                for pv in piv_resolved:
+                    if not isinstance(pv, dict):
+                        continue
+                    seg_name = pv.get("name") or pv.get("urn")
+                    if seg_name:
+                        seg_parts.append(str(seg_name))
+                if not seg_parts:
+                    continue
+
+                seg_key = " / ".join(seg_parts)
+                impr = metrics.get("impressions") or 0
+                clicks = metrics.get("clicks") or 0
+                cost = metrics.get("costInLocalCurrency")
+
+                try:
+                    impr_i = int(impr)
+                except Exception:
+                    impr_i = 0
+                try:
+                    clicks_i = int(clicks)
+                except Exception:
+                    clicks_i = 0
+                try:
+                    cost_d = Decimal(str(cost)) if cost is not None else Decimal("0")
+                except Exception:
+                    cost_d = Decimal("0")
+
+                agg = pivot_map.setdefault(
+                    seg_key,
+                    {"impressions": 0, "clicks": 0, "costInLocalCurrency": Decimal("0")},
+                )
+                agg["impressions"] += impr_i
+                agg["clicks"] += clicks_i
+                agg["costInLocalCurrency"] += cost_d
+
+                total_impr_all += impr_i
+                total_clicks_all += clicks_i
+
+        logger.info(
+            "summarize_linkedin_creative_portfolio: aggregated total_impr_all=%s total_clicks_all=%s creatives=%s",
+            total_impr_all,
+            total_clicks_all,
+            len(creatives),
+        )
+
+        # No data across all items?
+        if total_impr_all == 0 and total_clicks_all == 0:
+            # Log first item structure to help troubleshoot (path + first element keys/metrics)
+            first_path = (items[0].get("enriched_storage_path") or "").strip() if items else ""
+            first_el_sample: Dict[str, Any] = {}
+            if first_path and creatives:
+                try:
+                    obj0 = storage.get_json(first_path) or {}
+                    els = (obj0.get("payload") or {}).get("enriched_response") or {}
+                    el_list = els.get("elements") or []
+                    if el_list and isinstance(el_list[0], dict):
+                        first_el = el_list[0]
+                        first_el_sample = {
+                            "keys": list(first_el.keys()),
+                            "metrics_keys": list((first_el.get("metrics") or {}).keys()),
+                            "metrics_sample": first_el.get("metrics"),
+                        }
+                except Exception as e:
+                    first_el_sample = {"read_error": str(e)}
+            logger.warning(
+                "summarize_linkedin_creative_portfolio: no impressions/clicks; first_path=%s first_element_sample=%s",
+                first_path,
+                first_el_sample,
+            )
+            no_data_message = (
+                "## 📊 LinkedIn Creative Portfolio Report\n\n"
+                "No LinkedIn ad data was available for the specified creatives and period.\n\n"
+                "No OpenAI analysis was generated."
+            )
+            if webhook_url:
+                post_to_discord(webhook_url, no_data_message)
+            return jsonify(
+                {
+                    "status": "success",
+                    "had_data": False,
+                    "discord_posted": bool(webhook_url),
+                }
+            )
+
+        # Build compact per-ad summaries with Top 5 segments per pivot.
+        # Apply a small impression threshold to avoid noisy 1/1 rows.
+        min_impressions = int(data.get("min_impressions") or 10)
+        top_k = int(data.get("top_k") or 5)
+
+        ads_payload = []
+        for cid, info in creatives.items():
+            pivots_payload = {}
+            totals_impr = 0
+            totals_clicks = 0
+            totals_cost = Decimal("0")
+
+            for pivot_name, segs in info["pivots"].items():
+                rows = []
+                for seg, m in segs.items():
+                    impr = m.get("impressions") or 0
+                    clicks = m.get("clicks") or 0
+                    cost = m.get("costInLocalCurrency") or Decimal("0")
+                    if impr < min_impressions:
+                        continue
+                    ctr = (Decimal(clicks) / Decimal(impr) * Decimal(100)) if impr else None
+                    avg_cpc = (cost / Decimal(clicks)) if clicks else None
+                    rows.append(
+                        {
+                            "segment": seg,
+                            "impressions": impr,
+                            "clicks": clicks,
+                            "ctr_pct": float(ctr) if ctr is not None else None,
+                            "cost_local": float(cost),
+                            "avg_cpc_local": float(avg_cpc) if avg_cpc is not None else None,
+                        }
+                    )
+                    totals_impr += impr
+                    totals_clicks += clicks
+                    totals_cost += cost
+
+                # Sort by CTR descending, then impressions
+                rows.sort(
+                    key=lambda r: ((r["ctr_pct"] or 0.0), r["impressions"]),
+                    reverse=True,
+                )
+                pivots_payload[pivot_name] = rows[:top_k]
+
+            ctr_total = (Decimal(totals_clicks) / Decimal(totals_impr) * Decimal(100)) if totals_impr else None
+            avg_cpc_total = (totals_cost / Decimal(totals_clicks)) if totals_clicks else None
+
+            ads_payload.append(
+                {
+                    "creative_id": cid,
+                    "name": info.get("name"),
+                    "totals": {
+                        "impressions": totals_impr,
+                        "clicks": totals_clicks,
+                        "ctr_pct": float(ctr_total) if ctr_total is not None else None,
+                        "cost_local": float(totals_cost),
+                        "avg_cpc_local": float(avg_cpc_total) if avg_cpc_total is not None else None,
+                    },
+                    "pivots": pivots_payload,
+                }
+            )
+
+        analytics_payload = {
+            "platform": "linkedin",
+            "ads": ads_payload,
+        }
+
+        model = (data.get("llm_model") or "gpt-4.1-mini").strip()
+
+        prompt_cfg = AD_SUMMARY_PROMPTS.get(("linkedin", "creative_portfolio"))
+        if not prompt_cfg:
+            return jsonify({"error": "Prompt configuration missing for LinkedIn creative portfolio"}), 500
+
+        system_prompt = prompt_cfg["system"]
+        user_prompt = prompt_cfg["user_template"].format(
+            platform="linkedin",
+            payload=json.dumps(analytics_payload, indent=2),
+        )
+
+        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        completion = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=1100,
+            temperature=0.4,
+            timeout=40,
+        )
+        analysis_text = completion.choices[0].message.content.strip()
+
+        discord_message = (
+            "## 📊 LinkedIn Creative Portfolio Report\n\n"
+            f"{analysis_text}\n\n"
+            "---\n"
+            "_This report is based on per-creative, per-dimension LinkedIn adAnalytics data._"
+        )
+
+        if webhook_url:
+            post_long_to_discord(webhook_url, discord_message)
+
+        return jsonify(
+            {
+                "status": "success",
+                "had_data": True,
+                "discord_posted": bool(webhook_url),
+                "used_model": model,
+                "ads_count": len(ads_payload),
+            }
+        )
+    except Exception:
+        logger.error("Error in summarize_linkedin_creative_portfolio: %s", traceback.format_exc())
+        sanitized_error = sanitize_error_message(str(traceback.format_exc()))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/run_linkedin_portfolio_report', methods=['POST'])
+def run_linkedin_portfolio_report():
+    """
+    Run the full LinkedIn portfolio pipeline in one request: discover creatives for a period,
+    fetch per-creative demographic data (job title, job function, country), then summarize
+    with the creative-portfolio summarizer and post to Discord.
+
+    Uses job title, function, and country pivots so the report includes segment insights.
+    If no demographic data is available, falls back to CREATIVE-level ad analytics + ad-analytics summarizer.
+
+    Request JSON:
+      - account_urn: urn:li:sponsoredAccount:XXXX (required if not set in env)
+      - discovery_relative_range: LAST_7_DAYS | LAST_30_DAYS | LAST_90_DAYS (default: LAST_30_DAYS). Or use discovery_start_date/end_date.
+      - discovery_start_date / discovery_end_date: YYYY-MM-DD (optional; overrides relative_range)
+      - min_impressions: only creatives with at least this many impressions in discovery (default: 1)
+      - store_raw, force_refresh: same as list/fetch endpoints (defaults: true, false)
+      - include_entity_names: for enriched responses (default: true)
+      - max_creatives_per_run: max creatives to fetch demographics for (default: 10)
+      - llm_model: passed to summarizer (default: gpt-4.1-mini)
+
+    Response: status, creatives_discovered, had_data, discord_posted, used_model, report_type (portfolio | ad_analytics), and any error.
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    account_urn = (data.get("account_urn") or os.environ.get("LINKEDIN_AD_ACCOUNT_URN") or "").strip()
+    if not account_urn:
+        return jsonify({"error": "account_urn is required (or set LINKEDIN_AD_ACCOUNT_URN)."}), 400
+    if account_urn.isdigit():
+        account_urn = f"urn:li:sponsoredAccount:{account_urn}"
+
+    # 1) Discovery: list creatives for period (default LAST_30_DAYS)
+    discovery_payload = {
+        "account_urn": account_urn,
+        "discovery_relative_range": data.get("discovery_relative_range") or "LAST_30_DAYS",
+        "discovery_start_date": (data.get("discovery_start_date") or "").strip() or None,
+        "discovery_end_date": (data.get("discovery_end_date") or "").strip() or None,
+        "min_impressions": int(data.get("min_impressions") or 1),
+        "store_raw": data.get("store_raw", True),
+        "force_refresh": bool(data.get("force_refresh", False)),
+    }
+    discovery_payload = {k: v for k, v in discovery_payload.items() if v is not None}
+
+    try:
+        with current_app.test_request_context(
+            path="/mcp/tools/list_linkedin_creatives_for_period",
+            method="POST",
+            json=discovery_payload,
+        ):
+            disc_resp = list_linkedin_creatives_for_period()
+        if isinstance(disc_resp, tuple):
+            disc_resp, disc_status = disc_resp[0], disc_resp[1]
+        else:
+            disc_status = disc_resp.status_code if hasattr(disc_resp, "status_code") else 200
+        disc_body = disc_resp.get_json() if hasattr(disc_resp, "get_json") else {}
+        if disc_status != 200 or (isinstance(disc_body, dict) and disc_body.get("error")):
+            return (
+                jsonify(disc_body if isinstance(disc_body, dict) else {"error": "Discovery failed"}),
+                disc_status if disc_status >= 400 else 500,
+            )
+
+        creatives_list = disc_body.get("creatives") or []
+        creative_ids = [c["creative_id"] for c in creatives_list if c.get("creative_id")]
+
+        if not creative_ids:
+            webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
+            no_creatives_msg = (
+                "## 📊 LinkedIn Creative Portfolio Report\n\n"
+                "No creatives with activity in the discovery period (or none above min_impressions).\n\n"
+                "No report or summary was run."
+            )
+            if webhook_url:
+                post_to_discord(webhook_url, no_creatives_msg)
+            return jsonify(
+                {
+                    "status": "success",
+                    "creatives_discovered": 0,
+                    "had_data": False,
+                    "discord_posted": bool(webhook_url),
+                    "message": "no_creatives",
+                }
+            )
+
+        date_range = disc_body.get("date_range") or {}
+        start_date_s = date_range.get("start_date")
+        end_date_s = date_range.get("end_date")
+        if not start_date_s or not end_date_s:
+            return jsonify({"error": "Discovery did not return date_range"}), 500
+
+        max_creatives = int(data.get("max_creatives_per_run") or 10)
+        limited_creative_ids = creative_ids[:max_creatives]
+
+        # 2) Fetch per-creative demographics (job title, function, country) for portfolio insights
+        demographics_payload = {
+            "account_urn": account_urn,
+            "start_date": start_date_s,
+            "end_date": end_date_s,
+            "creative_ids": limited_creative_ids,
+            "pivots": list(LINKEDIN_PORTFOLIO_REPORT_PIVOTS),
+            "store_raw": data.get("store_raw", True),
+            "force_refresh": bool(data.get("force_refresh", False)),
+            "include_entity_names": bool(data.get("include_entity_names", True)),
+        }
+        with current_app.test_request_context(
+            path="/mcp/tools/fetch_linkedin_creative_demographics_portfolio",
+            method="POST",
+            json=demographics_payload,
+        ):
+            demo_resp = fetch_linkedin_creative_demographics_portfolio()
+        if isinstance(demo_resp, tuple):
+            demo_resp, demo_status = demo_resp[0], demo_resp[1]
+        else:
+            demo_status = demo_resp.status_code if hasattr(demo_resp, "status_code") else 200
+        demo_body = demo_resp.get_json() if hasattr(demo_resp, "get_json") else {}
+        if demo_status != 200 or (isinstance(demo_body, dict) and demo_body.get("error")):
+            return (
+                jsonify(demo_body if isinstance(demo_body, dict) else {"error": "Demographics fetch failed"}),
+                demo_status if demo_status >= 400 else 500,
+            )
+
+        # Build items for portfolio summarizer: need creative_id, pivot, enriched_storage_path
+        results = demo_body.get("results") or []
+        portfolio_items = [
+            {"creative_id": r["creative_id"], "pivot": r["pivot"], "enriched_storage_path": r["enriched_storage_path"]}
+            for r in results
+            if r.get("enriched_storage_path")
+        ]
+
+        if portfolio_items:
+            # 3a) Summarize with creative-portfolio summarizer (includes job title, function, country insights)
+            summarize_payload = {
+                "items": portfolio_items,
+                "llm_model": (data.get("llm_model") or "gpt-4.1-mini").strip(),
+            }
+            with current_app.test_request_context(
+                path="/mcp/tools/summarize_linkedin_creative_portfolio",
+                method="POST",
+                json=summarize_payload,
+            ):
+                sum_resp = summarize_linkedin_creative_portfolio()
+            if isinstance(sum_resp, tuple):
+                sum_resp, sum_status = sum_resp[0], sum_resp[1]
+            else:
+                sum_status = sum_resp.status_code if hasattr(sum_resp, "status_code") else 200
+            sum_body = sum_resp.get_json() if hasattr(sum_resp, "get_json") else {}
+            if sum_status != 200 or (isinstance(sum_body, dict) and sum_body.get("error")):
+                return (
+                    jsonify(sum_body if isinstance(sum_body, dict) else {"error": "Portfolio summarize failed"}),
+                    sum_status if sum_status >= 400 else 500,
+                )
+            return jsonify(
+                {
+                    "status": "success",
+                    "creatives_discovered": len(creative_ids),
+                    "had_data": sum_body.get("had_data", True),
+                    "discord_posted": sum_body.get("discord_posted", False),
+                    "used_model": sum_body.get("used_model"),
+                    "report_type": "portfolio",
+                }
+            )
+
+        # 3b) Fallback: no demographic data — use CREATIVE-level ad analytics + ad-analytics summarizer
+        logger.warning(
+            "run_linkedin_portfolio_report: no portfolio items with enriched_storage_path (results=%s); falling back to CREATIVE ad analytics",
+            len(results),
+        )
+        ad_analytics_payload = {
+            "account_urn": account_urn,
+            "start_date": start_date_s,
+            "end_date": end_date_s,
+            "pivot": "CREATIVE",
+            "store_raw": data.get("store_raw", True),
+            "force_refresh": bool(data.get("force_refresh", False)),
+            "include_entity_names": bool(data.get("include_entity_names", True)),
+        }
+        with current_app.test_request_context(
+            path="/mcp/tools/fetch_linkedin_ad_analytics_report",
+            method="POST",
+            json=ad_analytics_payload,
+        ):
+            fetch_resp = fetch_linkedin_ad_analytics_report()
+        if isinstance(fetch_resp, tuple):
+            fetch_resp, fetch_status = fetch_resp[0], fetch_resp[1]
+        else:
+            fetch_status = fetch_resp.status_code if hasattr(fetch_resp, "status_code") else 200
+        fetch_body = fetch_resp.get_json() if hasattr(fetch_resp, "get_json") else {}
+        if fetch_status != 200 or (isinstance(fetch_body, dict) and fetch_body.get("error")):
+            return (
+                jsonify(fetch_body if isinstance(fetch_body, dict) else {"error": "Ad analytics fetch failed"}),
+                fetch_status if fetch_status >= 400 else 500,
+            )
+
+        enriched_path = fetch_body.get("enriched_storage_path") if isinstance(fetch_body, dict) else None
+        if not enriched_path:
+            webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
+            no_data_msg = (
+                "## 📊 LinkedIn Creative Portfolio Report\n\n"
+                "No demographic data was available and ad analytics fetch did not return an enriched path.\n\n"
+                "No OpenAI analysis was generated."
+            )
+            if webhook_url:
+                post_to_discord(webhook_url, no_data_msg)
+            return jsonify(
+                {
+                    "status": "success",
+                    "creatives_discovered": len(creative_ids),
+                    "had_data": False,
+                    "discord_posted": bool(webhook_url),
+                    "message": "no_enriched_path",
+                    "report_type": "ad_analytics",
+                }
+            )
+
+        summarize_payload = {
+            "enriched_storage_path": enriched_path,
+            "llm_model": (data.get("llm_model") or "gpt-4.1-mini").strip(),
+            "sample_limit": int(data.get("sample_limit") or 50),
+        }
+        with current_app.test_request_context(
+            path="/mcp/tools/summarize_linkedin_ad_analytics",
+            method="POST",
+            json=summarize_payload,
+        ):
+            sum_resp = summarize_linkedin_ad_analytics()
+        if isinstance(sum_resp, tuple):
+            sum_resp, sum_status = sum_resp[0], sum_resp[1]
+        else:
+            sum_status = sum_resp.status_code if hasattr(sum_resp, "status_code") else 200
+        sum_body = sum_resp.get_json() if hasattr(sum_resp, "get_json") else {}
+        if sum_status != 200 or (isinstance(sum_body, dict) and sum_body.get("error")):
+            return (
+                jsonify(sum_body if isinstance(sum_body, dict) else {"error": "Summarize failed"}),
+                sum_status if sum_status >= 400 else 500,
+            )
+
+        return jsonify(
+            {
+                "status": "success",
+                "creatives_discovered": len(creative_ids),
+                "had_data": sum_body.get("had_data", True),
+                "discord_posted": sum_body.get("discord_posted", False),
+                "enriched_storage_path": enriched_path,
+                "used_model": sum_body.get("used_model"),
+                "report_type": "ad_analytics",
+            }
+        )
+    except Exception:
+        logger.error("Error in run_linkedin_portfolio_report: %s", traceback.format_exc())
+        sanitized_error = sanitize_error_message(str(traceback.format_exc()))
+        return jsonify({"error": sanitized_error}), 500
+
+
+def _run_reddit_audience_fetch(
+    report_type: str,
+    account_id: str,
+    start_date_s: str,
+    end_date_s: str,
+    campaign_id: Optional[str] = None,
+    return_raw: bool = False,
+) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Fetch one audience report and return (top rows by clicks, optional raw API response).
+    Rows are capped at 25. If campaign_id is set, request is campaign-scoped.
+    When return_raw is True, also request and return the raw Reddit API response for troubleshooting."""
+    payload = {
+        "account_id": account_id,
+        "report_type": report_type,
+        "start_date": start_date_s,
+        "end_date": end_date_s,
+    }
+    if campaign_id:
+        payload["campaign_id"] = campaign_id
+    if return_raw:
+        payload["include_raw_response"] = True
+    try:
+        with current_app.test_request_context(
+            path="/mcp/tools/fetch_reddit_audience_report",
+            method="POST",
+            json=payload,
+        ):
+            resp = fetch_reddit_audience_report()
+        if isinstance(resp, tuple):
+            resp, status = resp[0], resp[1]
+        else:
+            status = resp.status_code if hasattr(resp, "status_code") else 200
+        body = resp.get_json() if hasattr(resp, "get_json") else {}
+        if status != 200 or (isinstance(body, dict) and body.get("error")):
+            if campaign_id and status == 200 and (body.get("data") or []) == []:
+                return ([], body.get("raw_response") if return_raw else None)
+            if campaign_id and (status != 200 or body.get("error")):
+                logger.info(
+                    "Reddit audience %s with campaign_id failed, retrying account-level: %s",
+                    report_type,
+                    body.get("error", status),
+                )
+                return _run_reddit_audience_fetch(
+                    report_type, account_id, start_date_s, end_date_s, campaign_id=None, return_raw=return_raw
+                )
+            return ([], None)
+        rows = body.get("data") or []
+        if not isinstance(rows, list):
+            return ([], body.get("raw_response") if return_raw else None)
+        def _sort_key(r: Dict[str, Any]) -> tuple:
+            if not isinstance(r, dict):
+                return (0, 0, 0)
+            clicks = int(r.get("clicks") or 0)
+            imp = int(r.get("impressions") or 0)
+            reach = int(r.get("reach") or 0)
+            return (-clicks, -imp, -reach)
+        rows = sorted(rows, key=_sort_key)
+        raw = body.get("raw_response") if return_raw else None
+        return (rows[:25], raw)
+    except Exception as e:
+        logger.warning("Reddit audience fetch %s failed: %s", report_type, e)
+        if campaign_id:
+            try:
+                return _run_reddit_audience_fetch(
+                    report_type, account_id, start_date_s, end_date_s, campaign_id=None, return_raw=return_raw
+                )
+            except Exception:
+                return ([], None)
+        return ([], None)
+
+
+@marketing_bp.route('/mcp/tools/run_reddit_portfolio_report', methods=['POST'])
+def run_reddit_portfolio_report():
+    """
+    Full Reddit Ads portfolio report (like LinkedIn): fetch performance + audience data,
+    then generate facts, summary, and recommendations and post to Discord.
+
+    Request JSON:
+      - account_id: optional (default: REDDIT_AD_ACCOUNT_ID)
+      - relative_range: LAST_7_DAYS | LAST_30_DAYS, or start_date / end_date
+      - store_raw, force_refresh: optional
+      - llm_model: optional (default: gpt-4.1-mini)
+      - include_audience: optional (default: true) — fetch interests, communities, country, region, DMA
+      - debug_audience: optional (default: false) — if true, response includes troubleshooting with exact
+        interest/community payload and raw Reddit API responses so you can compare to the UI (same date range and campaign).
+    """
+    data = request.json or {}
+    account_id = (data.get("account_id") or os.environ.get("REDDIT_AD_ACCOUNT_ID") or "").strip()
+    if not account_id:
+        return jsonify({"error": "account_id is required (or set REDDIT_AD_ACCOUNT_ID)."}), 400
+
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
+    include_audience = bool(data.get("include_audience", True))
+    debug_audience = bool(data.get("debug_audience", False))
+
+    try:
+        fetch_payload = {
+            "account_id": account_id,
+            "relative_range": data.get("relative_range") or "LAST_7_DAYS",
+            "store_raw": data.get("store_raw", True),
+            "force_refresh": bool(data.get("force_refresh", False)) or debug_audience,
+        }
+        if data.get("start_date"):
+            fetch_payload["start_date"] = data["start_date"]
+        if data.get("end_date"):
+            fetch_payload["end_date"] = data["end_date"]
+
+        with current_app.test_request_context(
+            path="/mcp/tools/fetch_reddit_ad_analytics_report",
+            method="POST",
+            json=fetch_payload,
+        ):
+            fetch_resp = fetch_reddit_ad_analytics_report()
+        if isinstance(fetch_resp, tuple):
+            fetch_resp, fetch_status = fetch_resp[0], fetch_resp[1]
+        else:
+            fetch_status = fetch_resp.status_code if hasattr(fetch_resp, "status_code") else 200
+        fetch_body = fetch_resp.get_json() if hasattr(fetch_resp, "get_json") else {}
+        if fetch_status != 200 or (isinstance(fetch_body, dict) and fetch_body.get("error")):
+            return (
+                jsonify(fetch_body if isinstance(fetch_body, dict) else {"error": "Reddit ad analytics fetch failed"}),
+                fetch_status if fetch_status >= 400 else 500,
+            )
+
+        date_range = fetch_body.get("date_range") or {}
+        start_date_s = date_range.get("start_date") or fetch_payload.get("start_date") or ""
+        end_date_s = date_range.get("end_date") or fetch_payload.get("end_date") or ""
+        enriched_path = fetch_body.get("enriched_storage_path") if isinstance(fetch_body, dict) else None
+
+        # When debugging audience, load raw Reddit performance API response to inspect structure (e.g. why no campaign_id).
+        raw_performance_response: Optional[Dict[str, Any]] = None
+        if debug_audience and isinstance(fetch_body, dict) and fetch_body.get("storage_path"):
+            try:
+                from bigas.resources.marketing.storage_service import StorageService
+                _storage = StorageService()
+                _raw_obj = _storage.get_json(fetch_body["storage_path"])
+                if isinstance(_raw_obj, dict):
+                    raw_performance_response = _raw_obj.get("payload", {}).get("raw_response")
+            except Exception as e:
+                logger.warning("Could not load raw Reddit performance blob for debug: %s", e)
+
+        # Load performance data from enriched blob (if we have it).
+        # Re-normalize spend in elements (blob may have been stored before micro fix) and add total_spend so the model sees one clear EUR total.
+        performance_payload = None
+        if enriched_path:
+            try:
+                from bigas.resources.marketing.storage_service import StorageService
+                storage = StorageService()
+                obj = storage.get_json(enriched_path)
+                if obj and isinstance(obj, dict):
+                    payload = obj.get("payload") or {}
+                    enriched = payload.get("enriched_response") or {}
+                    raw_elements = (enriched.get("elements") or [])[:30]
+                    elements = []
+                    total_spend = 0.0
+                    total_impressions = 0
+                    total_clicks = 0
+                    for el in raw_elements:
+                        if not isinstance(el, dict):
+                            elements.append(el)
+                            continue
+                        el = dict(el)
+                        metrics = el.get("metrics") or {}
+                        if isinstance(metrics, dict):
+                            if metrics.get("spend") is not None:
+                                norm = _normalize_reddit_spend(metrics.get("spend"), metrics)
+                                if norm is not None:
+                                    metrics = dict(metrics)
+                                    metrics["spend"] = norm
+                                    total_spend += norm
+                                el["metrics"] = metrics
+                            try:
+                                total_impressions += int(metrics.get("impressions") or 0)
+                                total_clicks += int(metrics.get("clicks") or 0)
+                            except (TypeError, ValueError):
+                                pass
+                        elements.append(el)
+                    summary = dict(enriched.get("summary") or {})
+                    summary["total_spend"] = round(total_spend, 2)
+                    summary["total_spend_currency"] = "EUR"
+                    summary["total_impressions"] = total_impressions
+                    summary["total_clicks"] = total_clicks
+                    if total_impressions > 0:
+                        summary["total_ctr_pct"] = round(100.0 * total_clicks / total_impressions, 2)
+                    else:
+                        summary["total_ctr_pct"] = None
+                    if total_clicks > 0:
+                        summary["total_cpc"] = round(total_spend / total_clicks, 2)
+                    else:
+                        summary["total_cpc"] = None
+                    context = dict(enriched.get("context") or {})
+                    context["spend_currency"] = "EUR"
+                    performance_payload = {
+                        "summary": summary,
+                        "context": context,
+                        "elements": elements,
+                    }
+            except Exception as e:
+                logger.warning("Could not load Reddit enriched blob %s: %s", enriched_path, e)
+
+        # Discover all campaigns from performance (active/paused/done in period), sorted by spend desc (like LinkedIn discovery).
+        discovered_campaigns: List[Dict[str, Any]] = []
+        campaign_spend: Dict[str, float] = {}
+        campaign_name: Dict[str, Optional[str]] = {}
+        if performance_payload and performance_payload.get("elements"):
+            for el in performance_payload["elements"]:
+                if not isinstance(el, dict):
+                    continue
+                cid = el.get("campaign_id")
+                name = el.get("campaign_name")
+                if cid is None and isinstance(el.get("segments"), list):
+                    for seg in el["segments"]:
+                        if isinstance(seg, str) and seg.startswith("campaign_id="):
+                            cid = seg.split("=", 1)[1].strip()
+                            break
+                spend = 0.0
+                m = el.get("metrics") or {}
+                if isinstance(m, dict) and m.get("spend") is not None:
+                    try:
+                        spend = float(m["spend"])
+                    except (TypeError, ValueError):
+                        pass
+                if cid is not None:
+                    campaign_spend[cid] = campaign_spend.get(cid, 0.0) + spend
+                    if cid not in campaign_name and name:
+                        campaign_name[cid] = name
+            for cid, total in sorted(campaign_spend.items(), key=lambda x: -x[1]):
+                discovered_campaigns.append({
+                    "campaign_id": cid,
+                    "campaign_name": campaign_name.get(cid),
+                    "spend": round(total, 2),
+                })
+        top_campaign_id = discovered_campaigns[0]["campaign_id"] if discovered_campaigns else None
+        top_campaign_name = (discovered_campaigns[0].get("campaign_name") if discovered_campaigns else None)
+
+        # Fetch audience (interests, communities, etc.) per discovered campaign, like LinkedIn per-creative.
+        MAX_CAMPAIGNS_FOR_AUDIENCE = 10
+        audience_payload: Dict[str, List[Dict[str, Any]]] = {}
+        audience_by_campaign: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        raw_reddit_interests: Optional[Dict[str, Any]] = None
+        raw_reddit_communities: Optional[Dict[str, Any]] = None
+        if include_audience and start_date_s and end_date_s:
+            campaigns_to_fetch = discovered_campaigns[:MAX_CAMPAIGNS_FOR_AUDIENCE] if discovered_campaigns else []
+            for report_type in ("interests", "communities", "country", "region", "dma"):
+                # Aggregate account-level for country/region/dma (once); per-campaign only for interests and communities.
+                if report_type in ("interests", "communities") and campaigns_to_fetch:
+                    for camp in campaigns_to_fetch:
+                        cid = camp["campaign_id"]
+                        rows, raw_response = _run_reddit_audience_fetch(
+                            report_type, account_id, start_date_s, end_date_s,
+                            campaign_id=cid,
+                            return_raw=debug_audience and cid == top_campaign_id and report_type in ("interests", "communities"),
+                        )
+                        if debug_audience and cid == top_campaign_id and report_type == "interests":
+                            raw_reddit_interests = raw_response
+                        if debug_audience and cid == top_campaign_id and report_type == "communities":
+                            raw_reddit_communities = raw_response
+                        out_rows = _normalize_audience_rows(rows)
+                        audience_by_campaign.setdefault(cid, {})[report_type] = out_rows
+                    # Top campaign's data for main audience payload (backward compat + summary)
+                    audience_payload[report_type] = (audience_by_campaign.get(top_campaign_id) or {}).get(report_type, []) if top_campaign_id else []
+                else:
+                    # Single fetch: account-level for country/region/dma, or top campaign when no discovery
+                    rows, _ = _run_reddit_audience_fetch(
+                        report_type, account_id, start_date_s, end_date_s,
+                        campaign_id=top_campaign_id if report_type in ("interests", "communities") else None,
+                        return_raw=False,
+                    )
+                    audience_payload[report_type] = _normalize_audience_rows(rows)
+                    if report_type in ("interests", "communities") and top_campaign_id and top_campaign_id not in audience_by_campaign:
+                        audience_by_campaign.setdefault(top_campaign_id, {})[report_type] = audience_payload[report_type]
+
+        combined = {
+            "account_id": account_id,
+            "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+            "performance": performance_payload,
+            "audience": audience_payload,
+            "audience_scope": "campaign" if top_campaign_id else "account",
+            "audience_campaign_id": top_campaign_id,
+            "audience_campaign_name": top_campaign_name,
+            "discovered_campaigns": discovered_campaigns,
+            "audience_by_campaign": audience_by_campaign,
+        }
+
+        has_any_data = bool(performance_payload and (performance_payload.get("elements") or performance_payload.get("summary"))) or any(audience_payload.get(k) for k in ("interests", "communities", "country", "region", "dma"))
+
+        if not has_any_data:
+            no_data_msg = (
+                "## 📊 Reddit Ads Portfolio Report\n\n"
+                "No performance or audience data was available for the period.\n\n"
+                "No analysis was generated."
+            )
+            if webhook_url:
+                post_to_discord(webhook_url, no_data_msg)
+            return jsonify(
+                {
+                    "status": "success",
+                    "had_data": False,
+                    "discord_posted": bool(webhook_url),
+                    "message": "no_data",
+                }
+            )
+
+        model = (data.get("llm_model") or "gpt-4.1-mini").strip()
+        prompt_cfg = AD_SUMMARY_PROMPTS.get(("reddit", "portfolio"))
+        if not prompt_cfg:
+            return jsonify({"error": "Prompt configuration missing for Reddit portfolio"}), 500
+        system_prompt = prompt_cfg["system"]
+        user_prompt = prompt_cfg["user_template"].format(
+            platform="reddit",
+            payload=json.dumps(combined, indent=2),
+        )
+
+        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        completion = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=1100,
+            temperature=0.4,
+            timeout=40,
+        )
+        analysis_text = completion.choices[0].message.content.strip()
+
+        scope_note = ""
+        if discovered_campaigns:
+            scope_note = f" Discovered {len(discovered_campaigns)} campaign(s); audience data fetched per campaign (top by spend: {top_campaign_name or top_campaign_id})."
+        elif top_campaign_id:
+            scope_note = f" Audience is for top campaign by spend: {top_campaign_name or top_campaign_id}."
+        discord_message = (
+            "## 📊 Reddit Ads Portfolio Report\n\n"
+            f"{analysis_text}\n\n"
+            "---\n"
+            f"_Performance + audience for {start_date_s}–{end_date_s}.{scope_note}_"
+        )
+        if webhook_url:
+            post_long_to_discord(webhook_url, discord_message)
+
+        out = {
+            "status": "success",
+            "had_data": True,
+            "discord_posted": bool(webhook_url),
+            "enriched_storage_path": enriched_path,
+            "used_model": model,
+        }
+        if debug_audience:
+            elements = (performance_payload or {}).get("elements") or []
+            first_el = elements[0] if elements and isinstance(elements[0], dict) else None
+            first_el_sample = None
+            if first_el:
+                segs = first_el.get("segments") or []
+                first_el_sample = {
+                    "campaign_id": first_el.get("campaign_id"),
+                    "campaign_name": first_el.get("campaign_name"),
+                    "segments_preview": segs[:5] if isinstance(segs, list) else str(segs)[:200],
+                }
+            out["troubleshooting"] = {
+                "note": "Compare these numbers to Reddit Ads Manager UI: set the same date range (start_date–end_date) and, if audience_scope is campaign, select that campaign in the UI. Reference: last 7 days in UI shows News & Education = 19 clicks; compare API interests to this.",
+                "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+                "audience_scope": "campaign" if top_campaign_id else "account",
+                "top_campaign_id": top_campaign_id,
+                "top_campaign_name": top_campaign_name,
+                "discovered_campaigns_count": len(discovered_campaigns),
+                "discovered_campaigns": discovered_campaigns,
+                "audience_by_campaign_keys": list(audience_by_campaign.keys()),
+                "performance_elements_count": len(elements),
+                "first_element_has_campaign_id": first_el is not None and (first_el.get("campaign_id") is not None or any(isinstance(s, str) and s.startswith("campaign_id=") for s in (first_el.get("segments") or []))),
+                "first_element_keys": list(first_el.keys()) if first_el else None,
+                "first_element_sample": first_el_sample,
+                "interests_payload": audience_payload.get("interests", []),
+                "communities_payload": audience_payload.get("communities", []),
+                "interests_count": len(audience_payload.get("interests") or []),
+                "communities_count": len(audience_payload.get("communities") or []),
+            }
+            if raw_reddit_interests is not None:
+                out["troubleshooting"]["raw_reddit_interests"] = raw_reddit_interests
+            if raw_reddit_communities is not None:
+                out["troubleshooting"]["raw_reddit_communities"] = raw_reddit_communities
+            if raw_performance_response is not None:
+                out["troubleshooting"]["raw_performance_response"] = raw_performance_response
+        return jsonify(out)
+    except Exception:
+        logger.error("Error in run_reddit_portfolio_report: %s", traceback.format_exc())
+        sanitized_error = sanitize_error_message(str(traceback.format_exc()))
+        return jsonify({"error": sanitized_error}), 500
+
 
 @marketing_bp.route('/mcp/tools/linkedin_exchange_code', methods=['POST'])
 def linkedin_exchange_code():
@@ -3390,6 +6663,31 @@ def cleanup_old_reports():
     except Exception as e:
         logger.error(f"Error cleaning up old reports: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
+
+
+def post_long_to_discord(webhook_url, message, chunk_size: int = 1900):
+    """
+    Post message to Discord; if over 2000 chars, split into multiple messages (like LinkedIn/product flow).
+    Discord limit is 2000; we use chunk_size to leave margin and try to split on newlines.
+    """
+    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placehoder"):
+        return
+    msg = (message or "").strip()
+    if not msg:
+        return
+    if len(msg) <= 2000:
+        post_to_discord(webhook_url, msg)
+        return
+    start = 0
+    while start < len(msg):
+        end = min(start + chunk_size, len(msg))
+        # Prefer splitting on a newline for readability
+        nl = msg.rfind("\n", start, end)
+        if nl > start + 200:
+            end = nl + 1
+        post_to_discord(webhook_url, msg[start:end].strip())
+        start = end
+
 
 def post_to_discord(webhook_url, message: str):
     """

@@ -274,7 +274,70 @@ class StorageService:
         except Exception as e:
             logger.error(f"Error retrieving report for {report_date}: {e}")
             return None
-    
+
+    def blob_exists(self, blob_name: str) -> bool:
+        """Check whether a blob exists in the bucket."""
+        if not blob_name or not blob_name.strip():
+            return False
+        try:
+            return self.bucket.blob(blob_name).exists()
+        except Exception:
+            return False
+
+    def store_raw_ads_report_at_blob(
+        self,
+        platform: str,
+        blob_name: str,
+        report_data: Dict[str, Any],
+        report_date: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Store raw ads payload at an explicit blob name, using the same {metadata, payload} wrapper
+        as store_raw_ads_report.
+        """
+        if report_date is None:
+            report_date = datetime.now().strftime("%Y-%m-%d")
+        platform = (platform or "").strip().lower()
+        if not platform:
+            raise ValueError("platform is required for storing raw ads reports")
+        if not blob_name or not blob_name.strip():
+            raise ValueError("blob_name is required")
+        metadata_obj = {
+            "report_date": report_date,
+            "stored_at": datetime.now().isoformat(),
+            "report_type": "raw_ads",
+            "platform": platform,
+            "version": "1.0",
+        }
+        if metadata:
+            metadata_obj.update(metadata)
+        full_data = {"metadata": metadata_obj, "payload": report_data}
+        return self.store_json(blob_name=blob_name, data=full_data)
+
+    def store_json(self, blob_name: str, data: Dict[str, Any]) -> str:
+        """Store arbitrary JSON data at the given blob name."""
+        if not blob_name or not blob_name.strip():
+            raise ValueError("blob_name is required")
+        blob = self.bucket.blob(blob_name)
+        blob.upload_from_string(
+            json.dumps(data, indent=2), content_type="application/json"
+        )
+        logger.info(f"Stored JSON at {blob_name}")
+        return blob_name
+
+    def get_json(self, blob_name: str) -> Optional[Dict[str, Any]]:
+        """Load JSON from a blob. Returns None if not found or invalid."""
+        try:
+            blob = self.bucket.blob(blob_name)
+            if not blob.exists():
+                return None
+            content = blob.download_as_text()
+            return json.loads(content) if content else None
+        except Exception as e:
+            logger.warning(f"Failed to load JSON from {blob_name}: {e}")
+            return None
+
     def list_available_reports(self) -> List[Dict[str, str]]:
         """
         List all available weekly reports with their dates and metadata.
