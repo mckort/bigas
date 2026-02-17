@@ -140,18 +140,15 @@ class LinkedInAdsService:
         Mint a LinkedIn access token using a refresh token.
         Caches token in-memory for the process lifetime.
         """
-        logger.debug("LinkedIn _mint_access_token: start")
         # If an access token is explicitly provided (manual mode), prefer it.
         manual_token = (os.environ.get("LINKEDIN_ACCESS_TOKEN") or "").strip()
         if manual_token:
-            logger.debug("LinkedIn _mint_access_token: using LINKEDIN_ACCESS_TOKEN env")
             return manual_token
 
         now = int(time.time())
         cached = _token_cache.get("access_token")
         expires_at = int(_token_cache.get("expires_at") or 0)
         if cached and expires_at - now > 60:
-            logger.debug("LinkedIn _mint_access_token: using in-memory cache")
             return cached
 
         # Try GCS-stored token to avoid hitting OAuth endpoint (helps when LinkedIn rate limits refresh flow).
@@ -159,7 +156,6 @@ class LinkedInAdsService:
         gcs_expires_at = int(_gcs_token_cache.get("expires_at") or 0)
         last_checked = int(_gcs_token_cache.get("last_checked_at") or 0)
         if gcs_cached and gcs_expires_at - now > 60:
-            logger.debug("LinkedIn _mint_access_token: using GCS cache")
             return gcs_cached
         # Avoid checking GCS too frequently.
         if now - last_checked > 60:
@@ -168,7 +164,6 @@ class LinkedInAdsService:
             if token and int(_gcs_token_cache.get("expires_at") or 0) - now > 60:
                 return token
 
-        logger.info("LinkedIn _mint_access_token: calling OAuth endpoint (refresh_token grant)")
         data = {
             "grant_type": "refresh_token",
             "refresh_token": self.config.refresh_token,
@@ -194,7 +189,6 @@ class LinkedInAdsService:
 
         _token_cache["access_token"] = access_token
         _token_cache["expires_at"] = now + max(expires_in, 0)
-        logger.info("LinkedIn _mint_access_token: OAuth done expires_in=%s", expires_in)
         return access_token
 
     def _headers(self) -> Dict[str, str]:
@@ -364,15 +358,11 @@ class LinkedInAdsService:
             query += "&fields=" + ",".join(fields)
 
         url = f"{LINKEDIN_API_BASE}/adAnalytics?{query}"
-        logger.info("LinkedIn ad_analytics: GET pivot=%s accounts=%s (timeout 60s)", pivot, len(account_urns))
         resp = requests.get(url, headers=self._headers(), timeout=60)
-        data = resp.json() if resp.text else {}
-        elements = data.get("elements", []) if isinstance(data, dict) else []
-        logger.info("LinkedIn ad_analytics: response status=%s elements=%s", resp.status_code, len(elements) if isinstance(elements, list) else 0)
         if resp.status_code >= 400:
             logger.error("LinkedIn adAnalytics failed: status=%s body=%s", resp.status_code, (resp.text or "")[:2000])
             raise LinkedInApiError("LinkedIn API error calling adAnalytics", resp.status_code, resp.text)
-        return data
+        return resp.json()
 
     def ad_analytics_statistics(
         self,
@@ -423,13 +413,9 @@ class LinkedInAdsService:
             query += "&fields=" + ",".join(fields)
 
         url = f"{LINKEDIN_API_BASE}/adAnalytics?{query}"
-        logger.info("LinkedIn ad_analytics_statistics: GET pivots=%s (timeout 60s)", pivots_clean)
         resp = requests.get(url, headers=self._headers(), timeout=60)
-        data = resp.json() if resp.text else {}
-        elements = data.get("elements", []) if isinstance(data, dict) else []
-        logger.info("LinkedIn ad_analytics_statistics: response status=%s elements=%s", resp.status_code, len(elements) if isinstance(elements, list) else 0)
         if resp.status_code >= 400:
             logger.error("LinkedIn adAnalytics (statistics) failed: status=%s body=%s", resp.status_code, (resp.text or "")[:2000])
             raise LinkedInApiError("LinkedIn API error calling adAnalytics statistics", resp.status_code, resp.text)
-        return data
+        return resp.json()
 

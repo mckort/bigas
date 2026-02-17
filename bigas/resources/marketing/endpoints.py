@@ -2022,8 +2022,6 @@ def list_linkedin_creatives_for_period():
     store_raw = data.get("store_raw", True)
     force_refresh = bool(data.get("force_refresh", False))
 
-    logger.info("list_linkedin_creatives_for_period: start account_urn=%s date_range=%s..%s", account_urn, disc_start_s, disc_end_s)
-
     try:
         from bigas.resources.marketing.linkedin_ads_service import LinkedInAdsService
         from bigas.resources.marketing.storage_service import StorageService
@@ -2072,9 +2070,7 @@ def list_linkedin_creatives_for_period():
             payload = cached.get("payload") if isinstance(cached, dict) else {}
             raw = payload.get("response") if isinstance(payload, dict) else {}
             from_cache = True
-            logger.info("list_linkedin_creatives_for_period: using cached creative rollup blob=%s", blob_name)
         else:
-            logger.info("list_linkedin_creatives_for_period: calling LinkedIn ad_analytics pivot=CREATIVE (timeout 60s)")
             raw = svc.ad_analytics(
                 start_date=start_d,
                 end_date=end_d,
@@ -2099,7 +2095,6 @@ def list_linkedin_creatives_for_period():
                 )
 
         elements = raw.get("elements", []) if isinstance(raw, dict) else []
-        logger.info("list_linkedin_creatives_for_period: LinkedIn returned elements=%s", len(elements) if isinstance(elements, list) else 0)
 
         creatives_out = []
         for el in elements:
@@ -2261,14 +2256,6 @@ def fetch_linkedin_creative_demographics_portfolio():
     if account_urn.isdigit():
         account_urn = f"urn:li:sponsoredAccount:{account_urn}"
 
-    logger.info(
-        "fetch_linkedin_creative_demographics_portfolio: start creatives=%s pivots=%s date_range=%s..%s",
-        len(creative_ids),
-        pivots[:5] if isinstance(pivots, list) else pivots,
-        start_date_s,
-        end_date_s,
-    )
-
     try:
         from bigas.resources.marketing.linkedin_ads_service import LinkedInAdsService
         from bigas.resources.marketing.storage_service import StorageService
@@ -2287,12 +2274,6 @@ def fetch_linkedin_creative_demographics_portfolio():
         # Request metrics so the summarizer has impressions/clicks/cost per segment (required for portfolio insights).
         required_fields = {"dateRange", "pivotValues", "impressions", "clicks", "costInLocalCurrency"}
         final_fields = sorted(set((cleaned_fields or [])) | required_fields) if (cleaned_fields is not None) else sorted(required_fields)
-        logger.info(
-            "LinkedIn demographics portfolio: creatives=%s pivots=%s fields=%s",
-            len(creative_ids),
-            pivots[:3] if isinstance(pivots, list) else pivots,
-            final_fields,
-        )
 
         safe_account = account_urn.split(":")[-1]
 
@@ -2303,28 +2284,15 @@ def fetch_linkedin_creative_demographics_portfolio():
 
         total_calls = len(limited_creatives) * len(limited_pivots)
         call_index = 0
-        logger.info(
-            "fetch_linkedin_creative_demographics_portfolio: loop start total_calls=%s (sleep_ms=%s between calls)",
-            total_calls,
-            sleep_ms_between_calls,
-        )
 
         for cid in limited_creatives:
             cid_str = str(cid).strip()
             if not cid_str:
                 continue
             creative_urn = f"urn:li:sponsoredCreative:{cid_str}"
-            logger.info("LinkedIn portfolio: creative %s (%s)", cid_str, creative_urn)
 
             for pivot_name in limited_pivots:
                 call_index += 1
-                logger.info(
-                    "LinkedIn portfolio [%d/%d]: fetching pivot=%s for creative=%s",
-                    call_index,
-                    total_calls,
-                    pivot_name,
-                    cid_str,
-                )
 
                 request_signature = {
                     "platform": "linkedin",
@@ -2411,7 +2379,6 @@ def fetch_linkedin_creative_demographics_portfolio():
                                 traceback.format_exc(),
                             )
                 else:
-                    logger.info("fetch_linkedin_creative_demographics_portfolio: calling LinkedIn ad_analytics creative=%s pivot=%s [%s/%s]", cid_str, pivot_name, call_index, total_calls)
                     raw = svc.ad_analytics(
                         start_date=start_d,
                         end_date=end_d,
@@ -2425,7 +2392,6 @@ def fetch_linkedin_creative_demographics_portfolio():
                     )
                     elements = raw.get("elements", []) if isinstance(raw, dict) else []
                     elements_count = len(elements) if isinstance(elements, list) else None
-                    logger.info("fetch_linkedin_creative_demographics_portfolio: LinkedIn returned elements=%s for creative=%s pivot=%s", elements_count, cid_str, pivot_name)
 
                     if store_raw:
                         storage.store_raw_ads_report_at_blob(
@@ -2481,7 +2447,6 @@ def fetch_linkedin_creative_demographics_portfolio():
 
                     # Gentle delay between LinkedIn calls
                     if sleep_ms_between_calls > 0:
-                        logger.debug("fetch_linkedin_creative_demographics_portfolio: sleeping %s ms after creative=%s pivot=%s", sleep_ms_between_calls, cid_str, pivot_name)
                         time.sleep(sleep_ms_between_calls / 1000.0)
 
                 results.append(
@@ -3068,8 +3033,6 @@ def summarize_linkedin_creative_portfolio():
     if not OPENAI_API_KEY:
         return jsonify({"error": "OPENAI_API_KEY is not configured on the server"}), 500
 
-    logger.info("summarize_linkedin_creative_portfolio: items=%s", len(items))
-
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
 
     try:
@@ -3367,8 +3330,6 @@ def run_linkedin_portfolio_report():
     if account_urn.isdigit():
         account_urn = f"urn:li:sponsoredAccount:{account_urn}"
 
-    logger.info("run_linkedin_portfolio_report: start account_urn=%s", account_urn)
-
     # 1) Discovery: list creatives for period (default LAST_30_DAYS)
     discovery_payload = {
         "account_urn": account_urn,
@@ -3382,14 +3343,12 @@ def run_linkedin_portfolio_report():
     discovery_payload = {k: v for k, v in discovery_payload.items() if v is not None}
 
     try:
-        logger.info("run_linkedin_portfolio_report: step 1 calling list_linkedin_creatives_for_period discovery_relative_range=%s", discovery_payload.get("discovery_relative_range"))
         with current_app.test_request_context(
             path="/mcp/tools/list_linkedin_creatives_for_period",
             method="POST",
             json=discovery_payload,
         ):
             disc_resp = list_linkedin_creatives_for_period()
-        logger.info("run_linkedin_portfolio_report: step 1 list_linkedin_creatives_for_period returned")
         if isinstance(disc_resp, tuple):
             disc_resp, disc_status = disc_resp[0], disc_resp[1]
         else:
@@ -3403,7 +3362,6 @@ def run_linkedin_portfolio_report():
 
         creatives_list = disc_body.get("creatives") or []
         creative_ids = [c["creative_id"] for c in creatives_list if c.get("creative_id")]
-        logger.info("run_linkedin_portfolio_report: step 1 done creatives_count=%s", len(creative_ids))
 
         if not creative_ids:
             webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
@@ -3434,7 +3392,6 @@ def run_linkedin_portfolio_report():
         limited_creative_ids = creative_ids[:max_creatives]
 
         # 2) Fetch per-creative demographics (job title, function, country) for portfolio insights
-        logger.info("run_linkedin_portfolio_report: step 2 calling fetch_linkedin_creative_demographics_portfolio creatives=%s pivots=%s", len(limited_creative_ids), list(LINKEDIN_PORTFOLIO_REPORT_PIVOTS))
         demographics_payload = {
             "account_urn": account_urn,
             "start_date": start_date_s,
@@ -3451,7 +3408,6 @@ def run_linkedin_portfolio_report():
             json=demographics_payload,
         ):
             demo_resp = fetch_linkedin_creative_demographics_portfolio()
-        logger.info("run_linkedin_portfolio_report: step 2 fetch_linkedin_creative_demographics_portfolio returned")
         if isinstance(demo_resp, tuple):
             demo_resp, demo_status = demo_resp[0], demo_resp[1]
         else:
@@ -3470,15 +3426,9 @@ def run_linkedin_portfolio_report():
             for r in results
             if r.get("enriched_storage_path")
         ]
-        logger.info(
-            "run_linkedin_portfolio_report: demographics returned results=%s, portfolio_items with enriched_path=%s",
-            len(results),
-            len(portfolio_items),
-        )
 
         if portfolio_items:
             # 3a) Summarize with creative-portfolio summarizer (includes job title, function, country insights)
-            logger.info("run_linkedin_portfolio_report: step 3a calling summarize_linkedin_creative_portfolio items=%s", len(portfolio_items))
             summarize_payload = {
                 "items": portfolio_items,
                 "llm_model": (data.get("llm_model") or "gpt-4.1-mini").strip(),
@@ -3515,7 +3465,6 @@ def run_linkedin_portfolio_report():
             "run_linkedin_portfolio_report: no portfolio items with enriched_storage_path (results=%s); falling back to CREATIVE ad analytics",
             len(results),
         )
-        logger.info("run_linkedin_portfolio_report: step 3b calling fetch_linkedin_ad_analytics_report pivot=CREATIVE")
         ad_analytics_payload = {
             "account_urn": account_urn,
             "start_date": start_date_s,
@@ -3531,7 +3480,6 @@ def run_linkedin_portfolio_report():
             json=ad_analytics_payload,
         ):
             fetch_resp = fetch_linkedin_ad_analytics_report()
-        logger.info("run_linkedin_portfolio_report: step 3b fetch_linkedin_ad_analytics_report returned")
         if isinstance(fetch_resp, tuple):
             fetch_resp, fetch_status = fetch_resp[0], fetch_resp[1]
         else:
@@ -3564,7 +3512,6 @@ def run_linkedin_portfolio_report():
                 }
             )
 
-        logger.info("run_linkedin_portfolio_report: step 3b calling summarize_linkedin_ad_analytics enriched_path=%s", enriched_path)
         summarize_payload = {
             "enriched_storage_path": enriched_path,
             "llm_model": (data.get("llm_model") or "gpt-4.1-mini").strip(),
@@ -3576,7 +3523,6 @@ def run_linkedin_portfolio_report():
             json=summarize_payload,
         ):
             sum_resp = summarize_linkedin_ad_analytics()
-        logger.info("run_linkedin_portfolio_report: step 3b summarize_linkedin_ad_analytics returned")
         if isinstance(sum_resp, tuple):
             sum_resp, sum_status = sum_resp[0], sum_resp[1]
         else:
