@@ -438,6 +438,187 @@ curl -X POST https://your-deployment-url.com/mcp/tools/cleanup_old_reports \
   -d '{"keep_days": 30}'
 ```
 
+#### LinkedIn Ads API Health Check (Paid Ads - LinkedIn)
+
+Lists accessible ad accounts (requires LinkedIn app approval + scopes `r_ads`).
+
+```bash
+curl https://your-deployment-url.com/mcp/tools/linkedin_ads_health_check
+```
+
+#### Fetch LinkedIn Ad Analytics Report (Paid Ads - LinkedIn)
+
+Stores the raw response in GCS under `raw_ads/linkedin/{end_date}/ad_analytics_{accountId}_{pivot}_{hashPrefix}.json`.
+
+Caching behavior:
+- If the exact same request (same params → same hash) already exists in GCS, the API returns the cached report and does **not** refetch.
+- Use `force_refresh: true` to bypass cache and refetch anyway.
+
+Date range behavior:
+- You can either pass explicit `start_date`/`end_date` **or** use a relative range via `relative_range`.
+- If both are provided, `start_date`/`end_date` take precedence.
+- Supported `relative_range` values:
+  - `LAST_DAY`      → yesterday only
+  - `LAST_7_DAYS`   → last 7 full days ending yesterday
+  - `LAST_30_DAYS`  → last 30 full days ending yesterday
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/fetch_linkedin_ad_analytics_report \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_urn": "urn:li:sponsoredAccount:123456",
+    "relative_range": "LAST_7_DAYS",
+    "time_granularity": "DAILY",
+    "store_raw": true,
+    "force_refresh": false,
+    "include_entity_names": true
+  }'
+```
+
+##### How LinkedIn ad analytics caching works
+
+When you call `fetch_linkedin_ad_analytics_report`, the backend:
+
+1. Normalizes IDs into **LinkedIn URNs** (e.g. `123456` → `urn:li:sponsoredCampaign:123456`) using a shared helper.
+2. Builds a generic **`AdsAnalyticsRequest`** object that captures:
+   - `platform` (e.g. `linkedin`)
+   - `endpoint` (e.g. `ad_analytics`)
+   - `finder` (`analytics` or `statistics`)
+   - account/campaign/creative URNs
+   - date range, time granularity, pivots, fields
+   - flags like `include_entity_names`
+3. Serializes this request into a deterministic JSON signature and hashes it with **SHA‑256**.
+4. Uses the hash to generate stable storage paths:
+   - Raw: `raw_ads/{platform}/{end_date}/{endpoint}_{accountId}_{pivot}_{hashPrefix}.json`
+   - Enriched: `raw_ads/{platform}/{end_date}/{endpoint}_{accountId}_{pivot}_{hashPrefix}.enriched.json`
+5. Checks if the raw blob already exists:
+   - If **yes** and `force_refresh` is `false`, it returns a cached response (`from_cache: true`) without hitting LinkedIn.
+   - If **no** (or `force_refresh: true`), it calls LinkedIn, stores the response in GCS, and returns `from_cache: false`.
+
+This pattern is implemented with:
+
+- `AdsAnalyticsRequest` – the cross‑platform request schema used for hashing and logging.
+- `build_ads_cache_keys(...)` – computes the hash + blob names from an `AdsAnalyticsRequest`.
+- `StorageService.store_raw_ads_report_at_blob(...)` – writes the `{metadata, payload}` wrapper to GCS.
+
+The same pattern can be reused for other platforms (e.g. Meta, Reddit) by:
+
+1. Constructing an `AdsAnalyticsRequest(platform="meta" | "reddit", ...)`.
+2. Calling `build_ads_cache_keys(...)` to get `request_hash`, `blob_name`, and `enriched_blob_name`.
+3. Storing raw responses under `raw_ads/{platform}/...` via `StorageService`.
+
+##### OpenAI analysis + Discord for LinkedIn ads
+
+Once you have an **enriched** LinkedIn report, you can summarize it with:
+
+- `/mcp/tools/summarize_linkedin_ad_analytics` – account‑level or pivot‑level performance (used by the one-command portfolio report).
+- `/mcp/tools/summarize_linkedin_creative_portfolio` – per‑creative demographic portfolio summaries (separate flow).
+
+The **one-command** `/mcp/tools/run_linkedin_portfolio_report` runs discovery, fetches CREATIVE-level ad analytics, and calls `summarize_linkedin_ad_analytics` so a single request produces a creative performance summary in Discord.
+
+Both summarization endpoints:
+
+1. Load enriched JSON from GCS (which includes `summary`, `context`, and `elements`).
+2. Build a compact `analytics_payload` with only the fields needed for the LLM.
+3. Look up a prompt configuration in `AD_SUMMARY_PROMPTS[(platform, report_type)]`, which defines:
+   - a **system prompt** (role + expectations for the AI analyst), and
+   - a **user template** that injects the JSON payload.
+4. Call OpenAI’s Chat Completions API (default `gpt-4.1-mini`) with these prompts.
+5. Post the resulting markdown to Discord using `post_long_to_discord`, which:
+   - splits long content into 2k‑character‑safe chunks, and
+   - uses a short, configurable HTTP timeout via `DISCORD_HTTP_TIMEOUT`.
+
+To add another paid ads provider (e.g. Google Ads or Meta) to this flow you:
+
+1. Implement a platform‑specific service (`GoogleAdsService`, `MetaAdsService`, etc.) that fetches raw analytics.
+2. Build an `AdsAnalyticsRequest` for that platform and pass it to `build_ads_cache_keys(...)`.
+3. Store raw + enriched responses under `raw_ads/{platform}/...` using `StorageService`.
+4. Add a new entry in `AD_SUMMARY_PROMPTS[(platform, report_type)]` with a tailored system prompt.
+5. Create a summarization endpoint that:
+   - reads the enriched blob,
+   - builds a compact `analytics_payload`, and
+   - uses the shared prompt config + Discord helpers, mirroring the LinkedIn endpoints.
+
+**Demographic breakdowns (per-ad)**
+
+To break down performance by professional demographics, use the statistics finder via `pivots` (up to 3).
+Example: per-creative performance split by job title:
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/fetch_linkedin_ad_analytics_report \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_urn": "urn:li:sponsoredAccount:123456",
+    "relative_range": "LAST_7_DAYS",
+    "time_granularity": "DAILY",
+    "pivots": ["CREATIVE","MEMBER_JOB_TITLE"],
+    "fields": ["impressions","clicks","costInLocalCurrency","landingPageClicks"],
+    "store_raw": true,
+    "force_refresh": false
+  }'
+```
+
+#### Exchange LinkedIn OAuth Code for Refresh Token (Paid Ads - LinkedIn)
+
+This avoids putting your LinkedIn Client Secret into a terminal command history.
+It uses `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET` from the server environment.
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/linkedin_exchange_code \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "PASTE_CODE_FROM_/linkedin/callback"
+  }'
+```
+
+If LinkedIn is rate-limiting refresh-token minting, you can temporarily use a manual access token:
+- Call `linkedin_exchange_code` with `"include_access_token": true`
+- Set `LINKEDIN_ACCESS_TOKEN` in your environment (and redeploy)
+
+#### Summarize LinkedIn Ad Analytics Report → OpenAI → Discord
+
+Once you have generated an **enriched** LinkedIn report (with `include_entity_names: true`), you can ask an AI marketing specialist to summarize performance and post the results to your Discord marketing channel.
+
+Requires:
+- `OPENAI_API_KEY`
+- `DISCORD_WEBHOOK_URL_MARKETING` (or `DISCORD_WEBHOOK_URL`) – your Discord webhook URL for the marketing channel.
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/summarize_linkedin_ad_analytics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enriched_storage_path": "raw_ads/linkedin/2026-02-09/ad_analytics_516183054_MEMBER_JOB_TITLE_abc123456789.enriched.json",
+    "llm_model": "gpt-4"
+  }'
+```
+
+Behavior:
+- If the enriched report has **no elements** for the selected period, the tool posts a short **“no LinkedIn data for this period”** message to Discord so it’s clear nothing ran.
+- Otherwise it:
+  - Loads a compact view of the enriched report from GCS.
+  - Sends it to OpenAI with a “senior B2B performance marketer” prompt.
+  - Posts a structured summary (high-level summary, key insights, recommendations, caveats) to your Discord marketing channel.
+
+#### One-command LinkedIn portfolio report
+
+A single endpoint runs discovery → fetch CREATIVE-level ad analytics → summarize with the same ad-analytics summarizer → post to Discord. No need to chain three calls or pass `enriched_storage_path` manually.
+
+Requires `account_urn` (or `LINKEDIN_AD_ACCOUNT_URN` in env), and optionally `discovery_relative_range`, `min_impressions`, `store_raw`, `force_refresh`, `include_entity_names`, `llm_model`, `sample_limit`.
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_linkedin_portfolio_report \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_urn": "urn:li:sponsoredAccount:516183054",
+    "discovery_relative_range": "LAST_7_DAYS",
+    "min_impressions": 1
+  }'
+```
+
+Response includes `creatives_discovered`, `had_data`, `discord_posted`, `enriched_storage_path`, `used_model`. Uses the same report structure and summarization logic as `fetch_linkedin_ad_analytics_report` + `summarize_linkedin_ad_analytics` (CREATIVE pivot).
+
+This endpoint is designed to be scheduled from **Google Cloud Scheduler**: a single job runs discovery, fetch, and summarize and posts the result to Discord.
+
 #### Ask Analytics Question
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/ask_analytics_question \
