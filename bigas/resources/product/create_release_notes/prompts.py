@@ -32,6 +32,33 @@ Rules:
 - Return ONLY valid JSON for the requested schema.
 """
 
+# Example of the desired level of detail for the proposed blog post (features = title + short paragraph; improvements = descriptive bullets; bug fixes = one line each; end with a short closing).
+BLOG_POST_DETAIL_EXAMPLE = """
+New Feature
+Multiple Logos on a Single Garment
+
+You can now add multiple logos to your custom apparel!
+
+For example: place your company logo on the left chest and a special message like "Team Meetup 2026" on the back. This gives you more creative flexibility to design the perfect promotional or team wear.
+
+Key Improvements
+We've focused on streamlining the experience and adding helpful details:
+
+Clearer post-order flow: More transparency on what happens after you click "Accept Order."
+Fewer clicks to complete and accept orders.
+Simplified one-size products: Recipients now only need to provide a shipping address.
+Smarter preference selection: The correct preference tab (e.g., t-shirt vs. sweatshirt) is automatically selected based on the item received.
+Editable template names for easier organization.
+Better size selection visibility: See at a glance whether sizes are available for all workspace members (while keeping individual size choices private).
+Less intrusive feedback prompts: Feedback requests now appear only once per user.
+Worker conditions transparency: Added information about manufacturing and worker conditions for each product.
+
+Bug Fixes
+Discounted prices are now correctly displayed in the order overview (previously visible only in details).
+
+Thank you for your continued support and feedback—it's helping us build a better product every day. Log in now to try the new features and let us know what you think!
+"""
+
 
 def build_release_notes_user_prompt(*, fix_version: str, issues_compact_json: str) -> str:
     return f"""Generate release notes for Fix Version "{fix_version}" using the Jira issues below.
@@ -120,7 +147,11 @@ Return JSON with this schema:
 
 Constraints:
 - The three lists in sections must have EXACTLY the same item counts as the input lists (no drops, no merges).
-- Blog markdown must include H2 headings: \"New features\", \"Improvements\", \"Bug Fixes\" and use bullet lists.
+- blog_markdown must be a full proposed blog post (plain text or minimal markdown) at the following level of detail. Use this example as the target style—do not copy it verbatim; adapt the structure and depth to the Jira issues provided:
+
+{BLOG_POST_DETAIL_EXAMPLE}
+
+- Structure for blog_markdown: (1) "New Feature(s)": for each new feature, a short title and 2–3 sentences explaining what it is and why it matters. (2) "Key Improvements": bullets with a brief label and one sentence of context (e.g. "Clearer post-order flow: More transparency on what happens after you click Accept Order."). (3) "Bug Fixes": one short line per fix. (4) End with a one- or two-sentence closing (e.g. thank you + CTA to try the release).
 - Social drafts should not contain keys; keep X within 280 chars; LinkedIn should be professional; Facebook/Instagram can be slightly warmer.
 """
 

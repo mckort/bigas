@@ -122,7 +122,7 @@ def create_release_notes():
 
             blog = result.get("blog_markdown") or ""
             if blog:
-                _post_to_discord_in_chunks(webhook_url, "## 📝 Blog draft\n\n" + blog)
+                _post_to_discord_in_chunks(webhook_url, "## 📝 Proposed blog post\n\n" + blog)
 
         return jsonify(result)
     except ReleaseNotesError as e:

@@ -111,6 +111,72 @@ Bigas is built as a **Modular Monolith** with a service-oriented architecture:
 +-------------------------------------------------+
 ```
 
+#### 📣 Ads Analytics (LinkedIn + Reddit)
+
+Bigas also includes a multi-platform **Paid Ads Analytics Orchestrator** alongside GA4 web analytics. This layer standardizes how ads data is fetched, stored, and summarized across platforms such as **LinkedIn Ads** and **Reddit Ads**.
+
+```text
++------------------------------+
+|   Triggers / Clients         |
+|  - Cloud Scheduler           |
+|  - Manual curl / MCP tools   |
++------------------------------+
+              |
+              v
++----------------------------------------------+
+|  Marketing Ads Orchestrator (Flask)          |
+|  - /mcp/tools/run_linkedin_portfolio_report  |
+|  - /mcp/tools/run_reddit_portfolio_report    |
+|  - /mcp/tools/fetch_*_ad_analytics_report    |
+|  - /mcp/tools/fetch_*_audience_report        |
+|  - /mcp/tools/summarize_*_ad_analytics       |
++----------------------------------------------+
+      |                          |
+      v                          v
++---------------+        +------------------+
+| LinkedInAds   |        | RedditAds        |
+| Service       |        | Service          |
+| (OAuth +      |        | (OAuth +         |
+|  adAnalytics) |        |  Reports API v3) |
++---------------+        +------------------+
+      \                          /
+       \                        /
+        \                      /
+         v                    v
+      +----------------------------------------------+
+      | StorageService (Google Cloud Storage)        |
+      |  - raw_ads/linkedin/...                      |
+      |  - raw_ads/reddit/...                        |
+      |  - *.enriched.json (normalized payloads)     |
+      +----------------------------------------------+
+                         |
+                         v
+      +----------------------------------------------+
+      | OpenAI (AD_SUMMARY_PROMPTS registry)         |
+      |  - ("linkedin", "ad_analytics")              |
+      |  - ("linkedin", "creative_portfolio")        |
+      |  - ("reddit",  "ad_analytics")               |
+      |  - ("reddit",  "portfolio")                  |
+      +----------------------------------------------+
+                         |
+                         v
+               +------------------------+
+               | Discord (Marketing)    |
+               | - Portfolio reports    |
+               | - Segment insights     |
+               | - Actionable recs      |
+               +------------------------+
+```
+
+At a high level:
+
+- **Platform services** (`LinkedInAdsService`, `RedditAdsService`) hide API specifics, authentication, and rate limits.
+- **Standardized storage** uses `raw_ads/{platform}/{date}/...` for raw reports and matching `.enriched.json` files for normalized, LLM-ready payloads.
+- The **Paid Ads Analytics Orchestrator** endpoints handle date ranges, caching, and coordinating multi-step jobs (discovery → fetch → enrich → summarize).
+- **Summaries** are generated via a shared `AD_SUMMARY_PROMPTS` registry, so each platform + report type gets a consistent, opinionated analysis:
+  - Portfolio overview, key segments, underperformers, and concrete next steps
+- **Output** is posted to Discord for easy consumption by marketing stakeholders.
+
 ### Service Layer
 
 The marketing analytics functionality is organized into focused services:
@@ -319,6 +385,23 @@ You can find your service URL by running:
 ```bash
 gcloud run services describe bigas-core --region=your-region --format='value(status.url)'
 ```
+
+#### Ads Analytics Endpoints (LinkedIn + Reddit)
+
+These endpoints expose paid ads analytics over HTTP:
+
+- **LinkedIn Ads**
+  - `POST /mcp/tools/run_linkedin_portfolio_report` – One-command LinkedIn portfolio report (creative discovery → demographics → portfolio summary → Discord).
+  - `POST /mcp/tools/fetch_linkedin_ad_analytics_report` – Fetch raw LinkedIn adAnalytics for an account and cache in GCS.
+  - `POST /mcp/tools/fetch_linkedin_creative_demographics_portfolio` – Per-creative, per-pivot demographics (job title, function, country) with strong caching.
+  - `POST /mcp/tools/summarize_linkedin_ad_analytics` – Summarize an enriched LinkedIn ad analytics report from GCS and post to Discord.
+  - `POST /mcp/tools/summarize_linkedin_creative_portfolio` – Summarize a demographic portfolio built from multiple enriched blobs.
+
+- **Reddit Ads**
+  - `POST /mcp/tools/run_reddit_portfolio_report` – One-command Reddit portfolio report (performance + audience breakdowns → Discord).
+  - `POST /mcp/tools/fetch_reddit_ad_analytics_report` – Fetch Reddit Ads performance report, normalize, and store raw + enriched payloads in GCS.
+  - `POST /mcp/tools/fetch_reddit_audience_report` – Fetch Reddit audience reports (interests, communities, geography) and optionally store in GCS.
+  - `POST /mcp/tools/summarize_reddit_ad_analytics` – Summarize an enriched Reddit ad analytics report and post to Discord.
 
 ### API Examples
 
