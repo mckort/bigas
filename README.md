@@ -246,6 +246,15 @@ DISCORD_WEBHOOK_URL_MARKETING=your_actual_marketing_discord_webhook
 DISCORD_WEBHOOK_URL_PRODUCT=your_actual_product_discord_webhook
 STORAGE_BUCKET_NAME=your_actual_storage_bucket
 TARGET_KEYWORDS=your_actual_keywords
+
+# Google Ads (for run_google_ads_portfolio_report):
+GOOGLE_ADS_DEVELOPER_TOKEN=your_google_ads_developer_token
+GOOGLE_ADS_LOGIN_CUSTOMER_ID=optional_manager_account_id
+GOOGLE_ADS_CUSTOMER_ID=optional_default_customer_id
+
+# Meta Ads (for run_meta_portfolio_report and cross-platform):
+META_ACCESS_TOKEN=your_long_lived_system_user_token
+META_AD_ACCOUNT_ID=optional_ad_account_id_without_act_prefix
 ```
 
 ### Step-by-Step Setup
@@ -314,6 +323,8 @@ nano .env
 - `DISCORD_WEBHOOK_URL_PRODUCT` - Your Discord webhook URL (product channel, for release notes)
 - `STORAGE_BUCKET_NAME` - Your Google Cloud Storage bucket (optional, defaults to 'bigas-analytics-reports')
 - `TARGET_KEYWORDS` - Colon-separated list of target keywords for SEO analysis (optional, e.g., "sustainable_swag:eco_friendly_clothing:green_promos")
+- **Google Ads** (for `run_google_ads_portfolio_report`): `GOOGLE_ADS_DEVELOPER_TOKEN` (required); `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional, manager/MCC); `GOOGLE_ADS_CUSTOMER_ID` (optional default customer). Auth uses Application Default Credentials; the Cloud Run service account must have access to the Google Ads account.
+- **Meta Ads** (for `run_meta_portfolio_report` and cross-platform): `META_ACCESS_TOKEN` (required, long-lived system user token with `ads_management` and `ads_read`); `META_AD_ACCOUNT_ID` (optional default ad account ID, numeric without `act_` prefix).
 
 **⚠️ IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
 
@@ -388,7 +399,7 @@ You can find your service URL by running:
 gcloud run services describe bigas-core --region=your-region --format='value(status.url)'
 ```
 
-#### Ads Analytics Endpoints (LinkedIn + Reddit)
+#### Ads Analytics Endpoints (LinkedIn + Reddit + Google Ads)
 
 These endpoints expose paid ads analytics over HTTP:
 
@@ -405,8 +416,14 @@ These endpoints expose paid ads analytics over HTTP:
   - `POST /mcp/tools/fetch_reddit_audience_report` – Fetch Reddit audience reports (interests, communities, geography) and optionally store in GCS.
   - `POST /mcp/tools/summarize_reddit_ad_analytics` – Summarize an enriched Reddit ad analytics report and post to Discord.
 
-- **Cross-Platform (LinkedIn + Reddit)**
-  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn and Reddit portfolio reports (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”); posts all three reports to Discord.
+- **Google Ads**
+  - `POST /mcp/tools/run_google_ads_portfolio_report` – One-command Google Ads campaign portfolio (daily performance → AI summary → optional Discord).
+
+- **Meta (Facebook/Instagram) Ads**
+  - `POST /mcp/tools/run_meta_portfolio_report` – One-command Meta Ads campaign portfolio (daily performance → AI summary → optional Discord). Requires `META_ACCESS_TOKEN` and optionally `META_AD_ACCOUNT_ID`.
+
+- **Cross-Platform (LinkedIn + Reddit + Google Ads + Meta)**
+  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn, Reddit, and Google Ads portfolio reports (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”); posts all three reports to Discord.
 
 ### API Examples
 
@@ -624,11 +641,11 @@ Response includes `creatives_discovered`, `had_data`, `discord_posted`, `enriche
 
 This endpoint is designed to be scheduled from **Google Cloud Scheduler**: a single job runs discovery, fetch, and summarize and posts the result to Discord.
 
-#### Cross-Platform Marketing Budget Analysis (LinkedIn + Reddit)
+#### Cross-Platform Marketing Budget Analysis (LinkedIn + Reddit + Google Ads)
 
-Runs both LinkedIn and Reddit portfolio reports (default last 30 days), then sends combined data to an AI marketing analyst and posts a single Discord report with **summary**, **key data points**, and **recommendation** on where to spend more budget (e.g. LinkedIn with focus on job function X, Reddit with focus on community Y).
+Runs LinkedIn, Reddit, and Google Ads portfolio reports in parallel (default last 30 days), then sends combined data to an AI marketing analyst and posts a single Discord report with **summary**, **key data points**, and **recommendation** on where to spend more budget (e.g. LinkedIn with focus on job function X, Reddit with focus on community Y, Google Ads with focus on campaigns/keywords).
 
-Requires `LINKEDIN_AD_ACCOUNT_URN`, `REDDIT_AD_ACCOUNT_ID`, `OPENAI_API_KEY`, and a Discord webhook. Optional: `relative_range` (default `LAST_30_DAYS`), `account_urn`, `account_id`, `llm_model`, `sample_limit`.
+Requires `LINKEDIN_AD_ACCOUNT_URN`, `REDDIT_AD_ACCOUNT_ID`, `OPENAI_API_KEY`, and a Discord webhook. Optional: `GOOGLE_ADS_CUSTOMER_ID` (or request `customer_id`) to include Google Ads; if missing, only LinkedIn and Reddit are compared. Other optional params: `relative_range` (default `LAST_30_DAYS`), `account_urn`, `account_id`, `llm_model`, `sample_limit`.
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_marketing_analysis \
@@ -645,6 +662,31 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_market
 ```
 
 Flow: LinkedIn portfolio report → Reddit portfolio report → combined AI analysis → three Discord posts (LinkedIn report, Reddit report, cross-platform budget analysis).
+
+#### Google Ads portfolio report
+
+Requires **Google Ads API** access (developer token) and Application Default Credentials (ADC). Add to your `.env`:
+
+- `GOOGLE_ADS_DEVELOPER_TOKEN` – required (from Google Ads API Center).
+- `GOOGLE_ADS_LOGIN_CUSTOMER_ID` – optional (manager/MCC account ID).
+- `GOOGLE_ADS_CUSTOMER_ID` – optional default customer ID (can also be sent in the request body).
+
+The Cloud Run service account (or local gcloud user) must be granted access to the Google Ads account in the Google Ads UI.
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_google_ads_portfolio_report \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_id": "1234567890",
+    "start_date": "2026-02-01",
+    "end_date": "2026-02-15",
+    "store_raw": true,
+    "store_enriched": true,
+    "post_to_discord": true
+  }'
+```
+
+If `customer_id` is omitted, `GOOGLE_ADS_CUSTOMER_ID` from `.env` is used. Default date range is last 30 days.
 
 #### Ask Analytics Question
 ```bash

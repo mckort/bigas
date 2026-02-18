@@ -19,6 +19,12 @@ import hashlib
 import traceback
 from decimal import Decimal, InvalidOperation
 from bigas.resources.marketing.service import MarketingAnalyticsService
+from bigas.resources.marketing.google_ads_portfolio_service import (
+    run_google_ads_campaign_portfolio,
+)
+from bigas.resources.marketing.meta_ads_portfolio_service import (
+    run_meta_campaign_portfolio,
+)
 from bigas.resources.marketing.utils import (
     convert_metric_name,
     convert_dimension_name,
@@ -140,8 +146,10 @@ def _build_linkedin_compact_payload(
                     "avg_cpc_local": derived.get("avg_cpc_local"),
                 },
             })
+        currency = (context.get("currency") or "local").strip().upper() or "LOCAL"
         return {
             "platform": "linkedin",
+            "currency": currency,
             "source_blob": enriched_path,
             "summary": summary,
             "context": context,
@@ -180,8 +188,11 @@ def _build_reddit_compact_payload(
                 "metrics": el.get("metrics") or {},
                 "derived": el.get("derived") or {},
             })
+        reddit_currency = context.get("spend_currency") or "EUR"
+        reddit_currency = (reddit_currency.strip().upper() if isinstance(reddit_currency, str) else None) or "EUR"
         return {
             "platform": "reddit",
+            "currency": reddit_currency,
             "source_blob": enriched_path,
             "summary": summary,
             "context": context,
@@ -313,20 +324,69 @@ AD_SUMMARY_PROMPTS: Dict[Tuple[str, str], Dict[str, str]] = {
         "budget_analysis",
     ): {
         "system": (
-            "You are a senior marketing analyst. You receive performance data from multiple paid channels (LinkedIn, Reddit, and optionally others). "
+            "You are a senior marketing analyst. You receive performance data from multiple paid channels (LinkedIn, Reddit, Google Ads, Meta, and optionally others). "
             "Your job is to compare performance across platforms, identify where to allocate more budget and where to focus "
-            "(e.g. LinkedIn with focus on job function X or country Y; Reddit with focus on community or interest Z). "
-            "Use only the figures provided; do not invent numbers. Currencies may differ (e.g. EUR for Reddit, local for LinkedIn)—do not add spend across currencies without noting conversion. "
-            "Be concise and actionable; output is posted to Discord."
+            "(e.g. LinkedIn with focus on job function X or country Y; Reddit with focus on community or interest Z; Google Ads with focus on campaigns or keywords; Meta with focus on campaigns, placements, or audiences). "
+            "Use only the figures provided; do not invent numbers. Each platform has a 'currency' field (e.g. SEK, EUR, USD, or LOCAL for LinkedIn). "
+            "When stating spend or CPC for a platform, use that platform's 'currency' value: if it is SEK, EUR, USD, etc., state the amount in that currency (e.g. '1.62 SEK', '50 EUR'); if it is LOCAL (e.g. LinkedIn), state 'local currency' or 'account local currency'. Never use € or $ for a platform whose currency is SEK or another code. "
+            "Do not add spend across currencies without noting conversion. Be concise and actionable; output is posted to Discord."
         ),
         "user_template": (
             "Here are the platform reports for the period {date_range}:\n\n"
             "{payload}\n\n"
             "Respond in exactly this structure:\n"
             "1. **Summary** – 3–5 bullet points comparing platforms and overall performance.\n"
-            "2. **Key data points** – Top metrics per platform (spend, impressions, clicks, CTR, CPC; for LinkedIn highlight top segments; for Reddit top campaigns/communities/interests).\n"
-            "3. **Recommendation** – Where to spend more marketing budget and on what (e.g. 'LinkedIn with focus on [job title/function/country]' and/or 'Reddit with focus on [communities/interests]'). Include 2–4 concrete next steps.\n"
+            "2. **Key data points** – Top metrics per platform (spend, impressions, clicks, CTR, CPC; for LinkedIn highlight top segments; for Reddit top campaigns/communities/interests; for Google Ads top campaigns, cost, conversions, ROAS; for Meta top campaigns, cost, conversions, ROAS). For every amount (spend, CPC, CPA), use the platform's 'currency' field (e.g. 'X SEK', 'Y EUR')—never use € or $ unless that is the platform's currency.\n"
+            "3. **Recommendation** – Where to spend more marketing budget and on what (e.g. 'LinkedIn with focus on [job title/function/country]', 'Reddit with focus on [communities/interests]', 'Google Ads with focus on [campaigns/keywords]', 'Meta with focus on [campaigns/placements]'). Include 2–4 concrete next steps.\n"
             "4. **Risks / caveats** – Anything missing or uncertain (e.g. date range, currency, scope).\n"
+        ),
+    },
+    (
+        "google_ads",
+        "portfolio",
+    ): {
+        "system": (
+            "You are a senior performance marketer specializing in Google Ads (search and display). "
+            "You receive normalized campaign-level performance data and must:\n"
+            "1) Summarize overall performance clearly for non-technical stakeholders.\n"
+            "2) Highlight the best and worst performing campaigns with actual numbers.\n"
+            "3) Recommend specific budget shifts, bid/keyword changes, and experiments.\n"
+            "Be concise, structured, and action-oriented."
+        ),
+        "user_template": (
+            "Here is a JSON portfolio of Google Ads campaigns (daily performance):\n\n"
+            "{payload}\n\n"
+            "Please respond in this structure:\n"
+            "1. Portfolio overview (3–6 bullet points).\n"
+            "2. Top performing campaigns (with key metrics like cost, conversions, ROAS).\n"
+            "3. Underperforming campaigns and what to change.\n"
+            "4. Recommendations for budget shifts, bidding, and experiments.\n"
+            "5. Risks / caveats.\n"
+        ),
+    },
+    (
+        "meta",
+        "portfolio",
+    ): {
+        "system": (
+            "You are a senior performance marketer specializing in Meta Ads (Facebook and Instagram). "
+            "You receive normalized campaign-level performance data and must:\n"
+            "1) Summarize overall performance clearly for non-technical stakeholders.\n"
+            "2) Highlight the best and worst performing campaigns with actual numbers.\n"
+            "3) Recommend specific budget shifts, placements, and experiments.\n"
+            "All monetary figures (spend, CPC, CPA, ROAS, conversion value) are in the Meta account currency provided in the JSON (for this account typically SEK). "
+            "Never assume USD; always mention the currency when you state amounts.\n"
+            "Be concise, structured, and action-oriented."
+        ),
+        "user_template": (
+            "Here is a JSON portfolio of Meta (Facebook/Instagram) Ads campaigns (daily performance):\n\n"
+            "{payload}\n\n"
+            "Please respond in this structure:\n"
+            "1. Portfolio overview (3–6 bullet points).\n"
+            "2. Top performing campaigns (with key metrics like cost, conversions, ROAS).\n"
+            "3. Underperforming campaigns and what to change.\n"
+            "4. Recommendations for budget shifts, placements, and experiments.\n"
+            "5. Risks / caveats (including any uncertainty about currency; explicitly mention the currency when you state spend or CPC).\n"
         ),
     },
 }
@@ -467,6 +527,113 @@ def build_ads_cache_keys(
         "enriched_blob_name": enriched_blob_name,
         "base_name": base_name,
     }
+
+
+def _post_google_ads_portfolio_to_discord(
+    webhook_url: str,
+    model: str,
+    portfolio_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Generate a Google Ads portfolio summary via OpenAI and post it to Discord.
+    """
+    prompt_cfg = AD_SUMMARY_PROMPTS.get(("google_ads", "portfolio"))
+    if not prompt_cfg:
+        raise RuntimeError("Prompt configuration missing for Google Ads portfolio")
+
+    system_prompt = prompt_cfg["system"]
+    payload = {
+        "summary": portfolio_result.get("summary") or {},
+        "request_metadata": portfolio_result.get("request_metadata") or {},
+        "sample_rows": (portfolio_result.get("rows") or [])[:50],
+    }
+    user_prompt = prompt_cfg["user_template"].format(
+        payload=json.dumps(payload, indent=2),
+    )
+
+    openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    completion = openai_client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_tokens=1100,
+        temperature=0.4,
+        timeout=40,
+    )
+    analysis_text = completion.choices[0].message.content.strip()
+
+    meta = portfolio_result.get("request_metadata") or {}
+    date_range_s = f"{meta.get('start_date')}–{meta.get('end_date')}"
+    customer_id = meta.get("customer_id")
+
+    discord_message = (
+        "## 📊 Google Ads Campaign Portfolio Report\n\n"
+        f"{analysis_text}\n\n"
+        "---\n"
+        f"_Campaign-level performance for {date_range_s} (customer {customer_id})._"
+    )
+    post_long_to_discord(webhook_url, discord_message)
+
+    return {
+        "posted": True,
+        "webhook_url": webhook_url,
+        "model": model,
+    }
+
+
+def _post_meta_portfolio_to_discord(
+    webhook_url: str,
+    model: str,
+    portfolio_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Generate a Meta Ads portfolio summary via OpenAI and post to Discord."""
+    prompt_cfg = AD_SUMMARY_PROMPTS.get(("meta", "portfolio"))
+    if not prompt_cfg:
+        raise RuntimeError("Prompt configuration missing for Meta portfolio")
+
+    system_prompt = prompt_cfg["system"]
+    payload = {
+        "summary": portfolio_result.get("summary") or {},
+        "request_metadata": portfolio_result.get("request_metadata") or {},
+        "sample_rows": (portfolio_result.get("rows") or [])[:50],
+    }
+    user_prompt = prompt_cfg["user_template"].format(
+        payload=json.dumps(payload, indent=2),
+    )
+
+    openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    completion = openai_client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_tokens=1100,
+        temperature=0.4,
+        timeout=40,
+    )
+    analysis_text = completion.choices[0].message.content.strip()
+
+    meta = portfolio_result.get("request_metadata") or {}
+    date_range_s = f"{meta.get('start_date')}–{meta.get('end_date')}"
+    account_id = meta.get("account_id")
+
+    discord_message = (
+        "## 📊 Meta Ads Campaign Portfolio Report\n\n"
+        f"{analysis_text}\n\n"
+        "---\n"
+        f"_Campaign-level performance for {date_range_s} (account {account_id})._"
+    )
+    post_long_to_discord(webhook_url, discord_message)
+
+    return {
+        "posted": True,
+        "webhook_url": webhook_url,
+        "model": model,
+    }
+
 
 # In SaaS mode, don't initialize client at module load
 # Client will be initialized per-request from SaaS layer
@@ -966,7 +1133,9 @@ def get_manifest():
             {"name": "summarize_reddit_ad_analytics", "description": "Summarize Reddit ads from enriched GCS blob; post to Discord.", "path": "/mcp/tools/summarize_reddit_ad_analytics", "method": "POST"},
             {"name": "run_reddit_portfolio_report", "description": "One-command Reddit ads: fetch report, summarize, post to Discord.", "path": "/mcp/tools/run_reddit_portfolio_report", "method": "POST"},
             {"name": "run_linkedin_portfolio_report", "description": "One-command LinkedIn portfolio: discover creatives, fetch demographics, summarize, post to Discord.", "path": "/mcp/tools/run_linkedin_portfolio_report", "method": "POST"},
-            {"name": "run_cross_platform_marketing_analysis", "description": "Run LinkedIn and Reddit portfolio reports (default last 30 days), then AI comparison: summary, key data, budget recommendation; post to Discord.", "path": "/mcp/tools/run_cross_platform_marketing_analysis", "method": "POST"},
+            {"name": "run_google_ads_portfolio_report", "description": "One-command Google Ads campaign portfolio: daily performance, summary, optional Discord.", "path": "/mcp/tools/run_google_ads_portfolio_report", "method": "POST"},
+            {"name": "run_meta_portfolio_report", "description": "One-command Meta (Facebook/Instagram) Ads campaign portfolio: daily performance, summary, optional Discord.", "path": "/mcp/tools/run_meta_portfolio_report", "method": "POST"},
+            {"name": "run_cross_platform_marketing_analysis", "description": "Run LinkedIn, Reddit, Google Ads, and Meta portfolio reports (default last 30 days), then AI comparison: summary, key data, budget recommendation; post to Discord.", "path": "/mcp/tools/run_cross_platform_marketing_analysis", "method": "POST"},
             {"name": "reddit_ads_health_check", "description": "Smoke test Reddit Ads API and list ad accounts (verify REDDIT_AD_ACCOUNT_ID).", "path": "/mcp/tools/reddit_ads_health_check", "method": "GET"},
         ]
     }
@@ -3677,6 +3846,142 @@ def run_linkedin_portfolio_report():
         return jsonify({"error": sanitized_error}), 500
 
 
+@marketing_bp.route('/mcp/tools/run_google_ads_portfolio_report', methods=['POST'])
+def run_google_ads_portfolio_report():
+    """
+    Run a Google Ads campaign-level daily performance portfolio report.
+
+    Request JSON:
+      - customer_id: optional (default: GOOGLE_ADS_CUSTOMER_ID)
+      - login_customer_id: optional (default: GOOGLE_ADS_LOGIN_CUSTOMER_ID)
+      - start_date, end_date: YYYY-MM-DD (optional; default last 30 days)
+      - store_raw: optional bool (default: false)
+      - store_enriched: optional bool (default: false)
+      - post_to_discord: optional bool (default: false)
+      - discord_webhook_url: optional override (else DISCORD_WEBHOOK_URL_MARKETING / DISCORD_WEBHOOK_URL)
+      - llm_model: optional model name for AI summary (default: gpt-4.1-mini)
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    start_date_s = (data.get("start_date") or "").strip() or None
+    end_date_s = (data.get("end_date") or "").strip() or None
+    customer_id = (data.get("customer_id") or os.environ.get("GOOGLE_ADS_CUSTOMER_ID") or "").strip()
+    login_customer_id = (data.get("login_customer_id") or os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "").strip() or None
+
+    store_raw = bool(data.get("store_raw", False))
+    store_enriched = bool(data.get("store_enriched", False))
+    post_to_discord = bool(data.get("post_to_discord", False))
+    webhook_url = (
+        (data.get("discord_webhook_url") or "").strip()
+        or os.environ.get("DISCORD_WEBHOOK_URL_MARKETING")
+        or os.environ.get("DISCORD_WEBHOOK_URL")
+    )
+    model = (data.get("llm_model") or "gpt-4.1-mini").strip()
+
+    try:
+        storage = None
+        if store_raw or store_enriched:
+            storage = StorageService()
+
+        result = run_google_ads_campaign_portfolio(
+            start_date_s=start_date_s,
+            end_date_s=end_date_s,
+            customer_id=customer_id,
+            login_customer_id=login_customer_id,
+            store_raw=store_raw,
+            store_enriched=store_enriched,
+            storage=storage,
+        )
+
+        discord_info = None
+        if post_to_discord and webhook_url:
+            discord_info = _post_google_ads_portfolio_to_discord(
+                webhook_url=webhook_url,
+                model=model,
+                portfolio_result=result,
+            )
+
+        payload = dict(result)
+        if discord_info:
+            payload["discord"] = discord_info
+        return jsonify(payload)
+    except Exception:
+        logger.error("Error in run_google_ads_portfolio_report: %s", traceback.format_exc())
+        sanitized_error = sanitize_error_message(str(traceback.format_exc()))
+        return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/run_meta_portfolio_report', methods=['POST'])
+def run_meta_portfolio_report():
+    """
+    Run a Meta (Facebook/Instagram) Ads campaign-level portfolio report.
+
+    Request JSON:
+      - account_id: optional (default: META_AD_ACCOUNT_ID)
+      - start_date, end_date: YYYY-MM-DD (optional; default last 30 days)
+      - store_raw: optional bool (default: false)
+      - store_enriched: optional bool (default: false)
+      - post_to_discord: optional bool (default: false)
+      - discord_webhook_url: optional override
+      - llm_model: optional (default: gpt-4.1-mini)
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    start_date_s = (data.get("start_date") or "").strip() or None
+    end_date_s = (data.get("end_date") or "").strip() or None
+    account_id = (data.get("account_id") or os.environ.get("META_AD_ACCOUNT_ID") or "").strip()
+    if not account_id:
+        return jsonify({"error": "account_id is required (or set META_AD_ACCOUNT_ID)."}), 400
+
+    store_raw = bool(data.get("store_raw", False))
+    store_enriched = bool(data.get("store_enriched", False))
+    post_to_discord = bool(data.get("post_to_discord", False))
+    webhook_url = (
+        (data.get("discord_webhook_url") or "").strip()
+        or os.environ.get("DISCORD_WEBHOOK_URL_MARKETING")
+        or os.environ.get("DISCORD_WEBHOOK_URL")
+    )
+    model = (data.get("llm_model") or "gpt-4.1-mini").strip()
+
+    try:
+        storage = None
+        if store_raw or store_enriched:
+            from bigas.resources.marketing.storage_service import StorageService
+            storage = StorageService()
+
+        result = run_meta_campaign_portfolio(
+            start_date_s=start_date_s,
+            end_date_s=end_date_s,
+            account_id=account_id,
+            store_raw=store_raw,
+            store_enriched=store_enriched,
+            storage=storage,
+        )
+
+        discord_info = None
+        if post_to_discord and webhook_url:
+            discord_info = _post_meta_portfolio_to_discord(
+                webhook_url=webhook_url,
+                model=model,
+                portfolio_result=result,
+            )
+
+        payload = dict(result)
+        if discord_info:
+            payload["discord"] = discord_info
+        return jsonify(payload)
+    except Exception:
+        logger.error("Error in run_meta_portfolio_report: %s", traceback.format_exc())
+        sanitized_error = sanitize_error_message(str(traceback.format_exc()))
+        return jsonify({"error": sanitized_error}), 500
+
+
 def _run_reddit_audience_fetch(
     report_type: str,
     account_id: str,
@@ -4071,20 +4376,21 @@ def run_reddit_portfolio_report():
 @marketing_bp.route('/mcp/tools/run_cross_platform_marketing_analysis', methods=['POST'])
 def run_cross_platform_marketing_analysis():
     """
-    Run fresh LinkedIn and Reddit portfolio reports (default last 30 days), then compare
+    Run fresh LinkedIn, Reddit, Google Ads, and Meta portfolio reports (default last 30 days), then compare
     them with an AI marketing analyst and post a single Discord report: summary, key data
-    points, and recommendation on where to spend more budget (e.g. LinkedIn focus X, Reddit focus Y).
+    points, and recommendation on where to spend more budget (e.g. LinkedIn focus X, Reddit focus Y, Google Ads focus Z, Meta focus W).
 
     Request JSON:
-      - relative_range: LAST_30_DAYS | LAST_7_DAYS (default: LAST_30_DAYS)
+      - relative_range: LAST_30_DAYS | LAST_7_DAYS | LAST_90_DAYS (default: LAST_30_DAYS)
       - account_urn: optional LinkedIn account (default: LINKEDIN_AD_ACCOUNT_URN)
       - account_id: optional Reddit account (default: REDDIT_AD_ACCOUNT_ID)
+      - customer_id: optional Google Ads customer (default: GOOGLE_ADS_CUSTOMER_ID); if missing, Google Ads is skipped
+      - meta_account_id: optional Meta ad account (default: META_AD_ACCOUNT_ID); if missing, Meta is skipped
       - llm_model: optional (default: gpt-4.1-mini)
       - sample_limit: optional max rows per platform for comparison (default: 50)
 
-    Flow: run_linkedin_portfolio_report (posts report + progress 1/3) -> run_reddit_portfolio_report
-    (posts report + progress 2/3) -> build combined payload -> OpenAI analyst -> post summary (3/3).
-    Each portfolio report and a short progress line are posted to Discord as they complete.
+    Flow: run LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (each posts its report + progress),
+    then build combined payload -> OpenAI analyst -> post cross-platform summary to Discord.
     For long runs, increase Cloud Run request timeout (e.g. gcloud run services update
     mcp-marketing --timeout=3600 --region=europe-north1 for 1 hour).
     """
@@ -4093,6 +4399,17 @@ def run_cross_platform_marketing_analysis():
     if relative_range not in ("LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS"):
         relative_range = "LAST_30_DAYS"
 
+    # Compute date range for Google Ads (and fallback) from relative_range
+    _end = date.today()
+    if relative_range == "LAST_7_DAYS":
+        _start = _end - timedelta(days=6)
+    elif relative_range == "LAST_90_DAYS":
+        _start = _end - timedelta(days=89)
+    else:
+        _start = _end - timedelta(days=29)
+    _start_s = _start.isoformat()
+    _end_s = _end.isoformat()
+
     account_urn = (data.get("account_urn") or os.environ.get("LINKEDIN_AD_ACCOUNT_URN") or "").strip()
     if account_urn.isdigit():
         account_urn = f"urn:li:sponsoredAccount:{account_urn}"
@@ -4100,6 +4417,9 @@ def run_cross_platform_marketing_analysis():
     account_id = (data.get("account_id") or os.environ.get("REDDIT_AD_ACCOUNT_ID") or "").strip()
     if not account_id:
         return jsonify({"error": "account_id is required (or set REDDIT_AD_ACCOUNT_ID)."}), 400
+
+    google_ads_customer_id = (data.get("customer_id") or os.environ.get("GOOGLE_ADS_CUSTOMER_ID") or "").strip()
+    meta_account_id = (data.get("meta_account_id") or os.environ.get("META_AD_ACCOUNT_ID") or "").strip()
 
     if not OPENAI_API_KEY:
         return jsonify({"error": "OPENAI_API_KEY is not configured on the server"}), 500
@@ -4114,7 +4434,6 @@ def run_cross_platform_marketing_analysis():
         from bigas.resources.marketing.storage_service import StorageService
         storage = StorageService()
 
-        # 1) Run LinkedIn + Reddit portfolio reports. These endpoints post their own reports to Discord.
         if not account_urn:
             return jsonify({"error": "account_urn is required (or set LINKEDIN_AD_ACCOUNT_URN)."}), 400
 
@@ -4132,6 +4451,22 @@ def run_cross_platform_marketing_analysis():
             "force_refresh": bool(data.get("force_refresh", False)),
             "llm_model": model,
         }
+        google_ads_payload_req = {
+            "start_date": _start_s,
+            "end_date": _end_s,
+            "customer_id": google_ads_customer_id or None,
+            "store_raw": data.get("store_raw", False),
+            "store_enriched": data.get("store_enriched", False),
+            "post_to_discord": False,
+        }
+        meta_payload_req = {
+            "start_date": _start_s,
+            "end_date": _end_s,
+            "account_id": meta_account_id or None,
+            "store_raw": data.get("store_raw", False),
+            "store_enriched": data.get("store_enriched", False),
+            "post_to_discord": False,
+        }
 
         app_obj = current_app._get_current_object()
 
@@ -4146,17 +4481,20 @@ def run_cross_platform_marketing_analysis():
             body = resp.get_json() if hasattr(resp, "get_json") else {}
             return int(status or 0), (body if isinstance(body, dict) else {})
 
+        platforms_note = "LinkedIn + Reddit" + (" + Google Ads" if google_ads_customer_id else "") + (" + Meta" if meta_account_id else "")
         if webhook_url:
             post_to_discord(
                 webhook_url,
-                f"⏳ **Cross-platform run started** for `{relative_range}`. Running LinkedIn + Reddit portfolio reports in parallel…",
+                f"⏳ **Cross-platform run started** for `{relative_range}`. Running {platforms_note} portfolio reports in parallel…",
             )
 
-        li_status = rd_status = 0
-        li_body: Dict[str, Any] = {}
-        rd_body: Dict[str, Any] = {}
+        li_status = rd_status = ga_status = meta_status = 0
+        li_body = rd_body = ga_body = meta_body = {}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        futures = []
+        fut_li = fut_rd = fut_ga = fut_meta = None
+        max_workers = 2 + (1 if google_ads_customer_id else 0) + (1 if meta_account_id else 0)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
             fut_li = ex.submit(
                 _call_local_endpoint,
                 run_linkedin_portfolio_report,
@@ -4169,9 +4507,25 @@ def run_cross_platform_marketing_analysis():
                 path="/mcp/tools/run_reddit_portfolio_report",
                 json_payload=reddit_payload_req,
             )
+            futures = [fut_li, fut_rd]
+            if google_ads_customer_id:
+                fut_ga = ex.submit(
+                    _call_local_endpoint,
+                    run_google_ads_portfolio_report,
+                    path="/mcp/tools/run_google_ads_portfolio_report",
+                    json_payload=google_ads_payload_req,
+                )
+                futures.append(fut_ga)
+            if meta_account_id:
+                fut_meta = ex.submit(
+                    _call_local_endpoint,
+                    run_meta_portfolio_report,
+                    path="/mcp/tools/run_meta_portfolio_report",
+                    json_payload=meta_payload_req,
+                )
+                futures.append(fut_meta)
 
-            # As each completes, post a small progress line.
-            for fut in concurrent.futures.as_completed([fut_li, fut_rd]):
+            for fut in concurrent.futures.as_completed(futures):
                 status, body = fut.result()
                 if fut is fut_li:
                     li_status, li_body = status, body
@@ -4183,7 +4537,7 @@ def run_cross_platform_marketing_analysis():
                             webhook_url,
                             f"📊 **Cross-platform run:** LinkedIn portfolio step finished for {_start}–{_end}.",
                         )
-                else:
+                elif fut is fut_rd:
                     rd_status, rd_body = status, body
                     if webhook_url:
                         _dr = rd_body.get("date_range") or {}
@@ -4192,6 +4546,26 @@ def run_cross_platform_marketing_analysis():
                         post_to_discord(
                             webhook_url,
                             f"📊 **Cross-platform run:** Reddit portfolio step finished for {_start}–{_end}.",
+                        )
+                elif fut is fut_ga:
+                    ga_status, ga_body = status, body
+                    if webhook_url:
+                        _meta = ga_body.get("request_metadata") or {}
+                        _start = _meta.get("start_date") or "?"
+                        _end = _meta.get("end_date") or "?"
+                        post_to_discord(
+                            webhook_url,
+                            f"📊 **Cross-platform run:** Google Ads portfolio step finished for {_start}–{_end}.",
+                        )
+                elif fut is fut_meta:
+                    meta_status, meta_body = status, body
+                    if webhook_url:
+                        _meta_meta = meta_body.get("request_metadata") or {}
+                        _start = _meta_meta.get("start_date") or "?"
+                        _end = _meta_meta.get("end_date") or "?"
+                        post_to_discord(
+                            webhook_url,
+                            f"📊 **Cross-platform run:** Meta portfolio step finished for {_start}–{_end}.",
                         )
 
         if li_status != 200 or li_body.get("error"):
@@ -4211,8 +4585,9 @@ def run_cross_platform_marketing_analysis():
         li_enriched_path = (li_body.get("enriched_storage_path") or "").strip()
         rd_enriched_path = (rd_body.get("enriched_storage_path") or "").strip()
 
-        start_date_s = (li_date_range.get("start_date") or rd_date_range.get("start_date"))
-        end_date_s = (li_date_range.get("end_date") or rd_date_range.get("end_date"))
+        _meta_req = (meta_body.get("request_metadata") or {}) if meta_account_id else {}
+        start_date_s = (li_date_range.get("start_date") or rd_date_range.get("start_date") or _meta_req.get("start_date") or _start_s)
+        end_date_s = (li_date_range.get("end_date") or rd_date_range.get("end_date") or _meta_req.get("end_date") or _end_s)
 
         # If LinkedIn used portfolio summarizer (no single enriched path), fetch CREATIVE ad analytics for comparison
         if not li_enriched_path and start_date_s and end_date_s:
@@ -4233,9 +4608,29 @@ def run_cross_platform_marketing_analysis():
             if fetch_status == 200:
                 li_enriched_path = (fetch_body.get("enriched_storage_path") or "").strip()
 
-        # 3) Build compact payloads for comparison
+        # Build compact payloads for comparison
         linkedin_compact = _build_linkedin_compact_payload(storage, li_enriched_path, sample_limit) if li_enriched_path else None
         reddit_compact = _build_reddit_compact_payload(storage, rd_enriched_path, sample_limit) if rd_enriched_path else None
+        google_ads_compact = None
+        if google_ads_customer_id and ga_status == 200 and not ga_body.get("error"):
+            ga_summary = ga_body.get("summary") or {}
+            google_ads_compact = {
+                "platform": "google_ads",
+                "currency": (ga_summary.get("currency") or "").strip().upper() or None,
+                "summary": ga_summary,
+                "request_metadata": ga_body.get("request_metadata") or {},
+                "sample_rows": (ga_body.get("rows") or [])[:sample_limit],
+            }
+        meta_compact = None
+        if meta_account_id and meta_status == 200 and not meta_body.get("error"):
+            meta_summary = meta_body.get("summary") or {}
+            meta_compact = {
+                "platform": "meta",
+                "currency": (meta_summary.get("currency") or "").strip().upper() or None,
+                "summary": meta_summary,
+                "request_metadata": meta_body.get("request_metadata") or {},
+                "sample_rows": (meta_body.get("rows") or [])[:sample_limit],
+            }
 
         date_range_str = f"{start_date_s or '?'} to {end_date_s or '?'}"
         combined = {
@@ -4243,13 +4638,15 @@ def run_cross_platform_marketing_analysis():
             "platforms": {
                 "linkedin": linkedin_compact if linkedin_compact else {"note": "No LinkedIn data available for comparison."},
                 "reddit": reddit_compact if reddit_compact else {"note": "No Reddit data available for comparison."},
+                "google_ads": google_ads_compact if google_ads_compact else {"note": "No Google Ads data available for comparison."},
+                "meta": meta_compact if meta_compact else {"note": "No Meta Ads data available for comparison."},
             },
         }
 
-        if not linkedin_compact and not reddit_compact:
+        if not linkedin_compact and not reddit_compact and not google_ads_compact and not meta_compact:
             no_data_msg = (
                 "## 📊 Cross-Platform Marketing Budget Analysis\n\n"
-                "No LinkedIn or Reddit data was available for the period.\n\n"
+                "No LinkedIn, Reddit, Google Ads, or Meta data was available for the period.\n\n"
                 f"Date range: {date_range_str}\n\n"
                 "No comparison was generated."
             )
@@ -4292,7 +4689,7 @@ def run_cross_platform_marketing_analysis():
             "## 📊 Cross-Platform Marketing Budget Analysis\n\n"
             f"{analysis_text}\n\n"
             "---\n"
-            f"_LinkedIn + Reddit comparison for {date_range_str}. Sources: platform portfolio reports._"
+            f"_LinkedIn + Reddit + Google Ads + Meta comparison for {date_range_str}. Sources: platform portfolio reports._"
         )
         if webhook_url:
             post_long_to_discord(webhook_url, discord_message)
@@ -4306,6 +4703,8 @@ def run_cross_platform_marketing_analysis():
                 "date_range": {"start_date": start_date_s, "end_date": end_date_s},
                 "linkedin_enriched_path": li_enriched_path or None,
                 "reddit_enriched_path": rd_enriched_path or None,
+                "google_ads_included": bool(google_ads_compact),
+                "meta_included": bool(meta_compact),
             }
         )
     except Exception as e:
