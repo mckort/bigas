@@ -399,7 +399,7 @@ You can find your service URL by running:
 gcloud run services describe bigas-core --region=your-region --format='value(status.url)'
 ```
 
-#### Ads Analytics Endpoints (LinkedIn + Reddit + Google Ads)
+#### Ads Analytics Endpoints (LinkedIn + Reddit + Google Ads + Meta)
 
 These endpoints expose paid ads analytics over HTTP:
 
@@ -423,7 +423,7 @@ These endpoints expose paid ads analytics over HTTP:
   - `POST /mcp/tools/run_meta_portfolio_report` – One-command Meta Ads campaign portfolio (daily performance → AI summary → optional Discord). Requires `META_ACCESS_TOKEN` and optionally `META_AD_ACCOUNT_ID`.
 
 - **Cross-Platform (LinkedIn + Reddit + Google Ads + Meta)**
-  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn, Reddit, and Google Ads portfolio reports (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”); posts all three reports to Discord.
+  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”, “Google Ads focus Z”, “Meta focus W”). Posts progress to Discord as each platform completes, then one cross-platform summary. Currency is reported per platform (e.g. SEK, EUR).
 
 ### API Examples
 
@@ -641,11 +641,11 @@ Response includes `creatives_discovered`, `had_data`, `discord_posted`, `enriche
 
 This endpoint is designed to be scheduled from **Google Cloud Scheduler**: a single job runs discovery, fetch, and summarize and posts the result to Discord.
 
-#### Cross-Platform Marketing Budget Analysis (LinkedIn + Reddit + Google Ads)
+#### Cross-Platform Marketing Budget Analysis (LinkedIn + Reddit + Google Ads + Meta)
 
-Runs LinkedIn, Reddit, and Google Ads portfolio reports in parallel (default last 30 days), then sends combined data to an AI marketing analyst and posts a single Discord report with **summary**, **key data points**, and **recommendation** on where to spend more budget (e.g. LinkedIn with focus on job function X, Reddit with focus on community Y, Google Ads with focus on campaigns/keywords).
+Runs LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then sends combined data to an AI marketing analyst and posts a single Discord report with **summary**, **key data points**, and **recommendation** on where to spend more budget (e.g. LinkedIn with focus on job function X, Reddit with focus on community Y, Google Ads with focus on campaigns/keywords, Meta with focus on campaigns/placements). Each platform’s spend and CPC are stated in that platform’s currency (e.g. SEK, EUR).
 
-Requires `LINKEDIN_AD_ACCOUNT_URN`, `REDDIT_AD_ACCOUNT_ID`, `OPENAI_API_KEY`, and a Discord webhook. Optional: `GOOGLE_ADS_CUSTOMER_ID` (or request `customer_id`) to include Google Ads; if missing, only LinkedIn and Reddit are compared. Other optional params: `relative_range` (default `LAST_30_DAYS`), `account_urn`, `account_id`, `llm_model`, `sample_limit`.
+Requires `LINKEDIN_AD_ACCOUNT_URN`, `REDDIT_AD_ACCOUNT_ID`, `OPENAI_API_KEY`, and a Discord webhook. Optional: `GOOGLE_ADS_CUSTOMER_ID` (or request `customer_id`) to include Google Ads; `META_AD_ACCOUNT_ID` (or request `meta_account_id`) to include Meta; if a platform ID is missing, that platform is skipped. Other optional params: `relative_range` (default `LAST_30_DAYS`), `account_urn`, `account_id`, `llm_model`, `sample_limit`.
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_marketing_analysis \
@@ -661,7 +661,7 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_market
   -d '{"relative_range": "LAST_30_DAYS"}'
 ```
 
-Flow: LinkedIn portfolio report → Reddit portfolio report → combined AI analysis → three Discord posts (LinkedIn report, Reddit report, cross-platform budget analysis).
+Flow: LinkedIn, Reddit, Google Ads, and Meta portfolio reports run in parallel → progress posted to Discord as each completes → combined AI analysis → one cross-platform budget analysis post to Discord.
 
 #### Google Ads portfolio report
 
@@ -687,6 +687,21 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_google_ads_portfolio_
 ```
 
 If `customer_id` is omitted, `GOOGLE_ADS_CUSTOMER_ID` from `.env` is used. Default date range is last 30 days.
+
+#### Meta Ads portfolio report
+
+Requires a long-lived system user access token with `ads_management` and `ads_read`. Add to your `.env`: `META_ACCESS_TOKEN`, and optionally `META_AD_ACCOUNT_ID` (numeric, no `act_` prefix). Currency (e.g. SEK) is read from the ad account and included in the report.
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_meta_portfolio_report \
+  -H "Content-Type: application/json" \
+  -d '{
+    "relative_range": "LAST_30_DAYS",
+    "post_to_discord": true
+  }'
+```
+
+If `account_id` is omitted, `META_AD_ACCOUNT_ID` from `.env` is used.
 
 #### Ask Analytics Question
 ```bash
