@@ -49,6 +49,17 @@ class GoogleAdsConfig:
     login_customer_id: Optional[str] = None
 
 
+def _safe_float(val: Any) -> float:
+    try:
+        if val is None:
+            return 0.0
+        if isinstance(val, (int, float)):
+            return float(val)
+        return float(str(val))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class GoogleAdsService:
     """
     Minimal Google Ads REST client for reporting via GAQL SearchStream.
@@ -127,6 +138,7 @@ class GoogleAdsService:
             "segments.date, "
             "campaign.id, "
             "campaign.name, "
+            "customer.currency_code, "
             "metrics.impressions, "
             "metrics.clicks, "
             "metrics.cost_micros, "
@@ -177,4 +189,120 @@ class GoogleAdsService:
             chunks = [chunks]
 
         return rows, chunks
+
+    @staticmethod
+    def _flatten_campaign_daily_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Flatten a single Google Ads SearchStream row into a simple, stable dict.
+
+        Expected row shape (as returned by REST SearchStream):
+          {
+            "segments": {"date": "..."},
+            "campaign": {"id": "...", "name": "..."},
+            "metrics": {
+              "impressions": "...",
+              "clicks": "...",
+              "cost_micros": "...",
+              "conversions": "...",
+              "conversions_value": "..."
+            }
+          }
+        """
+        if not isinstance(row, dict):
+            return {}
+
+        segments = row.get("segments") or {}
+        campaign = row.get("campaign") or {}
+        customer = row.get("customer") or {}
+        metrics = row.get("metrics") or {}
+
+        date_s = segments.get("date")
+        cid = campaign.get("id")
+        cname = campaign.get("name")
+        currency_code = (customer.get("currency_code") or "").strip().upper()
+
+        impressions = int(_safe_float(metrics.get("impressions")))
+        clicks = int(_safe_float(metrics.get("clicks")))
+        cost_micros = _safe_float(metrics.get("cost_micros"))
+        conversions = _safe_float(metrics.get("conversions"))
+        conv_value = _safe_float(metrics.get("conversions_value"))
+
+        cost = cost_micros / 1_000_000.0 if cost_micros else 0.0
+
+        ctr_pct = (100.0 * clicks / impressions) if impressions > 0 else 0.0
+        cpc = (cost / clicks) if clicks > 0 else 0.0
+        cpa = (cost / conversions) if conversions > 0 else 0.0
+        roas = (conv_value / cost) if cost > 0 else 0.0
+
+        return {
+            "date": date_s,
+            "campaign_id": cid,
+            "campaign_name": cname,
+            "currency_code": currency_code or None,
+            "metrics": {
+                "impressions": impressions,
+                "clicks": clicks,
+                "cost": round(cost, 4),
+                "conversions": round(conversions, 4),
+                "conversions_value": round(conv_value, 4),
+            },
+            "derived": {
+                "ctr_pct": round(ctr_pct, 2),
+                "cpc": round(cpc, 4),
+                "cpa": round(cpa, 4),
+                "roas": round(roas, 4),
+            },
+        }
+
+    @staticmethod
+    def normalize_campaign_daily_rows(raw_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Normalize SearchStream results into:
+          - 'rows': flattened per-day per-campaign dicts
+          - 'summary': aggregate metrics and derived KPIs
+        """
+        out_rows: List[Dict[str, Any]] = []
+        tot_impr = 0
+        tot_clicks = 0
+        tot_cost = 0.0
+        tot_conv = 0.0
+        tot_conv_val = 0.0
+        currency_code: Optional[str] = None
+
+        for r in raw_rows or []:
+            if not isinstance(r, dict):
+                continue
+            flat = GoogleAdsService._flatten_campaign_daily_row(r)
+            if not flat:
+                continue
+            out_rows.append(flat)
+            if currency_code is None and flat.get("currency_code"):
+                currency_code = flat.get("currency_code")
+
+            m = flat.get("metrics") or {}
+            tot_impr += int(m.get("impressions") or 0)
+            tot_clicks += int(m.get("clicks") or 0)
+            tot_cost += _safe_float(m.get("cost"))
+            tot_conv += _safe_float(m.get("conversions"))
+            tot_conv_val += _safe_float(m.get("conversions_value"))
+
+        summary_ctr = (100.0 * tot_clicks / tot_impr) if tot_impr > 0 else 0.0
+        summary_cpc = (tot_cost / tot_clicks) if tot_clicks > 0 else 0.0
+        summary_cpa = (tot_cost / tot_conv) if tot_conv > 0 else 0.0
+        summary_roas = (tot_conv_val / tot_cost) if tot_cost > 0 else 0.0
+
+        summary = {
+            "total_impressions": tot_impr,
+            "total_clicks": tot_clicks,
+            "total_cost": round(tot_cost, 2),
+            "total_conversions": round(tot_conv, 4),
+            "total_conversions_value": round(tot_conv_val, 4),
+            "ctr_pct": round(summary_ctr, 2),
+            "cpc": round(summary_cpc, 4),
+            "cpa": round(summary_cpa, 4),
+            "roas": round(summary_roas, 4),
+            "currency": currency_code,
+        }
+
+        return {"rows": out_rows, "summary": summary}
 

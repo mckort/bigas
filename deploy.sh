@@ -139,6 +139,37 @@ else
     echo "⚠️  Reddit Ad Account ID: not set in .env (run_reddit_portfolio_report will require account_id in body)"
 fi
 
+# Optional Google Ads
+GOOGLE_ADS_ENV_VAR=""
+if [ ! -z "$GOOGLE_ADS_DEVELOPER_TOKEN" ]; then
+    GOOGLE_ADS_ENV_VAR="$GOOGLE_ADS_ENV_VAR,GOOGLE_ADS_DEVELOPER_TOKEN=$GOOGLE_ADS_DEVELOPER_TOKEN"
+fi
+if [ ! -z "$GOOGLE_ADS_LOGIN_CUSTOMER_ID" ]; then
+    GOOGLE_ADS_ENV_VAR="$GOOGLE_ADS_ENV_VAR,GOOGLE_ADS_LOGIN_CUSTOMER_ID=$GOOGLE_ADS_LOGIN_CUSTOMER_ID"
+fi
+if [ ! -z "$GOOGLE_ADS_CUSTOMER_ID" ]; then
+    GOOGLE_ADS_ENV_VAR="$GOOGLE_ADS_ENV_VAR,GOOGLE_ADS_CUSTOMER_ID=$GOOGLE_ADS_CUSTOMER_ID"
+fi
+if [ ! -z "$GOOGLE_ADS_DEVELOPER_TOKEN" ]; then
+    echo "📌 Google Ads: developer token + customer IDs will be sent to Cloud Run"
+else
+    echo "⚠️  Google Ads: not set in .env (run_google_ads_portfolio_report will require customer_id in body)"
+fi
+
+# Optional Meta (Facebook/Instagram) Ads
+META_ENV_VAR=""
+if [ ! -z "$META_ACCESS_TOKEN" ]; then
+    META_ENV_VAR="$META_ENV_VAR,META_ACCESS_TOKEN=$META_ACCESS_TOKEN"
+fi
+if [ ! -z "$META_AD_ACCOUNT_ID" ]; then
+    META_ENV_VAR="$META_ENV_VAR,META_AD_ACCOUNT_ID=$META_AD_ACCOUNT_ID"
+fi
+if [ ! -z "$META_ACCESS_TOKEN" ]; then
+    echo "📌 Meta Ads: access token + account ID will be sent to Cloud Run"
+else
+    echo "⚠️  Meta Ads: not set in .env (run_meta_portfolio_report will require account_id in body)"
+fi
+
 echo "✅ All required environment variables are set"
 echo "📊 GA4 Property ID: $GA4_PROPERTY_ID"
 echo "🤖 OpenAI API Key: ${OPENAI_API_KEY:0:20}..."
@@ -170,6 +201,6 @@ gcloud run deploy mcp-marketing \
     --region europe-north1 \
     --allow-unauthenticated \
     --service-account=$GOOGLE_SERVICE_ACCOUNT_EMAIL \
-    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$JIRA_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR$LINKEDIN_ENV_VAR$REDDIT_ENV_VAR
+    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$JIRA_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR$LINKEDIN_ENV_VAR$REDDIT_ENV_VAR$GOOGLE_ADS_ENV_VAR$META_ENV_VAR
 
 echo "✅ Deployment completed successfully!" 
