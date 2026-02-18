@@ -5,6 +5,7 @@ import requests
 
 from bigas.resources.marketing.utils import sanitize_error_message, validate_request_data
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
+from bigas.resources.product.progress_updates.service import ProgressUpdatesService, ProgressUpdatesError
 
 product_bp = Blueprint(
     'product_bp', __name__,
@@ -137,6 +138,48 @@ def create_release_notes():
         logger.error("Error in create_release_notes", exc_info=True)
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
+
+@product_bp.route('/progress_updates', methods=['POST'])
+def progress_updates():
+    """
+    Generate a team progress update from Jira issues moved to Done in the last N days.
+    Designed to be triggered by e.g. Google Cloud Scheduler (e.g. biweekly).
+    Request JSON (optional): { "days": 14, "biweekly_skip": true, "post_to_discord": true }
+    """
+    data = request.json or {}
+    days = int(data.get("days", 14))
+    if days < 1 or days > 365:
+        return jsonify({"error": "days must be between 1 and 365"}), 400
+    biweekly_skip = bool(data.get("biweekly_skip", False))
+    post_to_discord = bool(data.get("post_to_discord", True))
+
+    try:
+        service = ProgressUpdatesService()
+        result = service.run(days=days, biweekly_skip=biweekly_skip)
+
+        if result.get("skipped"):
+            return jsonify(result)
+
+        message = result.get("message", "")
+        if post_to_discord and message:
+            webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_PRODUCT")
+            if webhook_url:
+                _post_to_discord_in_chunks(webhook_url, message)
+                result["posted_to_discord"] = True
+            else:
+                result["posted_to_discord"] = False
+        else:
+            result["posted_to_discord"] = False
+
+        return jsonify(result)
+    except ProgressUpdatesError as e:
+        logger.warning("Progress updates error: %s", e)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+    except Exception as e:
+        logger.error("Error in progress_updates", exc_info=True)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
 def get_manifest():
     """Returns the manifest for the product tools."""
     return {
@@ -160,6 +203,20 @@ def get_manifest():
                         "fix_version": {"type": "string", "description": "Jira Fix Version, e.g. 1.1.0"}
                     },
                     "required": ["fix_version"]
+                }
+            },
+            {
+                "name": "progress_updates",
+                "description": "Generate a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord post).",
+                "path": "/mcp/tools/progress_updates",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "days": {"type": "integer", "description": "Number of days to look back (default 14)", "default": 14},
+                        "biweekly_skip": {"type": "boolean", "description": "If true, only run on even ISO weeks", "default": false},
+                        "post_to_discord": {"type": "boolean", "description": "Post the message to product Discord webhook", "default": true}
+                    }
                 }
             }
         ]

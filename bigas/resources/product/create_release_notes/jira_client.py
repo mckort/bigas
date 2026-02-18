@@ -127,6 +127,66 @@ class JiraClient:
 
         return all_issues
 
+    def search_issues_done_in_last_n_days(
+        self,
+        *,
+        days: int = 14,
+        fields: Optional[List[str]] = None,
+        max_results_per_page: int = 50,
+        max_pages: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        Query Jira for issues that are in Done and were resolved (or updated) in the last N days.
+        Uses resolutiondate when set; otherwise falls back to updated date.
+        """
+        if days < 1 or days > 365:
+            raise ValueError("days must be between 1 and 365")
+        if fields is None:
+            fields = [
+                "key",
+                "summary",
+                "issuetype",
+                "status",
+                "resolutiondate",
+                "assignee",
+                "updated",
+            ]
+
+        # resolutiondate is set when issue is resolved/done; fallback to updated for boards that don't set it
+        jql = (
+            f'project = "{self._config.project_key}" '
+            f'AND status = Done '
+            f'AND (resolutiondate >= -{days}d OR (resolutiondate is EMPTY AND updated >= -{days}d)) '
+        )
+        if self._config.jql_extra:
+            jql = f"{jql} {self._config.jql_extra} "
+        jql = f"{jql} ORDER BY resolutiondate DESC, updated DESC, key ASC"
+
+        url = f"{self._config.base_url}/rest/api/3/search/jql"
+        all_issues: List[Dict[str, Any]] = []
+        next_page_token: Optional[str] = None
+
+        for _page in range(max_pages):
+            payload = {
+                "jql": jql,
+                "maxResults": max_results_per_page,
+                "fields": fields,
+            }
+            if next_page_token:
+                payload["nextPageToken"] = next_page_token
+
+            data = self._post_with_retry_429(url, json=payload)
+
+            issues = data.get("issues", []) or []
+            all_issues.extend(issues)
+
+            is_last = bool(data.get("isLast", False))
+            next_page_token = data.get("nextPageToken") or None
+            if is_last or not next_page_token or not issues:
+                break
+
+        return all_issues
+
     def _post_with_retry_429(self, url: str, *, json: Dict[str, Any]) -> Dict[str, Any]:
         backoff_s = 1.0
         max_attempts = 5
