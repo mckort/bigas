@@ -1,0 +1,35 @@
+# Exclude archive and other projects so the image only contains root app + bigas
+bigas-core-archive/
+bigas-saas/
+# Git and IDE
+.git
+.gitignore
+.cursor
+*.md
+!README.md
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+# Env and secrets (injected at deploy time)
+.env
+.env.*
+!.env.example
+# Tests and dev (not needed in production image)
+tests/
+run_tests.py
+requirements-dev.txt
+# Docs and misc (optional, keeps image smaller)
+docs/
+assets/
+CONTRIBUTING.md
+mcp.json
+create_release_notes
+edit
+load_env.sh

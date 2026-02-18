@@ -127,6 +127,8 @@ Bigas also includes a multi-platform **Paid Ads Analytics Orchestrator** alongsi
 |  Marketing Ads Orchestrator (Flask)          |
 |  - /mcp/tools/run_linkedin_portfolio_report  |
 |  - /mcp/tools/run_reddit_portfolio_report    |
+|  - /mcp/tools/run_cross_platform_marketing_  |
+|    analysis (LinkedIn + Reddit → comparison) |
 |  - /mcp/tools/fetch_*_ad_analytics_report    |
 |  - /mcp/tools/fetch_*_audience_report        |
 |  - /mcp/tools/summarize_*_ad_analytics       |
@@ -403,6 +405,9 @@ These endpoints expose paid ads analytics over HTTP:
   - `POST /mcp/tools/fetch_reddit_audience_report` – Fetch Reddit audience reports (interests, communities, geography) and optionally store in GCS.
   - `POST /mcp/tools/summarize_reddit_ad_analytics` – Summarize an enriched Reddit ad analytics report and post to Discord.
 
+- **Cross-Platform (LinkedIn + Reddit)**
+  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn and Reddit portfolio reports (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”); posts all three reports to Discord.
+
 ### API Examples
 
 **Note**: Replace `https://your-deployment-url.com` with your actual Cloud Run service URL in the examples below.
@@ -618,6 +623,28 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_linkedin_portfolio_re
 Response includes `creatives_discovered`, `had_data`, `discord_posted`, `enriched_storage_path`, `used_model`. Uses the same report structure and summarization logic as `fetch_linkedin_ad_analytics_report` + `summarize_linkedin_ad_analytics` (CREATIVE pivot).
 
 This endpoint is designed to be scheduled from **Google Cloud Scheduler**: a single job runs discovery, fetch, and summarize and posts the result to Discord.
+
+#### Cross-Platform Marketing Budget Analysis (LinkedIn + Reddit)
+
+Runs both LinkedIn and Reddit portfolio reports (default last 30 days), then sends combined data to an AI marketing analyst and posts a single Discord report with **summary**, **key data points**, and **recommendation** on where to spend more budget (e.g. LinkedIn with focus on job function X, Reddit with focus on community Y).
+
+Requires `LINKEDIN_AD_ACCOUNT_URN`, `REDDIT_AD_ACCOUNT_ID`, `OPENAI_API_KEY`, and a Discord webhook. Optional: `relative_range` (default `LAST_30_DAYS`), `account_urn`, `account_id`, `llm_model`, `sample_limit`.
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_marketing_analysis \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Or with an explicit range:
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_marketing_analysis \
+  -H "Content-Type: application/json" \
+  -d '{"relative_range": "LAST_30_DAYS"}'
+```
+
+Flow: LinkedIn portfolio report → Reddit portfolio report → combined AI analysis → three Discord posts (LinkedIn report, Reddit report, cross-platform budget analysis).
 
 #### Ask Analytics Question
 ```bash
