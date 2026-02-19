@@ -402,6 +402,47 @@ You can find your service URL by running:
 gcloud run services describe bigas-core --region=your-region --format='value(status.url)'
 ```
 
+## 🤝 MCP Integration (AI Agents)
+
+Bigas exposes its capabilities as a **Model Context Protocol (MCP)** HTTP server, so AI agents and IDEs can auto-discover and call its tools.
+
+### Discovery URLs
+
+- **Server card (recommended entry point)**  
+  `https://mcp-marketing-919623369853.europe-north1.run.app/.well-known/mcp.json`
+
+  The server card tells MCP clients:
+
+  - The base URL for the server
+  - Where to fetch the tool manifest
+  - Where to fetch the OpenAPI schema
+  - How to authenticate (API key header)
+
+- **Manifest (tool catalog)**  
+  `https://mcp-marketing-919623369853.europe-north1.run.app/mcp/manifest`
+
+  Returns a compact list of tools (name, description, HTTP path, method, and light parameter schema).  
+  This is optimized for LLMs to browse and choose tools.
+
+- **OpenAPI schema (full contract)**  
+  `https://mcp-marketing-919623369853.europe-north1.run.app/openapi.json`
+
+  Returns an OpenAPI 3.0 document describing all MCP HTTP endpoints in detail
+  (request/response JSON schemas, error responses, and security).
+
+Most MCP-aware clients only need the **server card URL**; they will follow the links inside.
+
+### Authentication for MCP tools
+
+If `BIGAS_ACCESS_MODE=restricted`, all tool requests (except health checks and the manifest/server card) must include an API key:
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/create_release_notes \
+  -H "X-Bigas-Access-Key: <YOUR_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"fix_version": "1.1.0"}'
+```
+
 #### Ads Analytics Endpoints (LinkedIn + Reddit + Google Ads + Meta)
 
 These endpoints expose paid ads analytics over HTTP:

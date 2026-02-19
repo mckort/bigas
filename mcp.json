@@ -1,4 +1,22 @@
 {
+  "name": "Bigas Modular AI Agent",
+  "description": "Marketing and product analytics tools for GA4, ad platforms, Jira, and Discord.",
+  "schemaVersion": "1.0",
+  "transport": {
+    "type": "http",
+    "baseUrl": "https://mcp-marketing-919623369853.europe-north1.run.app",
     "manifestUrl": "https://mcp-marketing-919623369853.europe-north1.run.app/mcp/manifest",
     "openapiUrl": "https://mcp-marketing-919623369853.europe-north1.run.app/openapi.json"
+  },
+  "auth": {
+    "type": "api_key",
+    "location": "header",
+    "header": "X-Bigas-Access-Key",
+    "optional": true
+  },
+  "tags": [
+    "marketing",
+    "product",
+    "analytics"
+  ]
 }

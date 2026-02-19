@@ -42,10 +42,24 @@ def _extract_json(text: str) -> Dict[str, Any]:
         else:
             t = t.split("```", 1)[1].split("```", 1)[0].strip()
 
+    # First, try direct JSON parse.
     try:
         return json.loads(t)
-    except Exception as e:
-        raise ReleaseNotesError(f"LLM returned invalid JSON: {e}")
+    except Exception:
+        # Best-effort: extract the first JSON object from within surrounding text.
+        start = t.find("{")
+        end = t.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            candidate = t[start : end + 1]
+            try:
+                return json.loads(candidate)
+            except Exception:
+                # Fall through to empty fallback below.
+                pass
+
+        # As a last resort, return an empty object rather than failing the entire flow.
+        logger.warning("Failed to parse LLM JSON response; returning empty object.")
+        return {}
 
 
 def _validate_fix_version(fix_version: str) -> None:
