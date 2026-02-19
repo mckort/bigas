@@ -325,8 +325,11 @@ nano .env
 - `TARGET_KEYWORDS` - Colon-separated list of target keywords for SEO analysis (optional, e.g., "sustainable_swag:eco_friendly_clothing:green_promos")
 - **Google Ads** (for `run_google_ads_portfolio_report`): `GOOGLE_ADS_DEVELOPER_TOKEN` (required); `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional, manager/MCC); `GOOGLE_ADS_CUSTOMER_ID` (optional default customer). Auth uses Application Default Credentials; the Cloud Run service account must have access to the Google Ads account.
 - **Meta Ads** (for `run_meta_portfolio_report` and cross-platform): `META_ACCESS_TOKEN` (required, long-lived system user token with `ads_management` and `ads_read`); `META_AD_ACCOUNT_ID` (optional default ad account ID, numeric without `act_` prefix).
+- **LinkedIn** (optional, for cross-platform): LinkedIn ad account currency is read from the API when building the cross-platform payload.
 
 **⚠️ IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
+
+**Debugging GA4 attribution**: If cross-platform reports show "GA4 attribution data is missing due to technical issues", run the debug script locally (from repo root; requires credentials with GA4 access, e.g. service account key in `GOOGLE_APPLICATION_CREDENTIALS`): `python scripts/ga4_attribution_debug.py`
 
 #### 5. Deploy to Google Cloud Run
 
