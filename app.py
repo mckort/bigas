@@ -85,7 +85,7 @@ def create_app():
         logger.info("Registered product blueprint.")
 
     # Paths that should always remain public, even in restricted mode
-    public_paths = {"/", "/mcp/manifest", "/.well-known/mcp.json"}
+    public_paths = {"/", "/mcp/manifest", "/.well-known/mcp.json", "/openapi.json"}
 
     @app.before_request
     def _enforce_access_key():
