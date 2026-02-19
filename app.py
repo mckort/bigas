@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
@@ -84,7 +85,7 @@ def create_app():
         logger.info("Registered product blueprint.")
 
     # Paths that should always remain public, even in restricted mode
-    public_paths = {"/", "/mcp/manifest"}
+    public_paths = {"/", "/mcp/manifest", "/.well-known/mcp.json"}
 
     @app.before_request
     def _enforce_access_key():
@@ -123,8 +124,18 @@ def create_app():
         """
         Dynamically generates a combined manifest from all registered resources.
         """
-        marketing_manifest = get_marketing_manifest()
-        product_manifest = get_product_manifest()
+        marketing_manifest = {}
+        product_manifest = {}
+
+        try:
+            marketing_manifest = get_marketing_manifest() or {}
+        except Exception:
+            logger.exception("Failed to build marketing manifest")
+
+        try:
+            product_manifest = get_product_manifest() or {}
+        except Exception:
+            logger.exception("Failed to build product manifest")
 
         # Combine the tools from all manifests
         all_tools = marketing_manifest.get('tools', []) + product_manifest.get('tools', [])
@@ -137,6 +148,21 @@ def create_app():
             "tools": all_tools
         }
         return jsonify(manifest)
+
+    @app.route('/.well-known/mcp.json', methods=['GET'])
+    def well_known_mcp():
+        """
+        Expose the MCP server card at the standard well-known location.
+        """
+        try:
+            base_dir = os.path.dirname(__file__)
+            card_path = os.path.join(base_dir, "mcp.json")
+            with open(card_path, "r", encoding="utf-8") as f:
+                card = json.load(f)
+            return jsonify(card)
+        except Exception as exc:
+            logger.error("Failed to load MCP server card: %s", exc)
+            return jsonify({"error": "MCP server card not available"}), 500
 
     return app
 

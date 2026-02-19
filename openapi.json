@@ -1,10 +1,24 @@
 {
   "openapi": "3.0.1",
   "info": {
-    "title": "Bigas Marketing MCP Tools API",
+    "title": "Bigas MCP Tools API",
     "version": "1.0.0",
-    "description": "API for Google Analytics reporting and analysis tools."
+    "description": "MCP HTTP tools for marketing analytics (GA4, ad platforms) and product management (Jira, progress updates)."
   },
+  "components": {
+    "securitySchemes": {
+      "bigasApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Bigas-Access-Key"
+      }
+    }
+  },
+  "security": [
+    {
+      "bigasApiKey": []
+    }
+  ],
   "paths": {
     "/mcp/tools/fetch_analytics_report": {
       "post": {
@@ -262,6 +276,610 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/mcp/tools/get_stored_reports": {
+      "get": {
+        "summary": "List stored weekly analytics reports.",
+        "description": "Returns a list of stored weekly analytics reports available for retrieval.",
+        "responses": {
+          "200": {
+            "description": "List of stored reports.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/get_latest_report": {
+      "get": {
+        "summary": "Get the latest weekly analytics report.",
+        "description": "Retrieves the most recent weekly analytics report with summary.",
+        "responses": {
+          "200": {
+            "description": "Latest report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No reports available."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/analyze_underperforming_pages": {
+      "post": {
+        "summary": "Analyze underperforming pages.",
+        "description": "Analyzes underperforming pages from stored reports and generates AI-powered improvement suggestions.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Analysis result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/cleanup_old_reports": {
+      "post": {
+        "summary": "Clean up old weekly reports.",
+        "description": "Cleans up old weekly analytics reports to manage storage costs.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cleanup result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/linkedin_ads_health_check": {
+      "get": {
+        "summary": "Smoke test LinkedIn Ads API access.",
+        "description": "Lists LinkedIn ad accounts to verify API connectivity and credentials.",
+        "responses": {
+          "200": {
+            "description": "LinkedIn Ads health check result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/reddit_ads_health_check": {
+      "get": {
+        "summary": "Smoke test Reddit Ads API access.",
+        "description": "Lists Reddit ad accounts and verifies configuration such as REDDIT_AD_ACCOUNT_ID.",
+        "responses": {
+          "200": {
+            "description": "Reddit Ads health check result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/fetch_linkedin_ad_analytics_report": {
+      "post": {
+        "summary": "Fetch LinkedIn ad analytics report.",
+        "description": "Fetches LinkedIn adAnalytics (account-level pivot) and stores raw data in GCS.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "LinkedIn ad analytics report result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/fetch_reddit_ad_analytics_report": {
+      "post": {
+        "summary": "Fetch Reddit Ads performance report.",
+        "description": "Fetches Reddit Ads performance report and stores raw and enriched data in GCS.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reddit ad analytics report result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/fetch_reddit_audience_report": {
+      "post": {
+        "summary": "Fetch Reddit Ads audience report.",
+        "description": "Fetches Reddit Ads audience report with interests, communities, country, region, or DMA segmentation.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reddit audience report result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/summarize_reddit_ad_analytics": {
+      "post": {
+        "summary": "Summarize Reddit ad analytics.",
+        "description": "Summarizes Reddit Ads analytics from an enriched GCS blob and optionally posts to Discord.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Summary result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/run_reddit_portfolio_report": {
+      "post": {
+        "summary": "Run Reddit portfolio report.",
+        "description": "One-command Reddit Ads workflow: fetch report, summarize, and optionally post to Discord.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Portfolio report result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/run_linkedin_portfolio_report": {
+      "post": {
+        "summary": "Run LinkedIn portfolio report.",
+        "description": "One-command LinkedIn portfolio workflow: discover creatives, fetch demographics, summarize, and optionally post to Discord.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "LinkedIn portfolio report result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/run_google_ads_portfolio_report": {
+      "post": {
+        "summary": "Run Google Ads portfolio report.",
+        "description": "One-command Google Ads campaign portfolio report with daily performance and summary, optionally posting to Discord.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Google Ads portfolio report result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/run_meta_portfolio_report": {
+      "post": {
+        "summary": "Run Meta Ads portfolio report.",
+        "description": "One-command Meta (Facebook/Instagram) Ads portfolio report with daily performance and summary, optionally posting to Discord.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Meta Ads portfolio report result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/run_cross_platform_marketing_analysis": {
+      "post": {
+        "summary": "Run cross-platform marketing analysis.",
+        "description": "Runs LinkedIn, Reddit, Google Ads, and Meta portfolio reports and generates an AI comparison summary with budget recommendations, optionally posting to Discord.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cross-platform analysis result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/linkedin_exchange_code": {
+      "post": {
+        "summary": "Exchange LinkedIn OAuth authorization code.",
+        "description": "Exchanges a LinkedIn OAuth authorization code for tokens without exposing the client secret in terminal history.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "description": "Authorization code from /linkedin/callback."
+                  },
+                  "redirect_uri": {
+                    "type": "string",
+                    "description": "Redirect URI used in the OAuth flow."
+                  },
+                  "include_access_token": {
+                    "type": "boolean",
+                    "description": "If true, includes the access_token in the response.",
+                    "default": false
+                  }
+                },
+                "required": ["code"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token exchange result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/reddit_exchange_code": {
+      "post": {
+        "summary": "Exchange Reddit OAuth authorization code.",
+        "description": "Exchanges a Reddit OAuth authorization code for tokens without exposing the client secret in terminal history.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "description": "Authorization code from the Reddit OAuth callback."
+                  },
+                  "redirect_uri": {
+                    "type": "string",
+                    "description": "Redirect URI used in the OAuth flow."
+                  }
+                },
+                "required": ["code"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token exchange result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
+    "/mcp/tools/progress_updates": {
+      "post": {
+        "summary": "Generate a team progress update from Jira issues.",
+        "description": "Uses Jira issues moved to Done in the last N days to generate a progress update and optionally post it to Discord.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "days": {
+                    "type": "integer",
+                    "description": "Number of days to look back.",
+                    "default": 14,
+                    "minimum": 1,
+                    "maximum": 365
+                  },
+                  "biweekly_skip": {
+                    "type": "boolean",
+                    "description": "If true, only run on even ISO weeks.",
+                    "default": false
+                  },
+                  "post_to_discord": {
+                    "type": "boolean",
+                    "description": "Post the message to the product Discord webhook.",
+                    "default": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Progress update result.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input."
+          },
+          "500": {
+            "description": "Server error."
           }
         }
       }
