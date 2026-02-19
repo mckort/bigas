@@ -614,17 +614,18 @@ def validate_ga4_metrics_dimensions(metrics: List[str], dimensions: List[str]) -
     Returns:
         Tuple of (is_valid, error_message)
     """
-    # Common GA4 metrics (keyEvents is GA4's current metric for conversions)
+    # Common GA4 metrics (conversions = Key Events in API schema; keyEvents also supported)
     valid_metrics = {
-        'activeUsers', 'sessions', 'screenPageViews', 'bounceRate', 
+        'activeUsers', 'eventCount', 'sessions', 'screenPageViews', 'bounceRate',
         'averageSessionDuration', 'screenPageViewsPerSession', 'conversions', 'keyEvents',
         'totalRevenue', 'transactions', 'ecommercePurchases'
     }
     
-    # Common GA4 dimensions
+    # Common GA4 dimensions (firstUser* = User Acquisition / first touch)
     valid_dimensions = {
         'country', 'city', 'deviceCategory', 'pagePath', 'pageTitle',
-        'sessionDefaultChannelGroup', 'hostName', 'browser', 'operatingSystem'
+        'sessionDefaultChannelGroup', 'sessionSource', 'hostName', 'browser', 'operatingSystem',
+        'firstUserDefaultChannelGroup', 'firstUserSource', 'firstUserMedium', 'firstUserCampaignName',
     }
     
     # Check metrics

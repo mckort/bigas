@@ -288,6 +288,27 @@ class LinkedInAdsService:
             )
         return resp.json()
 
+    def get_ad_account(self, account_id: str) -> Dict[str, Any]:
+        """
+        Get a single ad account by ID (numeric from urn:li:sponsoredAccount:{id}).
+        Returns account details including currency (ISO 4217, e.g. USD, SEK).
+        Uses v2 adAccountsV2 endpoint.
+        """
+        aid = (account_id or "").strip().replace("urn:li:sponsoredAccount:", "")
+        if not aid or not aid.isdigit():
+            raise ValueError("account_id must be numeric or urn:li:sponsoredAccount:{id}")
+        url = f"https://api.linkedin.com/v2/adAccountsV2/{aid}"
+        resp = requests.get(url, headers=self._headers_v2(), timeout=30)
+        if resp.status_code >= 400:
+            logger.warning("LinkedIn adAccountsV2 get failed: status=%s body=%s", resp.status_code, (resp.text or "")[:500])
+            raise LinkedInApiError(
+                "LinkedIn API error calling adAccountsV2",
+                status_code=resp.status_code,
+                response_text=resp.text,
+                operation="adAccountsV2 get",
+            )
+        return resp.json()
+
     def list_ad_accounts(self, start: int = 0, count: int = 10) -> Dict[str, Any]:
         """
         List accessible ad accounts.

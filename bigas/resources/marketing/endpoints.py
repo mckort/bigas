@@ -7,6 +7,7 @@ from google.analytics.data_v1beta.types import (
     RunReportRequest,
     Filter,
     FilterExpression,
+    FilterExpressionList,
     OrderBy,
 )
 import os
@@ -146,7 +147,10 @@ def _build_linkedin_compact_payload(
                     "avg_cpc_local": derived.get("avg_cpc_local"),
                 },
             })
-        currency = (context.get("currency") or "local").strip().upper() or "LOCAL"
+        currency = (
+            (context.get("currency") or "local")
+            .strip().upper() or "LOCAL"
+        )
         return {
             "platform": "linkedin",
             "currency": currency,
@@ -324,9 +328,10 @@ AD_SUMMARY_PROMPTS: Dict[Tuple[str, str], Dict[str, str]] = {
         "budget_analysis",
     ): {
         "system": (
-            "You are a senior marketing analyst. You receive performance data from multiple paid channels (LinkedIn, Reddit, Google Ads, Meta, and optionally others). "
+            "You are a senior marketing analyst. You receive performance data from multiple paid channels (LinkedIn, Reddit, Google Ads, Meta, and optionally others) and, when available, ga4_attribution: Paid Social traffic from Google Analytics 4 broken down by session source (eventCount, activeUsers, keyEvents per source). "
             "Your job is to compare performance across platforms, identify where to allocate more budget and where to focus "
             "(e.g. LinkedIn with focus on job function X or country Y; Reddit with focus on community or interest Z; Google Ads with focus on campaigns or keywords; Meta with focus on campaigns, placements, or audiences). "
+            "When ga4_attribution.by_source is present, use it to connect ad spend to outcomes: which sources (linkedin, meta, reddit) drove key events and users, so you can say which paid channel is not only cheap in CPC but also drives conversions. "
             "Use only the figures provided; do not invent numbers. Each platform has a 'currency' field (e.g. SEK, EUR, USD, or LOCAL for LinkedIn). "
             "When stating spend or CPC for a platform, use that platform's 'currency' value: if it is SEK, EUR, USD, etc., state the amount in that currency (e.g. '1.62 SEK', '50 EUR'); if it is LOCAL (e.g. LinkedIn), state 'local currency' or 'account local currency'. Never use € or $ for a platform whose currency is SEK or another code. "
             "Do not add spend across currencies without noting conversion. Be concise and actionable; output is posted to Discord."
@@ -336,7 +341,7 @@ AD_SUMMARY_PROMPTS: Dict[Tuple[str, str], Dict[str, str]] = {
             "{payload}\n\n"
             "Respond in exactly this structure:\n"
             "1. **Summary** – 3–5 bullet points comparing platforms and overall performance.\n"
-            "2. **Key data points** – Top metrics per platform (spend, impressions, clicks, CTR, CPC; for LinkedIn highlight top segments; for Reddit top campaigns/communities/interests; for Google Ads top campaigns, cost, conversions, ROAS; for Meta top campaigns, cost, conversions, ROAS). For every amount (spend, CPC, CPA), use the platform's 'currency' field (e.g. 'X SEK', 'Y EUR')—never use € or $ unless that is the platform's currency.\n"
+            "2. **Key data points** – Top metrics per platform (spend, impressions, clicks, CTR, CPC; for LinkedIn highlight top segments; for Reddit top campaigns/communities/interests; for Google Ads top campaigns, cost, conversions, ROAS; for Meta top campaigns, cost, conversions, ROAS). For every amount (spend, CPC, CPA), use the platform's 'currency' field (e.g. 'X SEK', 'Y EUR')—never use € or $ unless that is the platform's currency. If ga4_attribution is present, include which paid sources (LinkedIn, Meta, Reddit, etc.) drove the most key events and users.\n"
             "3. **Recommendation** – Where to spend more marketing budget and on what (e.g. 'LinkedIn with focus on [job title/function/country]', 'Reddit with focus on [communities/interests]', 'Google Ads with focus on [campaigns/keywords]', 'Meta with focus on [campaigns/placements]'). Include 2–4 concrete next steps.\n"
             "4. **Risks / caveats** – Anything missing or uncertain (e.g. date range, currency, scope).\n"
         ),
@@ -840,7 +845,7 @@ def get_ga_report(property_id, start_date, end_date, metrics, dimensions, dimens
     date_ranges = [DateRange(start_date=start_date, end_date=end_date, name="current_period")]
     if comparison_start_date and comparison_end_date:
         date_ranges.append(DateRange(start_date=comparison_start_date, end_date=comparison_end_date, name="previous_period"))
-    filter_expression = FilterExpression(and_group=FilterExpression.AndGroup(expressions=dimension_filters)) if dimension_filters else None
+    filter_expression = FilterExpression(and_group=FilterExpressionList(expressions=dimension_filters)) if dimension_filters else None
     converted_metrics = [Metric(name=m) for m in metrics]
     converted_dimensions = [Dimension(name=d) for d in dimensions]
     request_obj = RunReportRequest(property=property_id_api_format, date_ranges=date_ranges, metrics=converted_metrics, dimensions=converted_dimensions, dimension_filter=filter_expression, order_bys=list(order_bys) if order_bys else None, limit=limit)
@@ -864,6 +869,118 @@ def get_ga_report_with_cache(property_id, start_date, end_date, metrics, dimensi
     except Exception as e:
         logger.error(f"Error in get_ga_report_with_cache: {str(e)}")
         raise
+
+
+def _map_ga4_source_to_platform(source: str) -> str:
+    """Map GA4 session/first user source to our platform key (linkedin, meta, reddit, google_ads, other)."""
+    if not source:
+        return "other"
+    s = source.lower().strip()
+    if "linkedin" in s:
+        return "linkedin"
+    if "facebook" in s or "instagram" in s or "meta" in s or "fb.com" in s:
+        return "meta"
+    if "reddit" in s:
+        return "reddit"
+    if "google" in s:
+        return "google_ads"
+    return "other"
+
+
+def _get_ga4_paid_social_attribution(
+    property_id: str,
+    start_date: str,
+    end_date: str,
+) -> Dict[str, Any]:
+    """
+    Fetch GA4 Paid Social traffic by User Acquisition (first user) dimensions:
+    firstUserDefaultChannelGroup = Paid Social, broken down by firstUserSource.
+    Uses metrics: eventCount, activeUsers, conversions (Key Events; API uses 'conversions').
+    Attribution is First Click (first touch that brought the user).
+
+    Returns a dict with by_source (list of {source, platform, eventCount, activeUsers, keyEvents?}),
+    date_range, and optional note/error.
+    """
+    if not property_id or not property_id.strip():
+        return {"note": "GA4_PROPERTY_ID not set", "by_source": []}
+    if not client:
+        return {"note": "GA4 client not initialized", "by_source": []}
+    property_id = property_id.strip()
+    if not property_id.startswith("properties/"):
+        property_id = f"properties/{property_id}"
+    # User Acquisition scope: "First user" dimensions (first touch)
+    dimensions = ["firstUserDefaultChannelGroup", "firstUserSource"]
+    dimension_filters = [
+        FilterExpression(
+            filter=Filter(
+                field_name="firstUserDefaultChannelGroup",
+                string_filter=Filter.StringFilter(
+                    value="Paid Social",
+                    match_type=Filter.StringFilter.MatchType.EXACT,
+                ),
+            ),
+        ),
+    ]
+    # API standard for Key Events is 'conversions'; fallback to request without it if invalid
+    metrics_with_conversions = ["eventCount", "activeUsers", "conversions"]
+    metrics_fallback = ["eventCount", "activeUsers"]
+    response = None
+    try:
+        response = get_ga_report_with_cache(
+            property_id,
+            start_date,
+            end_date,
+            metrics_with_conversions,
+            dimensions,
+            dimension_filters=dimension_filters,
+            limit=50,
+        )
+    except Exception as e1:
+        logger.warning("GA4 Paid Social attribution (with conversions) failed, retrying without: %s", e1)
+        try:
+            response = get_ga_report_with_cache(
+                property_id,
+                start_date,
+                end_date,
+                metrics_fallback,
+                dimensions,
+                dimension_filters=dimension_filters,
+                limit=50,
+            )
+        except Exception as e2:
+            logger.warning("GA4 Paid Social attribution fetch failed: %s", e2)
+            return {
+                "note": f"GA4 attribution unavailable: {sanitize_error_message(str(e2))}",
+                "by_source": [],
+                "date_range": {"start_date": start_date, "end_date": end_date},
+            }
+    rows = process_ga_response(response)
+    by_source: List[Dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        # firstUserSource = source that first brought the user (e.g. linkedin.com, facebook)
+        src = (row.get("firstUserSource") or "").strip()
+        platform = _map_ga4_source_to_platform(src)
+        event_count = int(row.get("eventCount") or 0)
+        active_users = int(row.get("activeUsers") or 0)
+        # Key Events: API may return 'conversions' (standard) and/or 'keyEvents'
+        key_events_raw = row.get("conversions") or row.get("keyEvents")
+        key_events = int(key_events_raw or 0) if key_events_raw is not None else None
+        by_source.append({
+            "source": src or "(not set)",
+            "platform": platform,
+            "eventCount": event_count,
+            "activeUsers": active_users,
+            "keyEvents": key_events,
+        })
+    by_source.sort(key=lambda x: (-(x.get("eventCount") or 0), -(x.get("activeUsers") or 0)))
+    return {
+        "by_source": by_source,
+        "date_range": {"start_date": start_date, "end_date": end_date},
+        "note": "Paid Social from GA4 by first user source (User Acquisition, First Click). Use platform to match ad platforms (linkedin=LinkedIn, meta=Meta/Instagram/Facebook, reddit=Reddit). Key events via conversions metric.",
+    }
+
 
 @marketing_bp.route('/mcp/tools/fetch_analytics_report', methods=['POST'])
 def fetch_analytics_report():
@@ -1710,19 +1827,20 @@ def fetch_linkedin_ad_analytics_report():
                 cached_response = cached_payload.get("response") if isinstance(cached_payload, dict) else None
 
                 elements = cached_response.get("elements", []) if isinstance(cached_response, dict) else []
-                return jsonify(
-                    {
-                        "status": "success",
-                        "from_cache": True,
-                        "request_hash": request_hash,
-                        "account_urn": account_urn,
-                        "date_range": {"start_date": start_date_s, "end_date": end_date_s},
-                        "elements_count": len(elements) if isinstance(elements, list) else None,
-                        "elements_preview": (elements[:10] if isinstance(elements, list) else None),
-                        "stored": True,
-                        "storage_path": blob_name,
-                    }
-                )
+                out = {
+                    "status": "success",
+                    "from_cache": True,
+                    "request_hash": request_hash,
+                    "account_urn": account_urn,
+                    "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+                    "elements_count": len(elements) if isinstance(elements, list) else None,
+                    "elements_preview": (elements[:10] if isinstance(elements, list) else None),
+                    "stored": True,
+                    "storage_path": blob_name,
+                }
+                if include_entity_names and storage.blob_exists(enriched_blob_name):
+                    out["enriched_storage_path"] = enriched_blob_name
+                return jsonify(out)
 
         if pivots_clean:
             raw = svc.ad_analytics_statistics(
@@ -3741,6 +3859,26 @@ def run_linkedin_portfolio_report():
                     jsonify(sum_body if isinstance(sum_body, dict) else {"error": "Portfolio summarize failed"}),
                     sum_status if sum_status >= 400 else 500,
                 )
+            # Provide a single CREATIVE-level enriched path for cross-platform (fetch reuses cache when possible)
+            ad_analytics_payload = {
+                "account_urn": account_urn,
+                "start_date": start_date_s,
+                "end_date": end_date_s,
+                "pivot": "CREATIVE",
+                "store_raw": data.get("store_raw", True),
+                "force_refresh": False,
+                "include_entity_names": bool(data.get("include_entity_names", True)),
+            }
+            with current_app.test_request_context(
+                path="/mcp/tools/fetch_linkedin_ad_analytics_report",
+                method="POST",
+                json=ad_analytics_payload,
+            ):
+                fetch_resp = fetch_linkedin_ad_analytics_report()
+            if isinstance(fetch_resp, tuple):
+                fetch_resp = fetch_resp[0]
+            fetch_body = fetch_resp.get_json() if hasattr(fetch_resp, "get_json") else {}
+            enriched_path = (fetch_body.get("enriched_storage_path") or "").strip() if isinstance(fetch_body, dict) else None
             return jsonify(
                 {
                     "status": "success",
@@ -3750,6 +3888,7 @@ def run_linkedin_portfolio_report():
                     "used_model": sum_body.get("used_model"),
                     "report_type": "portfolio",
                     "date_range": {"start_date": start_date_s, "end_date": end_date_s},
+                    "enriched_storage_path": enriched_path or None,
                 }
             )
 
@@ -4067,8 +4206,10 @@ def run_reddit_portfolio_report():
       - include_audience: optional (default: true) — fetch interests, communities, country, region, DMA
       - debug_audience: optional (default: false) — if true, response includes troubleshooting with exact
         interest/community payload and raw Reddit API responses so you can compare to the UI (same date range and campaign).
+      - post_to_discord: optional (default: true) — if false, do not post the full report to Discord (e.g. when called from cross-platform).
     """
     data = request.json or {}
+    post_reddit_to_discord = bool(data.get("post_to_discord", True))
     account_id = (data.get("account_id") or os.environ.get("REDDIT_AD_ACCOUNT_ID") or "").strip()
     if not account_id:
         return jsonify({"error": "account_id is required (or set REDDIT_AD_ACCOUNT_ID)."}), 400
@@ -4274,13 +4415,13 @@ def run_reddit_portfolio_report():
                 "No performance or audience data was available for the period.\n\n"
                 "No analysis was generated."
             )
-            if webhook_url:
+            if post_reddit_to_discord and webhook_url:
                 post_to_discord(webhook_url, no_data_msg)
             return jsonify(
                 {
                     "status": "success",
                     "had_data": False,
-                    "discord_posted": bool(webhook_url),
+                    "discord_posted": bool(post_reddit_to_discord and webhook_url),
                     "message": "no_data",
                     "date_range": {"start_date": start_date_s, "end_date": end_date_s},
                 }
@@ -4320,13 +4461,13 @@ def run_reddit_portfolio_report():
             "---\n"
             f"_Performance + audience for {start_date_s}–{end_date_s}.{scope_note}_"
         )
-        if webhook_url:
+        if post_reddit_to_discord and webhook_url:
             post_long_to_discord(webhook_url, discord_message)
 
         out = {
             "status": "success",
             "had_data": True,
-            "discord_posted": bool(webhook_url),
+            "discord_posted": bool(post_reddit_to_discord and webhook_url),
             "enriched_storage_path": enriched_path,
             "used_model": model,
             "date_range": {"start_date": start_date_s, "end_date": end_date_s},
@@ -4443,6 +4584,7 @@ def run_cross_platform_marketing_analysis():
             "store_raw": data.get("store_raw", True),
             "force_refresh": bool(data.get("force_refresh", False)),
             "llm_model": model,
+            "post_to_discord": True,
         }
         reddit_payload_req = {
             "account_id": account_id,
@@ -4450,6 +4592,7 @@ def run_cross_platform_marketing_analysis():
             "store_raw": data.get("store_raw", True),
             "force_refresh": bool(data.get("force_refresh", False)),
             "llm_model": model,
+            "post_to_discord": True,
         }
         google_ads_payload_req = {
             "start_date": _start_s,
@@ -4457,7 +4600,7 @@ def run_cross_platform_marketing_analysis():
             "customer_id": google_ads_customer_id or None,
             "store_raw": data.get("store_raw", False),
             "store_enriched": data.get("store_enriched", False),
-            "post_to_discord": False,
+            "post_to_discord": True,
         }
         meta_payload_req = {
             "start_date": _start_s,
@@ -4465,7 +4608,7 @@ def run_cross_platform_marketing_analysis():
             "account_id": meta_account_id or None,
             "store_raw": data.get("store_raw", False),
             "store_enriched": data.get("store_enriched", False),
-            "post_to_discord": False,
+            "post_to_discord": True,
         }
 
         app_obj = current_app._get_current_object()
@@ -4610,6 +4753,16 @@ def run_cross_platform_marketing_analysis():
 
         # Build compact payloads for comparison
         linkedin_compact = _build_linkedin_compact_payload(storage, li_enriched_path, sample_limit) if li_enriched_path else None
+        if linkedin_compact and account_urn:
+            try:
+                from bigas.resources.marketing.linkedin_ads_service import LinkedInAdsService
+                svc = LinkedInAdsService()
+                acc = svc.get_ad_account(account_urn)
+                api_currency = (acc.get("currency") or "").strip().upper()
+                if api_currency:
+                    linkedin_compact["currency"] = api_currency
+            except Exception as e:
+                logger.warning("LinkedIn ad account currency from API failed (using existing): %s", e)
         reddit_compact = _build_reddit_compact_payload(storage, rd_enriched_path, sample_limit) if rd_enriched_path else None
         google_ads_compact = None
         if google_ads_customer_id and ga_status == 200 and not ga_body.get("error"):
@@ -4633,6 +4786,12 @@ def run_cross_platform_marketing_analysis():
             }
 
         date_range_str = f"{start_date_s or '?'} to {end_date_s or '?'}"
+        ga4_property_id = os.environ.get("GA4_PROPERTY_ID") or ""
+        ga4_attribution = _get_ga4_paid_social_attribution(
+            ga4_property_id,
+            start_date_s or _start_s,
+            end_date_s or _end_s,
+        ) if (ga4_property_id and start_date_s and end_date_s) else {"note": "GA4 attribution skipped (no property ID or date range)", "by_source": []}
         combined = {
             "date_range": date_range_str,
             "platforms": {
@@ -4641,6 +4800,7 @@ def run_cross_platform_marketing_analysis():
                 "google_ads": google_ads_compact if google_ads_compact else {"note": "No Google Ads data available for comparison."},
                 "meta": meta_compact if meta_compact else {"note": "No Meta Ads data available for comparison."},
             },
+            "ga4_attribution": ga4_attribution,
         }
 
         if not linkedin_compact and not reddit_compact and not google_ads_compact and not meta_compact:

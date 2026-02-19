@@ -317,7 +317,7 @@ nano .env
 ```
 
 **Required environment variables** (see `env.example` for details):
-- `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID (found in GA4 Admin → Property Settings)
+- `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID (found in GA4 Admin → Property Settings). Also used in cross-platform analysis: when set, the run fetches GA4 Paid Social attribution (User Acquisition / First Click by first user source) and Key Events (conversions) so the AI can link ad spend to outcomes (e.g. which paid channel drove conversions).
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `DISCORD_WEBHOOK_URL_MARKETING` - Your Discord webhook URL (marketing channel)
 - `DISCORD_WEBHOOK_URL_PRODUCT` - Your Discord webhook URL (product channel, for release notes)
@@ -325,8 +325,11 @@ nano .env
 - `TARGET_KEYWORDS` - Colon-separated list of target keywords for SEO analysis (optional, e.g., "sustainable_swag:eco_friendly_clothing:green_promos")
 - **Google Ads** (for `run_google_ads_portfolio_report`): `GOOGLE_ADS_DEVELOPER_TOKEN` (required); `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional, manager/MCC); `GOOGLE_ADS_CUSTOMER_ID` (optional default customer). Auth uses Application Default Credentials; the Cloud Run service account must have access to the Google Ads account.
 - **Meta Ads** (for `run_meta_portfolio_report` and cross-platform): `META_ACCESS_TOKEN` (required, long-lived system user token with `ads_management` and `ads_read`); `META_AD_ACCOUNT_ID` (optional default ad account ID, numeric without `act_` prefix).
+- **LinkedIn** (optional, for cross-platform): LinkedIn ad account currency is read from the API when building the cross-platform payload.
 
 **⚠️ IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
+
+**Debugging GA4 attribution**: If cross-platform reports show "GA4 attribution data is missing due to technical issues", run the debug script locally (from repo root; requires credentials with GA4 access, e.g. service account key in `GOOGLE_APPLICATION_CREDENTIALS`): `python scripts/ga4_attribution_debug.py`
 
 #### 5. Deploy to Google Cloud Run
 
@@ -423,7 +426,7 @@ These endpoints expose paid ads analytics over HTTP:
   - `POST /mcp/tools/run_meta_portfolio_report` – One-command Meta Ads campaign portfolio (daily performance → AI summary → optional Discord). Requires `META_ACCESS_TOKEN` and optionally `META_AD_ACCOUNT_ID`.
 
 - **Cross-Platform (LinkedIn + Reddit + Google Ads + Meta)**
-  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”, “Google Ads focus Z”, “Meta focus W”). Posts progress to Discord as each platform completes, then one cross-platform summary. Currency is reported per platform (e.g. SEK, EUR).
+  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”, “Google Ads focus Z”, “Meta focus W”). Posts progress to Discord as each platform completes, then one cross-platform summary. Currency is reported per platform (e.g. SEK, EUR). When `GA4_PROPERTY_ID` is set, the run also fetches GA4 Paid Social attribution (by first user source) and Key Events (conversions), so the analyst can connect ad spend to which channels drove users and conversions.
 
 ### API Examples
 
@@ -661,7 +664,7 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_market
   -d '{"relative_range": "LAST_30_DAYS"}'
 ```
 
-Flow: LinkedIn, Reddit, Google Ads, and Meta portfolio reports run in parallel → progress posted to Discord as each completes → combined AI analysis → one cross-platform budget analysis post to Discord.
+Flow: LinkedIn, Reddit, Google Ads, and Meta portfolio reports run in parallel (and GA4 Paid Social attribution is fetched when `GA4_PROPERTY_ID` is set) → progress posted to Discord as each completes → combined AI analysis with spend and attribution → one cross-platform budget analysis post to Discord.
 
 #### Google Ads portfolio report
 
