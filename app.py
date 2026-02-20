@@ -9,6 +9,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _jsonrpc_result(request_id, result):
+    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def _jsonrpc_error(request_id, code: int, message: str, data=None):
+    err = {"code": code, "message": message}
+    if data is not None:
+        err["data"] = data
+    return {"jsonrpc": "2.0", "id": request_id, "error": err}
+
+
 def _load_access_control_config(app: Flask) -> None:
     """
     Load simple access control configuration from environment variables and
@@ -85,7 +96,7 @@ def create_app():
         logger.info("Registered product blueprint.")
 
     # Paths that should always remain public, even in restricted mode
-    public_paths = {"/", "/mcp/manifest", "/.well-known/mcp.json", "/openapi.json"}
+    public_paths = {"/", "/mcp", "/mcp/manifest", "/.well-known/mcp.json", "/openapi.json"}
 
     @app.before_request
     def _enforce_access_key():
@@ -148,6 +159,117 @@ def create_app():
             "tools": all_tools
         }
         return jsonify(manifest)
+
+    @app.route('/mcp', methods=['GET', 'POST'])
+    def mcp_endpoint():
+        """
+        Minimal MCP Streamable-HTTP compatible JSON-RPC endpoint.
+        Supports initialize, tools/list, and tools/call.
+        """
+        if request.method == "GET":
+            return jsonify(
+                {
+                    "service": "bigas-mcp",
+                    "status": "ok",
+                    "endpoint": "/mcp",
+                    "note": "Send JSON-RPC requests as HTTP POST to use MCP tools.",
+                }
+            )
+
+        # Local auth for /mcp itself. We keep /mcp in public_paths to support clients
+        # that cannot set custom headers during discovery and bootstrap.
+        mode = app.config.get("BIGAS_ACCESS_MODE", "open")
+        header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+        expected_keys = app.config.get("BIGAS_ACCESS_KEYS") or set()
+
+        provided_key = (
+            request.headers.get(header_name)
+            or request.args.get("access_key")
+            or (request.headers.get("Authorization", "").replace("Bearer ", "", 1).strip() or None)
+        )
+        if mode == "restricted" and (not provided_key or provided_key not in expected_keys):
+            return jsonify({"error": "Invalid or missing access key for /mcp"}), 401
+
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify(_jsonrpc_error(None, -32600, "Invalid Request: expected JSON object")), 400
+
+        request_id = payload.get("id")
+        method = payload.get("method")
+        params = payload.get("params") or {}
+
+        if method == "initialize":
+            protocol_version = params.get("protocolVersion") or "2025-03-26"
+            return jsonify(
+                _jsonrpc_result(
+                    request_id,
+                    {
+                        "protocolVersion": protocol_version,
+                        "capabilities": {"tools": {"listChanged": False}},
+                        "serverInfo": {"name": "bigas-mcp", "version": "1.1"},
+                    },
+                )
+            )
+
+        if method == "tools/list":
+            manifest = combined_manifest().get_json() or {}
+            tools = []
+            for tool in manifest.get("tools", []):
+                if not isinstance(tool, dict):
+                    continue
+                tools.append(
+                    {
+                        "name": tool.get("name"),
+                        "description": tool.get("description", ""),
+                        "inputSchema": tool.get("parameters")
+                        or {"type": "object", "properties": {}},
+                    }
+                )
+            return jsonify(_jsonrpc_result(request_id, {"tools": tools}))
+
+        if method == "tools/call":
+            tool_name = params.get("name")
+            arguments = params.get("arguments") or {}
+            if not tool_name:
+                return jsonify(_jsonrpc_error(request_id, -32602, "Missing tool name in tools/call"))
+
+            manifest = combined_manifest().get_json() or {}
+            manifest_tools = manifest.get("tools", [])
+            selected = next((t for t in manifest_tools if isinstance(t, dict) and t.get("name") == tool_name), None)
+            if not selected:
+                return jsonify(_jsonrpc_error(request_id, -32601, f"Tool not found: {tool_name}"))
+
+            tool_path = selected.get("path")
+            tool_method = (selected.get("method") or "POST").upper()
+            if not tool_path:
+                return jsonify(_jsonrpc_error(request_id, -32603, f"Tool path missing for: {tool_name}"))
+
+            headers = {}
+            if mode == "restricted" and provided_key:
+                headers[header_name] = provided_key
+
+            with app.test_client() as client:
+                if tool_method == "GET":
+                    tool_resp = client.open(tool_path, method="GET", headers=headers, query_string=arguments)
+                else:
+                    tool_resp = client.open(tool_path, method=tool_method, headers=headers, json=arguments)
+
+            response_text = tool_resp.get_data(as_text=True)
+            response_json = None
+            if tool_resp.is_json:
+                response_json = tool_resp.get_json()
+                response_text = json.dumps(response_json, ensure_ascii=False)
+
+            result = {
+                "content": [{"type": "text", "text": response_text}],
+                "isError": tool_resp.status_code >= 400,
+            }
+            if response_json is not None:
+                result["structuredContent"] = response_json
+
+            return jsonify(_jsonrpc_result(request_id, result))
+
+        return jsonify(_jsonrpc_error(request_id, -32601, f"Method not found: {method}")), 404
 
     @app.route('/.well-known/mcp.json', methods=['GET'])
     def well_known_mcp():
