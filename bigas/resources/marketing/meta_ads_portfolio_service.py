@@ -28,12 +28,15 @@ def run_meta_campaign_portfolio(
     start_date_s: Optional[str],
     end_date_s: Optional[str],
     account_id: Optional[str] = None,
+    report_level: str = "campaign",
+    breakdowns: Optional[list[str]] = None,
+    include_targeting: bool = False,
     store_raw: bool = False,
     store_enriched: bool = False,
     storage: Optional[StorageService] = None,
 ) -> Dict[str, Any]:
     """
-    Run a Meta Ads campaign-level insights report and optionally store raw/enriched data in GCS.
+    Run a Meta Ads insights report and optionally store raw/enriched data in GCS.
 
     Returns a dict with:
       - status
@@ -55,16 +58,33 @@ def run_meta_campaign_portfolio(
     account_id = (account_id or os.environ.get("META_AD_ACCOUNT_ID") or "").replace("act_", "").strip()
     if not account_id:
         raise ValueError("account_id is required (or set META_AD_ACCOUNT_ID).")
+    report_level = (report_level or "campaign").strip().lower()
+    if report_level not in {"campaign", "ad", "audience_breakdown"}:
+        raise ValueError("report_level must be one of: campaign, ad, audience_breakdown")
+    clean_breakdowns = [str(b).strip() for b in (breakdowns or []) if str(b).strip()]
+    if report_level == "audience_breakdown" and not clean_breakdowns:
+        clean_breakdowns = ["age", "gender"]
 
     service = MetaAdsService()
-    raw_rows = service.get_campaign_insights(account_id=account_id, start_date=start_d, end_date=end_d)
-    norm = MetaAdsService.normalize_campaign_daily_rows(raw_rows)
+    if report_level == "ad":
+        raw_rows = service.get_ad_insights(account_id=account_id, start_date=start_d, end_date=end_d)
+    elif report_level == "audience_breakdown":
+        raw_rows = service.get_audience_breakdown_insights(
+            account_id=account_id,
+            start_date=start_d,
+            end_date=end_d,
+            breakdowns=clean_breakdowns,
+        )
+    else:
+        raw_rows = service.get_campaign_insights(account_id=account_id, start_date=start_d, end_date=end_d, level="campaign")
+    norm = MetaAdsService.normalize_campaign_daily_rows(raw_rows, level=report_level, breakdowns=clean_breakdowns)
     rows = norm["rows"]
     summary = dict(norm["summary"])
     if not summary.get("currency"):
         account_currency = service.get_account_currency(account_id)
         if account_currency:
             summary["currency"] = account_currency
+    targeting_rows = service.get_adsets_targeting(account_id, limit=100) if include_targeting else []
 
     storage = storage or (StorageService() if (store_raw or store_enriched) else None)
     raw_blob = None
@@ -74,6 +94,8 @@ def run_meta_campaign_portfolio(
         report_date = end_d.isoformat()
         meta = {
             "account_id": account_id,
+            "report_level": report_level,
+            "breakdowns": clean_breakdowns,
             "range_start": start_d.isoformat(),
             "range_end": end_d.isoformat(),
         }
@@ -82,21 +104,24 @@ def run_meta_campaign_portfolio(
                 platform="meta",
                 report_data={"data": raw_rows},
                 report_date=report_date,
-                filename="campaign_insights.json",
+                filename=f"{report_level}_insights.json",
                 metadata=meta,
             )
         if store_enriched:
             enriched_payload = {
                 "summary": summary,
                 "rows": rows,
+                "targeting": targeting_rows[:100] if include_targeting else [],
                 "context": {
                     "account_id": account_id,
+                    "report_level": report_level,
+                    "breakdowns": clean_breakdowns,
                     "start_date": start_d.isoformat(),
                     "end_date": end_d.isoformat(),
                 },
             }
             enriched_blob = storage.store_json(
-                blob_name=f"enriched_ads/meta/{report_date}/campaign_daily.json",
+                blob_name=f"enriched_ads/meta/{report_date}/{report_level}_daily.json",
                 data={"metadata": meta, "payload": {"enriched_response": enriched_payload}},
             )
 
@@ -104,12 +129,16 @@ def run_meta_campaign_portfolio(
         "status": "success",
         "request_metadata": {
             "account_id": account_id,
+            "report_level": report_level,
+            "breakdowns": clean_breakdowns,
             "start_date": start_d.isoformat(),
             "end_date": end_d.isoformat(),
         },
         "summary": summary,
         "rows": rows,
     }
+    if include_targeting:
+        result["targeting"] = targeting_rows[:100]
     if raw_blob or enriched_blob:
         result["storage"] = {
             "raw_blob": raw_blob,

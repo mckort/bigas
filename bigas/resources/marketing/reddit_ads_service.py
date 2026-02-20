@@ -413,6 +413,7 @@ class RedditAdsService:
             "IMPRESSIONS",
             "CLICKS",
             "SPEND",
+            "REACH",
         ]
         # Normalize to uppercase if caller passed lowercase.
         dimensions = [str(d).upper() for d in dimensions]

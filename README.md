@@ -449,6 +449,7 @@ These endpoints expose paid ads analytics over HTTP:
 
 - **LinkedIn Ads**
   - `POST /mcp/tools/run_linkedin_portfolio_report` – One-command LinkedIn portfolio report (creative discovery → demographics → portfolio summary → Discord).
+  - `POST /mcp/tools/run_linkedin_portfolio_report_async` – Async version for MCP clients with strict per-call time limits. Returns `job_id` immediately.
   - `POST /mcp/tools/fetch_linkedin_ad_analytics_report` – Fetch raw LinkedIn adAnalytics for an account and cache in GCS.
   - `POST /mcp/tools/fetch_linkedin_creative_demographics_portfolio` – Per-creative, per-pivot demographics (job title, function, country) with strong caching.
   - `POST /mcp/tools/summarize_linkedin_ad_analytics` – Summarize an enriched LinkedIn ad analytics report from GCS and post to Discord.
@@ -456,15 +457,22 @@ These endpoints expose paid ads analytics over HTTP:
 
 - **Reddit Ads**
   - `POST /mcp/tools/run_reddit_portfolio_report` – One-command Reddit portfolio report (performance + audience breakdowns → Discord).
+  - `POST /mcp/tools/run_reddit_portfolio_report_async` – Async version for MCP clients with strict per-call time limits. Returns `job_id` immediately.
   - `POST /mcp/tools/fetch_reddit_ad_analytics_report` – Fetch Reddit Ads performance report, normalize, and store raw + enriched payloads in GCS.
   - `POST /mcp/tools/fetch_reddit_audience_report` – Fetch Reddit audience reports (interests, communities, geography) and optionally store in GCS.
   - `POST /mcp/tools/summarize_reddit_ad_analytics` – Summarize an enriched Reddit ad analytics report and post to Discord.
 
 - **Google Ads**
-  - `POST /mcp/tools/run_google_ads_portfolio_report` – One-command Google Ads campaign portfolio (daily performance → AI summary → optional Discord).
+  - `POST /mcp/tools/run_google_ads_portfolio_report` – One-command Google Ads portfolio. Supports `report_level: campaign | ad | audience_breakdown` and optional `breakdowns` (`device`, `network`, `day_of_week`) for more Meta-like alignment.
+  - `POST /mcp/tools/run_google_ads_portfolio_report_async` – Async version for MCP clients with strict per-call time limits. Returns `job_id` immediately.
 
 - **Meta (Facebook/Instagram) Ads**
-  - `POST /mcp/tools/run_meta_portfolio_report` – One-command Meta Ads campaign portfolio (daily performance → AI summary → optional Discord). Requires `META_ACCESS_TOKEN` and optionally `META_AD_ACCOUNT_ID`.
+  - `POST /mcp/tools/run_meta_portfolio_report` – One-command Meta Ads portfolio. Supports `report_level: campaign | ad | audience_breakdown`, includes spend totals/per-entity rows, reach/frequency, and optional targeting snapshot (`include_targeting: true`). Requires `META_ACCESS_TOKEN` and optionally `META_AD_ACCOUNT_ID`.
+  - `POST /mcp/tools/run_meta_portfolio_report_async` – Async version for MCP clients with strict per-call time limits. Returns `job_id` immediately.
+
+- **Shared async job tools**
+  - `POST /mcp/tools/get_job_status` – Poll status for async jobs (`queued`, `running`, `succeeded`, `failed`).
+  - `POST /mcp/tools/get_job_result` – Fetch the final result payload for a completed async job.
 
 - **Cross-Platform (LinkedIn + Reddit + Google Ads + Meta)**
   - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”, “Google Ads focus Z”, “Meta focus W”). Posts progress to Discord as each platform completes, then one cross-platform summary. Currency is reported per platform (e.g. SEK, EUR). When `GA4_PROPERTY_ID` is set, the run also fetches GA4 Paid Social attribution (by first user source) and Key Events (conversions), so the analyst can connect ad spend to which channels drove users and conversions.
@@ -472,6 +480,16 @@ These endpoints expose paid ads analytics over HTTP:
 ### API Examples
 
 **Note**: Replace `https://your-deployment-url.com` with your actual Cloud Run service URL in the examples below.
+
+#### MCP timeout guidance (important for external LLM clients)
+
+Some MCP clients enforce short call limits (for example ~30 seconds). For long-running tools, use async flow:
+
+1. Call the async tool (`*_async`) and get `job_id`.
+2. Poll `POST /mcp/tools/get_job_status` until `status` is `succeeded` or `failed`.
+3. Fetch final output via `POST /mcp/tools/get_job_result`.
+
+Portfolio tools support `timeout_seconds` (default `300`, min `10`, max `900`) and sync tools also support `async: true`.
 
 #### Generate Weekly Report
 ```bash
@@ -527,6 +545,8 @@ Date range behavior:
   - `LAST_DAY`      → yesterday only
   - `LAST_7_DAYS`   → last 7 full days ending yesterday
   - `LAST_30_DAYS`  → last 30 full days ending yesterday
+
+Tip: if a campaign was paused recently and 7 days looks empty, request a broader period explicitly with `start_date`/`end_date` or `relative_range: LAST_30_DAYS`.
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/fetch_linkedin_ad_analytics_report \
@@ -685,6 +705,36 @@ Response includes `creatives_discovered`, `had_data`, `discord_posted`, `enriche
 
 This endpoint is designed to be scheduled from **Google Cloud Scheduler**: a single job runs discovery, fetch, and summarize and posts the result to Discord.
 
+#### One-command LinkedIn portfolio report (async for MCP clients)
+
+Use this when your MCP client has a short request timeout.
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_linkedin_portfolio_report_async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_urn": "urn:li:sponsoredAccount:516183054",
+    "discovery_relative_range": "LAST_30_DAYS",
+    "timeout_seconds": 300
+  }'
+```
+
+Then poll:
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/get_job_status \
+  -H "Content-Type: application/json" \
+  -d '{"job_id":"job_abc123"}'
+```
+
+And fetch final result:
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/get_job_result \
+  -H "Content-Type: application/json" \
+  -d '{"job_id":"job_abc123"}'
+```
+
 #### Cross-Platform Marketing Budget Analysis (LinkedIn + Reddit + Google Ads + Meta)
 
 Runs LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then sends combined data to an AI marketing analyst and posts a single Discord report with **summary**, **key data points**, and **recommendation** on where to spend more budget (e.g. LinkedIn with focus on job function X, Reddit with focus on community Y, Google Ads with focus on campaigns/keywords, Meta with focus on campaigns/placements). Each platform’s spend and CPC are stated in that platform’s currency (e.g. SEK, EUR).
@@ -732,15 +782,30 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_google_ads_portfolio_
 
 If `customer_id` is omitted, `GOOGLE_ADS_CUSTOMER_ID` from `.env` is used. Default date range is last 30 days.
 
+Optional alignment parameters:
+- `report_level`: `campaign` (default), `ad`, or `audience_breakdown`
+- `breakdowns`: optional list for `audience_breakdown` (supported: `device`, `network`, `day_of_week`)
+
 #### Meta Ads portfolio report
 
 Requires a long-lived system user access token with `ads_management` and `ads_read`. Add to your `.env`: `META_ACCESS_TOKEN`, and optionally `META_AD_ACCOUNT_ID` (numeric, no `act_` prefix). Currency (e.g. SEK) is read from the ad account and included in the report.
+
+Supported report levels:
+- `campaign` (default): total + per-campaign spend, clicks, conversions, reach, frequency
+- `ad`: individual ad/creative performance (`ad_id`, `ad_name`, plus campaign/adset context)
+- `audience_breakdown`: campaign performance broken down by dimensions like `age`, `gender`, `country` (`breakdowns` list)
+
+Optional:
+- `include_targeting: true` to include ad set targeting configuration snapshot
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/run_meta_portfolio_report \
   -H "Content-Type: application/json" \
   -d '{
-    "relative_range": "LAST_30_DAYS",
+    "report_level": "ad",
+    "start_date": "2026-02-01",
+    "end_date": "2026-02-15",
+    "include_targeting": true,
     "post_to_discord": true
   }'
 ```

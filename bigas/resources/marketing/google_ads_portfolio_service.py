@@ -25,12 +25,14 @@ def run_google_ads_campaign_portfolio(
     end_date_s: Optional[str],
     customer_id: Optional[str],
     login_customer_id: Optional[str] = None,
+    report_level: str = "campaign",
+    breakdowns: Optional[list[str]] = None,
     store_raw: bool = False,
     store_enriched: bool = False,
     storage: Optional[StorageService] = None,
 ) -> Dict[str, Any]:
     """
-    Run a Google Ads campaign-level daily performance report and optionally store raw/enriched data in GCS.
+    Run a Google Ads performance report and optionally store raw/enriched data in GCS.
 
     Returns a dict with:
       - status
@@ -55,12 +57,38 @@ def run_google_ads_campaign_portfolio(
         raise ValueError("customer_id is required (or set GOOGLE_ADS_CUSTOMER_ID).")
 
     login_customer_id = (login_customer_id or os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "").strip() or None
+    report_level = (report_level or "campaign").strip().lower()
+    if report_level not in {"campaign", "ad", "audience_breakdown"}:
+        raise ValueError("report_level must be one of: campaign, ad, audience_breakdown")
+    clean_breakdowns = [str(b).strip() for b in (breakdowns or []) if str(b).strip()]
+    if report_level == "audience_breakdown" and not clean_breakdowns:
+        clean_breakdowns = ["device"]
 
     service = GoogleAdsService(login_customer_id=login_customer_id)
-    query = GoogleAdsService.build_campaign_daily_performance_query(start_d, end_d)
+    query = GoogleAdsService.build_performance_query(
+        start=start_d,
+        end=end_d,
+        report_level=report_level,
+        breakdowns=clean_breakdowns,
+        include_optional_reach_metrics=True,
+    )
+    fallback_query = GoogleAdsService.build_performance_query(
+        start=start_d,
+        end=end_d,
+        report_level=report_level,
+        breakdowns=clean_breakdowns,
+        include_optional_reach_metrics=False,
+    )
 
-    raw_rows, raw_chunks = service.search_stream(customer_id=customer_id, query=query)
-    norm = GoogleAdsService.normalize_campaign_daily_rows(raw_rows)
+    try:
+        raw_rows, raw_chunks = service.search_stream(customer_id=customer_id, query=query)
+        used_query = query
+    except Exception:
+        logger.warning("Google Ads primary query failed, retrying fallback without optional reach metrics")
+        raw_rows, raw_chunks = service.search_stream(customer_id=customer_id, query=fallback_query)
+        used_query = fallback_query
+
+    norm = GoogleAdsService.normalize_campaign_daily_rows(raw_rows, report_level=report_level, breakdowns=clean_breakdowns)
     rows = norm["rows"]
     summary = norm["summary"]
 
@@ -73,16 +101,18 @@ def run_google_ads_campaign_portfolio(
         meta = {
             "customer_id": customer_id,
             "login_customer_id": login_customer_id,
+            "report_level": report_level,
+            "breakdowns": clean_breakdowns,
             "range_start": start_d.isoformat(),
             "range_end": end_d.isoformat(),
-            "query": query,
+            "query": used_query,
         }
         if store_raw:
             raw_blob = storage.store_raw_ads_report(
                 platform="google_ads",
                 report_data={"chunks": raw_chunks},
                 report_date=report_date,
-                filename="search_stream.json",
+                filename=f"{report_level}_search_stream.json",
                 metadata=meta,
             )
         if store_enriched:
@@ -92,12 +122,14 @@ def run_google_ads_campaign_portfolio(
                 "context": {
                     "customer_id": customer_id,
                     "login_customer_id": login_customer_id,
+                    "report_level": report_level,
+                    "breakdowns": clean_breakdowns,
                     "start_date": start_d.isoformat(),
                     "end_date": end_d.isoformat(),
                 },
             }
             enriched_blob = storage.store_json(
-                blob_name=f"enriched_ads/google_ads/{report_date}/campaign_daily.json",
+                blob_name=f"enriched_ads/google_ads/{report_date}/{report_level}_daily.json",
                 data={"metadata": meta, "payload": {"enriched_response": enriched_payload}},
             )
 
@@ -106,9 +138,11 @@ def run_google_ads_campaign_portfolio(
         "request_metadata": {
             "customer_id": customer_id,
             "login_customer_id": login_customer_id,
+            "report_level": report_level,
+            "breakdowns": clean_breakdowns,
             "start_date": start_d.isoformat(),
             "end_date": end_d.isoformat(),
-            "query": query,
+            "query": used_query,
         },
         "summary": summary,
         "rows": rows,
