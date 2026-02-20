@@ -1426,7 +1426,7 @@ def get_manifest():
             {"name": "reddit_exchange_code", "description": "Exchange a Reddit OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/reddit_exchange_code", "method": "POST"},
             {"name": "fetch_reddit_ad_analytics_report", "description": "Fetch Reddit Ads performance report and store raw + enriched in GCS.", "path": "/mcp/tools/fetch_reddit_ad_analytics_report", "method": "POST"},
             {"name": "fetch_reddit_audience_report", "description": "Fetch Reddit Ads audience report: interests, communities, country, region, or DMA (reach and metrics per segment).", "path": "/mcp/tools/fetch_reddit_audience_report", "method": "POST"},
-            {"name": "summarize_reddit_ad_analytics", "description": "Summarize Reddit ads from enriched GCS blob; post to Discord.", "path": "/mcp/tools/summarize_reddit_ad_analytics", "method": "POST"},
+            {"name": "summarize_reddit_ad_analytics", "description": "Summarize Reddit ads from enriched GCS blob; post to Discord.", "path": "/mcp/tools/summarize_reddit_ad_analytics", "method": "POST", "parameters": {"type": "object", "properties": {"enriched_storage_path": {"type": "string", "description": "GCS path to Reddit enriched blob (required). Example: raw_ads/reddit/2026-02-19/ad_performance_...enriched.json"}, "webhook_url": {"type": "string", "description": "Optional Discord webhook URL override"}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "sample_limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 200}}, "required": ["enriched_storage_path"]}},
             {"name": "run_reddit_portfolio_report", "description": "One-command Reddit ads: fetch report, summarize, post to Discord. Supports async mode for MCP clients with short timeouts.", "path": "/mcp/tools/run_reddit_portfolio_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "relative_range": {"type": "string", "enum": ["LAST_7_DAYS", "LAST_30_DAYS"], "default": "LAST_7_DAYS"}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "include_audience": {"type": "boolean", "default": True}, "post_to_discord": {"type": "boolean", "default": True}, "async": {"type": "boolean", "default": False}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
             {"name": "run_reddit_portfolio_report_async", "description": "Async Reddit portfolio report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/run_reddit_portfolio_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "relative_range": {"type": "string", "enum": ["LAST_7_DAYS", "LAST_30_DAYS"], "default": "LAST_7_DAYS"}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "include_audience": {"type": "boolean", "default": True}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
             {"name": "run_linkedin_portfolio_report", "description": "One-command LinkedIn portfolio: discover creatives, fetch demographics, summarize, post to Discord. Supports async mode for MCP clients with short timeouts.", "path": "/mcp/tools/run_linkedin_portfolio_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_urn": {"type": "string"}, "discovery_relative_range": {"type": "string", "enum": ["LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS"], "default": "LAST_30_DAYS"}, "discovery_start_date": {"type": "string", "description": "YYYY-MM-DD"}, "discovery_end_date": {"type": "string", "description": "YYYY-MM-DD"}, "max_creatives_per_run": {"type": "integer", "default": 10}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "async": {"type": "boolean", "default": False}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
@@ -3521,6 +3521,76 @@ def summarize_reddit_ad_analytics():
         summary = enriched.get("summary") or {}
         context = enriched.get("context") or {}
 
+        def _to_int(value: Any, default: int = 0) -> int:
+            try:
+                if value is None:
+                    return default
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        def _to_float(value: Any, default: float = 0.0) -> float:
+            try:
+                if value is None:
+                    return default
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        calc_impressions = 0
+        calc_clicks = 0
+        calc_spend = 0.0
+        for el in elements:
+            if not isinstance(el, dict):
+                continue
+            metrics = el.get("metrics") or {}
+            if not isinstance(metrics, dict):
+                continue
+            calc_impressions += _to_int(metrics.get("impressions"), 0)
+            calc_clicks += _to_int(metrics.get("clicks"), 0)
+            calc_spend += _to_float(metrics.get("spend"), 0.0)
+
+        total_impressions = _to_int(summary.get("total_impressions"), calc_impressions)
+        total_clicks = _to_int(summary.get("total_clicks"), calc_clicks)
+        total_spend = _to_float(summary.get("total_spend"), calc_spend)
+        total_ctr_pct_val = summary.get("total_ctr_pct")
+        if total_ctr_pct_val is None:
+            total_ctr_pct = round((100.0 * total_clicks / total_impressions), 2) if total_impressions > 0 else None
+        else:
+            try:
+                total_ctr_pct = round(float(total_ctr_pct_val), 2)
+            except (TypeError, ValueError):
+                total_ctr_pct = round((100.0 * total_clicks / total_impressions), 2) if total_impressions > 0 else None
+
+        total_cpc_val = summary.get("total_cpc")
+        if total_cpc_val is None:
+            total_cpc = round((total_spend / total_clicks), 2) if total_clicks > 0 else None
+        else:
+            try:
+                total_cpc = round(float(total_cpc_val), 2)
+            except (TypeError, ValueError):
+                total_cpc = round((total_spend / total_clicks), 2) if total_clicks > 0 else None
+
+        spend_currency = (
+            (context.get("spend_currency") or summary.get("total_spend_currency") or "EUR")
+            if isinstance(context, dict)
+            else (summary.get("total_spend_currency") or "EUR")
+        )
+        if isinstance(spend_currency, str):
+            spend_currency = spend_currency.strip().upper() or "EUR"
+        else:
+            spend_currency = "EUR"
+
+        metrics_summary = {
+            "impressions": total_impressions,
+            "clicks": total_clicks,
+            "spend": round(total_spend, 2),
+            "spend_currency": spend_currency,
+            "ctr_pct": total_ctr_pct,
+            "cpc": total_cpc,
+            "rows_count": len(elements),
+        }
+
         if not elements:
             no_data_message = (
                 "## 📊 Reddit Ads Report\n\n"
@@ -3535,6 +3605,15 @@ def summarize_reddit_ad_analytics():
                     "had_data": False,
                     "discord_posted": bool(webhook_url),
                     "enriched_storage_path": enriched_path,
+                    "metrics_summary": {
+                        "impressions": 0,
+                        "clicks": 0,
+                        "spend": 0.0,
+                        "spend_currency": spend_currency,
+                        "ctr_pct": None,
+                        "cpc": None,
+                        "rows_count": 0,
+                    },
                 }
             )
 
@@ -3598,6 +3677,7 @@ def summarize_reddit_ad_analytics():
                 "discord_posted": bool(webhook_url),
                 "enriched_storage_path": enriched_path,
                 "used_model": model,
+                "metrics_summary": metrics_summary,
             }
         )
     except Exception as e:
