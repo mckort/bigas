@@ -127,27 +127,77 @@ class GoogleAdsService:
         return data.get("resourceNames", []) or []
 
     @staticmethod
-    def build_campaign_daily_performance_query(start: date, end: date) -> str:
+    def build_performance_query(
+        start: date,
+        end: date,
+        report_level: str = "campaign",
+        breakdowns: Optional[List[str]] = None,
+        include_optional_reach_metrics: bool = True,
+    ) -> str:
         """
-        Simple GAQL query for daily campaign performance.
+        Build GAQL for campaign/ad/audience-like performance.
+        report_level:
+          - campaign
+          - ad
+          - audience_breakdown (campaign with selected segment breakdown columns)
         """
         start_s = start.isoformat()
         end_s = end.isoformat()
+        level = (report_level or "campaign").strip().lower()
+        if level not in {"campaign", "ad", "audience_breakdown"}:
+            raise ValueError("report_level must be one of: campaign, ad, audience_breakdown")
+
+        base_select = [
+            "segments.date",
+            "campaign.id",
+            "campaign.name",
+            "customer.currency_code",
+            "metrics.impressions",
+            "metrics.clicks",
+            "metrics.cost_micros",
+            "metrics.conversions",
+            "metrics.conversions_value",
+        ]
+        if include_optional_reach_metrics:
+            # Not all account/resource combinations support these; caller can fallback without them.
+            base_select += [
+                "metrics.unique_users",
+                "metrics.average_impression_frequency_per_user",
+            ]
+
+        from_resource = "campaign"
+        if level == "ad":
+            from_resource = "ad_group_ad"
+            base_select += [
+                "ad_group.id",
+                "ad_group.name",
+                "ad_group_ad.ad.id",
+                "ad_group_ad.ad.name",
+            ]
+        elif level == "audience_breakdown":
+            breakdown_map = {
+                "device": "segments.device",
+                "network": "segments.ad_network_type",
+                "day_of_week": "segments.day_of_week",
+            }
+            for b in (breakdowns or []):
+                key = str(b).strip().lower()
+                col = breakdown_map.get(key)
+                if col and col not in base_select:
+                    base_select.append(col)
+
+        select_clause = ", ".join(base_select)
         return (
-            "SELECT "
-            "segments.date, "
-            "campaign.id, "
-            "campaign.name, "
-            "customer.currency_code, "
-            "metrics.impressions, "
-            "metrics.clicks, "
-            "metrics.cost_micros, "
-            "metrics.conversions, "
-            "metrics.conversions_value "
-            "FROM campaign "
+            f"SELECT {select_clause} "
+            f"FROM {from_resource} "
             f"WHERE segments.date BETWEEN '{start_s}' AND '{end_s}' "
             "ORDER BY segments.date"
         )
+
+    @staticmethod
+    def build_campaign_daily_performance_query(start: date, end: date) -> str:
+        """Backward-compatible wrapper for campaign-level query."""
+        return GoogleAdsService.build_performance_query(start=start, end=end, report_level="campaign")
 
     def search_stream(self, customer_id: str, query: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
@@ -191,7 +241,11 @@ class GoogleAdsService:
         return rows, chunks
 
     @staticmethod
-    def _flatten_campaign_daily_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _flatten_campaign_daily_row(
+        row: Dict[str, Any],
+        report_level: str = "campaign",
+        breakdowns: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         Flatten a single Google Ads SearchStream row into a simple, stable dict.
 
@@ -211,8 +265,12 @@ class GoogleAdsService:
         if not isinstance(row, dict):
             return {}
 
+        report_level = (report_level or "campaign").strip().lower()
         segments = row.get("segments") or {}
         campaign = row.get("campaign") or {}
+        ad_group = row.get("ad_group") or {}
+        ad_group_ad = row.get("ad_group_ad") or {}
+        ad = ad_group_ad.get("ad") if isinstance(ad_group_ad, dict) else {}
         customer = row.get("customer") or {}
         metrics = row.get("metrics") or {}
 
@@ -226,22 +284,29 @@ class GoogleAdsService:
         cost_micros = _safe_float(metrics.get("cost_micros"))
         conversions = _safe_float(metrics.get("conversions"))
         conv_value = _safe_float(metrics.get("conversions_value"))
+        unique_users = int(_safe_float(metrics.get("unique_users"))) if metrics.get("unique_users") is not None else None
+        avg_freq = _safe_float(metrics.get("average_impression_frequency_per_user"))
 
         cost = cost_micros / 1_000_000.0 if cost_micros else 0.0
 
         ctr_pct = (100.0 * clicks / impressions) if impressions > 0 else 0.0
+        if not avg_freq and impressions > 0 and unique_users and unique_users > 0:
+            avg_freq = float(impressions) / float(unique_users)
         cpc = (cost / clicks) if clicks > 0 else 0.0
         cpa = (cost / conversions) if conversions > 0 else 0.0
         roas = (conv_value / cost) if cost > 0 else 0.0
 
-        return {
+        out = {
             "date": date_s,
             "campaign_id": cid,
             "campaign_name": cname,
+            "report_level": report_level,
             "currency_code": currency_code or None,
             "metrics": {
                 "impressions": impressions,
                 "clicks": clicks,
+                "reach": unique_users,
+                "frequency": round(avg_freq, 4) if avg_freq else 0.0,
                 "cost": round(cost, 4),
                 "conversions": round(conversions, 4),
                 "conversions_value": round(conv_value, 4),
@@ -253,9 +318,31 @@ class GoogleAdsService:
                 "roas": round(roas, 4),
             },
         }
+        if report_level == "ad":
+            out["ad_group_id"] = ad_group.get("id")
+            out["ad_group_name"] = ad_group.get("name")
+            out["ad_id"] = ad.get("id") if isinstance(ad, dict) else None
+            out["ad_name"] = ad.get("name") if isinstance(ad, dict) else None
+        if report_level == "audience_breakdown":
+            segments_out: Dict[str, Any] = {}
+            for b in (breakdowns or []):
+                bk = str(b).strip().lower()
+                if bk == "device" and segments.get("device") is not None:
+                    segments_out["device"] = segments.get("device")
+                elif bk == "network" and segments.get("ad_network_type") is not None:
+                    segments_out["network"] = segments.get("ad_network_type")
+                elif bk == "day_of_week" and segments.get("day_of_week") is not None:
+                    segments_out["day_of_week"] = segments.get("day_of_week")
+            if segments_out:
+                out["segments"] = segments_out
+        return out
 
     @staticmethod
-    def normalize_campaign_daily_rows(raw_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def normalize_campaign_daily_rows(
+        raw_rows: List[Dict[str, Any]],
+        report_level: str = "campaign",
+        breakdowns: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         Normalize SearchStream results into:
           - 'rows': flattened per-day per-campaign dicts
@@ -264,6 +351,7 @@ class GoogleAdsService:
         out_rows: List[Dict[str, Any]] = []
         tot_impr = 0
         tot_clicks = 0
+        tot_reach = 0
         tot_cost = 0.0
         tot_conv = 0.0
         tot_conv_val = 0.0
@@ -272,7 +360,7 @@ class GoogleAdsService:
         for r in raw_rows or []:
             if not isinstance(r, dict):
                 continue
-            flat = GoogleAdsService._flatten_campaign_daily_row(r)
+            flat = GoogleAdsService._flatten_campaign_daily_row(r, report_level=report_level, breakdowns=breakdowns)
             if not flat:
                 continue
             out_rows.append(flat)
@@ -282,11 +370,13 @@ class GoogleAdsService:
             m = flat.get("metrics") or {}
             tot_impr += int(m.get("impressions") or 0)
             tot_clicks += int(m.get("clicks") or 0)
+            tot_reach += int(m.get("reach") or 0)
             tot_cost += _safe_float(m.get("cost"))
             tot_conv += _safe_float(m.get("conversions"))
             tot_conv_val += _safe_float(m.get("conversions_value"))
 
         summary_ctr = (100.0 * tot_clicks / tot_impr) if tot_impr > 0 else 0.0
+        summary_freq = (tot_impr / tot_reach) if tot_reach > 0 else 0.0
         summary_cpc = (tot_cost / tot_clicks) if tot_clicks > 0 else 0.0
         summary_cpa = (tot_cost / tot_conv) if tot_conv > 0 else 0.0
         summary_roas = (tot_conv_val / tot_cost) if tot_cost > 0 else 0.0
@@ -294,6 +384,8 @@ class GoogleAdsService:
         summary = {
             "total_impressions": tot_impr,
             "total_clicks": tot_clicks,
+            "total_reach": tot_reach,
+            "avg_frequency": round(summary_freq, 4),
             "total_cost": round(tot_cost, 2),
             "total_conversions": round(tot_conv, 4),
             "total_conversions_value": round(tot_conv_val, 4),
@@ -302,7 +394,10 @@ class GoogleAdsService:
             "cpa": round(summary_cpa, 4),
             "roas": round(summary_roas, 4),
             "currency": currency_code,
+            "report_level": report_level,
         }
+        if breakdowns:
+            summary["breakdowns"] = [str(b).strip() for b in breakdowns if str(b).strip()]
 
         return {"rows": out_rows, "summary": summary}
 

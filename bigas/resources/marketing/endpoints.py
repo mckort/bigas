@@ -18,6 +18,8 @@ import logging
 import json
 import hashlib
 import traceback
+import threading
+import uuid
 from decimal import Decimal, InvalidOperation
 from bigas.resources.marketing.service import MarketingAnalyticsService
 from bigas.resources.marketing.google_ads_portfolio_service import (
@@ -42,6 +44,10 @@ import re
 from typing import Dict, Any, Optional, List, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+_ASYNC_JOBS: Dict[str, Dict[str, Any]] = {}
+_ASYNC_JOBS_LOCK = threading.Lock()
 
 
 def _normalize_reddit_spend(spend: Any, row: Optional[Dict[str, Any]] = None) -> Optional[float]:
@@ -86,6 +92,7 @@ def _normalize_audience_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         try:
             imp = int(row.get("impressions") or 0)
             clk = int(row.get("clicks") or 0)
+            reach = int(row.get("reach") or 0)
             spend = row.get("spend")
             if imp > 0:
                 row["ctr_pct"] = round(100.0 * clk / imp, 2)
@@ -95,9 +102,14 @@ def _normalize_audience_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                 row["cpc"] = round(float(spend) / clk, 2)
             else:
                 row["cpc"] = None
+            if imp > 0 and reach > 0:
+                row["frequency"] = round(float(imp) / float(reach), 4)
+            else:
+                row["frequency"] = None
         except (TypeError, ValueError):
             row["ctr_pct"] = None
             row["cpc"] = None
+            row["frequency"] = None
         out.append(row)
     return out
 
@@ -573,11 +585,17 @@ def _post_google_ads_portfolio_to_discord(
     date_range_s = f"{meta.get('start_date')}–{meta.get('end_date')}"
     customer_id = meta.get("customer_id")
 
+    report_level = (meta.get("report_level") or "campaign").strip().lower()
+    level_label = {
+        "campaign": "Campaign-level",
+        "ad": "Ad-level creative",
+        "audience_breakdown": "Audience-breakdown",
+    }.get(report_level, "Campaign-level")
     discord_message = (
-        "## 📊 Google Ads Campaign Portfolio Report\n\n"
+        "## 📊 Google Ads Portfolio Report\n\n"
         f"{analysis_text}\n\n"
         "---\n"
-        f"_Campaign-level performance for {date_range_s} (customer {customer_id})._"
+        f"_{level_label} performance for {date_range_s} (customer {customer_id})._"
     )
     post_long_to_discord(webhook_url, discord_message)
 
@@ -625,11 +643,17 @@ def _post_meta_portfolio_to_discord(
     date_range_s = f"{meta.get('start_date')}–{meta.get('end_date')}"
     account_id = meta.get("account_id")
 
+    report_level = (meta.get("report_level") or "campaign").strip().lower()
+    level_label = {
+        "campaign": "Campaign-level",
+        "ad": "Ad-level creative",
+        "audience_breakdown": "Audience-breakdown",
+    }.get(report_level, "Campaign-level")
     discord_message = (
-        "## 📊 Meta Ads Campaign Portfolio Report\n\n"
+        "## 📊 Meta Ads Portfolio Report\n\n"
         f"{analysis_text}\n\n"
         "---\n"
-        f"_Campaign-level performance for {date_range_s} (account {account_id})._"
+        f"_{level_label} performance for {date_range_s} (account {account_id})._"
     )
     post_long_to_discord(webhook_url, discord_message)
 
@@ -982,6 +1006,161 @@ def _get_ga4_paid_social_attribution(
     }
 
 
+def _create_async_job(payload: Dict[str, Any], timeout_seconds: int) -> str:
+    job_id = f"job_{uuid.uuid4().hex[:12]}"
+    now = datetime.utcnow().isoformat()
+    with _ASYNC_JOBS_LOCK:
+        _ASYNC_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "created_at": now,
+            "updated_at": now,
+            "timeout_seconds": timeout_seconds,
+            "progress_pct": 0,
+            "stage": "queued",
+            "result": None,
+            "error": None,
+            "payload_preview": {
+                "account_urn": payload.get("account_urn"),
+                "discovery_relative_range": payload.get("discovery_relative_range"),
+                "discovery_start_date": payload.get("discovery_start_date"),
+                "discovery_end_date": payload.get("discovery_end_date"),
+            },
+        }
+    return job_id
+
+
+def _update_async_job(job_id: str, **fields: Any) -> None:
+    with _ASYNC_JOBS_LOCK:
+        job = _ASYNC_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(fields)
+        job["updated_at"] = datetime.utcnow().isoformat()
+
+
+def _get_async_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with _ASYNC_JOBS_LOCK:
+        job = _ASYNC_JOBS.get(job_id)
+        if not job:
+            return None
+        return dict(job)
+
+
+def _run_linkedin_portfolio_job(app_obj: Any, job_id: str, payload: Dict[str, Any]) -> None:
+    _run_async_tool_job(
+        app_obj=app_obj,
+        job_id=job_id,
+        payload=payload,
+        tool_path="/mcp/tools/run_linkedin_portfolio_report",
+        tool_label="LinkedIn portfolio",
+    )
+
+
+def _run_reddit_portfolio_job(app_obj: Any, job_id: str, payload: Dict[str, Any]) -> None:
+    _run_async_tool_job(
+        app_obj=app_obj,
+        job_id=job_id,
+        payload=payload,
+        tool_path="/mcp/tools/run_reddit_portfolio_report",
+        tool_label="Reddit portfolio",
+    )
+
+
+def _run_google_ads_portfolio_job(app_obj: Any, job_id: str, payload: Dict[str, Any]) -> None:
+    _run_async_tool_job(
+        app_obj=app_obj,
+        job_id=job_id,
+        payload=payload,
+        tool_path="/mcp/tools/run_google_ads_portfolio_report",
+        tool_label="Google Ads portfolio",
+    )
+
+
+def _run_meta_portfolio_job(app_obj: Any, job_id: str, payload: Dict[str, Any]) -> None:
+    _run_async_tool_job(
+        app_obj=app_obj,
+        job_id=job_id,
+        payload=payload,
+        tool_path="/mcp/tools/run_meta_portfolio_report",
+        tool_label="Meta portfolio",
+    )
+
+
+def _run_async_tool_job(
+    app_obj: Any,
+    job_id: str,
+    payload: Dict[str, Any],
+    tool_path: str,
+    tool_label: str,
+) -> None:
+    """
+    Execute any long-running portfolio tool asynchronously by invoking the existing endpoint internally.
+    """
+    _update_async_job(job_id, status="running", stage="running_pipeline", progress_pct=10)
+    try:
+        worker_payload = dict(payload)
+        worker_payload["async"] = False
+        worker_payload["_internal_async_worker"] = True
+
+        internal_headers = {}
+        internal_access_key = (payload.get("_internal_access_key") or "").strip()
+        if internal_access_key:
+            internal_headers["X-Bigas-Access-Key"] = internal_access_key
+
+        with app_obj.app_context():
+            with app_obj.test_client() as client:
+                resp = client.post(
+                    tool_path,
+                    json=worker_payload,
+                    headers=internal_headers,
+                )
+
+        result_body = {}
+        if resp.is_json:
+            result_body = resp.get_json() or {}
+        else:
+            result_body = {"raw_response": resp.get_data(as_text=True)}
+
+        if resp.status_code >= 400 or (isinstance(result_body, dict) and result_body.get("error")):
+            err = (
+                result_body.get("error")
+                if isinstance(result_body, dict)
+                else f"{tool_label} job failed with status {resp.status_code}"
+            )
+            if not err:
+                err = result_body.get("detail") if isinstance(result_body, dict) else None
+            if not err:
+                err = f"{tool_label} job failed with status {resp.status_code}"
+            _update_async_job(
+                job_id,
+                status="failed",
+                stage="failed",
+                progress_pct=100,
+                error=sanitize_error_message(str(err)),
+                result=result_body if isinstance(result_body, dict) else None,
+            )
+            return
+
+        _update_async_job(
+            job_id,
+            status="succeeded",
+            stage="completed",
+            progress_pct=100,
+            result=result_body,
+            error=None,
+        )
+    except Exception as e:
+        logger.error("Async %s job %s failed: %s", tool_label, job_id, traceback.format_exc())
+        _update_async_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            progress_pct=100,
+            error=sanitize_error_message(str(e)),
+        )
+
+
 @marketing_bp.route('/mcp/tools/fetch_analytics_report', methods=['POST'])
 def fetch_analytics_report():
     # Rate limiting check
@@ -1242,16 +1421,22 @@ def get_manifest():
             {"name": "analyze_underperforming_pages", "description": "Analyzes underperforming pages from stored reports and generates AI-powered improvement suggestions.", "path": "/mcp/tools/analyze_underperforming_pages", "method": "POST"},
             {"name": "cleanup_old_reports", "description": "Cleans up old weekly reports to manage storage costs.", "path": "/mcp/tools/cleanup_old_reports", "method": "POST"},
             {"name": "linkedin_ads_health_check", "description": "Smoke test LinkedIn Ads API access by listing ad accounts.", "path": "/mcp/tools/linkedin_ads_health_check", "method": "GET"},
-            {"name": "fetch_linkedin_ad_analytics_report", "description": "Fetch LinkedIn adAnalytics (account-level pivot) and store raw data in GCS.", "path": "/mcp/tools/fetch_linkedin_ad_analytics_report", "method": "POST"},
+            {"name": "fetch_linkedin_ad_analytics_report", "description": "Fetch LinkedIn adAnalytics and store raw data in GCS. Supports explicit date range via start_date/end_date or relative_range.", "path": "/mcp/tools/fetch_linkedin_ad_analytics_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_urn": {"type": "string"}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "relative_range": {"type": "string", "enum": ["LAST_DAY", "LAST_7_DAYS", "LAST_30_DAYS"]}, "time_granularity": {"type": "string", "enum": ["DAILY", "MONTHLY", "ALL"], "default": "DAILY"}, "pivot": {"type": "string", "default": "ACCOUNT"}, "pivots": {"type": "array", "items": {"type": "string"}}, "store_raw": {"type": "boolean", "default": True}, "force_refresh": {"type": "boolean", "default": False}, "include_entity_names": {"type": "boolean", "default": False}}}},
             {"name": "linkedin_exchange_code", "description": "Exchange a LinkedIn OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/linkedin_exchange_code", "method": "POST"},
             {"name": "reddit_exchange_code", "description": "Exchange a Reddit OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/reddit_exchange_code", "method": "POST"},
             {"name": "fetch_reddit_ad_analytics_report", "description": "Fetch Reddit Ads performance report and store raw + enriched in GCS.", "path": "/mcp/tools/fetch_reddit_ad_analytics_report", "method": "POST"},
             {"name": "fetch_reddit_audience_report", "description": "Fetch Reddit Ads audience report: interests, communities, country, region, or DMA (reach and metrics per segment).", "path": "/mcp/tools/fetch_reddit_audience_report", "method": "POST"},
             {"name": "summarize_reddit_ad_analytics", "description": "Summarize Reddit ads from enriched GCS blob; post to Discord.", "path": "/mcp/tools/summarize_reddit_ad_analytics", "method": "POST"},
-            {"name": "run_reddit_portfolio_report", "description": "One-command Reddit ads: fetch report, summarize, post to Discord.", "path": "/mcp/tools/run_reddit_portfolio_report", "method": "POST"},
-            {"name": "run_linkedin_portfolio_report", "description": "One-command LinkedIn portfolio: discover creatives, fetch demographics, summarize, post to Discord.", "path": "/mcp/tools/run_linkedin_portfolio_report", "method": "POST"},
-            {"name": "run_google_ads_portfolio_report", "description": "One-command Google Ads campaign portfolio: daily performance, summary, optional Discord.", "path": "/mcp/tools/run_google_ads_portfolio_report", "method": "POST"},
-            {"name": "run_meta_portfolio_report", "description": "One-command Meta (Facebook/Instagram) Ads campaign portfolio: daily performance, summary, optional Discord.", "path": "/mcp/tools/run_meta_portfolio_report", "method": "POST"},
+            {"name": "run_reddit_portfolio_report", "description": "One-command Reddit ads: fetch report, summarize, post to Discord. Supports async mode for MCP clients with short timeouts.", "path": "/mcp/tools/run_reddit_portfolio_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "relative_range": {"type": "string", "enum": ["LAST_7_DAYS", "LAST_30_DAYS"], "default": "LAST_7_DAYS"}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "include_audience": {"type": "boolean", "default": True}, "post_to_discord": {"type": "boolean", "default": True}, "async": {"type": "boolean", "default": False}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
+            {"name": "run_reddit_portfolio_report_async", "description": "Async Reddit portfolio report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/run_reddit_portfolio_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "relative_range": {"type": "string", "enum": ["LAST_7_DAYS", "LAST_30_DAYS"], "default": "LAST_7_DAYS"}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "include_audience": {"type": "boolean", "default": True}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
+            {"name": "run_linkedin_portfolio_report", "description": "One-command LinkedIn portfolio: discover creatives, fetch demographics, summarize, post to Discord. Supports async mode for MCP clients with short timeouts.", "path": "/mcp/tools/run_linkedin_portfolio_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_urn": {"type": "string"}, "discovery_relative_range": {"type": "string", "enum": ["LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS"], "default": "LAST_30_DAYS"}, "discovery_start_date": {"type": "string", "description": "YYYY-MM-DD"}, "discovery_end_date": {"type": "string", "description": "YYYY-MM-DD"}, "max_creatives_per_run": {"type": "integer", "default": 10}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "async": {"type": "boolean", "default": False}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
+            {"name": "run_linkedin_portfolio_report_async", "description": "Async LinkedIn portfolio report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/run_linkedin_portfolio_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"account_urn": {"type": "string"}, "discovery_relative_range": {"type": "string", "enum": ["LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS"], "default": "LAST_30_DAYS"}, "discovery_start_date": {"type": "string", "description": "YYYY-MM-DD"}, "discovery_end_date": {"type": "string", "description": "YYYY-MM-DD"}, "max_creatives_per_run": {"type": "integer", "default": 10}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
+            {"name": "get_job_status", "description": "Poll async job status for long-running MCP tools.", "path": "/mcp/tools/get_job_status", "method": "POST", "parameters": {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}},
+            {"name": "get_job_result", "description": "Fetch async job result for long-running MCP tools.", "path": "/mcp/tools/get_job_result", "method": "POST", "parameters": {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}},
+            {"name": "run_google_ads_portfolio_report", "description": "One-command Google Ads portfolio: campaign/ad/audience-breakdown performance, summary, optional Discord. Supports async mode for MCP clients with short timeouts.", "path": "/mcp/tools/run_google_ads_portfolio_report", "method": "POST", "parameters": {"type": "object", "properties": {"customer_id": {"type": "string"}, "login_customer_id": {"type": "string"}, "report_level": {"type": "string", "enum": ["campaign", "ad", "audience_breakdown"], "default": "campaign"}, "breakdowns": {"type": "array", "items": {"type": "string"}}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "post_to_discord": {"type": "boolean", "default": False}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "async": {"type": "boolean", "default": False}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
+            {"name": "run_google_ads_portfolio_report_async", "description": "Async Google Ads portfolio report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/run_google_ads_portfolio_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"customer_id": {"type": "string"}, "login_customer_id": {"type": "string"}, "report_level": {"type": "string", "enum": ["campaign", "ad", "audience_breakdown"], "default": "campaign"}, "breakdowns": {"type": "array", "items": {"type": "string"}}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "post_to_discord": {"type": "boolean", "default": False}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
+            {"name": "run_meta_portfolio_report", "description": "One-command Meta (Facebook/Instagram) Ads campaign portfolio: daily performance, summary, optional Discord. Supports async mode for MCP clients with short timeouts.", "path": "/mcp/tools/run_meta_portfolio_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "report_level": {"type": "string", "enum": ["campaign", "ad", "audience_breakdown"], "default": "campaign"}, "breakdowns": {"type": "array", "items": {"type": "string"}}, "include_targeting": {"type": "boolean", "default": False}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "post_to_discord": {"type": "boolean", "default": False}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "async": {"type": "boolean", "default": False}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
+            {"name": "run_meta_portfolio_report_async", "description": "Async Meta portfolio report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/run_meta_portfolio_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "report_level": {"type": "string", "enum": ["campaign", "ad", "audience_breakdown"], "default": "campaign"}, "breakdowns": {"type": "array", "items": {"type": "string"}}, "include_targeting": {"type": "boolean", "default": False}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "post_to_discord": {"type": "boolean", "default": False}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
             {"name": "run_cross_platform_marketing_analysis", "description": "Run LinkedIn, Reddit, Google Ads, and Meta portfolio reports (default last 30 days), then AI comparison: summary, key data, budget recommendation; post to Discord.", "path": "/mcp/tools/run_cross_platform_marketing_analysis", "method": "POST"},
             {"name": "reddit_ads_health_check", "description": "Smoke test Reddit Ads API and list ad accounts (verify REDDIT_AD_ACCOUNT_ID).", "path": "/mcp/tools/reddit_ads_health_check", "method": "GET"},
         ]
@@ -2072,7 +2257,7 @@ def fetch_reddit_ad_analytics_report():
         if not isinstance(data_rows, list):
             data_rows = []
 
-        # Normalize to Option A schema: segments, metrics (impressions, clicks, spend), spend_currency, derived (ctr_pct, avg_cpc)
+        # Normalize to Option A schema: segments, metrics (impressions, clicks, spend, reach), spend_currency, derived (ctr_pct, avg_cpc, frequency)
         # Reddit dashboard often shows a single currency (e.g. EUR) per account, but the API
         # can return different or mixed currencies. We normalize spend to a major unit and
         # track the per-row currency explicitly; the top-level context currency is derived
@@ -2091,6 +2276,7 @@ def fetch_reddit_ad_analytics_report():
             segments = seg_parts if seg_parts else [str(row)]
             imp = row.get("impressions")
             clk = row.get("clicks")
+            reach = row.get("reach")
             spend = _normalize_reddit_spend(row.get("spend"), row)
             ctr = row.get("ctr")
             ecpc = row.get("ecpc")
@@ -2100,6 +2286,14 @@ def fetch_reddit_ad_analytics_report():
                 .upper()
                 or default_currency
             )
+            frequency = None
+            try:
+                imp_i = int(imp) if imp is not None else None
+                reach_i = int(reach) if reach is not None else None
+                if imp_i is not None and reach_i and reach_i > 0:
+                    frequency = round(float(imp_i) / float(reach_i), 4)
+            except Exception:
+                frequency = None
             elements.append({
                 "segments": segments,
                 "campaign_id": row.get("campaign_id"),
@@ -2107,12 +2301,14 @@ def fetch_reddit_ad_analytics_report():
                 "metrics": {
                     "impressions": imp,
                     "clicks": clk,
+                    "reach": reach,
                     "spend": spend,
                     "spend_currency": row_currency,
                 },
                 "derived": {
                     "ctr_pct": float(ctr) if ctr is not None else None,
                     "avg_cpc": float(ecpc) if ecpc is not None else None,
+                    "frequency": frequency,
                 },
             })
 
@@ -3705,6 +3901,98 @@ def summarize_linkedin_creative_portfolio():
         return jsonify({"error": sanitized_error}), 500
 
 
+@marketing_bp.route('/mcp/tools/run_linkedin_portfolio_report_async', methods=['POST'])
+def run_linkedin_portfolio_report_async():
+    """
+    Async entrypoint for LinkedIn portfolio report.
+    Enqueues a background job and returns job metadata immediately.
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    timeout_seconds = int(data.get("timeout_seconds") or 300)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+
+    app_obj = current_app._get_current_object()
+    access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+    request_key = (request.headers.get(access_header) or "").strip()
+    if request_key:
+        data["_internal_access_key"] = request_key
+    job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+
+    t = threading.Thread(
+        target=_run_linkedin_portfolio_job,
+        args=(app_obj, job_id, data),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify(
+        {
+            "status": "accepted",
+            "job_id": job_id,
+            "poll_after_seconds": 5,
+            "timeout_seconds": timeout_seconds,
+        }
+    )
+
+
+@marketing_bp.route('/mcp/tools/get_job_status', methods=['POST'])
+def get_job_status():
+    data = request.json or {}
+    job_id = (data.get("job_id") or "").strip()
+    if not job_id:
+        return jsonify({"error": "job_id is required"}), 400
+
+    job = _get_async_job(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+
+    return jsonify(
+        {
+            "job_id": job["job_id"],
+            "status": job["status"],
+            "progress_pct": job.get("progress_pct", 0),
+            "stage": job.get("stage", "unknown"),
+            "updated_at": job.get("updated_at"),
+            "error": job.get("error"),
+            "result_available": bool(job.get("result")) and job.get("status") == "succeeded",
+        }
+    )
+
+
+@marketing_bp.route('/mcp/tools/get_job_result', methods=['POST'])
+def get_job_result():
+    data = request.json or {}
+    job_id = (data.get("job_id") or "").strip()
+    if not job_id:
+        return jsonify({"error": "job_id is required"}), 400
+
+    job = _get_async_job(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+
+    if job["status"] != "succeeded":
+        return jsonify(
+            {
+                "job_id": job["job_id"],
+                "status": job["status"],
+                "error": job.get("error"),
+                "result": job.get("result"),
+            }
+        )
+
+    return jsonify(
+        {
+            "job_id": job["job_id"],
+            "status": "succeeded",
+            "result": job.get("result"),
+        }
+    )
+
+
 @marketing_bp.route('/mcp/tools/run_linkedin_portfolio_report', methods=['POST'])
 def run_linkedin_portfolio_report():
     """
@@ -3731,6 +4019,32 @@ def run_linkedin_portfolio_report():
     is_valid, error_msg = validate_request_data(data)
     if not is_valid:
         return jsonify({"error": error_msg}), 400
+
+    # For MCP clients with hard per-call limits (e.g. 30s), return immediately and poll.
+    run_async = bool(data.get("async", False)) and not bool(data.get("_internal_async_worker", False))
+    timeout_seconds = int(data.get("timeout_seconds") or 300)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+    if run_async:
+        app_obj = current_app._get_current_object()
+        access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+        request_key = (request.headers.get(access_header) or "").strip()
+        if request_key:
+            data["_internal_access_key"] = request_key
+        job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+        t = threading.Thread(
+            target=_run_linkedin_portfolio_job,
+            args=(app_obj, job_id, data),
+            daemon=True,
+        )
+        t.start()
+        return jsonify(
+            {
+                "status": "accepted",
+                "job_id": job_id,
+                "poll_after_seconds": 5,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
 
     account_urn = (data.get("account_urn") or os.environ.get("LINKEDIN_AD_ACCOUNT_URN") or "").strip()
     if not account_urn:
@@ -3985,14 +4299,50 @@ def run_linkedin_portfolio_report():
         return jsonify({"error": sanitized_error}), 500
 
 
+@marketing_bp.route('/mcp/tools/run_google_ads_portfolio_report_async', methods=['POST'])
+def run_google_ads_portfolio_report_async():
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    timeout_seconds = int(data.get("timeout_seconds") or 300)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+
+    app_obj = current_app._get_current_object()
+    access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+    request_key = (request.headers.get(access_header) or "").strip()
+    if request_key:
+        data["_internal_access_key"] = request_key
+
+    job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+    t = threading.Thread(
+        target=_run_google_ads_portfolio_job,
+        args=(app_obj, job_id, data),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify(
+        {
+            "status": "accepted",
+            "job_id": job_id,
+            "poll_after_seconds": 5,
+            "timeout_seconds": timeout_seconds,
+        }
+    )
+
+
 @marketing_bp.route('/mcp/tools/run_google_ads_portfolio_report', methods=['POST'])
 def run_google_ads_portfolio_report():
     """
-    Run a Google Ads campaign-level daily performance portfolio report.
+    Run a Google Ads performance portfolio report.
 
     Request JSON:
       - customer_id: optional (default: GOOGLE_ADS_CUSTOMER_ID)
       - login_customer_id: optional (default: GOOGLE_ADS_LOGIN_CUSTOMER_ID)
+      - report_level: campaign | ad | audience_breakdown (default: campaign)
+      - breakdowns: optional list for audience_breakdown (device | network | day_of_week)
       - start_date, end_date: YYYY-MM-DD (optional; default last 30 days)
       - store_raw: optional bool (default: false)
       - store_enriched: optional bool (default: false)
@@ -4005,10 +4355,42 @@ def run_google_ads_portfolio_report():
     if not is_valid:
         return jsonify({"error": error_msg}), 400
 
+    run_async = bool(data.get("async", False)) and not bool(data.get("_internal_async_worker", False))
+    timeout_seconds = int(data.get("timeout_seconds") or 300)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+    if run_async:
+        app_obj = current_app._get_current_object()
+        access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+        request_key = (request.headers.get(access_header) or "").strip()
+        if request_key:
+            data["_internal_access_key"] = request_key
+        job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+        t = threading.Thread(
+            target=_run_google_ads_portfolio_job,
+            args=(app_obj, job_id, data),
+            daemon=True,
+        )
+        t.start()
+        return jsonify(
+            {
+                "status": "accepted",
+                "job_id": job_id,
+                "poll_after_seconds": 5,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+
     start_date_s = (data.get("start_date") or "").strip() or None
     end_date_s = (data.get("end_date") or "").strip() or None
     customer_id = (data.get("customer_id") or os.environ.get("GOOGLE_ADS_CUSTOMER_ID") or "").strip()
     login_customer_id = (data.get("login_customer_id") or os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "").strip() or None
+    report_level = (data.get("report_level") or "campaign").strip().lower()
+    if report_level not in {"campaign", "ad", "audience_breakdown"}:
+        return jsonify({"error": "report_level must be one of: campaign, ad, audience_breakdown"}), 400
+    raw_breakdowns = data.get("breakdowns") or []
+    if raw_breakdowns and not isinstance(raw_breakdowns, list):
+        return jsonify({"error": "breakdowns must be a list when provided"}), 400
+    breakdowns = [str(b).strip() for b in raw_breakdowns if str(b).strip()]
 
     store_raw = bool(data.get("store_raw", False))
     store_enriched = bool(data.get("store_enriched", False))
@@ -4023,6 +4405,7 @@ def run_google_ads_portfolio_report():
     try:
         storage = None
         if store_raw or store_enriched:
+            from bigas.resources.marketing.storage_service import StorageService
             storage = StorageService()
 
         result = run_google_ads_campaign_portfolio(
@@ -4030,6 +4413,8 @@ def run_google_ads_portfolio_report():
             end_date_s=end_date_s,
             customer_id=customer_id,
             login_customer_id=login_customer_id,
+            report_level=report_level,
+            breakdowns=breakdowns,
             store_raw=store_raw,
             store_enriched=store_enriched,
             storage=storage,
@@ -4053,13 +4438,50 @@ def run_google_ads_portfolio_report():
         return jsonify({"error": sanitized_error}), 500
 
 
+@marketing_bp.route('/mcp/tools/run_meta_portfolio_report_async', methods=['POST'])
+def run_meta_portfolio_report_async():
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    timeout_seconds = int(data.get("timeout_seconds") or 300)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+
+    app_obj = current_app._get_current_object()
+    access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+    request_key = (request.headers.get(access_header) or "").strip()
+    if request_key:
+        data["_internal_access_key"] = request_key
+
+    job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+    t = threading.Thread(
+        target=_run_meta_portfolio_job,
+        args=(app_obj, job_id, data),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify(
+        {
+            "status": "accepted",
+            "job_id": job_id,
+            "poll_after_seconds": 5,
+            "timeout_seconds": timeout_seconds,
+        }
+    )
+
+
 @marketing_bp.route('/mcp/tools/run_meta_portfolio_report', methods=['POST'])
 def run_meta_portfolio_report():
     """
-    Run a Meta (Facebook/Instagram) Ads campaign-level portfolio report.
+    Run a Meta (Facebook/Instagram) Ads portfolio report.
 
     Request JSON:
       - account_id: optional (default: META_AD_ACCOUNT_ID)
+      - report_level: campaign | ad | audience_breakdown (default: campaign)
+      - breakdowns: optional list of breakdown dimensions for audience_breakdown
+      - include_targeting: optional bool (default: false) include ad set targeting config snapshot
       - start_date, end_date: YYYY-MM-DD (optional; default last 30 days)
       - store_raw: optional bool (default: false)
       - store_enriched: optional bool (default: false)
@@ -4072,9 +4494,42 @@ def run_meta_portfolio_report():
     if not is_valid:
         return jsonify({"error": error_msg}), 400
 
+    run_async = bool(data.get("async", False)) and not bool(data.get("_internal_async_worker", False))
+    timeout_seconds = int(data.get("timeout_seconds") or 300)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+    if run_async:
+        app_obj = current_app._get_current_object()
+        access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+        request_key = (request.headers.get(access_header) or "").strip()
+        if request_key:
+            data["_internal_access_key"] = request_key
+        job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+        t = threading.Thread(
+            target=_run_meta_portfolio_job,
+            args=(app_obj, job_id, data),
+            daemon=True,
+        )
+        t.start()
+        return jsonify(
+            {
+                "status": "accepted",
+                "job_id": job_id,
+                "poll_after_seconds": 5,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+
     start_date_s = (data.get("start_date") or "").strip() or None
     end_date_s = (data.get("end_date") or "").strip() or None
     account_id = (data.get("account_id") or os.environ.get("META_AD_ACCOUNT_ID") or "").strip()
+    report_level = (data.get("report_level") or "campaign").strip().lower()
+    if report_level not in {"campaign", "ad", "audience_breakdown"}:
+        return jsonify({"error": "report_level must be one of: campaign, ad, audience_breakdown"}), 400
+    raw_breakdowns = data.get("breakdowns") or []
+    if raw_breakdowns and not isinstance(raw_breakdowns, list):
+        return jsonify({"error": "breakdowns must be a list when provided"}), 400
+    breakdowns = [str(b).strip() for b in raw_breakdowns if str(b).strip()]
+    include_targeting = bool(data.get("include_targeting", False))
     if not account_id:
         return jsonify({"error": "account_id is required (or set META_AD_ACCOUNT_ID)."}), 400
 
@@ -4098,6 +4553,9 @@ def run_meta_portfolio_report():
             start_date_s=start_date_s,
             end_date_s=end_date_s,
             account_id=account_id,
+            report_level=report_level,
+            breakdowns=breakdowns,
+            include_targeting=include_targeting,
             store_raw=store_raw,
             store_enriched=store_enriched,
             storage=storage,
@@ -4192,6 +4650,40 @@ def _run_reddit_audience_fetch(
         return ([], None)
 
 
+@marketing_bp.route('/mcp/tools/run_reddit_portfolio_report_async', methods=['POST'])
+def run_reddit_portfolio_report_async():
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    timeout_seconds = int(data.get("timeout_seconds") or 300)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+
+    app_obj = current_app._get_current_object()
+    access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+    request_key = (request.headers.get(access_header) or "").strip()
+    if request_key:
+        data["_internal_access_key"] = request_key
+
+    job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+    t = threading.Thread(
+        target=_run_reddit_portfolio_job,
+        args=(app_obj, job_id, data),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify(
+        {
+            "status": "accepted",
+            "job_id": job_id,
+            "poll_after_seconds": 5,
+            "timeout_seconds": timeout_seconds,
+        }
+    )
+
+
 @marketing_bp.route('/mcp/tools/run_reddit_portfolio_report', methods=['POST'])
 def run_reddit_portfolio_report():
     """
@@ -4209,6 +4701,31 @@ def run_reddit_portfolio_report():
       - post_to_discord: optional (default: true) — if false, do not post the full report to Discord (e.g. when called from cross-platform).
     """
     data = request.json or {}
+    run_async = bool(data.get("async", False)) and not bool(data.get("_internal_async_worker", False))
+    timeout_seconds = int(data.get("timeout_seconds") or 300)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+    if run_async:
+        app_obj = current_app._get_current_object()
+        access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+        request_key = (request.headers.get(access_header) or "").strip()
+        if request_key:
+            data["_internal_access_key"] = request_key
+        job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+        t = threading.Thread(
+            target=_run_reddit_portfolio_job,
+            args=(app_obj, job_id, data),
+            daemon=True,
+        )
+        t.start()
+        return jsonify(
+            {
+                "status": "accepted",
+                "job_id": job_id,
+                "poll_after_seconds": 5,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+
     post_reddit_to_discord = bool(data.get("post_to_discord", True))
     account_id = (data.get("account_id") or os.environ.get("REDDIT_AD_ACCOUNT_ID") or "").strip()
     if not account_id:
