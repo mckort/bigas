@@ -757,6 +757,26 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_market
 
 Flow: LinkedIn, Reddit, Google Ads, and Meta portfolio reports run in parallel (and GA4 Paid Social attribution is fetched when `GA4_PROPERTY_ID` is set) → progress posted to Discord as each completes → combined AI analysis with spend and attribution → one cross-platform budget analysis post to Discord.
 
+#### Reddit portfolio report (async for MCP clients)
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_reddit_portfolio_report_async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "relative_range": "LAST_30_DAYS",
+    "include_audience": true,
+    "timeout_seconds": 300
+  }'
+```
+
+Then poll:
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/get_job_status \
+  -H "Content-Type: application/json" \
+  -d '{"job_id":"job_abc123"}'
+```
+
 #### Google Ads portfolio report
 
 Requires **Google Ads API** access (developer token) and Application Default Credentials (ADC). Add to your `.env`:
@@ -781,6 +801,20 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_google_ads_portfolio_
 ```
 
 If `customer_id` is omitted, `GOOGLE_ADS_CUSTOMER_ID` from `.env` is used. Default date range is last 30 days.
+
+Async variant (recommended for MCP clients with short call time limits):
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_google_ads_portfolio_report_async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_id": "1234567890",
+    "start_date": "2026-02-01",
+    "end_date": "2026-02-15",
+    "post_to_discord": true,
+    "timeout_seconds": 300
+  }'
+```
 
 Optional alignment parameters:
 - `report_level`: `campaign` (default), `ad`, or `audience_breakdown`
@@ -811,6 +845,21 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_meta_portfolio_report
 ```
 
 If `account_id` is omitted, `META_AD_ACCOUNT_ID` from `.env` is used.
+
+Async variant (recommended for MCP clients with short call time limits):
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_meta_portfolio_report_async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "report_level": "ad",
+    "start_date": "2026-02-01",
+    "end_date": "2026-02-15",
+    "include_targeting": true,
+    "post_to_discord": true,
+    "timeout_seconds": 300
+  }'
+```
 
 #### Ask Analytics Question
 ```bash
