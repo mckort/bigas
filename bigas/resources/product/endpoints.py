@@ -214,8 +214,8 @@ def get_manifest():
                     "type": "object",
                     "properties": {
                         "days": {"type": "integer", "description": "Number of days to look back (default 14)", "default": 14},
-                        "biweekly_skip": {"type": "boolean", "description": "If true, only run on even ISO weeks", "default": false},
-                        "post_to_discord": {"type": "boolean", "description": "Post the message to product Discord webhook", "default": true}
+                        "biweekly_skip": {"type": "boolean", "description": "If true, only run on even ISO weeks", "default": False},
+                        "post_to_discord": {"type": "boolean", "description": "Post the message to product Discord webhook", "default": True}
                     }
                 }
             }
