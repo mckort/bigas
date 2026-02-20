@@ -505,11 +505,58 @@
         "summary": "Fetch Reddit Ads audience report.",
         "description": "Fetches Reddit Ads audience report with interests, communities, country, region, or DMA segmentation.",
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "required": [
+                  "report_type"
+                ],
+                "properties": {
+                  "account_id": {
+                    "type": "string",
+                    "description": "Reddit ad account ID. Optional if REDDIT_AD_ACCOUNT_ID is configured."
+                  },
+                  "report_type": {
+                    "type": "string",
+                    "enum": [
+                      "interests",
+                      "communities",
+                      "country",
+                      "region",
+                      "dma"
+                    ],
+                    "description": "Audience report type."
+                  },
+                  "start_date": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "end_date": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "relative_range": {
+                    "type": "string",
+                    "enum": [
+                      "LAST_7_DAYS",
+                      "LAST_30_DAYS"
+                    ]
+                  },
+                  "campaign_id": {
+                    "type": "string",
+                    "description": "Optional campaign ID for campaign-scoped audience fetch."
+                  },
+                  "store_raw": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "include_raw_response": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
               }
             }
           }
