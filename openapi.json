@@ -539,11 +539,34 @@
         "summary": "Summarize Reddit ad analytics.",
         "description": "Summarizes Reddit Ads analytics from an enriched GCS blob and optionally posts to Discord.",
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "required": [
+                  "enriched_storage_path"
+                ],
+                "properties": {
+                  "enriched_storage_path": {
+                    "type": "string",
+                    "description": "GCS path to Reddit enriched blob."
+                  },
+                  "webhook_url": {
+                    "type": "string",
+                    "description": "Optional Discord webhook URL override."
+                  },
+                  "llm_model": {
+                    "type": "string",
+                    "default": "gpt-4.1-mini"
+                  },
+                  "sample_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "default": 50
+                  }
+                }
               }
             }
           }
@@ -554,7 +577,56 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "had_data": {
+                      "type": "boolean"
+                    },
+                    "discord_posted": {
+                      "type": "boolean"
+                    },
+                    "enriched_storage_path": {
+                      "type": "string"
+                    },
+                    "used_model": {
+                      "type": "string"
+                    },
+                    "metrics_summary": {
+                      "type": "object",
+                      "properties": {
+                        "impressions": {
+                          "type": "integer"
+                        },
+                        "clicks": {
+                          "type": "integer"
+                        },
+                        "spend": {
+                          "type": "number"
+                        },
+                        "spend_currency": {
+                          "type": "string"
+                        },
+                        "ctr_pct": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "cpc": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "rows_count": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
