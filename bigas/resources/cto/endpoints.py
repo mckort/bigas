@@ -30,6 +30,7 @@ def _post_to_discord_cto(message: str) -> None:
     """Post to CTO Discord channel if DISCORD_WEBHOOK_URL_CTO is set (e.g. from Secret Manager)."""
     webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
     if not webhook or webhook.startswith("placeholder"):
+        logger.info("DISCORD_WEBHOOK_URL_CTO not set or placeholder, skipping Discord post")
         return
     if len(message) > 2000:
         message = message[:1997] + "..."
@@ -37,6 +38,8 @@ def _post_to_discord_cto(message: str) -> None:
         resp = requests.post(webhook, json={"content": message}, timeout=20)
         if resp.status_code != 204:
             logger.warning("CTO Discord post failed: %s %s", resp.status_code, resp.text[:200])
+        else:
+            logger.info("CTO Discord post succeeded")
     except Exception:
         logger.warning("CTO Discord post failed", exc_info=True)
 
@@ -58,6 +61,11 @@ def review_and_comment_pr():
       - success, comment_url, review_posted; or error with status 4xx/5xx.
     """
     data = request.get_json(silent=True) or {}
+    # Post "review started" immediately so Discord is always notified when the endpoint is hit
+    repo_raw = (data.get("repo") or "").strip() or "?"
+    pr_raw = data.get("pr_number", "?")
+    _post_to_discord_cto(f"**CTO PR review started**\nPR: https://github.com/{repo_raw}/pull/{pr_raw}")
+
     repo = (data.get("repo") or "").strip()
     pr_number = data.get("pr_number")
     diff = data.get("diff")
@@ -66,22 +74,32 @@ def review_and_comment_pr():
     llm_model = (data.get("llm_model") or "").strip() or None
 
     if not repo:
+        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: repo is required.")
         return jsonify({"error": "repo is required (e.g. 'owner/repo')"}), 400
     if "/" not in repo or repo.count("/") != 1:
+        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: repo must be owner/repo.")
         return jsonify({"error": "repo must be in the form 'owner/repo'"}), 400
     if pr_number is None:
+        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: pr_number is required.")
         return jsonify({"error": "pr_number is required"}), 400
     try:
         pr_number = int(pr_number)
     except (TypeError, ValueError):
+        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: pr_number must be an integer.")
         return jsonify({"error": "pr_number must be an integer"}), 400
     if pr_number < 1:
+        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: pr_number must be positive.")
         return jsonify({"error": "pr_number must be a positive integer"}), 400
     if diff is None:
+        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: diff is required.")
         return jsonify({"error": "diff is required"}), 400
     if not isinstance(diff, str):
+        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: diff must be a string.")
         return jsonify({"error": "diff must be a string"}), 400
     if not github_token:
+        _post_to_discord_cto(
+            "**CTO PR review done**\nNo comment posted.\nReason: GitHub token is required (GITHUB_TOKEN or github_token)."
+        )
         return (
             jsonify(
                 {
@@ -93,8 +111,6 @@ def review_and_comment_pr():
 
     owner, repo_name = repo.split("/", 1)
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
-
-    _post_to_discord_cto(f"**CTO PR review started**\nPR: {pr_url}")
 
     try:
         review_service = PRReviewService(openai_model=llm_model)

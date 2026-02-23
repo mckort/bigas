@@ -64,3 +64,14 @@ jobs:
           HTTP_CODE=$(tail -n1 response.txt)
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
           sed '$d' response.txt > response_body.txt
+
+      - name: Check Bigas response
+        run: |
+          HTTP_CODE="${{ steps.bigas.outputs.http_code }}"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Bigas returned HTTP $HTTP_CODE"
+            echo "Response body:"
+            cat response_body.txt || true
+            exit 1
+          fi
+          echo "Bigas returned 200 OK."
