@@ -38,28 +38,24 @@ curl -X POST https://YOUR-SERVICE-URL/mcp/tools/run_cross_platform_marketing_ana
 
 ## 2. Progress Updates
 
-Generates a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord post).
+Generates a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord post). Specify the period with `days` (default: last 7 days).
 
 **Requires:** Jira env vars (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY`), `OPENAI_API_KEY`. Optional: `DISCORD_WEBHOOK_URL_PRODUCT` to post to Discord.
 
 ```bash
-# Default: last 14 days, post to Discord if webhook set
+# Default: last 7 days, post to Discord if webhook set
 curl -X POST https://YOUR-SERVICE-URL/mcp/tools/progress_updates \
   -H "Content-Type: application/json" \
   -d '{}'
 
-# Custom: last 7 days, do not post to Discord
+# Custom: last 14 days, do not post to Discord
 curl -X POST https://YOUR-SERVICE-URL/mcp/tools/progress_updates \
   -H "Content-Type: application/json" \
-  -d '{"days": 7, "post_to_discord": false}'
+  -d '{"days": 14, "post_to_discord": false}'
 
-# Biweekly skip: only run on “cheer weeks” (even ISO week)
-curl -X POST https://YOUR-SERVICE-URL/mcp/tools/progress_updates \
-  -H "Content-Type: application/json" \
-  -d '{"days": 14, "biweekly_skip": true}'
 ```
 
-**Success:** HTTP 200, JSON with `"ok": true`, `"message": "..."` (AI coach text), `"posted_to_discord": true/false`. If `biweekly_skip` and current week is odd, `"skipped": true`.
+**Success:** HTTP 200, JSON with `"ok": true`, `"message": "..."` (AI coach text), `"posted_to_discord": true/false`.
 
 ---
 

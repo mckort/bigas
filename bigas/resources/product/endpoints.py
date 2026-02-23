@@ -71,7 +71,7 @@ def create_release_notes():
     Create release notes by querying Jira issues for a Fix Version.
 
     Request JSON:
-      { "fix_version": "1.1.0" }
+      { "fix_version": "1.1.0", "jql_extra": "AND statusCategory = Done" }  (jql_extra optional)
     """
     data = request.json or {}
     is_valid, error_msg = validate_request_data(data, required_fields=["fix_version"])
@@ -79,9 +79,10 @@ def create_release_notes():
         return jsonify({"error": error_msg}), 400
 
     fix_version = data.get("fix_version")
+    jql_extra = (data.get("jql_extra") or "").strip()
     try:
         service = CreateReleaseNotesService()
-        result = service.create(fix_version=fix_version)
+        result = service.create(fix_version=fix_version, jql_extra=jql_extra)
 
         # Optional: post the release notes to the product Discord channel
         webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_PRODUCT")
@@ -143,22 +144,20 @@ def create_release_notes():
 def progress_updates():
     """
     Generate a team progress update from Jira issues moved to Done in the last N days.
-    Designed to be triggered by e.g. Google Cloud Scheduler (e.g. biweekly).
-    Request JSON (optional): { "days": 14, "biweekly_skip": true, "post_to_discord": true }
+    Request JSON (optional): { "days": 7, "post_to_discord": true, "jql_extra": "..." }
+    Default jql_extra is "AND statusCategory = Done". Specify the period with `days` (default 7).
     """
     data = request.json or {}
-    days = int(data.get("days", 14))
+    days = int(data.get("days", 7))
     if days < 1 or days > 365:
         return jsonify({"error": "days must be between 1 and 365"}), 400
-    biweekly_skip = bool(data.get("biweekly_skip", False))
     post_to_discord = bool(data.get("post_to_discord", True))
+    # Default jql_extra for progress report: narrow to statusCategory = Done (can override via request).
+    jql_extra = (data.get("jql_extra") or "AND statusCategory = Done").strip()
 
     try:
         service = ProgressUpdatesService()
-        result = service.run(days=days, biweekly_skip=biweekly_skip)
-
-        if result.get("skipped"):
-            return jsonify(result)
+        result = service.run(days=days, jql_extra=jql_extra)
 
         message = result.get("message", "")
         if post_to_discord and message:
@@ -200,22 +199,23 @@ def get_manifest():
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "fix_version": {"type": "string", "description": "Jira Fix Version, e.g. 1.1.0"}
+                        "fix_version": {"type": "string", "description": "Jira Fix Version, e.g. 1.1.0"},
+                        "jql_extra": {"type": "string", "description": "Optional JQL fragment to narrow results (e.g. AND statusCategory = Done)"}
                     },
                     "required": ["fix_version"]
                 }
             },
             {
                 "name": "progress_updates",
-                "description": "Generate a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord post).",
+                "description": "Generate a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord post). Specify the period with days (default 7). Uses jql_extra default AND statusCategory = Done.",
                 "path": "/mcp/tools/progress_updates",
                 "method": "POST",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "days": {"type": "integer", "description": "Number of days to look back (default 14)", "default": 14},
-                        "biweekly_skip": {"type": "boolean", "description": "If true, only run on even ISO weeks", "default": False},
-                        "post_to_discord": {"type": "boolean", "description": "Post the message to product Discord webhook", "default": True}
+                        "days": {"type": "integer", "description": "Number of days to look back (default 7)", "default": 7},
+                        "post_to_discord": {"type": "boolean", "description": "Post the message to product Discord webhook", "default": True},
+                        "jql_extra": {"type": "string", "description": "JQL fragment to narrow results; default AND statusCategory = Done", "default": "AND statusCategory = Done"}
                     }
                 }
             }

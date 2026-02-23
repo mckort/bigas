@@ -184,7 +184,8 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "fix_version": { "type": "string", "description": "Jira Fix Version, e.g. 1.1.0" }
+                  "fix_version": { "type": "string", "description": "Jira Fix Version, e.g. 1.1.0" },
+                  "jql_extra": { "type": "string", "description": "Optional JQL fragment to narrow results (e.g. AND statusCategory = Done)" }
                 },
                 "required": ["fix_version"]
               }
@@ -965,20 +966,20 @@
                 "properties": {
                   "days": {
                     "type": "integer",
-                    "description": "Number of days to look back.",
-                    "default": 14,
+                    "description": "Number of days to look back (period for the update).",
+                    "default": 7,
                     "minimum": 1,
                     "maximum": 365
-                  },
-                  "biweekly_skip": {
-                    "type": "boolean",
-                    "description": "If true, only run on even ISO weeks.",
-                    "default": false
                   },
                   "post_to_discord": {
                     "type": "boolean",
                     "description": "Post the message to the product Discord webhook.",
                     "default": true
+                  },
+                  "jql_extra": {
+                    "type": "string",
+                    "description": "JQL fragment to narrow results; default AND statusCategory = Done.",
+                    "default": "AND statusCategory = Done"
                   }
                 }
               }

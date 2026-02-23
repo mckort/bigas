@@ -22,7 +22,6 @@ class JiraConfig:
     email: str
     api_token: str
     project_key: str
-    jql_extra: str = ""
 
     @staticmethod
     def from_env() -> "JiraConfig":
@@ -30,7 +29,6 @@ class JiraConfig:
         email = (os.environ.get("JIRA_EMAIL") or "").strip()
         api_token = (os.environ.get("JIRA_API_TOKEN") or "").strip()
         project_key = (os.environ.get("JIRA_PROJECT_KEY") or "").strip()
-        jql_extra = (os.environ.get("JIRA_JQL_EXTRA") or "").strip()
 
         missing = [k for k, v in {
             "JIRA_BASE_URL": base_url,
@@ -47,7 +45,6 @@ class JiraConfig:
             email=email,
             api_token=api_token,
             project_key=project_key,
-            jql_extra=jql_extra,
         )
 
 
@@ -69,6 +66,7 @@ class JiraClient:
         self,
         *,
         fix_version: str,
+        jql_extra: str = "",
         fields: Optional[List[str]] = None,
         max_results_per_page: int = 50,
         max_pages: int = 50,
@@ -78,6 +76,8 @@ class JiraClient:
 
         Note: Jira Cloud deprecated and removed /rest/api/3/search (410).
         We use /rest/api/3/search/jql which paginates using nextPageToken.
+
+        jql_extra: optional JQL fragment appended to the query (e.g. "AND statusCategory = Done").
         """
         if fields is None:
             fields = [
@@ -96,9 +96,8 @@ class JiraClient:
             f'project = "{self._config.project_key}" '
             f'AND fixVersion = "{fix_version}" '
         )
-        if self._config.jql_extra:
-            # caller supplies leading AND/OR if desired; keep flexible
-            jql = f"{jql} {self._config.jql_extra} "
+        if (jql_extra or "").strip():
+            jql = f"{jql} {(jql_extra or '').strip()} "
 
         jql = f"{jql} ORDER BY issuetype ASC, priority DESC, key ASC"
 
@@ -131,6 +130,7 @@ class JiraClient:
         self,
         *,
         days: int = 14,
+        jql_extra: str = "",
         fields: Optional[List[str]] = None,
         max_results_per_page: int = 50,
         max_pages: int = 50,
@@ -138,6 +138,8 @@ class JiraClient:
         """
         Query Jira for issues that are in Done and were resolved (or updated) in the last N days.
         Uses resolutiondate when set; otherwise falls back to updated date.
+
+        jql_extra: optional JQL fragment appended to the query (e.g. "AND statusCategory = Done").
         """
         if days < 1 or days > 365:
             raise ValueError("days must be between 1 and 365")
@@ -158,8 +160,8 @@ class JiraClient:
             f'AND status = Done '
             f'AND (resolutiondate >= -{days}d OR (resolutiondate is EMPTY AND updated >= -{days}d)) '
         )
-        if self._config.jql_extra:
-            jql = f"{jql} {self._config.jql_extra} "
+        if (jql_extra or "").strip():
+            jql = f"{jql} {(jql_extra or '').strip()} "
         jql = f"{jql} ORDER BY resolutiondate DESC, updated DESC, key ASC"
 
         url = f"{self._config.base_url}/rest/api/3/search/jql"

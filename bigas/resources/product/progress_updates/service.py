@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import logging
 import os
-from datetime import datetime
 
 import openai
 
@@ -91,26 +90,19 @@ class ProgressUpdatesService:
     def run(
         self,
         *,
-        days: int = 14,
-        biweekly_skip: bool = False,
+        days: int = 7,
+        jql_extra: str = "",
     ) -> Dict[str, Any]:
         """
         Fetch issues done in the last `days` days and generate a coach message.
         Caller is responsible for posting the returned message to Discord if desired.
-        If biweekly_skip is True, only run on "cheer weeks" (even ISO week); otherwise return skipped.
+        jql_extra: optional JQL fragment (e.g. "AND statusCategory = Done") to narrow the query.
         """
-        if biweekly_skip:
-            iso_week = datetime.utcnow().isocalendar()[1]
-            if iso_week % 2 != 0:
-                return {
-                    "ok": True,
-                    "skipped": True,
-                    "reason": "not_cheer_week",
-                    "iso_week": iso_week,
-                }
-
         try:
-            raw_issues = self._jira.search_issues_done_in_last_n_days(days=days)
+            raw_issues = self._jira.search_issues_done_in_last_n_days(
+                days=days,
+                jql_extra=(jql_extra or "").strip(),
+            )
         except JiraError as e:
             raise ProgressUpdatesError(str(e))
         except ValueError as e:
@@ -143,7 +135,6 @@ class ProgressUpdatesService:
 
         return {
             "ok": True,
-            "skipped": False,
             "stats": stats,
             "done_issues": normalized,
             "message": message,

@@ -218,21 +218,23 @@ See the [Google Cloud documentation](https://cloud.google.com/docs) for detailed
 
 ### Environment Configuration
 
-Configure your environment variables before deploying:
+You can either provide all configuration in `.env` or use **Google Secret Manager** so the app loads secrets at startup (minimal `.env`).
+
+**Option A – Full .env (all vars in one file):**
 
 ```bash
-# Copy the example environment file
 cp env.example .env
-
 # Edit .env and replace ALL dummy values with real credentials
 nano .env
 ```
 
-⚠️ **IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
+**Option B – Secret Manager (recommended for production):** Set `SECRET_MANAGER=true` and `SECRET_MANAGER_SECRET_NAMES` to a comma-separated list of secret names. Create one secret per value in Google Secret Manager (secret name = env var name; payload = plain value). Keep only bootstrap vars in `.env`: `GOOGLE_PROJECT_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `SECRET_MANAGER`, `SECRET_MANAGER_SECRET_NAMES`, Docker and access-control vars. See `env.example` (top) and the [Secret Manager](#secret-manager-optional) section below. The Cloud Run service account must have `roles/secretmanager.secretAccessor` on the project or secrets.
+
+⚠️ **IMPORTANT**: Never commit `.env` or any file containing real keys. The `env.example` file only contains placeholder values.
 
 ### Environment Variables
 
-Configure these environment variables for your deployment:
+**When not using Secret Manager**, configure these in `.env` (see `env.example` for the full list):
 
 ```bash
 # Required:
@@ -257,6 +259,8 @@ META_ACCESS_TOKEN=your_long_lived_system_user_token
 META_AD_ACCOUNT_ID=optional_ad_account_id_without_act_prefix
 ```
 
+When **SECRET_MANAGER=true**, the app loads the vars listed in `SECRET_MANAGER_SECRET_NAMES` from Google Secret Manager at startup; only bootstrap and deploy-related vars need to stay in `.env`.
+
 ### Step-by-Step Setup
 
 #### 1. Set Up Google Cloud Project
@@ -268,7 +272,19 @@ META_AD_ACCOUNT_ID=optional_ad_account_id_without_act_prefix
 3. **Create a service account** with the following roles:
    - `roles/analyticsdata.reader` - Read GA4 data
    - `roles/storage.objectAdmin` - Manage storage objects
-4. **Download the service account key file**
+   - If using Secret Manager: `roles/secretmanager.secretAccessor` (so the app can load secrets at startup)
+4. **Download the service account key file** (optional; for local runs)
+
+#### 1b. Secret Manager (optional)
+
+If you use **SECRET_MANAGER=true**, the app loads env vars from Google Secret Manager at startup (one secret per setting; secret name = env var name, payload = plain value).
+
+1. **Enable the Secret Manager API**: `gcloud services enable secretmanager.googleapis.com`
+2. **Create secrets** in the project (e.g. via Console or `gcloud secrets create SECRET_NAME` and add versions with your values). Use the same names as in `SECRET_MANAGER_SECRET_NAMES` (e.g. `OPENAI_API_KEY`, `JIRA_BASE_URL`).
+3. **Grant the Cloud Run service account** access: ensure the service account used by Cloud Run (e.g. `analytics@PROJECT_ID.iam.gserviceaccount.com`) has `roles/secretmanager.secretAccessor` on the project or on the secrets.
+4. In `.env` set **SECRET_MANAGER=true**, **SECRET_MANAGER_SECRET_NAMES** (comma-separated list), **GOOGLE_PROJECT_ID**; keep **GOOGLE_SERVICE_ACCOUNT_EMAIL** and deploy/access-control vars. See `env.example` (top section).
+
+You can populate Secret Manager from an existing `.env` once with `python scripts/sync_env_to_secret_manager.py` (run from repo root; requires `gcloud` and the secrets listed in the script).
 
 #### 2. Set Up Google Analytics 4 Property Access
 
@@ -893,7 +909,8 @@ Requires Jira + OpenAI env vars (see `env.example`):
 - `JIRA_EMAIL`
 - `JIRA_API_TOKEN`
 - `JIRA_PROJECT_KEY`
-- Optional: `JIRA_JQL_EXTRA`
+
+Optional request body parameter: `jql_extra` (e.g. `"AND statusCategory = Done"`) to narrow the Jira query.
 
 **Output format (no missed items)**
 
@@ -1303,7 +1320,7 @@ All sensitive information must be stored as environment variables:
 - `STORAGE_BUCKET_NAME` - Google Cloud Storage bucket (optional)
 
 #### 2. File Security
-- ✅ `.env` files are in `.gitignore`
+- ✅ `.env` files are in `.gitignore` (do not commit `.env` or any file containing real keys)
 - ✅ No hardcoded secrets in scripts
 - ✅ Service account JSON files are excluded
 - ✅ API keys are never logged
