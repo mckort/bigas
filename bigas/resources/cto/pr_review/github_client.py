@@ -94,9 +94,13 @@ class GitHubPRCommentClient:
         resp.raise_for_status()
 
         data = resp.json()
+        action = "updated" if existing_id else "created"
+        url = data.get("html_url", "")
         logger.info(
-            "GitHub PR comment %s: %s",
-            "updated" if existing_id else "created",
-            data.get("html_url", ""),
+            "GitHub PR comment %s: %s#%s -> %s",
+            action,
+            f"{owner}/{repo}",
+            pr_number,
+            url,
         )
         return data

@@ -17,8 +17,15 @@ from bigas.resources.cto.pr_review.prompts import (
 
 logger = logging.getLogger(__name__)
 
-# Max diff size to send to the model (chars). Larger diffs are truncated with a note.
-MAX_DIFF_CHARS = 150_000
+# Max diff size (chars); overridable via BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS env.
+def _max_diff_chars() -> int:
+    raw = os.environ.get("BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS", "").strip()
+    if not raw:
+        return 150_000
+    try:
+        return max(10_000, min(500_000, int(raw)))
+    except ValueError:
+        return 150_000
 
 
 class PRReviewError(RuntimeError):
@@ -56,12 +63,11 @@ class PRReviewService:
         if not diff or not diff.strip():
             raise PRReviewError("diff is required and must be non-empty.")
 
+        max_chars = _max_diff_chars()
         truncated_note = ""
-        if len(diff) > MAX_DIFF_CHARS:
-            diff = diff[:MAX_DIFF_CHARS] + "\n\n... (diff truncated for length)\n"
-            truncated_note = "_Review is based on the first {} characters of the diff._\n\n".format(
-                MAX_DIFF_CHARS
-            )
+        if len(diff) > max_chars:
+            diff = diff[:max_chars] + "\n\n... (diff truncated for length)\n"
+            truncated_note = f"_Review is based on the first {max_chars} characters of the diff._\n\n"
 
         user_prompt = build_pr_review_user_prompt(diff=diff, instructions=instructions)
         try:

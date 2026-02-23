@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 def _post_to_discord_cto(message: str) -> None:
-    """Post to CTO Discord channel if DISCORD_WEBHOOK_URL_CTO is set (e.g. from Secret Manager)."""
+    """Post to CTO Discord channel if DISCORD_WEBHOOK_URL_CTO is set (e.g. from Secret Manager).
+    Callers must pass only sanitized messages (use sanitize_error_message for errors) to avoid leaking tokens.
+    """
     webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
     if not webhook or webhook.startswith("placeholder"):
         logger.info("DISCORD_WEBHOOK_URL_CTO not set or placeholder, skipping Discord post")
@@ -42,6 +44,27 @@ def _post_to_discord_cto(message: str) -> None:
             logger.info("CTO Discord post succeeded")
     except Exception:
         logger.warning("CTO Discord post failed", exc_info=True)
+
+
+def _post_to_discord_cto_chunks(message: str, *, chunk_size: int = 1900) -> None:
+    """Post long content to CTO Discord in multiple messages. Discord limit 2000 chars; we use chunk_size margin."""
+    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
+    if not webhook or webhook.startswith("placeholder"):
+        return
+    if not message:
+        return
+    msg = message.strip()
+    if len(msg) <= 2000:
+        _post_to_discord_cto(msg)
+        return
+    start = 0
+    while start < len(msg):
+        end = min(start + chunk_size, len(msg))
+        nl = msg.rfind("\n", start, end)
+        if nl > start + 200:
+            end = nl
+        _post_to_discord_cto(msg[start:end].strip())
+        start = end
 
 
 @cto_bp.route("/review_and_comment_pr", methods=["POST"])
@@ -144,7 +167,8 @@ def review_and_comment_pr():
         return jsonify({"error": err_msg}), 502
 
     if comment_url:
-        _post_to_discord_cto(f"**CTO PR review done**\nComment posted: {comment_url}")
+        _post_to_discord_cto(f"**CTO PR review done**\nComment posted: {comment_url}\n\n---\n\n**Review:**")
+        _post_to_discord_cto_chunks(review_body)
     else:
         _post_to_discord_cto("**CTO PR review done**\nNo comment posted. (No URL returned from GitHub.)")
 
