@@ -95,12 +95,15 @@ def create_app():
         # Import and register blueprints from each resource
         from bigas.resources.marketing.endpoints import marketing_bp, get_manifest as get_marketing_manifest
         from bigas.resources.product.endpoints import product_bp, get_manifest as get_product_manifest
+        from bigas.resources.cto.endpoints import cto_bp, get_manifest as get_cto_manifest
 
         app.register_blueprint(marketing_bp)
         app.register_blueprint(product_bp)
+        app.register_blueprint(cto_bp)
 
         logger.info("Registered marketing blueprint.")
         logger.info("Registered product blueprint.")
+        logger.info("Registered CTO blueprint.")
 
     # Paths that should always remain public, even in restricted mode
     public_paths = {"/", "/mcp", "/mcp/manifest", "/.well-known/mcp.json", "/openapi.json"}
@@ -123,7 +126,11 @@ def create_app():
         header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
         expected_keys = app.config.get("BIGAS_ACCESS_KEYS") or set()
 
-        provided_key = request.headers.get(header_name)
+        provided_key = (
+            request.headers.get(header_name)
+            or request.args.get("access_key")
+            or (request.headers.get("Authorization") or "").replace("Bearer ", "", 1).strip()
+        )
         if not provided_key or provided_key not in expected_keys:
             logger.warning(
                 "Rejected request to %s due to invalid or missing access key (header: %s).",
@@ -144,6 +151,7 @@ def create_app():
         """
         marketing_manifest = {}
         product_manifest = {}
+        cto_manifest = {}
 
         try:
             marketing_manifest = get_marketing_manifest() or {}
@@ -155,14 +163,23 @@ def create_app():
         except Exception:
             logger.exception("Failed to build product manifest")
 
+        try:
+            cto_manifest = get_cto_manifest() or {}
+        except Exception:
+            logger.exception("Failed to build CTO manifest")
+
         # Combine the tools from all manifests
-        all_tools = marketing_manifest.get('tools', []) + product_manifest.get('tools', [])
+        all_tools = (
+            marketing_manifest.get('tools', [])
+            + product_manifest.get('tools', [])
+            + cto_manifest.get('tools', [])
+        )
 
         # Create the combined manifest
         manifest = {
             "name": "Bigas Modular AI Agent",
             "version": "1.1",
-            "description": "A multi-resource AI agent for marketing and product analytics.",
+            "description": "A multi-resource AI agent for marketing, product, and CTO (code review) analytics.",
             "tools": all_tools
         }
         return jsonify(manifest)
