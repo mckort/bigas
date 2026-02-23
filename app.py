@@ -64,6 +64,13 @@ def create_app():
     # In Cloud Run / production, environment variables are typically injected by the platform.
     load_dotenv(override=False)
 
+    # Standalone + SECRET_MANAGER=true: overlay env from Google Secret Manager (one secret, JSON key-value map).
+    try:
+        from bigas.secrets import load_secrets_from_secret_manager
+        load_secrets_from_secret_manager()
+    except Exception as e:
+        logger.warning("Secrets loader failed (continuing with existing env): %s", e)
+
     app = Flask(__name__)
 
     # Check deployment mode

@@ -16,5 +16,8 @@ uvicorn==0.24.0
 # Google Cloud Storage for report storage
 google-cloud-storage==2.10.0
 
+# Google Secret Manager (optional: when SECRET_MANAGER=true in standalone)
+google-cloud-secret-manager==2.16.0
+
 # Web scraping for page analysis
 beautifulsoup4==4.12.2 

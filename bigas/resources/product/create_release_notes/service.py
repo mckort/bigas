@@ -112,11 +112,14 @@ class CreateReleaseNotesService:
         self._openai_client = openai.OpenAI(api_key=api_key)
         self._model = openai_model or os.environ.get("OPENAI_MODEL") or "gpt-4"
 
-    def create(self, *, fix_version: str) -> Dict[str, Any]:
+    def create(self, *, fix_version: str, jql_extra: str = "") -> Dict[str, Any]:
         _validate_fix_version(fix_version)
 
         try:
-            raw_issues = self._jira.search_issues_by_fix_version(fix_version=fix_version)
+            raw_issues = self._jira.search_issues_by_fix_version(
+                fix_version=fix_version,
+                jql_extra=(jql_extra or "").strip(),
+            )
         except JiraError as e:
             raise ReleaseNotesError(str(e))
 

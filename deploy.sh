@@ -77,9 +77,6 @@ fi
 if [ ! -z "$JIRA_PROJECT_KEY" ]; then
     JIRA_ENV_VAR="$JIRA_ENV_VAR,JIRA_PROJECT_KEY=$JIRA_PROJECT_KEY"
 fi
-if [ ! -z "$JIRA_JQL_EXTRA" ]; then
-    JIRA_ENV_VAR="$JIRA_ENV_VAR,JIRA_JQL_EXTRA=$JIRA_JQL_EXTRA"
-fi
 
 # Optional Storage bucket
 STORAGE_ENV_VAR=""
@@ -170,6 +167,24 @@ else
     echo "⚠️  Meta Ads: not set in .env (run_meta_portfolio_report will require account_id in body)"
 fi
 
+# Secret Manager (when SECRET_MANAGER=true, app loads secrets from GCP at startup)
+# Built separately so SECRET_MANAGER_SECRET_NAMES (comma-separated list) is not broken by gcloud parsing
+SECRET_MANAGER_ENV_VAR=""
+if [ ! -z "$SECRET_MANAGER" ]; then
+    SECRET_MANAGER_ENV_VAR="SECRET_MANAGER=$SECRET_MANAGER"
+fi
+if [ ! -z "$SECRET_MANAGER_SECRET_NAMES" ]; then
+    [ -n "$SECRET_MANAGER_ENV_VAR" ] && SECRET_MANAGER_ENV_VAR="$SECRET_MANAGER_ENV_VAR^:^"
+    SECRET_MANAGER_ENV_VAR="$SECRET_MANAGER_ENV_VAR""SECRET_MANAGER_SECRET_NAMES=$SECRET_MANAGER_SECRET_NAMES"
+fi
+if [ ! -z "$GOOGLE_PROJECT_ID" ]; then
+    [ -n "$SECRET_MANAGER_ENV_VAR" ] && SECRET_MANAGER_ENV_VAR="$SECRET_MANAGER_ENV_VAR^:^"
+    SECRET_MANAGER_ENV_VAR="$SECRET_MANAGER_ENV_VAR""GOOGLE_PROJECT_ID=$GOOGLE_PROJECT_ID"
+fi
+if [ ! -z "$SECRET_MANAGER" ] && [ "$SECRET_MANAGER" = "true" ]; then
+    echo "🔐 Secret Manager: true (secrets will be loaded from GCP at startup)"
+fi
+
 echo "✅ All required environment variables are set"
 echo "📊 GA4 Property ID: $GA4_PROPERTY_ID"
 echo "🤖 OpenAI API Key: ${OPENAI_API_KEY:0:20}..."
@@ -195,12 +210,50 @@ echo "📤 Pushing image to Google Container Registry..."
 docker push $IMAGE
 
 echo "🚀 Deploying to Google Cloud Run..."
+# Use env-vars-file (YAML) so SECRET_MANAGER_SECRET_NAMES (value contains commas) is handled correctly
+ENV_VARS_FILE=$(mktemp).yaml
+trap "rm -f $ENV_VARS_FILE" EXIT
+# YAML format: KEY: "value"
+{
+  echo "DEPLOYMENT_MODE: \"$DEPLOYMENT_MODE\""
+  echo "GA4_PROPERTY_ID: \"$GA4_PROPERTY_ID\""
+  echo "OPENAI_API_KEY: \"$OPENAI_API_KEY\""
+  echo "BIGAS_ACCESS_MODE: \"$BIGAS_ACCESS_MODE\""
+  echo "BIGAS_ACCESS_KEYS: \"$BIGAS_ACCESS_KEYS\""
+  echo "BIGAS_ACCESS_HEADER: \"$BIGAS_ACCESS_HEADER\""
+  [ -n "$DISCORD_WEBHOOK_URL_MARKETING" ] && echo "DISCORD_WEBHOOK_URL_MARKETING: \"$DISCORD_WEBHOOK_URL_MARKETING\""
+  [ -n "$DISCORD_WEBHOOK_URL_PRODUCT" ] && echo "DISCORD_WEBHOOK_URL_PRODUCT: \"$DISCORD_WEBHOOK_URL_PRODUCT\""
+  [ -n "$JIRA_BASE_URL" ] && echo "JIRA_BASE_URL: \"$JIRA_BASE_URL\""
+  [ -n "$JIRA_EMAIL" ] && echo "JIRA_EMAIL: \"$JIRA_EMAIL\""
+  [ -n "$JIRA_API_TOKEN" ] && echo "JIRA_API_TOKEN: \"$JIRA_API_TOKEN\""
+  [ -n "$JIRA_PROJECT_KEY" ] && echo "JIRA_PROJECT_KEY: \"$JIRA_PROJECT_KEY\""
+  [ -n "$STORAGE_BUCKET_NAME" ] && echo "STORAGE_BUCKET_NAME: \"$STORAGE_BUCKET_NAME\""
+  [ -n "$TARGET_KEYWORDS" ] && echo "TARGET_KEYWORDS: \"$TARGET_KEYWORDS\""
+  [ -n "$LINKEDIN_CLIENT_ID" ] && echo "LINKEDIN_CLIENT_ID: \"$LINKEDIN_CLIENT_ID\""
+  [ -n "$LINKEDIN_CLIENT_SECRET" ] && echo "LINKEDIN_CLIENT_SECRET: \"$LINKEDIN_CLIENT_SECRET\""
+  [ -n "$LINKEDIN_REFRESH_TOKEN" ] && echo "LINKEDIN_REFRESH_TOKEN: \"$LINKEDIN_REFRESH_TOKEN\""
+  [ -n "$LINKEDIN_AD_ACCOUNT_URN" ] && echo "LINKEDIN_AD_ACCOUNT_URN: \"$LINKEDIN_AD_ACCOUNT_URN\""
+  [ -n "$LINKEDIN_VERSION" ] && echo "LINKEDIN_VERSION: \"$LINKEDIN_VERSION\""
+  [ -n "$REDDIT_CLIENT_ID" ] && echo "REDDIT_CLIENT_ID: \"$REDDIT_CLIENT_ID\""
+  [ -n "$REDDIT_CLIENT_SECRET" ] && echo "REDDIT_CLIENT_SECRET: \"$REDDIT_CLIENT_SECRET\""
+  [ -n "$REDDIT_REFRESH_TOKEN" ] && echo "REDDIT_REFRESH_TOKEN: \"$REDDIT_REFRESH_TOKEN\""
+  [ -n "$REDDIT_AD_ACCOUNT_ID" ] && echo "REDDIT_AD_ACCOUNT_ID: \"$REDDIT_AD_ACCOUNT_ID\""
+  [ -n "$GOOGLE_ADS_DEVELOPER_TOKEN" ] && echo "GOOGLE_ADS_DEVELOPER_TOKEN: \"$GOOGLE_ADS_DEVELOPER_TOKEN\""
+  [ -n "$GOOGLE_ADS_LOGIN_CUSTOMER_ID" ] && echo "GOOGLE_ADS_LOGIN_CUSTOMER_ID: \"$GOOGLE_ADS_LOGIN_CUSTOMER_ID\""
+  [ -n "$GOOGLE_ADS_CUSTOMER_ID" ] && echo "GOOGLE_ADS_CUSTOMER_ID: \"$GOOGLE_ADS_CUSTOMER_ID\""
+  [ -n "$META_ACCESS_TOKEN" ] && echo "META_ACCESS_TOKEN: \"$META_ACCESS_TOKEN\""
+  [ -n "$META_AD_ACCOUNT_ID" ] && echo "META_AD_ACCOUNT_ID: \"$META_AD_ACCOUNT_ID\""
+  [ -n "$SECRET_MANAGER" ] && echo "SECRET_MANAGER: \"$SECRET_MANAGER\""
+  [ -n "$SECRET_MANAGER_SECRET_NAMES" ] && echo "SECRET_MANAGER_SECRET_NAMES: \"$SECRET_MANAGER_SECRET_NAMES\""
+  [ -n "$GOOGLE_PROJECT_ID" ] && echo "GOOGLE_PROJECT_ID: \"$GOOGLE_PROJECT_ID\""
+} >> "$ENV_VARS_FILE"
+
 gcloud run deploy mcp-marketing \
     --image $IMAGE \
     --platform managed \
     --region europe-north1 \
     --allow-unauthenticated \
     --service-account=$GOOGLE_SERVICE_ACCOUNT_EMAIL \
-    --set-env-vars DEPLOYMENT_MODE=$DEPLOYMENT_MODE,GA4_PROPERTY_ID=$GA4_PROPERTY_ID,OPENAI_API_KEY=$OPENAI_API_KEY$DISCORD_ENV_VAR$JIRA_ENV_VAR$STORAGE_ENV_VAR$KEYWORDS_ENV_VAR$LINKEDIN_ENV_VAR$REDDIT_ENV_VAR$GOOGLE_ADS_ENV_VAR$META_ENV_VAR,BIGAS_ACCESS_MODE=$BIGAS_ACCESS_MODE,BIGAS_ACCESS_KEYS=$BIGAS_ACCESS_KEYS,BIGAS_ACCESS_HEADER=$BIGAS_ACCESS_HEADER
+    --env-vars-file="$ENV_VARS_FILE"
 
 echo "✅ Deployment completed successfully!" 
