@@ -1,6 +1,6 @@
 """
 PR review service: run AI review on a diff and return markdown review text.
-Uses the latest Codex model by default (gpt-5.2-codex), overridable via env or constructor.
+Uses gpt-4o by default (chat/completions); override via BIGAS_CTO_PR_REVIEW_MODEL or llm_model.
 """
 from __future__ import annotations
 
@@ -36,12 +36,12 @@ class PRReviewService:
         if not api_key:
             raise PRReviewError("OPENAI_API_KEY environment variable not set.")
         self._openai_client = openai.OpenAI(api_key=api_key)
-        # Default to latest Codex model; override with BIGAS_CTO_PR_REVIEW_MODEL or OPENAI_MODEL
+        # Default gpt-4o (chat/completions); override with BIGAS_CTO_PR_REVIEW_MODEL or OPENAI_MODEL
         self._model = (
             openai_model
             or os.environ.get("BIGAS_CTO_PR_REVIEW_MODEL")
             or os.environ.get("OPENAI_MODEL")
-            or "gpt-5.2-codex"
+            or "gpt-4o"
         )
 
     def review(
@@ -65,27 +65,16 @@ class PRReviewService:
 
         user_prompt = build_pr_review_user_prompt(diff=diff, instructions=instructions)
         try:
-            # Codex models use v1/completions, not chat/completions
-            if "codex" in self._model.lower():
-                full_prompt = f"{PR_REVIEW_SYSTEM_PROMPT}\n\n---\n\n{user_prompt}"
-                completion = self._openai_client.completions.create(
-                    model=self._model,
-                    prompt=full_prompt,
-                    max_tokens=4000,
-                    temperature=0.3,
-                )
-                content = (completion.choices[0].text or "").strip()
-            else:
-                completion = self._openai_client.chat.completions.create(
-                    model=self._model,
-                    messages=[
-                        {"role": "system", "content": PR_REVIEW_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=4000,
-                    temperature=0.3,
-                )
-                content = (completion.choices[0].message.content or "").strip()
+            completion = self._openai_client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": PR_REVIEW_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=4000,
+                temperature=0.3,
+            )
+            content = (completion.choices[0].message.content or "").strip()
         except Exception as e:
             logger.error("PR review OpenAI call failed", exc_info=True)
             raise PRReviewError(f"OpenAI request failed: {e}") from e
