@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 
+import requests
 from flask import Blueprint, jsonify, request
 
 from bigas.resources.cto.pr_review.github_client import (
@@ -23,6 +24,21 @@ cto_bp = Blueprint(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _post_to_discord_cto(message: str) -> None:
+    """Post to CTO Discord channel if DISCORD_WEBHOOK_URL_CTO is set (e.g. from Secret Manager)."""
+    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
+    if not webhook or webhook.startswith("placeholder"):
+        return
+    if len(message) > 2000:
+        message = message[:1997] + "..."
+    try:
+        resp = requests.post(webhook, json={"content": message}, timeout=20)
+        if resp.status_code != 204:
+            logger.warning("CTO Discord post failed: %s %s", resp.status_code, resp.text[:200])
+    except Exception:
+        logger.warning("CTO Discord post failed", exc_info=True)
 
 
 @cto_bp.route("/review_and_comment_pr", methods=["POST"])
@@ -76,14 +92,19 @@ def review_and_comment_pr():
         )
 
     owner, repo_name = repo.split("/", 1)
+    pr_url = f"https://github.com/{repo}/pull/{pr_number}"
+
+    _post_to_discord_cto(f"**CTO PR review started**\nPR: {pr_url}")
 
     try:
         review_service = PRReviewService(openai_model=llm_model)
         review_body = review_service.review(diff=diff, instructions=instructions)
     except PRReviewError as e:
         logger.warning("PR review failed: %s", e)
+        _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
+    comment_url = ""
     try:
         client = GitHubPRCommentClient(token=github_token)
         result = client.post_or_update_pr_comment(
@@ -93,22 +114,28 @@ def review_and_comment_pr():
             body=review_body,
             marker=BIGAS_REVIEW_MARKER,
         )
+        comment_url = result.get("html_url") or ""
     except GitHubPRCommentError as e:
         logger.warning("GitHub PR comment failed: %s", e)
-        msg = str(e)
-        if "401" in msg or "invalid" in msg.lower() or "expired" in msg.lower():
-            return jsonify({"error": sanitize_error_message(msg)}), 401
-        if "403" in msg:
-            return jsonify({"error": sanitize_error_message(msg)}), 403
-        if "404" in msg or "not found" in msg.lower():
-            return jsonify({"error": sanitize_error_message(msg)}), 404
-        return jsonify({"error": sanitize_error_message(msg)}), 502
+        err_msg = sanitize_error_message(str(e))
+        _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {err_msg}")
+        if "401" in str(e) or "invalid" in str(e).lower() or "expired" in str(e).lower():
+            return jsonify({"error": err_msg}), 401
+        if "403" in str(e):
+            return jsonify({"error": err_msg}), 403
+        if "404" in str(e) or "not found" in str(e).lower():
+            return jsonify({"error": err_msg}), 404
+        return jsonify({"error": err_msg}), 502
 
-    comment_url = result.get("html_url") or ""
+    if comment_url:
+        _post_to_discord_cto(f"**CTO PR review done**\nComment posted: {comment_url}")
+    else:
+        _post_to_discord_cto("**CTO PR review done**\nNo comment posted. (No URL returned from GitHub.)")
+
     return jsonify({
         "success": True,
         "comment_url": comment_url,
-        "review_posted": True,
+        "review_posted": bool(comment_url),
         "used_model": review_service._model,
     })
 

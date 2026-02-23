@@ -2,9 +2,10 @@
 # This workflow is in the Bigas repo so we can test PR review on Bigas itself.
 # In any repo (including this one), configure:
 #   Settings → Secrets and variables → Actions
-#   - Variable: BIGAS_URL = your Bigas Cloud Run URL
+#   - Variable: BIGAS_URL = your Bigas Cloud Run URL (required)
 #   - Secret:   BIGAS_API_KEY = one of your Bigas access keys (BIGAS_ACCESS_KEYS)
 #   - Secret:   GH_PAT_FOR_BIGAS = GitHub PAT with repo scope (optional if GITHUB_TOKEN is in Bigas Secret Manager)
+# Discord: Bigas posts to CTO channel using DISCORD_WEBHOOK_URL_CTO from GCP Secret Manager (no GitHub secret needed).
 name: Bigas PR review
 
 on:
@@ -20,6 +21,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Require BIGAS_URL
+        run: |
+          if [ -z "$BIGAS_URL" ]; then
+            echo "::error::BIGAS_URL is not set. Add it in Settings → Secrets and variables → Actions → Variables (repository variable)."
+            exit 1
+          fi
+        env:
+          BIGAS_URL: ${{ vars.BIGAS_URL }}
+
       - name: Get PR diff
         id: diff
         run: |
@@ -27,6 +37,7 @@ jobs:
           git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > diff.txt
 
       - name: Trigger Bigas review + comment
+        id: bigas
         env:
           BIGAS_URL: ${{ vars.BIGAS_URL }}
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
@@ -45,7 +56,11 @@ jobs:
           with open('payload.json', 'w') as f:
               json.dump(payload, f)
           "
-          curl -sS -X POST "$BIGAS_URL/mcp/tools/review_and_comment_pr" \
+          curl -sS -w "\n%{http_code}" -o response.txt -X POST "$BIGAS_URL/mcp/tools/review_and_comment_pr" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $BIGAS_API_KEY" \
             -d @payload.json
+          # Last line of response.txt is HTTP status code
+          HTTP_CODE=$(tail -n1 response.txt)
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          sed '$d' response.txt > response_body.txt

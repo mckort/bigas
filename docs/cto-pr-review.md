@@ -12,9 +12,10 @@ Create `.github/workflows/pr-review.yml` in your repo. You can copy the contents
 **2. Configure in GitHub**  
 In your repo: **Settings → Secrets and variables → Actions**.
 
-- **Variable** `BIGAS_URL`: your Bigas Cloud Run URL (e.g. `https://bigas-xxx.run.app`).
+- **Variable** `BIGAS_URL`: your Bigas Cloud Run URL (e.g. `https://bigas-xxx.run.app`). **Required** – the workflow fails with a clear error if this is missing.
 - **Secret** `BIGAS_API_KEY`: one of your Bigas access keys (same as `BIGAS_ACCESS_KEYS`).
 - **Secret** `GH_PAT_FOR_BIGAS`: GitHub PAT with repo scope *(optional if `GITHUB_TOKEN` is set in Bigas Secret Manager)*.
+- Discord: Bigas posts to the CTO channel using **DISCORD_WEBHOOK_URL_CTO** from **GCP Secret Manager** (add to `SECRET_MANAGER_SECRET_NAMES`). No GitHub secret needed.
 
 **3. Commit and push**  
 `git add .github/workflows/pr-review.yml && git commit -m "Add Bigas PR review workflow" && git push`
