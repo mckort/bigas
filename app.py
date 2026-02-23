@@ -126,7 +126,11 @@ def create_app():
         header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
         expected_keys = app.config.get("BIGAS_ACCESS_KEYS") or set()
 
-        provided_key = request.headers.get(header_name)
+        provided_key = (
+            request.headers.get(header_name)
+            or request.args.get("access_key")
+            or (request.headers.get("Authorization") or "").replace("Bearer ", "", 1).strip()
+        )
         if not provided_key or provided_key not in expected_keys:
             logger.warning(
                 "Rejected request to %s due to invalid or missing access key (header: %s).",
