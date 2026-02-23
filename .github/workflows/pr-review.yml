@@ -1,0 +1,51 @@
+# Run Bigas AI PR review and post/update a single comment on the PR.
+# This workflow is in the Bigas repo so we can test PR review on Bigas itself.
+# In any repo (including this one), configure:
+#   Settings → Secrets and variables → Actions
+#   - Variable: BIGAS_URL = your Bigas Cloud Run URL
+#   - Secret:   BIGAS_API_KEY = one of your Bigas access keys (BIGAS_ACCESS_KEYS)
+#   - Secret:   GH_PAT_FOR_BIGAS = GitHub PAT with repo scope (optional if GITHUB_TOKEN is in Bigas Secret Manager)
+name: Bigas PR review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > diff.txt
+
+      - name: Trigger Bigas review + comment
+        env:
+          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
+          GH_PAT: ${{ secrets.GH_PAT_FOR_BIGAS }}
+        run: |
+          python3 -c "
+          import json, os
+          with open('diff.txt') as f:
+              diff = f.read()
+          payload = {
+              'repo': os.environ['GITHUB_REPOSITORY'],
+              'pr_number': ${{ github.event.pull_request.number }},
+              'diff': diff,
+              'github_token': os.environ.get('GH_PAT', '')
+          }
+          with open('payload.json', 'w') as f:
+              json.dump(payload, f)
+          "
+          curl -sS -X POST "$BIGAS_URL/mcp/tools/review_and_comment_pr" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $BIGAS_API_KEY" \
+            -d @payload.json

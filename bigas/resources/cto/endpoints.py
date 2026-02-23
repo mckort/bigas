@@ -1,0 +1,159 @@
+"""
+CTO resource endpoints: PR review and comment (and future CTO tools).
+"""
+from __future__ import annotations
+
+import logging
+import os
+
+from flask import Blueprint, jsonify, request
+
+from bigas.resources.cto.pr_review.github_client import (
+    BIGAS_REVIEW_MARKER,
+    GitHubPRCommentClient,
+    GitHubPRCommentError,
+)
+from bigas.resources.cto.pr_review.service import PRReviewError, PRReviewService
+from bigas.resources.marketing.utils import sanitize_error_message
+
+cto_bp = Blueprint(
+    "cto_bp",
+    __name__,
+    url_prefix="/mcp/tools",
+)
+
+logger = logging.getLogger(__name__)
+
+
+@cto_bp.route("/review_and_comment_pr", methods=["POST"])
+def review_and_comment_pr():
+    """
+    Review a pull request diff with AI (Codex) and post or update a single PR comment.
+
+    Request JSON:
+      - repo (str, required): "owner/repo"
+      - pr_number (int, required): pull request number
+      - diff (str, required): PR diff text
+      - instructions (str, optional): extra instructions for the reviewer
+      - github_token (str, optional): override GitHub PAT (else uses GITHUB_TOKEN env)
+      - llm_model (str, optional): override model for this request (default: gpt-5.2-codex)
+
+    Returns:
+      - success, comment_url, review_posted; or error with status 4xx/5xx.
+    """
+    data = request.get_json(silent=True) or {}
+    repo = (data.get("repo") or "").strip()
+    pr_number = data.get("pr_number")
+    diff = data.get("diff")
+    instructions = (data.get("instructions") or "").strip() or None
+    github_token = (data.get("github_token") or "").strip() or os.environ.get("GITHUB_TOKEN") or ""
+    llm_model = (data.get("llm_model") or "").strip() or None
+
+    if not repo:
+        return jsonify({"error": "repo is required (e.g. 'owner/repo')"}), 400
+    if "/" not in repo or repo.count("/") != 1:
+        return jsonify({"error": "repo must be in the form 'owner/repo'"}), 400
+    if pr_number is None:
+        return jsonify({"error": "pr_number is required"}), 400
+    try:
+        pr_number = int(pr_number)
+    except (TypeError, ValueError):
+        return jsonify({"error": "pr_number must be an integer"}), 400
+    if pr_number < 1:
+        return jsonify({"error": "pr_number must be a positive integer"}), 400
+    if diff is None:
+        return jsonify({"error": "diff is required"}), 400
+    if not isinstance(diff, str):
+        return jsonify({"error": "diff must be a string"}), 400
+    if not github_token:
+        return (
+            jsonify(
+                {
+                    "error": "GitHub token is required. Set GITHUB_TOKEN in env or pass github_token in the request."
+                }
+            ),
+            400,
+        )
+
+    owner, repo_name = repo.split("/", 1)
+
+    try:
+        review_service = PRReviewService(openai_model=llm_model)
+        review_body = review_service.review(diff=diff, instructions=instructions)
+    except PRReviewError as e:
+        logger.warning("PR review failed: %s", e)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+    try:
+        client = GitHubPRCommentClient(token=github_token)
+        result = client.post_or_update_pr_comment(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            body=review_body,
+            marker=BIGAS_REVIEW_MARKER,
+        )
+    except GitHubPRCommentError as e:
+        logger.warning("GitHub PR comment failed: %s", e)
+        msg = str(e)
+        if "401" in msg or "invalid" in msg.lower() or "expired" in msg.lower():
+            return jsonify({"error": sanitize_error_message(msg)}), 401
+        if "403" in msg:
+            return jsonify({"error": sanitize_error_message(msg)}), 403
+        if "404" in msg or "not found" in msg.lower():
+            return jsonify({"error": sanitize_error_message(msg)}), 404
+        return jsonify({"error": sanitize_error_message(msg)}), 502
+
+    comment_url = result.get("html_url") or ""
+    return jsonify({
+        "success": True,
+        "comment_url": comment_url,
+        "review_posted": True,
+        "used_model": review_service._model,
+    })
+
+
+def get_manifest():
+    """Return the CTO tools manifest for the combined MCP manifest."""
+    return {
+        "name": "CTO Tools",
+        "description": "Tools for engineering leadership and code review.",
+        "tools": [
+            {
+                "name": "review_and_comment_pr",
+                "description": "Review a pull request diff with AI (Codex) and post or update a single PR comment on GitHub.",
+                "path": "/mcp/tools/review_and_comment_pr",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository in the form 'owner/repo' (required)",
+                        },
+                        "pr_number": {
+                            "type": "integer",
+                            "description": "Pull request number (required)",
+                        },
+                        "diff": {
+                            "type": "string",
+                            "description": "PR diff text (required)",
+                        },
+                        "instructions": {
+                            "type": "string",
+                            "description": "Optional extra instructions for the reviewer",
+                        },
+                        "github_token": {
+                            "type": "string",
+                            "description": "Optional GitHub PAT override (default: GITHUB_TOKEN env)",
+                        },
+                        "llm_model": {
+                            "type": "string",
+                            "description": "Optional model override (default: gpt-5.2-codex)",
+                        },
+                    },
+                    "required": ["repo", "pr_number", "diff"],
+                },
+            },
+        ],
+    }

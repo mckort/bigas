@@ -18,6 +18,7 @@ Follow us on X for the latest updates, feature announcements, and marketing insi
 Today it includes:
 - **The Senior Marketing Analyst** (GA4 → insights, weekly reports)
 - **The Product Release Manager** (Jira → customer-facing release notes + social/blog drafts)
+- **The CTO** (GitHub PR review → AI code review comment on pull requests)
 
 ### 🎯 Our Goal
 To build a comprehensive AI team that can handle various business functions, starting with marketing and expanding to other areas like sales, customer support, product development, and more.
@@ -41,6 +42,18 @@ Bigas is a **modular AI platform** that exposes marketing analytics and product 
 - 📰 **Blog draft**: Produces a longer `blog_markdown` draft suitable for publishing
 - 📣 **Social drafts**: Produces drafts for X, LinkedIn, Facebook, and Instagram
 - ✅ **No missed items**: Ensures every Jira issue is included exactly once under **New features**, **Improvements**, **Bug Fixes**
+
+**What our CTO does:**
+- 🔍 **PR review**: Reviews pull request diffs with AI (Codex) and posts or updates a single comment on GitHub
+- 🔐 **GitHub integration**: Uses a GitHub PAT (repo scope) from env or request; supports marker-based comment updates to avoid spam
+
+**PR review – add to your repo (the repo you want reviewed):**
+
+1. **Add the workflow** to your repo (e.g. the repo where you open PRs):
+   - Create `.github/workflows/pr-review.yml` (see [docs/cto-pr-review.md](docs/cto-pr-review.md) or copy from `bigas/.github/workflows/pr-review.yml` in this repo).
+2. **In that repo**, go to **Settings → Secrets and variables → Actions**:
+   - **Variables**: add `BIGAS_URL` = your Bigas Cloud Run URL (e.g. `https://bigas-xxx.run.app`).
+   - **Secrets**: add `BIGAS_API_KEY` = one of your Bigas access keys (same as `BIGAS_ACCESS_KEYS`; use header `X-Bigas-Access-Key` or `Authorization: Bearer`). Optionally add `GH_PAT_FOR_BIGAS` if you don’t store the GitHub PAT in Bigas Secret Manager.
 
 ### 🌟 Key Features
 
@@ -1463,7 +1476,7 @@ For security issues:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) - see the [LICENSE](LICENSE) file for details.
 
 ## 🔄 Changelog
 
