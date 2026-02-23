@@ -56,14 +56,11 @@ jobs:
           with open('payload.json', 'w') as f:
               json.dump(payload, f)
           "
-          curl -sS -w "\n%{http_code}" -o response.txt -X POST "$BIGAS_URL/mcp/tools/review_and_comment_pr" \
+          HTTP_CODE=$(curl -sS -w "%{http_code}" -o response_body.txt -X POST "$BIGAS_URL/mcp/tools/review_and_comment_pr" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $BIGAS_API_KEY" \
-            -d @payload.json
-          # Last line of response.txt is HTTP status code
-          HTTP_CODE=$(tail -n1 response.txt)
+            -d @payload.json)
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
-          sed '$d' response.txt > response_body.txt
 
       - name: Check Bigas response
         run: |
