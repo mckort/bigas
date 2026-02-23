@@ -230,7 +230,7 @@ nano .env
 
 **Option B – Secret Manager (recommended for production):** Set `SECRET_MANAGER=true` and `SECRET_MANAGER_SECRET_NAMES` to a comma-separated list of secret names. Create one secret per value in Google Secret Manager (secret name = env var name; payload = plain value). Keep only bootstrap vars in `.env`: `GOOGLE_PROJECT_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `SECRET_MANAGER`, `SECRET_MANAGER_SECRET_NAMES`, Docker and access-control vars. See `env.example` (top) and the [Secret Manager](#secret-manager-optional) section below. The Cloud Run service account must have `roles/secretmanager.secretAccessor` on the project or secrets.
 
-⚠️ **IMPORTANT**: Never commit `.env` or any file containing real keys (e.g. `.env-old`). The `env.example` file only contains placeholder values.
+⚠️ **IMPORTANT**: Never commit `.env` or any file containing real keys. The `env.example` file only contains placeholder values.
 
 ### Environment Variables
 
@@ -1320,7 +1320,7 @@ All sensitive information must be stored as environment variables:
 - `STORAGE_BUCKET_NAME` - Google Cloud Storage bucket (optional)
 
 #### 2. File Security
-- ✅ `.env` files are in `.gitignore` (do not commit `.env`, `.env-old`, or any file containing real keys)
+- ✅ `.env` files are in `.gitignore` (do not commit `.env` or any file containing real keys)
 - ✅ No hardcoded secrets in scripts
 - ✅ Service account JSON files are excluded
 - ✅ API keys are never logged
