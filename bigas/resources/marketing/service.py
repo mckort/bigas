@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, Any
 import logging
 from bigas.resources.marketing.ga4_service import GA4Service
-from bigas.resources.marketing.openai_service import MarketingLLMService
+from bigas.resources.marketing.marketing_llm_service import MarketingLLMService
 from bigas.resources.marketing.template_service import TemplateService
 from bigas.resources.marketing.trend_analysis_service import TrendAnalysisService
 from bigas.resources.marketing.storage_service import StorageService
