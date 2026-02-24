@@ -13,13 +13,21 @@ The `bigas.llm` package provides a single provider-agnostic interface for chat-s
 
 - **Provider** is inferred from the **model name**:
   - `gpt-*` → OpenAI (requires `OPENAI_API_KEY`)
-  - `gemini-*` → Gemini (requires `GEMINI_API_KEY` and optional `google-generativeai`)
+  - `gemini-*` → Gemini: either Google AI (`GEMINI_API_KEY`) or Vertex AI (ADC, no key)
 
 - **Model resolution** (same for all features):
   1. `explicit_model` (e.g. request body `llm_model`)
   2. Per-feature env (e.g. `BIGAS_CTO_PR_REVIEW_MODEL`)
   3. `LLM_MODEL` (provider-agnostic)
   4. Default `gpt-4o`
+
+## Gemini: Vertex AI (default on GCP) vs API key
+
+- **Vertex AI (default when `GOOGLE_PROJECT_ID` is set)**  
+  On Cloud Run, `GOOGLE_PROJECT_ID` is always set, so we use **Vertex AI with ADC** automatically. No `GEMINI_USE_VERTEX` or API key needed. Give the Cloud Run service account **Vertex AI User** and enable the **Vertex AI API**. Optional: `VERTEX_AI_LOCATION` (default `europe-west1`).
+
+- **Google AI (API key)**  
+  For local runs without a project, or to force the API key path, set `GEMINI_API_KEY` (from [Google AI Studio](https://aistudio.google.com/apikey)). To use the API key even when `GOOGLE_PROJECT_ID` is set (e.g. testing), set `GEMINI_USE_API_KEY=true`.
 
 ## Per-feature env overrides
 
@@ -30,14 +38,6 @@ The `bigas.llm` package provides a single provider-agnostic interface for chat-s
 | Release notes             | `BIGAS_RELEASE_NOTES_MODEL`          |
 | Marketing                 | `BIGAS_MARKETING_LLM_MODEL`          |
 | Duplicate recommendation  | `BIGAS_DUPLICATE_RECOMMENDATION_MODEL` |
-
-## Adding Gemini
-
-1. Install: `pip install google-generativeai`
-2. Set `GEMINI_API_KEY` (or pass `gemini_api_key` to `get_llm_client` for SaaS).
-3. Use a Gemini model name so the provider is inferred:
-   - Set e.g. `BIGAS_CTO_PR_REVIEW_MODEL=gemini-2.5-pro`, or
-   - Send `llm_model=gemini-2.5-pro` in the request body.
 
 ## Adding another provider (e.g. Claude)
 

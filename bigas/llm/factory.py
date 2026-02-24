@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 from bigas.llm.client import LLMClient
 from bigas.llm.openai_client import OpenAILLMClient
 from bigas.llm.gemini_client import GeminiLLMClient
+from bigas.llm.vertex_gemini_client import VertexGeminiLLMClient
 
 
 def _infer_provider_from_model(model: str) -> str:
@@ -56,9 +57,19 @@ def get_llm_client(
 
     if provider == "gemini":
         api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set for Gemini provider")
-        client: LLMClient = GeminiLLMClient(api_key=api_key, model=model)
+        project = os.environ.get("GOOGLE_PROJECT_ID", "").strip()
+        location = (os.environ.get("VERTEX_AI_LOCATION") or os.environ.get("GOOGLE_CLOUD_LOCATION") or "europe-west1").strip()
+        use_api_key = os.environ.get("GEMINI_USE_API_KEY", "").strip().lower() in ("1", "true", "yes")
+        # On GCP (GOOGLE_PROJECT_ID set), use Vertex AI by default so no GEMINI_USE_VERTEX secret is needed
+        if project and not use_api_key:
+            client = VertexGeminiLLMClient(project=project, location=location, model=model)
+        elif api_key:
+            client = GeminiLLMClient(api_key=api_key, model=model)
+        else:
+            raise RuntimeError(
+                "Gemini provider requires GOOGLE_PROJECT_ID (Vertex AI on GCP, default) or "
+                "GEMINI_API_KEY (Google AI). On Cloud Run, Vertex is used automatically."
+            )
         return client, model
 
     # default to OpenAI
