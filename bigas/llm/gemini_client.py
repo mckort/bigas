@@ -92,12 +92,8 @@ class GeminiLLMClient(LLMClient):
         gen_cfg = generation_config if generation_config else None
 
         # Last message is the new prompt; previous messages are history.
-        if len(gemini_contents) == 1:
-            history: List[Dict[str, Any]] = []
-            to_send = gemini_contents[0]["parts"][0]
-        else:
-            history = gemini_contents[:-1]
-            to_send = gemini_contents[-1]["parts"][0]
+        history = gemini_contents[:-1]
+        to_send = gemini_contents[-1]["parts"][0]
 
         chat = self._model.start_chat(history=history)
         # BLOCK_NONE for all harm categories: avoid false blocks on analytics/code-style content.
