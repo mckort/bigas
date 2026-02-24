@@ -3,7 +3,7 @@
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>Automated marketing analytics + product release communications with AI</strong>
+  <strong>Automated marketing analytics (GA4 + paid ads), product release comms, and PR reviews with AI</strong>
 </div>
 
 ## 📱 Stay Updated
@@ -16,10 +16,41 @@ Follow us on X for the latest updates, feature announcements, and marketing insi
 **Bigas** is an AI team concept designed to provide virtual specialists for different business functions.
 
 Today it includes:
-- **The Senior Marketing Analyst** (GA4 → insights, weekly reports)
+- **The Senior Marketing Analyst** – GA4 web analytics + **paid ads (Google Ads, Meta, LinkedIn, Reddit)** → insights, weekly reports, portfolio reports, cross-platform budget analysis
 - **The Product Release Manager** (Jira → customer-facing release notes + social/blog drafts)
 - **The CTO** (GitHub PR review → AI code review comment on pull requests)
 
+### Marketing view of Bigas
+
+Bigas runs in the cloud. You access it to run marketing specialist reports and create release notes (among other things). PR reviews are triggered automatically from GitHub when you open or update a pull request. Scheduled reports (e.g. weekly analytics or ad portfolio reports) are triggered by Google Cloud Scheduler.
+
+```text
+                    ┌─────────────────────────────────────────────────────────┐
+                    │              BIGAS (runs in the cloud)                   │
+                    │         Google Cloud Run · Your deployment URL           │
+                    └─────────────────────────────────────────────────────────┘
+                                              │
+         ┌───────────────────────────────────┼───────────────────────────────────┐
+         │                                   │                                   │
+         ▼                                   ▼                                   ▼
+┌─────────────────┐               ┌─────────────────────┐               ┌─────────────────┐
+│  You (user)     │               │  GitHub             │               │  Google Cloud   │
+│  access Bigas   │               │  (open/sync PR)     │               │  Scheduler      │
+│  via HTTP/MCP   │               │                     │               │                 │
+└────────┬────────┘               └──────────┬──────────┘               └────────┬────────┘
+         │                                   │                                   │
+         │  Trigger reports,                  │  PR review                       │  Scheduled
+         │  create release notes             │  automatically                   │  reports
+         │  (examples)                       │  triggered                       │  (e.g. weekly)
+         │                                   │                                   │
+         └───────────────────────────────────┼───────────────────────────────────┘
+                                             │
+                                             ▼
+                    ┌─────────────────────────────────────────────────────────┐
+                    │  Bigas produces outputs like reports (via HTTP/Discord), │
+                    │  release notes (HTTP), and PR review comments (GitHub).  │
+                    └─────────────────────────────────────────────────────────┘
+```
 ### 🎯 Our Goal
 To build a comprehensive AI team that can handle various business functions, starting with marketing and expanding to other areas like sales, customer support, product development, and more.
 
@@ -28,6 +59,7 @@ To build a comprehensive AI team that can handle various business functions, sta
 Bigas is a **modular AI platform** that exposes marketing analytics and product tooling over HTTP (MCP tools) and can post outputs to Discord.
 
 **What our Senior Marketing Analyst does:**
+- 📣 **Paid Ads Analytics (Google Ads, Meta, LinkedIn, Reddit)**: Portfolio reports per platform, cross-platform comparison and budget recommendations, optional GA4 Paid Social attribution; post to Discord
 - 📈 **Weekly Analytics Reports**: Automated GA4 analysis with AI-powered insights and comprehensive marketing analysis
 - 🔍 **Advanced Page Performance Analysis**: Identifies underperforming pages considering both conversions AND events, with web scraping for concrete recommendations
 - 🎯 **Expert Marketing Recommendations**: Provides specific, actionable improvement suggestions based on actual page content and scraped data
@@ -124,9 +156,9 @@ Bigas is built as a **Modular Monolith** with a service-oriented architecture:
 +-------------------------------------------------+
 ```
 
-#### 📣 Ads Analytics (LinkedIn + Reddit)
+#### 📣 Ads Analytics (Google Ads, Meta, LinkedIn, Reddit)
 
-Bigas also includes a multi-platform **Paid Ads Analytics Orchestrator** alongside GA4 web analytics. This layer standardizes how ads data is fetched, stored, and summarized across platforms such as **LinkedIn Ads** and **Reddit Ads**.
+Bigas also includes a multi-platform **Paid Ads Analytics Orchestrator** alongside GA4 web analytics. This layer standardizes how ads data is fetched, stored, and summarized across **Google Ads**, **Meta (Facebook/Instagram)**, **LinkedIn Ads**, and **Reddit Ads**.
 
 ```text
 +------------------------------+
@@ -138,41 +170,48 @@ Bigas also includes a multi-platform **Paid Ads Analytics Orchestrator** alongsi
               v
 +----------------------------------------------+
 |  Marketing Ads Orchestrator (Flask)          |
+|  - /mcp/tools/run_google_ads_portfolio_report|
+|  - /mcp/tools/run_meta_portfolio_report      |
 |  - /mcp/tools/run_linkedin_portfolio_report  |
 |  - /mcp/tools/run_reddit_portfolio_report    |
 |  - /mcp/tools/run_cross_platform_marketing_  |
-|    analysis (LinkedIn + Reddit → comparison) |
+|    analysis (all four → comparison)          |
 |  - /mcp/tools/fetch_*_ad_analytics_report    |
 |  - /mcp/tools/fetch_*_audience_report        |
 |  - /mcp/tools/summarize_*_ad_analytics       |
 +----------------------------------------------+
-      |                          |
-      v                          v
-+---------------+        +------------------+
-| LinkedInAds   |        | RedditAds        |
-| Service       |        | Service          |
-| (OAuth +      |        | (OAuth +         |
-|  adAnalytics) |        |  Reports API v3) |
-+---------------+        +------------------+
-      \                          /
-       \                        /
-        \                      /
-         v                    v
+      |              |              |              |
+      v              v              v              v
++-----------+  +-----------+  +---------------+  +------------------+
+|GoogleAds |  | MetaAds   |  | LinkedInAds   |  | RedditAds        |
+|Service   |  | Service   |  | Service       |  | Service          |
+|(ADC +    |  | (Graph API|  | (OAuth +      |  | (OAuth +         |
+| API)     |  | + token)  |  |  adAnalytics) |  |  Reports API v3) |
++-----------+  +-----------+  +---------------+  +------------------+
+      \              |              /                    /
+       \             |             /                    /
+        \            |            /                    /
+         v           v           v                    v
       +----------------------------------------------+
       | StorageService (Google Cloud Storage)        |
-      |  - raw_ads/linkedin/...                      |
-      |  - raw_ads/reddit/...                        |
+      |  - raw_ads/google_ads/...                     |
+      |  - raw_ads/meta/...                           |
+      |  - raw_ads/linkedin/...                       |
+      |  - raw_ads/reddit/...                         |
       |  - *.enriched.json (normalized payloads)     |
       +----------------------------------------------+
                          |
                          v
       +----------------------------------------------+
       | LLM (OpenAI or Gemini via bigas.llm)         |
-      | AD_SUMMARY_PROMPTS registry                   |
-      |  - ("linkedin", "ad_analytics")              |
+      | AD_SUMMARY_PROMPTS registry                    |
+      |  - ("google_ads", "ad_analytics")             |
+      |  - ("meta", "ad_analytics")                  |
+      |  - ("linkedin", "ad_analytics")               |
       |  - ("linkedin", "creative_portfolio")        |
       |  - ("reddit",  "ad_analytics")               |
       |  - ("reddit",  "portfolio")                  |
+      |  - ("cross_platform", "budget_analysis")     |
       +----------------------------------------------+
                          |
                          v
@@ -186,10 +225,10 @@ Bigas also includes a multi-platform **Paid Ads Analytics Orchestrator** alongsi
 
 At a high level:
 
-- **Platform services** (`LinkedInAdsService`, `RedditAdsService`) hide API specifics, authentication, and rate limits.
+- **Platform services** (`GoogleAdsService`, `MetaAdsService`, `LinkedInAdsService`, `RedditAdsService`) hide API specifics, authentication, and rate limits.
 - **Standardized storage** uses `raw_ads/{platform}/{date}/...` for raw reports and matching `.enriched.json` files for normalized, LLM-ready payloads.
 - The **Paid Ads Analytics Orchestrator** endpoints handle date ranges, caching, and coordinating multi-step jobs (discovery → fetch → enrich → summarize).
-- **Summaries** are generated via a shared `AD_SUMMARY_PROMPTS` registry, so each platform + report type gets a consistent, opinionated analysis:
+- **Summaries** are generated via a shared `AD_SUMMARY_PROMPTS` registry, so each platform + report type gets a consistent, opinionated analysis, including a dedicated prompt for cross-platform budget recommendations.
   - Portfolio overview, key segments, underperformers, and concrete next steps
 - **Output** is posted to Discord for easy consumption by marketing stakeholders.
 
@@ -416,6 +455,8 @@ For automated weekly reports, set up Google Cloud Scheduler:
 5. **Save the job**
 
 This will automatically post weekly analytics reports to your Discord channel every Monday at 9 AM.
+
+You can also schedule **ad portfolio reports** with Cloud Scheduler (e.g. `run_google_ads_portfolio_report`, `run_meta_portfolio_report`, or `run_cross_platform_marketing_analysis`). Use the same HTTP target type and the corresponding MCP tool URL; for long-running cross-platform runs, consider the async endpoint (e.g. `/mcp/tools/run_cross_platform_marketing_analysis_async`) and a job that polls for completion, or set the Cloud Run request timeout to 900s.
 
 **Schedule Examples:**
 - `0 9 * * 1` - Every Monday at 9 AM
