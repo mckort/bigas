@@ -6,7 +6,7 @@ import os
 import re
 import logging
 
-import openai
+from bigas.llm.factory import get_llm_client
 
 from bigas.resources.product.create_release_notes.jira_client import JiraClient, JiraConfig, JiraError
 from bigas.resources.product.create_release_notes.prompts import (
@@ -58,7 +58,11 @@ def _extract_json(text: str) -> Dict[str, Any]:
                 pass
 
         # As a last resort, return an empty object rather than failing the entire flow.
-        logger.warning("Failed to parse LLM JSON response; returning empty object.")
+        logger.warning(
+            "Failed to parse LLM JSON response; returning empty object. "
+            "Raw response (first 500 chars): %s",
+            (t[:500] + ("..." if len(t) > 500 else "")),
+        )
         return {}
 
 
@@ -105,12 +109,16 @@ class CreateReleaseNotesService:
             jira_client = JiraClient(JiraConfig.from_env())
         self._jira = jira_client
 
-        api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise ReleaseNotesError("OPENAI_API_KEY environment variable not set.")
-
-        self._openai_client = openai.OpenAI(api_key=api_key)
-        self._model = openai_model or os.environ.get("OPENAI_MODEL") or "gpt-4"
+        # Use shared LLM abstraction; ignore openai_api_key in favor of env-based config.
+        # Model resolution order:
+        #   1) openai_model argument
+        #   2) BIGAS_RELEASE_NOTES_MODEL
+        #   3) LLM_MODEL
+        #   4) "gpt-4o" (factory default)
+        self._llm, self._model = get_llm_client(
+            feature="release_notes",
+            explicit_model=openai_model,
+        )
 
     def create(self, *, fix_version: str, jql_extra: str = "") -> Dict[str, Any]:
         _validate_fix_version(fix_version)
@@ -168,8 +176,7 @@ class CreateReleaseNotesService:
                 fix_version=fix_version,
                 grouped_issues_json=grouped_issues_json,
             )
-            completion = self._openai_client.chat.completions.create(
-                model=self._model,
+            content = self._llm.complete(
                 messages=[
                     {"role": "system", "content": COMMS_PACK_SYSTEM_PROMPT},
                     {"role": "user", "content": comms_prompt},
@@ -177,7 +184,6 @@ class CreateReleaseNotesService:
                 max_tokens=2200,
                 temperature=0.3,
             )
-            content = (completion.choices[0].message.content or "").strip()
             pack = _extract_json(content)
             customer_sections = (pack.get("sections") or customer_sections)
             social = (pack.get("social") or social)
@@ -191,8 +197,7 @@ class CreateReleaseNotesService:
                     fix_version=fix_version,
                     grouped_issues_json=grouped_issues_json,
                 )
-                completion = self._openai_client.chat.completions.create(
-                    model=self._model,
+                content = self._llm.complete(
                     messages=[
                         {"role": "system", "content": CUSTOMER_COPY_SYSTEM_PROMPT},
                         {"role": "user", "content": copy_prompt},
@@ -200,7 +205,6 @@ class CreateReleaseNotesService:
                     max_tokens=1600,
                     temperature=0.2,
                 )
-                content = (completion.choices[0].message.content or "").strip()
                 customer_sections = _extract_json(content)
             except Exception:
                 # Last resort: raw summaries (still no keys).
@@ -224,8 +228,7 @@ class CreateReleaseNotesService:
             fix_version=fix_version,
             issues_compact_json=issues_compact_json,
         )
-        completion2 = self._openai_client.chat.completions.create(
-            model=self._model,
+        content2 = self._llm.complete(
             messages=[
                 {"role": "system", "content": RELEASE_NOTES_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -233,7 +236,6 @@ class CreateReleaseNotesService:
             max_tokens=1800,
             temperature=0.4,
         )
-        content2 = (completion2.choices[0].message.content or "").strip()
         result = _extract_json(content2)
 
         # Ensure required top-level fields exist (light validation; keep robust)

@@ -218,6 +218,8 @@ trap "rm -f $ENV_VARS_FILE" EXIT
   echo "DEPLOYMENT_MODE: \"$DEPLOYMENT_MODE\""
   echo "GA4_PROPERTY_ID: \"$GA4_PROPERTY_ID\""
   echo "OPENAI_API_KEY: \"$OPENAI_API_KEY\""
+  [ -n "$GEMINI_API_KEY" ] && echo "GEMINI_API_KEY: \"$GEMINI_API_KEY\""
+  [ -n "$LLM_MODEL" ] && echo "LLM_MODEL: \"$LLM_MODEL\""
   echo "BIGAS_ACCESS_MODE: \"$BIGAS_ACCESS_MODE\""
   echo "BIGAS_ACCESS_KEYS: \"$BIGAS_ACCESS_KEYS\""
   echo "BIGAS_ACCESS_HEADER: \"$BIGAS_ACCESS_HEADER\""
@@ -254,6 +256,7 @@ gcloud run deploy mcp-marketing \
     --region europe-north1 \
     --allow-unauthenticated \
     --service-account=$GOOGLE_SERVICE_ACCOUNT_EMAIL \
+    --timeout=900 \
     --env-vars-file="$ENV_VARS_FILE"
 
 echo "✅ Deployment completed successfully!" 

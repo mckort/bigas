@@ -22,4 +22,5 @@ ENV FLASK_RUN_HOST=0.0.0.0
 ENV PORT=8080
 
 # Run the application with Gunicorn
-CMD ["gunicorn", "--timeout", "300", "--bind", "0.0.0.0:8080", "app:create_app()"]
+# 15 min timeout so cross-platform (LinkedIn + Reddit + GA + Meta + LLM) can finish
+CMD ["gunicorn", "--timeout", "900", "--bind", "0.0.0.0:8080", "app:create_app()"]

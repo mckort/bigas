@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import logging
 import os
 
-import openai
+from bigas.llm.factory import get_llm_client
 
 from bigas.resources.product.create_release_notes.jira_client import JiraClient, JiraConfig, JiraError
 from bigas.resources.product.progress_updates.prompts import (
@@ -80,12 +80,16 @@ class ProgressUpdatesService:
             jira_client = JiraClient(JiraConfig.from_env())
         self._jira = jira_client
 
-        api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise ProgressUpdatesError("OPENAI_API_KEY environment variable not set.")
-
-        self._openai_client = openai.OpenAI(api_key=api_key)
-        self._model = openai_model or os.environ.get("OPENAI_MODEL") or "gpt-4"
+        # Use shared LLM abstraction; ignore openai_api_key in favor of env-based config.
+        # Model resolution order:
+        #   1) openai_model argument
+        #   2) BIGAS_PROGRESS_UPDATES_MODEL
+        #   3) LLM_MODEL
+        #   4) "gpt-4o" (factory default)
+        self._llm, self._model = get_llm_client(
+            feature="progress_updates",
+            explicit_model=openai_model,
+        )
 
     def run(
         self,
@@ -112,15 +116,14 @@ class ProgressUpdatesService:
         stats = _aggregate_stats(normalized)
         done_issues_text = _format_done_issues_for_prompt(normalized)
 
-        # Build and call OpenAI
+        # Build and call LLM
         user_prompt = build_progress_updates_user_prompt(
             stats=stats,
             done_issues_text=done_issues_text,
             days=days,
         )
         try:
-            completion = self._openai_client.chat.completions.create(
-                model=self._model,
+            message = self._llm.complete(
                 messages=[
                     {"role": "system", "content": PROGRESS_UPDATES_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
@@ -128,10 +131,9 @@ class ProgressUpdatesService:
                 max_tokens=800,
                 temperature=0.4,
             )
-            message = (completion.choices[0].message.content or "").strip()
         except Exception as e:
-            logger.error("Progress updates OpenAI call failed", exc_info=True)
-            raise ProgressUpdatesError(f"OpenAI request failed: {e}") from e
+            logger.error("Progress updates LLM call failed", exc_info=True)
+            raise ProgressUpdatesError(f"LLM request failed: {e}") from e
 
         return {
             "ok": True,
