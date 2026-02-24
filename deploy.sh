@@ -250,6 +250,7 @@ trap "rm -f $ENV_VARS_FILE" EXIT
   [ -n "$GOOGLE_PROJECT_ID" ] && echo "GOOGLE_PROJECT_ID: \"$GOOGLE_PROJECT_ID\""
 } >> "$ENV_VARS_FILE"
 
+# 900s (15 min) request timeout for sync cross-platform report; use *_async endpoints for longer runs
 gcloud run deploy mcp-marketing \
     --image $IMAGE \
     --platform managed \

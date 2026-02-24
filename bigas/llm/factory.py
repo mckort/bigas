@@ -14,7 +14,10 @@ def _infer_provider_from_model(model: str) -> str:
         return "openai"
     if lower.startswith("gemini-") or "gemini" in lower:
         return "gemini"
-    return os.environ.get("BIGAS_LLM_PROVIDER", "openai").lower()
+    raise ValueError(
+        f"Unsupported model prefix: {model!r}. "
+        "Expected 'gpt-*' (OpenAI) or 'gemini-*' (Gemini)."
+    )
 
 
 def get_llm_client(

@@ -5590,7 +5590,7 @@ def weekly_analytics_report():
             else:
                 # For other templates, use the template service with OpenAI summarization - use current property ID
                 raw_data = service.template_service.run_template_query(template_key, current_property_id)
-                answer = service.openai_service.format_response_obj(raw_data, q)
+                answer = service.marketing_llm_service.format_response_obj(raw_data, q)
             
             # Special handling for underperforming pages: scrape and analyze the page content
             page_content_analysis = None

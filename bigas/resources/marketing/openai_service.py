@@ -6,24 +6,24 @@ from bigas.llm.factory import get_llm_client
 
 logger = logging.getLogger(__name__)
 
-class OpenAIService:
-    """Service for handling LLM API interactions and natural language processing.
-    
+class MarketingLLMService:
+    """Service for marketing LLM API interactions and natural language processing.
+
     Uses the shared bigas.llm abstraction; supports OpenAI and Gemini via
-    BIGAS_LLM_PROVIDER / model name and BIGAS_MARKETING_LLM_MODEL.
+    model name and BIGAS_MARKETING_LLM_MODEL / LLM_MODEL.
     """
-    
+
     def __init__(self, openai_api_key: str):
         """Initialize the LLM service.
-        
+
         Note: GA4Service should be initialized BEFORE this service, which removes
         GOOGLE_APPLICATION_CREDENTIALS_GA4 to prevent httpx interference.
-        
+
         openai_api_key is still required for backward compatibility (callers pass it).
         The actual provider/model is resolved via get_llm_client(feature='marketing').
         """
         if not openai_api_key:
-            raise ValueError("OpenAI API key is required")
+            raise ValueError("API key is required for marketing LLM")
         
         self._llm, self._model = get_llm_client(
             feature="marketing",
@@ -182,7 +182,10 @@ class OpenAIService:
                 max_tokens=2000,
             )
             print(f"✅ DEBUG: LLM API call successful")
-            return content
+            text = (content or "").strip()
+            if not text:
+                raise ValueError("LLM returned no content (empty response). Check safety settings or increase max_output_tokens.")
+            return text
         except Exception as e:
             print(f"❌ DEBUG: LLM API call failed: {e}")
             raise
@@ -237,9 +240,12 @@ class OpenAIService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(analysis_data)}
                 ],
-                max_tokens=1500,
+                max_tokens=2048,
             )
-            return content
+            text = (content or "").strip()
+            if not text:
+                raise ValueError("LLM returned no content (empty response). Check safety settings or increase max_output_tokens. Cannot provide fallback analysis.")
+            return text
         except Exception as e:
             logger.error(f"Error generating analysis for filtered data: {e}")
             raise ValueError(f"LLM failed to generate analysis: {e}. Cannot provide fallback analysis.")
@@ -269,10 +275,13 @@ class OpenAIService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(analysis_data, indent=2)}
                 ],
-                max_tokens=800,
+                max_tokens=2048,
                 temperature=0.7
             )
-            return content.strip()
+            text = (content or "").strip()
+            if not text:
+                raise ValueError("LLM returned no content (empty response). Check safety settings or increase max_output_tokens. Cannot provide fallback insights.")
+            return text
             
         except Exception as e:
             logger.error(f"Error generating AI insights for trends: {e}")
@@ -298,7 +307,10 @@ class OpenAIService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(ai_data)}
             ],
-            max_tokens=500,
+            max_tokens=2048,
             temperature=0.7
         )
-        return content 
+        text = (content or "").strip()
+        if not text:
+            raise ValueError("LLM returned no content (empty response). Check safety settings or increase max_output_tokens.")
+        return text

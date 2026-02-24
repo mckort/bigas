@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 class TrendAnalysisService:
     """Service for orchestrating trend analysis workflows."""
     
-    def __init__(self, ga4_service, openai_service):
+    def __init__(self, ga4_service, marketing_llm_service):
         """Initialize the trend analysis service with dependencies."""
         self.ga4_service = ga4_service
-        self.openai_service = openai_service
+        self.marketing_llm_service = marketing_llm_service
     
     def get_default_time_frames(self) -> List[Dict[str, str]]:
         """Get default time frames for trend analysis."""
@@ -99,7 +99,7 @@ class TrendAnalysisService:
         formatted_trends = trend_result["formatted_data"]
         
         # Generate AI insights
-        ai_insights = self.openai_service.generate_trend_insights(
+        ai_insights = self.marketing_llm_service.generate_trend_insights(
             formatted_trends, metrics, dimensions, date_range
         )
         
