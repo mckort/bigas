@@ -5854,7 +5854,7 @@ Return ONLY the JSON, no explanation.
             if template_key == "underperforming_pages" and underperforming_metrics_snapshot:
                 message += underperforming_metrics_snapshot
             if should_post_to_discord:
-                post_to_discord(webhook_url, message)
+                post_long_to_discord(webhook_url, message)
             full_report += message + "\n\n"
             
             # Store question and answer in report data with recommendation
@@ -5870,7 +5870,7 @@ Return ONLY the JSON, no explanation.
             error_message = f"Could not answer question '{q}': {e}"
             logger.error(error_message)
             if should_post_to_discord:
-                post_to_discord(webhook_url, error_message)
+                post_long_to_discord(webhook_url, error_message)
             
             # Store error in report data
             report_data["questions"].append({
@@ -5898,7 +5898,7 @@ Return ONLY the JSON, no explanation.
             summary = "Executive Summary: Analytics data processed successfully. Individual recommendations generated for each question."
             
         if should_post_to_discord:
-            post_to_discord(webhook_url, f"📊 Enhanced Analytics Summary:\n{summary}")
+            post_long_to_discord(webhook_url, f"📊 Enhanced Analytics Summary:\n{summary}")
         
         # Store summary in report data
         report_data["summary"] = summary
@@ -6087,7 +6087,7 @@ def analyze_underperforming_pages():
                 pass
 
             header_message += f"\nI'll analyze each page and provide specific improvement suggestions..."
-            post_to_discord(webhook_url, header_message)
+            post_long_to_discord(webhook_url, header_message)
             discord_messages_sent += 1
             
             # If we have page URLs, analyze each underperforming page individually
@@ -6210,7 +6210,7 @@ def analyze_underperforming_pages():
                         page_message += f"🎯 **Expert Analysis & Recommendations**:\n\n{page_analysis}\n\n"
                         page_message += "---\n💡 *This analysis is based on actual page content analysis by an expert Digital Marketing Strategist*"
                         
-                        post_to_discord(webhook_url, page_message)
+                        post_long_to_discord(webhook_url, page_message)
                         discord_messages_sent += 1
                         
                         # Add a small delay between messages to avoid rate limiting
@@ -6252,7 +6252,7 @@ def analyze_underperforming_pages():
                         
                         error_message += f"---\n💡 *Expert recommendations require actual page content analysis. Generic advice without real data is not actionable.*"
                         
-                        post_to_discord(webhook_url, error_message)
+                        post_long_to_discord(webhook_url, error_message)
                         discord_messages_sent += 1
             else:
                 # If no page URLs extracted, send a general analysis
@@ -6310,7 +6310,7 @@ def analyze_underperforming_pages():
                 general_message += f"🎯 **Analysis & Recommendations**:\n\n{general_analysis}\n\n"
                 general_message += "---\n💡 *This analysis is based on conversion data and best practices*"
                 
-                post_to_discord(webhook_url, general_message)
+                post_long_to_discord(webhook_url, general_message)
                 discord_messages_sent += 1
         
         return jsonify({
@@ -6349,30 +6349,6 @@ def cleanup_old_reports():
     except Exception as e:
         logger.error(f"Error cleaning up old reports: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
-
-
-def post_long_to_discord(webhook_url, message, chunk_size: int = 1900):
-    """
-    Post message to Discord; if over 2000 chars, split into multiple messages (like LinkedIn/product flow).
-    Discord limit is 2000; we use chunk_size to leave margin and try to split on newlines.
-    """
-    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placehoder"):
-        return
-    msg = (message or "").strip()
-    if not msg:
-        return
-    if len(msg) <= 2000:
-        post_to_discord(webhook_url, msg)
-        return
-    start = 0
-    while start < len(msg):
-        end = min(start + chunk_size, len(msg))
-        # Prefer splitting on a newline for readability
-        nl = msg.rfind("\n", start, end)
-        if nl > start + 200:
-            end = nl + 1
-        post_to_discord(webhook_url, msg[start:end].strip())
-        start = end
 
 
 def post_to_discord(webhook_url, message: str):
@@ -6414,7 +6390,7 @@ def post_long_to_discord(webhook_url: str, text: str, chunk_size: int = 1900):
 
     Splits on newline boundaries where possible to keep sections readable.
     """
-    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placehoder"):
+    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placeholder"):
         logger.info("Discord webhook URL not provided or is placeholder, skipping Discord notification")
         return
 
