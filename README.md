@@ -47,9 +47,8 @@ Bigas runs in the cloud. You access it to run marketing specialist reports and c
                                              │
                                              ▼
                     ┌─────────────────────────────────────────────────────────┐
-                    │  Bigas produces: marketing specialist reports,           │
-                    │  release notes (and social/blog drafts), PR review       │
-                    │  comments, and scheduled analytics → e.g. Discord       │
+                    │  Bigas produces outputs like reports (via HTTP/Discord), │
+                    │  release notes (HTTP), and PR review comments (GitHub).  │
                     └─────────────────────────────────────────────────────────┘
 ```
 ### 🎯 Our Goal
@@ -229,7 +228,7 @@ At a high level:
 - **Platform services** (`GoogleAdsService`, `MetaAdsService`, `LinkedInAdsService`, `RedditAdsService`) hide API specifics, authentication, and rate limits.
 - **Standardized storage** uses `raw_ads/{platform}/{date}/...` for raw reports and matching `.enriched.json` files for normalized, LLM-ready payloads.
 - The **Paid Ads Analytics Orchestrator** endpoints handle date ranges, caching, and coordinating multi-step jobs (discovery → fetch → enrich → summarize).
-- **Summaries** are generated via a shared `AD_SUMMARY_PROMPTS` registry, so each platform + report type gets a consistent, opinionated analysis:
+- **Summaries** are generated via a shared `AD_SUMMARY_PROMPTS` registry, so each platform + report type gets a consistent, opinionated analysis, including a dedicated prompt for cross-platform budget recommendations.
   - Portfolio overview, key segments, underperformers, and concrete next steps
 - **Output** is posted to Discord for easy consumption by marketing stakeholders.
 
@@ -457,7 +456,7 @@ For automated weekly reports, set up Google Cloud Scheduler:
 
 This will automatically post weekly analytics reports to your Discord channel every Monday at 9 AM.
 
-You can also schedule **ad portfolio reports** with Cloud Scheduler (e.g. `run_google_ads_portfolio_report`, `run_meta_portfolio_report`, or `run_cross_platform_marketing_analysis`). Use the same HTTP target type and the corresponding MCP tool URL; for long-running cross-platform runs, consider the async endpoint and a job that polls for completion, or set the Cloud Run request timeout to 900s.
+You can also schedule **ad portfolio reports** with Cloud Scheduler (e.g. `run_google_ads_portfolio_report`, `run_meta_portfolio_report`, or `run_cross_platform_marketing_analysis`). Use the same HTTP target type and the corresponding MCP tool URL; for long-running cross-platform runs, consider the async endpoint (e.g. `/mcp/tools/run_cross_platform_marketing_analysis_async`) and a job that polls for completion, or set the Cloud Run request timeout to 900s.
 
 **Schedule Examples:**
 - `0 9 * * 1` - Every Monday at 9 AM
