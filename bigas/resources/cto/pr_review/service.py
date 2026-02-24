@@ -1,6 +1,6 @@
 """
 PR review service: run AI review on a diff and return markdown review text.
-Uses gpt-4o by default (chat/completions); override via BIGAS_CTO_PR_REVIEW_MODEL or llm_model.
+Uses Gemini by default (GEMINI_API_KEY); override via BIGAS_CTO_PR_REVIEW_MODEL or llm_model.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class PRReviewService:
             1) openai_model argument (from llm_model request body)
             2) BIGAS_CTO_PR_REVIEW_MODEL
             3) LLM_MODEL
-            4) "gpt-4o"
+            4) "gemini-2.5-pro" (factory default)
         - Provider is inferred from the model name (gpt-* -> OpenAI, gemini-* -> Gemini),
           falling back to BIGAS_LLM_PROVIDER / OpenAI.
         """

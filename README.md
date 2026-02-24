@@ -1501,7 +1501,7 @@ This project is licensed under the GNU Affero General Public License v3.0 (AGPL-
 ## 🔄 Changelog
 
 ### v1.3.0
-- ✅ **LLM abstraction**: Provider-agnostic LLM layer (`bigas.llm`) for OpenAI and Gemini. Model resolution: request/body → per-feature env (e.g. `BIGAS_CTO_PR_REVIEW_MODEL`) → `LLM_MODEL` → default `gpt-4o`. See `bigas/llm/README.md`.
+- ✅ **LLM abstraction**: Provider-agnostic LLM layer (`bigas.llm`) for OpenAI and Gemini. Model resolution: request/body → per-feature env (e.g. `BIGAS_CTO_PR_REVIEW_MODEL`) → `LLM_MODEL` → default `gemini-2.5-pro`. See `bigas/llm/README.md`.
 - ✅ **Gemini support**: Use `GEMINI_API_KEY` and `LLM_MODEL` (e.g. `gemini-2.5-pro`) for PR review, release notes, marketing, and progress updates.
 - ✅ **Cross-platform async**: `run_cross_platform_marketing_analysis_async` for long-running cross-platform reports; poll `get_job_status` / `get_job_result`.
 - ✅ **Longer timeouts**: Gunicorn and Cloud Run request timeout set to 900s (15 min) for sync cross-platform and LinkedIn portfolio runs.

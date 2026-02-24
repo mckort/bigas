@@ -1,6 +1,6 @@
 # CTO PR review (review_and_comment_pr)
 
-The **review_and_comment_pr** tool reviews a pull request diff with AI (OpenAI, default `gpt-4o`) and posts or updates a single comment on the GitHub PR. Repeated runs update the same comment (identified by a hidden marker) to avoid spam.
+The **review_and_comment_pr** tool reviews a pull request diff with AI (default: Gemini via Google AI API key) and posts or updates a single comment on the GitHub PR. Repeated runs update the same comment (identified by a hidden marker) to avoid spam.
 
 ## Add to your repo (repo you want reviewed)
 
@@ -30,7 +30,7 @@ On the next PR (open or push), the workflow runs and Bigas posts or updates the 
 
 2. **OpenAI API**
    - `OPENAI_API_KEY` must be set (already required for other Bigas features).
-   - Optional: `BIGAS_CTO_PR_REVIEW_MODEL` to override the model (default: `gpt-4o`).
+   - Optional: `BIGAS_CTO_PR_REVIEW_MODEL` to override the model (default: `gemini-2.5-pro`).
 
 ## Request
 
@@ -81,7 +81,7 @@ If `GITHUB_TOKEN` is configured in Bigas (e.g. via Secret Manager), you can omit
 
 ## Response
 
-- **Success**: `{ "success": true, "comment_url": "https://github.com/...", "review_posted": true, "used_model": "gpt-4o" }`
+- **Success**: `{ "success": true, "comment_url": "https://github.com/...", "review_posted": true, "used_model": "gemini-2.5-pro" }`
 - **Error**: `{ "error": "..." }` with status 400 (validation), 401/403 (GitHub auth), 404 (repo/PR not found), 500 (OpenAI), 502 (GitHub API).
 
 ## Diff size

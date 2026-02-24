@@ -6,7 +6,6 @@ from typing import Optional, Tuple
 from bigas.llm.client import LLMClient
 from bigas.llm.openai_client import OpenAILLMClient
 from bigas.llm.gemini_client import GeminiLLMClient
-from bigas.llm.vertex_gemini_client import VertexGeminiLLMClient
 
 
 def _infer_provider_from_model(model: str) -> str:
@@ -32,7 +31,7 @@ def get_llm_client(
       1. explicit_model (e.g. request body llm_model)
       2. per-feature env override
       3. LLM_MODEL (provider-agnostic)
-      4. hard-coded default "gpt-4o"
+      4. hard-coded default "gemini-2.5-pro"
 
     Optional openai_api_key / gemini_api_key override env (e.g. for per-tenant keys in SaaS).
     """
@@ -50,26 +49,18 @@ def get_llm_client(
         explicit_model
         or (os.environ.get(feature_env) if feature_env else None)
         or model_env
-        or "gpt-4o"
+        or "gemini-2.5-pro"
     ).strip()
 
     provider = _infer_provider_from_model(model)
 
     if provider == "gemini":
         api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY")
-        project = os.environ.get("GOOGLE_PROJECT_ID", "").strip()
-        location = (os.environ.get("VERTEX_AI_LOCATION") or os.environ.get("GOOGLE_CLOUD_LOCATION") or "europe-west1").strip()
-        use_api_key = os.environ.get("GEMINI_USE_API_KEY", "").strip().lower() in ("1", "true", "yes")
-        # On GCP (GOOGLE_PROJECT_ID set), use Vertex AI by default so no GEMINI_USE_VERTEX secret is needed
-        if project and not use_api_key:
-            client = VertexGeminiLLMClient(project=project, location=location, model=model)
-        elif api_key:
-            client = GeminiLLMClient(api_key=api_key, model=model)
-        else:
+        if not api_key:
             raise RuntimeError(
-                "Gemini provider requires GOOGLE_PROJECT_ID (Vertex AI on GCP, default) or "
-                "GEMINI_API_KEY (Google AI). On Cloud Run, Vertex is used automatically."
+                "Gemini provider requires GEMINI_API_KEY (from https://aistudio.google.com/apikey)."
             )
+        client = GeminiLLMClient(api_key=api_key, model=model)
         return client, model
 
     # default to OpenAI

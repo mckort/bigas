@@ -85,7 +85,7 @@ class ProgressUpdatesService:
         #   1) openai_model argument
         #   2) BIGAS_PROGRESS_UPDATES_MODEL
         #   3) LLM_MODEL
-        #   4) "gpt-4o" (factory default)
+        #   4) "gemini-2.5-pro" (factory default)
         self._llm, self._model = get_llm_client(
             feature="progress_updates",
             explicit_model=openai_model,
