@@ -5757,7 +5757,7 @@ Return ONLY the JSON, no explanation.
 """
                     
                     try:
-                        llm, _ = get_llm_client(feature="marketing", explicit_model="gpt-4")
+                        llm, _ = get_llm_client(feature="marketing")
                         content = llm.complete(
                             messages=[{"role": "user", "content": page_analysis_prompt}],
                             max_tokens=200,
@@ -5825,7 +5825,7 @@ Return ONLY the JSON, no explanation.
 """
                     
                     try:
-                        llm, _ = get_llm_client(feature="marketing", explicit_model="gpt-4")
+                        llm, _ = get_llm_client(feature="marketing")
                         content = llm.complete(
                             messages=[{"role": "user", "content": recommendation_prompt}],
                             max_tokens=200,
@@ -6192,7 +6192,7 @@ def analyze_underperforming_pages():
                         Focus on practical, implementable recommendations based on the actual page content. Be specific about what to change, add, or remove. Provide concrete examples and actionable steps.
                         """
                         
-                        llm, _ = get_llm_client(feature="marketing", explicit_model="gpt-4")
+                        llm, _ = get_llm_client(feature="marketing")
                         page_analysis = llm.complete(
                             messages=[{"role": "user", "content": page_analysis_prompt}],
                             max_tokens=800,
@@ -6298,7 +6298,7 @@ def analyze_underperforming_pages():
                 Format your response as a structured analysis with clear action items. Focus on practical recommendations that a solo founder or small team can implement.
                 """
                 
-                llm, _ = get_llm_client(feature="marketing", explicit_model="gpt-4")
+                llm, _ = get_llm_client(feature="marketing")
                 general_analysis = llm.complete(
                     messages=[{"role": "user", "content": general_analysis_prompt}],
                     max_tokens=800,

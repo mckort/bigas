@@ -71,6 +71,8 @@ class GeminiLLMClient(LLMClient):
             if role == "assistant":
                 role = "model"
             elif role == "system":
+                # Gemini's chat history doesn't have a distinct system role;
+                # treat it as the first user message to provide context.
                 role = "user"
             content = (m.get("content") or "").strip()
             if content:
@@ -98,6 +100,7 @@ class GeminiLLMClient(LLMClient):
             to_send = gemini_contents[-1]["parts"][0]
 
         chat = self._model.start_chat(history=history)
+        # BLOCK_NONE for all harm categories: avoid false blocks on analytics/code-style content.
         response = chat.send_message(
             to_send,
             generation_config=gen_cfg,
