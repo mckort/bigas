@@ -44,7 +44,7 @@ Bigas is a **modular AI platform** that exposes marketing analytics and product 
 - ✅ **No missed items**: Ensures every Jira issue is included exactly once under **New features**, **Improvements**, **Bug Fixes**
 
 **What our CTO does:**
-- 🔍 **PR review**: Reviews pull request diffs with AI (Codex) and posts or updates a single comment on GitHub
+- 🔍 **PR review**: Reviews pull request diffs with AI (configurable LLM: OpenAI or Gemini) and posts or updates a single comment on GitHub
 - 🔐 **GitHub integration**: Uses a GitHub PAT (repo scope) from env or request; supports marker-based comment updates to avoid spam
 
 **PR review – add to your repo (the repo you want reviewed):**
@@ -53,7 +53,7 @@ Bigas is a **modular AI platform** that exposes marketing analytics and product 
    - Create `.github/workflows/pr-review.yml` (see [docs/cto-pr-review.md](docs/cto-pr-review.md) or copy from `bigas/.github/workflows/pr-review.yml` in this repo).
 2. **In that repo**, go to **Settings → Secrets and variables → Actions**:
    - **Variables**: add `BIGAS_URL` = your Bigas Cloud Run URL (e.g. `https://bigas-xxx.run.app`).
-   - **Secrets**: add `BIGAS_API_KEY` = one of your Bigas access keys (same as `BIGAS_ACCESS_KEYS`; use header `X-Bigas-Access-Key` or `Authorization: Bearer`). Optionally add `GH_PAT_FOR_BIGAS` if you don’t store the GitHub PAT in Bigas Secret Manager.
+   - **Secrets**: add `BIGAS_API_KEY` = one of your Bigas access keys (same as `BIGAS_ACCESS_KEYS`; use header `X-Bigas-Access-Key` or `Authorization: Bearer`). Optionally add `GH_PAT_FOR_BIGAS` if you don’t store the GitHub PAT in Bigas Secret Manager. To use Gemini for PR review, ensure Bigas has `GEMINI_API_KEY` and `LLM_MODEL` (e.g. `gemini-2.5-pro`) in Secret Manager and in `SECRET_MANAGER_SECRET_NAMES`.
 
 ### 🌟 Key Features
 
@@ -117,7 +117,7 @@ Bigas is built as a **Modular Monolith** with a service-oriented architecture:
 |   v                      v                      |
 | +----------------------+ +--------------------+ |
 | | Marketing Resource   | | Product Resource   | |
-| | (GA4, OpenAI,        | | (Jira, OpenAI,     | |
+| | (GA4, LLM,          | | (Jira, LLM,        | |
 | |  Discord, Storage)   | |  Discord)          | |
 | +----------------------+ +--------------------+ |
 |                                                 |
@@ -167,7 +167,8 @@ Bigas also includes a multi-platform **Paid Ads Analytics Orchestrator** alongsi
                          |
                          v
       +----------------------------------------------+
-      | OpenAI (AD_SUMMARY_PROMPTS registry)         |
+      | LLM (OpenAI or Gemini via bigas.llm)         |
+      | AD_SUMMARY_PROMPTS registry                   |
       |  - ("linkedin", "ad_analytics")              |
       |  - ("linkedin", "creative_portfolio")        |
       |  - ("reddit",  "ad_analytics")               |
@@ -197,7 +198,8 @@ At a high level:
 The marketing analytics functionality is organized into focused services:
 
 - **`GA4Service`**: Handles Google Analytics 4 API interactions and data extraction
-- **`OpenAIService`**: Manages OpenAI API calls for comprehensive marketing analysis and executive summary generation
+- **LLM-backed analysis**: Marketing and product features use the shared `bigas.llm` abstraction (OpenAI or Gemini; model set via `LLM_MODEL` or per-feature env such as `BIGAS_CTO_PR_REVIEW_MODEL`). See `bigas/llm/README.md`.
+- **`OpenAIService`**: Legacy wrapper for marketing analysis; in practice uses the same LLM abstraction
 - **`TemplateService`**: Provides template-driven analytics queries including event analysis templates
 - **`TrendAnalysisService`**: Orchestrates trend analysis workflows and underperforming page identification
 - **`StorageService`**: Manages weekly report storage in Google Cloud Storage with enhanced metadata
@@ -212,7 +214,7 @@ The product functionality is organized into focused services:
 1. **Weekly Reports**: Generated with comprehensive analytics data and stored in Google Cloud Storage
 2. **Page Performance Analysis**: Identifies underperforming pages considering both conversions and events
 3. **Web Scraping**: Analyzes actual page content (titles, CTAs, H1 tags) for concrete recommendations
-4. **AI Marketing Analysis**: Generates executive summary and 7 focused recommendations (one per question) using OpenAI
+4. **AI Marketing Analysis**: Generates executive summary and 7 focused recommendations (one per question) using the configured LLM (OpenAI or Gemini)
 5. **Discord Integration**: Posts structured reports with executive summaries and expert recommendations
 6. **Enhanced Metadata**: Stores comprehensive timestamps and report structure for better organization
 7. **Storage Management**: Automatic cleanup of old reports to manage costs
@@ -250,9 +252,13 @@ nano .env
 **When not using Secret Manager**, configure these in `.env` (see `env.example` for the full list):
 
 ```bash
-# Required:
+# Required (at least one LLM provider):
 GA4_PROPERTY_ID=your_actual_ga4_property_id
-OPENAI_API_KEY=your_actual_openai_api_key
+OPENAI_API_KEY=your_actual_openai_api_key   # if using OpenAI (gpt-* models)
+# For Gemini (gemini-* models) also set:
+# GEMINI_API_KEY=your_gemini_api_key
+# LLM_MODEL=gemini-2.5-pro
+
 GOOGLE_PROJECT_ID=your_actual_google_project_id
 GOOGLE_SERVICE_ACCOUNT_EMAIL=your_actual_service_account_email
 
@@ -272,7 +278,7 @@ META_ACCESS_TOKEN=your_long_lived_system_user_token
 META_AD_ACCOUNT_ID=optional_ad_account_id_without_act_prefix
 ```
 
-When **SECRET_MANAGER=true**, the app loads the vars listed in `SECRET_MANAGER_SECRET_NAMES` from Google Secret Manager at startup; only bootstrap and deploy-related vars need to stay in `.env`.
+When **SECRET_MANAGER=true**, the app loads the vars listed in `SECRET_MANAGER_SECRET_NAMES` from Google Secret Manager at startup (include `GEMINI_API_KEY` and `LLM_MODEL` if you use Gemini). Only bootstrap and deploy-related vars need to stay in `.env`.
 
 ### Step-by-Step Setup
 
@@ -293,7 +299,7 @@ When **SECRET_MANAGER=true**, the app loads the vars listed in `SECRET_MANAGER_S
 If you use **SECRET_MANAGER=true**, the app loads env vars from Google Secret Manager at startup (one secret per setting; secret name = env var name, payload = plain value).
 
 1. **Enable the Secret Manager API**: `gcloud services enable secretmanager.googleapis.com`
-2. **Create secrets** in the project (e.g. via Console or `gcloud secrets create SECRET_NAME` and add versions with your values). Use the same names as in `SECRET_MANAGER_SECRET_NAMES` (e.g. `OPENAI_API_KEY`, `JIRA_BASE_URL`).
+2. **Create secrets** in the project (e.g. via Console or `gcloud secrets create SECRET_NAME` and add versions with your values). Use the same names as in `SECRET_MANAGER_SECRET_NAMES` (e.g. `OPENAI_API_KEY`, `GEMINI_API_KEY`, `LLM_MODEL`, `JIRA_BASE_URL`).
 3. **Grant the Cloud Run service account** access: ensure the service account used by Cloud Run (e.g. `analytics@PROJECT_ID.iam.gserviceaccount.com`) has `roles/secretmanager.secretAccessor` on the project or on the secrets.
 4. In `.env` set **SECRET_MANAGER=true**, **SECRET_MANAGER_SECRET_NAMES** (comma-separated list), **GOOGLE_PROJECT_ID**; keep **GOOGLE_SERVICE_ACCOUNT_EMAIL** and deploy/access-control vars. See `env.example` (top section).
 
@@ -346,8 +352,8 @@ nano .env
 ```
 
 **Required environment variables** (see `env.example` for details):
-- `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID (found in GA4 Admin → Property Settings). Also used in cross-platform analysis: when set, the run fetches GA4 Paid Social attribution (User Acquisition / First Click by first user source) and Key Events (conversions) so the AI can link ad spend to outcomes (e.g. which paid channel drove conversions).
-- `OPENAI_API_KEY` - Your OpenAI API key
+- `GA4_PROPERTY_ID` - Your Google Analytics 4 property ID (found in GA4 Admin → Property Settings). Also used in cross-platform analysis when set.
+- `OPENAI_API_KEY` - Your OpenAI API key (required if using gpt-* models). For Gemini, set `GEMINI_API_KEY` and `LLM_MODEL` (e.g. `gemini-2.5-pro`) instead or in addition; include both in `SECRET_MANAGER_SECRET_NAMES` if using Secret Manager.
 - `DISCORD_WEBHOOK_URL_MARKETING` - Your Discord webhook URL (marketing channel)
 - `DISCORD_WEBHOOK_URL_PRODUCT` - Your Discord webhook URL (product channel, for release notes)
 - `STORAGE_BUCKET_NAME` - Your Google Cloud Storage bucket (optional, defaults to 'bigas-analytics-reports')
@@ -355,6 +361,8 @@ nano .env
 - **Google Ads** (for `run_google_ads_portfolio_report`): `GOOGLE_ADS_DEVELOPER_TOKEN` (required); `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional, manager/MCC); `GOOGLE_ADS_CUSTOMER_ID` (optional default customer). Auth uses Application Default Credentials; the Cloud Run service account must have access to the Google Ads account.
 - **Meta Ads** (for `run_meta_portfolio_report` and cross-platform): `META_ACCESS_TOKEN` (required, long-lived system user token with `ads_management` and `ads_read`); `META_AD_ACCOUNT_ID` (optional default ad account ID, numeric without `act_` prefix).
 - **LinkedIn** (optional, for cross-platform): LinkedIn ad account currency is read from the API when building the cross-platform payload.
+
+**LLM configuration (OpenAI and/or Gemini):** Set `OPENAI_API_KEY` for OpenAI (gpt-* models) or `GEMINI_API_KEY` and `LLM_MODEL` (e.g. `gemini-2.5-pro`) for Gemini. Per-feature overrides: `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_MARKETING_LLM_MODEL`. See `env.example` and `bigas/llm/README.md`.
 
 **⚠️ IMPORTANT**: You must add your actual API keys and values to the `.env` file. The `env.example` file only contains placeholder values.
 
@@ -428,7 +436,7 @@ https://your-service-name-<hash>.a.run.app
 
 You can find your service URL by running:
 ```bash
-gcloud run services describe bigas-core --region=your-region --format='value(status.url)'
+gcloud run services describe mcp-marketing --region=your-region --format='value(status.url)'
 ```
 
 ## 🤝 MCP Integration (AI Agents)
@@ -504,7 +512,8 @@ These endpoints expose paid ads analytics over HTTP:
   - `POST /mcp/tools/get_job_result` – Fetch the final result payload for a completed async job.
 
 - **Cross-Platform (LinkedIn + Reddit + Google Ads + Meta)**
-  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then AI comparison: summary, key data points, and budget recommendation (e.g. “LinkedIn focus X”, “Reddit focus Y”, “Google Ads focus Z”, “Meta focus W”). Posts progress to Discord as each platform completes, then one cross-platform summary. Currency is reported per platform (e.g. SEK, EUR). When `GA4_PROPERTY_ID` is set, the run also fetches GA4 Paid Social attribution (by first user source) and Key Events (conversions), so the analyst can connect ad spend to which channels drove users and conversions.
+  - `POST /mcp/tools/run_cross_platform_marketing_analysis` – Run fresh LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then LLM comparison: summary, key data points, and budget recommendation. Posts progress to Discord as each platform completes, then one cross-platform summary. **Request timeout is 15 minutes** (900s); for longer runs or to avoid timeouts, use the async variant below.
+  - `POST /mcp/tools/run_cross_platform_marketing_analysis_async` – Async cross-platform report. Returns `job_id` immediately; poll with `get_job_status` and `get_job_result`. Use when the sync endpoint would time out (e.g. LinkedIn + Reddit + Google Ads + Meta + LLM can take 10+ min).
 
 ### API Examples
 
@@ -638,7 +647,7 @@ Both summarization endpoints:
 3. Look up a prompt configuration in `AD_SUMMARY_PROMPTS[(platform, report_type)]`, which defines:
    - a **system prompt** (role + expectations for the AI analyst), and
    - a **user template** that injects the JSON payload.
-4. Call OpenAI’s Chat Completions API (default `gpt-4.1-mini`) with these prompts.
+4. Call the configured LLM (OpenAI or Gemini via `bigas.llm`) with these prompts. Default model is from `LLM_MODEL` or the marketing override (e.g. `BIGAS_MARKETING_LLM_MODEL`).
 5. Post the resulting markdown to Discord using `post_long_to_discord`, which:
    - splits long content into 2k‑character‑safe chunks, and
    - uses a short, configurable HTTP timeout via `DISCORD_HTTP_TIMEOUT`.
@@ -695,7 +704,7 @@ If LinkedIn is rate-limiting refresh-token minting, you can temporarily use a ma
 Once you have generated an **enriched** LinkedIn report (with `include_entity_names: true`), you can ask an AI marketing specialist to summarize performance and post the results to your Discord marketing channel.
 
 Requires:
-- `OPENAI_API_KEY`
+- `OPENAI_API_KEY` or `GEMINI_API_KEY` (and `LLM_MODEL` if using Gemini)
 - `DISCORD_WEBHOOK_URL_MARKETING` (or `DISCORD_WEBHOOK_URL`) – your Discord webhook URL for the marketing channel.
 
 ```bash
@@ -711,7 +720,7 @@ Behavior:
 - If the enriched report has **no elements** for the selected period, the tool posts a short **“no LinkedIn data for this period”** message to Discord so it’s clear nothing ran.
 - Otherwise it:
   - Loads a compact view of the enriched report from GCS.
-  - Sends it to OpenAI with a “senior B2B performance marketer” prompt.
+  - Sends it to the configured LLM (OpenAI or Gemini) with a “senior B2B performance marketer” prompt.
   - Posts a structured summary (high-level summary, key insights, recommendations, caveats) to your Discord marketing channel.
 
 #### One-command LinkedIn portfolio report
@@ -766,9 +775,11 @@ curl -X POST https://your-deployment-url.com/mcp/tools/get_job_result \
 
 #### Cross-Platform Marketing Budget Analysis (LinkedIn + Reddit + Google Ads + Meta)
 
-Runs LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then sends combined data to an AI marketing analyst and posts a single Discord report with **summary**, **key data points**, and **recommendation** on where to spend more budget (e.g. LinkedIn with focus on job function X, Reddit with focus on community Y, Google Ads with focus on campaigns/keywords, Meta with focus on campaigns/placements). Each platform’s spend and CPC are stated in that platform’s currency (e.g. SEK, EUR).
+Runs LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (default last 30 days), then sends combined data to an LLM marketing analyst and posts a single Discord report with **summary**, **key data points**, and **recommendation** on where to spend more budget. Each platform’s spend and CPC are stated in that platform’s currency (e.g. SEK, EUR). When `GA4_PROPERTY_ID` is set, the run also fetches GA4 Paid Social attribution and Key Events so the analyst can connect ad spend to which channels drove users and conversions.
 
-Requires `LINKEDIN_AD_ACCOUNT_URN`, `REDDIT_AD_ACCOUNT_ID`, `OPENAI_API_KEY`, and a Discord webhook. Optional: `GOOGLE_ADS_CUSTOMER_ID` (or request `customer_id`) to include Google Ads; `META_AD_ACCOUNT_ID` (or request `meta_account_id`) to include Meta; if a platform ID is missing, that platform is skipped. Other optional params: `relative_range` (default `LAST_30_DAYS`), `account_urn`, `account_id`, `llm_model`, `sample_limit`.
+Requires `LINKEDIN_AD_ACCOUNT_URN`, `REDDIT_AD_ACCOUNT_ID`, and a Discord webhook. At least one LLM provider must be configured (`OPENAI_API_KEY` or `GEMINI_API_KEY` + `LLM_MODEL`). Optional: `GOOGLE_ADS_CUSTOMER_ID` (or request `customer_id`) to include Google Ads; `META_AD_ACCOUNT_ID` (or request `meta_account_id`) to include Meta; if a platform ID is missing, that platform is skipped. Other optional params: `relative_range` (default `LAST_30_DAYS`), `account_urn`, `account_id`, `llm_model`, `sample_limit`.
+
+**Sync** (15 min request timeout; use async if you hit timeouts):
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_marketing_analysis \
@@ -784,7 +795,16 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_market
   -d '{"relative_range": "LAST_30_DAYS"}'
 ```
 
-Flow: LinkedIn, Reddit, Google Ads, and Meta portfolio reports run in parallel (and GA4 Paid Social attribution is fetched when `GA4_PROPERTY_ID` is set) → progress posted to Discord as each completes → combined AI analysis with spend and attribution → one cross-platform budget analysis post to Discord.
+**Async** (returns immediately; poll for result—recommended for MCP clients or when sync times out):
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/run_cross_platform_marketing_analysis_async \
+  -H "Content-Type: application/json" \
+  -d '{"relative_range": "LAST_30_DAYS", "timeout_seconds": 900}'
+# Then poll: POST /mcp/tools/get_job_status and POST /mcp/tools/get_job_result with job_id
+```
+
+Flow: LinkedIn, Reddit, Google Ads, and Meta portfolio reports run in parallel (and GA4 Paid Social attribution is fetched when `GA4_PROPERTY_ID` is set) → progress posted to Discord as each completes → combined LLM analysis with spend and attribution → one cross-platform budget analysis post to Discord.
 
 #### Reddit portfolio report (async for MCP clients)
 
@@ -917,7 +937,7 @@ curl -X POST https://your-deployment-url.com/mcp/tools/fetch_custom_report \
 
 #### Create Release Notes (Jira Fix Version → multi-channel notes)
 
-Requires Jira + OpenAI env vars (see `env.example`):
+Requires Jira and an LLM provider (see `env.example`): set either `OPENAI_API_KEY` or `GEMINI_API_KEY` (and `LLM_MODEL` for Gemini). Also:
 - `JIRA_BASE_URL`
 - `JIRA_EMAIL`
 - `JIRA_API_TOKEN`
@@ -950,10 +970,9 @@ curl -X POST https://your-deployment-url.com/mcp/tools/create_release_notes \
   -d '{"fix_version":"1.1.0"}'
 ```
 
-**CLI**
+**CLI** (from repository root):
 
 ```bash
-cd bigas-core
 ./create_release_notes 1.1.0
 ```
 
@@ -1114,8 +1133,8 @@ Body: {"keep_days": 30}
 - **Monthly Cost**: ~$0.0003 for 30 reports
 
 #### API Costs
-- **OpenAI API**: ~$0.03 per analysis (GPT-4)
-- **Monthly Cost**: ~$0.06 for 2 analyses per month
+- **LLM (OpenAI or Gemini)**: Cost depends on model and usage (e.g. OpenAI GPT-4 ~$0.03 per analysis; Gemini has different pricing—see `env.example` for `LLM_MODEL`).
+- **Monthly Cost**: Varies by report frequency and model choice.
 
 #### Total Estimated Cost
 - **Storage**: <$0.01/month
@@ -1326,7 +1345,8 @@ python tests/health_check.py
 All sensitive information must be stored as environment variables:
 
 - `GA4_PROPERTY_ID` - Google Analytics 4 Property ID
-- `OPENAI_API_KEY` - OpenAI API key
+- `OPENAI_API_KEY` - OpenAI API key (if using gpt-* models)
+- `GEMINI_API_KEY` - Gemini API key (if using gemini-* models); set `LLM_MODEL` (e.g. `gemini-2.5-pro`) for default
 - `DISCORD_WEBHOOK_URL` - Discord webhook URL (optional)
 - `GOOGLE_PROJECT_ID` - Google Cloud Project ID
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL` - Service account email
@@ -1479,6 +1499,12 @@ For security issues:
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) - see the [LICENSE](LICENSE) file for details.
 
 ## 🔄 Changelog
+
+### v1.3.0
+- ✅ **LLM abstraction**: Provider-agnostic LLM layer (`bigas.llm`) for OpenAI and Gemini. Model resolution: request/body → per-feature env (e.g. `BIGAS_CTO_PR_REVIEW_MODEL`) → `LLM_MODEL` → default `gemini-2.5-pro`. See `bigas/llm/README.md`.
+- ✅ **Gemini support**: Use `GEMINI_API_KEY` and `LLM_MODEL` (e.g. `gemini-2.5-pro`) for PR review, release notes, marketing, and progress updates.
+- ✅ **Cross-platform async**: `run_cross_platform_marketing_analysis_async` for long-running cross-platform reports; poll `get_job_status` / `get_job_result`.
+- ✅ **Longer timeouts**: Gunicorn and Cloud Run request timeout set to 900s (15 min) for sync cross-platform and LinkedIn portfolio runs.
 
 ### v1.2.0
 - ✅ Added web scraping functionality for page content analysis

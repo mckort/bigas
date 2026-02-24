@@ -1,6 +1,6 @@
 """
 PR review service: run AI review on a diff and return markdown review text.
-Uses gpt-4o by default (chat/completions); override via BIGAS_CTO_PR_REVIEW_MODEL or llm_model.
+Uses Gemini by default (GEMINI_API_KEY); override via BIGAS_CTO_PR_REVIEW_MODEL or llm_model.
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Optional
 
-import openai
+from bigas.llm.factory import get_llm_client
 
 from bigas.resources.cto.pr_review.prompts import (
     PR_REVIEW_SYSTEM_PROMPT,
@@ -39,16 +39,23 @@ class PRReviewService:
         openai_api_key: Optional[str] = None,
         openai_model: Optional[str] = None,
     ):
-        api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise PRReviewError("OPENAI_API_KEY environment variable not set.")
-        self._openai_client = openai.OpenAI(api_key=api_key)
-        # Default gpt-4o (chat/completions); override with BIGAS_CTO_PR_REVIEW_MODEL or OPENAI_MODEL
-        self._model = (
-            openai_model
-            or os.environ.get("BIGAS_CTO_PR_REVIEW_MODEL")
-            or os.environ.get("OPENAI_MODEL")
-            or "gpt-4o"
+        """
+        PRReviewService now uses the shared LLM abstraction.
+
+        - If openai_api_key is provided, it is ignored in favor of environment-based
+          configuration to keep provider selection consistent.
+        - Model resolution order:
+            1) openai_model argument (from llm_model request body)
+            2) BIGAS_CTO_PR_REVIEW_MODEL
+            3) LLM_MODEL
+            4) "gemini-2.5-pro" (factory default)
+        - Provider is inferred from the model name (gpt-* -> OpenAI, gemini-* -> Gemini),
+          falling back to BIGAS_LLM_PROVIDER / OpenAI.
+        """
+        explicit_model = openai_model
+        self._llm, self._model = get_llm_client(
+            feature="cto_pr_review",
+            explicit_model=explicit_model,
         )
 
     def review(
@@ -71,8 +78,7 @@ class PRReviewService:
 
         user_prompt = build_pr_review_user_prompt(diff=diff, instructions=instructions)
         try:
-            completion = self._openai_client.chat.completions.create(
-                model=self._model,
+            content = self._llm.complete(
                 messages=[
                     {"role": "system", "content": PR_REVIEW_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
@@ -80,10 +86,9 @@ class PRReviewService:
                 max_tokens=4000,
                 temperature=0.3,
             )
-            content = (completion.choices[0].message.content or "").strip()
         except Exception as e:
-            logger.error("PR review OpenAI call failed", exc_info=True)
-            raise PRReviewError(f"OpenAI request failed: {e}") from e
+            logger.error("PR review LLM call failed", exc_info=True)
+            raise PRReviewError(f"LLM request failed: {e}") from e
 
         if truncated_note:
             content = truncated_note + content

@@ -11,7 +11,7 @@ from google.analytics.data_v1beta.types import (
     OrderBy,
 )
 import os
-import openai
+from bigas.llm.factory import get_llm_client
 from datetime import date, datetime, timedelta
 import time
 import logging
@@ -552,7 +552,7 @@ def _post_google_ads_portfolio_to_discord(
     portfolio_result: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Generate a Google Ads portfolio summary via OpenAI and post it to Discord.
+    Generate a Google Ads portfolio summary via LLM and post it to Discord.
     """
     prompt_cfg = AD_SUMMARY_PROMPTS.get(("google_ads", "portfolio"))
     if not prompt_cfg:
@@ -568,9 +568,8 @@ def _post_google_ads_portfolio_to_discord(
         payload=json.dumps(payload, indent=2),
     )
 
-    openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    completion = openai_client.chat.completions.create(
-        model=model,
+    llm, _ = get_llm_client(feature="marketing", explicit_model=model)
+    analysis_text = llm.complete(
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -579,7 +578,6 @@ def _post_google_ads_portfolio_to_discord(
         temperature=0.4,
         timeout=40,
     )
-    analysis_text = completion.choices[0].message.content.strip()
 
     meta = portfolio_result.get("request_metadata") or {}
     date_range_s = f"{meta.get('start_date')}–{meta.get('end_date')}"
@@ -611,7 +609,7 @@ def _post_meta_portfolio_to_discord(
     model: str,
     portfolio_result: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Generate a Meta Ads portfolio summary via OpenAI and post to Discord."""
+    """Generate a Meta Ads portfolio summary via LLM and post to Discord."""
     prompt_cfg = AD_SUMMARY_PROMPTS.get(("meta", "portfolio"))
     if not prompt_cfg:
         raise RuntimeError("Prompt configuration missing for Meta portfolio")
@@ -626,9 +624,8 @@ def _post_meta_portfolio_to_discord(
         payload=json.dumps(payload, indent=2),
     )
 
-    openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    completion = openai_client.chat.completions.create(
-        model=model,
+    llm, _ = get_llm_client(feature="marketing", explicit_model=model)
+    analysis_text = llm.complete(
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -637,7 +634,6 @@ def _post_meta_portfolio_to_discord(
         temperature=0.4,
         timeout=40,
     )
-    analysis_text = completion.choices[0].message.content.strip()
 
     meta = portfolio_result.get("request_metadata") or {}
     date_range_s = f"{meta.get('start_date')}–{meta.get('end_date')}"
@@ -1087,6 +1083,16 @@ def _run_meta_portfolio_job(app_obj: Any, job_id: str, payload: Dict[str, Any]) 
     )
 
 
+def _run_cross_platform_job(app_obj: Any, job_id: str, payload: Dict[str, Any]) -> None:
+    _run_async_tool_job(
+        app_obj=app_obj,
+        job_id=job_id,
+        payload=payload,
+        tool_path="/mcp/tools/run_cross_platform_marketing_analysis",
+        tool_label="Cross-platform marketing",
+    )
+
+
 def _run_async_tool_job(
     app_obj: Any,
     job_id: str,
@@ -1437,7 +1443,8 @@ def get_manifest():
             {"name": "run_google_ads_portfolio_report_async", "description": "Async Google Ads portfolio report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/run_google_ads_portfolio_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"customer_id": {"type": "string"}, "login_customer_id": {"type": "string"}, "report_level": {"type": "string", "enum": ["campaign", "ad", "audience_breakdown"], "default": "campaign"}, "breakdowns": {"type": "array", "items": {"type": "string"}}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "post_to_discord": {"type": "boolean", "default": False}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
             {"name": "run_meta_portfolio_report", "description": "One-command Meta (Facebook/Instagram) Ads campaign portfolio: daily performance, summary, optional Discord. Supports async mode for MCP clients with short timeouts.", "path": "/mcp/tools/run_meta_portfolio_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "report_level": {"type": "string", "enum": ["campaign", "ad", "audience_breakdown"], "default": "campaign"}, "breakdowns": {"type": "array", "items": {"type": "string"}}, "include_targeting": {"type": "boolean", "default": False}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "post_to_discord": {"type": "boolean", "default": False}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "async": {"type": "boolean", "default": False}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
             {"name": "run_meta_portfolio_report_async", "description": "Async Meta portfolio report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/run_meta_portfolio_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "report_level": {"type": "string", "enum": ["campaign", "ad", "audience_breakdown"], "default": "campaign"}, "breakdowns": {"type": "array", "items": {"type": "string"}}, "include_targeting": {"type": "boolean", "default": False}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "post_to_discord": {"type": "boolean", "default": False}, "llm_model": {"type": "string", "default": "gpt-4.1-mini"}, "timeout_seconds": {"type": "integer", "default": 300, "minimum": 10, "maximum": 900}}}},
-            {"name": "run_cross_platform_marketing_analysis", "description": "Run LinkedIn, Reddit, Google Ads, and Meta portfolio reports (default last 30 days), then AI comparison: summary, key data, budget recommendation; post to Discord.", "path": "/mcp/tools/run_cross_platform_marketing_analysis", "method": "POST"},
+            {"name": "run_cross_platform_marketing_analysis", "description": "Run LinkedIn, Reddit, Google Ads, and Meta portfolio reports (default last 30 days), then AI comparison: summary, key data, budget recommendation; post to Discord. For long runs use run_cross_platform_marketing_analysis_async or set Cloud Run timeout to 900s.", "path": "/mcp/tools/run_cross_platform_marketing_analysis", "method": "POST"},
+            {"name": "run_cross_platform_marketing_analysis_async", "description": "Async cross-platform report. Returns job_id immediately; poll with get_job_status and get_job_result. Use when sync would time out.", "path": "/mcp/tools/run_cross_platform_marketing_analysis_async", "method": "POST", "parameters": {"type": "object", "properties": {"relative_range": {"type": "string", "enum": ["LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS"], "default": "LAST_30_DAYS"}, "account_urn": {"type": "string"}, "account_id": {"type": "string"}, "customer_id": {"type": "string"}, "meta_account_id": {"type": "string"}, "llm_model": {"type": "string"}, "timeout_seconds": {"type": "integer", "default": 900, "minimum": 60, "maximum": 3600}}}},
             {"name": "reddit_ads_health_check", "description": "Smoke test Reddit Ads API and list ad accounts (verify REDDIT_AD_ACCOUNT_ID).", "path": "/mcp/tools/reddit_ads_health_check", "method": "GET"},
         ]
     }
@@ -3443,9 +3450,8 @@ def summarize_linkedin_ad_analytics():
             payload=json.dumps(analytics_payload, indent=2),
         )
 
-        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        completion = openai_client.chat.completions.create(
-            model=model,
+        llm, _ = get_llm_client(feature="marketing", explicit_model=model)
+        analysis_text = llm.complete(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -3454,7 +3460,6 @@ def summarize_linkedin_ad_analytics():
             temperature=0.4,
             timeout=40,
         )
-        analysis_text = completion.choices[0].message.content.strip()
 
         discord_message = (
             "## 📊 LinkedIn Ads Performance Report\n\n"
@@ -3648,9 +3653,8 @@ def summarize_reddit_ad_analytics():
             payload=json.dumps(analytics_payload, indent=2),
         )
 
-        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        completion = openai_client.chat.completions.create(
-            model=model,
+        llm, _ = get_llm_client(feature="marketing", explicit_model=model)
+        analysis_text = llm.complete(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -3659,7 +3663,6 @@ def summarize_reddit_ad_analytics():
             temperature=0.4,
             timeout=40,
         )
-        analysis_text = completion.choices[0].message.content.strip()
 
         discord_message = (
             "## 📊 Reddit Ads Performance Report\n\n"
@@ -3943,9 +3946,8 @@ def summarize_linkedin_creative_portfolio():
             payload=json.dumps(analytics_payload, indent=2),
         )
 
-        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        completion = openai_client.chat.completions.create(
-            model=model,
+        llm, _ = get_llm_client(feature="marketing", explicit_model=model)
+        analysis_text = llm.complete(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -3954,7 +3956,6 @@ def summarize_linkedin_creative_portfolio():
             temperature=0.4,
             timeout=40,
         )
-        analysis_text = completion.choices[0].message.content.strip()
 
         discord_message = (
             "## 📊 LinkedIn Creative Portfolio Report\n\n"
@@ -5034,9 +5035,8 @@ def run_reddit_portfolio_report():
             payload=json.dumps(combined, indent=2),
         )
 
-        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        completion = openai_client.chat.completions.create(
-            model=model,
+        llm, _ = get_llm_client(feature="marketing", explicit_model=model)
+        analysis_text = llm.complete(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -5045,7 +5045,6 @@ def run_reddit_portfolio_report():
             temperature=0.4,
             timeout=40,
         )
-        analysis_text = completion.choices[0].message.content.strip()
 
         scope_note = ""
         if discovered_campaigns:
@@ -5111,6 +5110,41 @@ def run_reddit_portfolio_report():
         return jsonify({"error": sanitized_error}), 500
 
 
+@marketing_bp.route('/mcp/tools/run_cross_platform_marketing_analysis_async', methods=['POST'])
+def run_cross_platform_marketing_analysis_async():
+    """
+    Async cross-platform report. Returns job_id immediately; poll with get_job_status and get_job_result.
+    Use this when the sync endpoint would time out (e.g. LinkedIn + Reddit + Google Ads + Meta + LLM can take 10+ min).
+    """
+    data = request.json or {}
+    timeout_seconds = int(data.get("timeout_seconds") or 900)
+    timeout_seconds = max(60, min(timeout_seconds, 3600))
+
+    app_obj = current_app._get_current_object()
+    access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+    request_key = (request.headers.get(access_header) or "").strip()
+    if request_key:
+        data["_internal_access_key"] = request_key
+
+    job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+
+    t = threading.Thread(
+        target=_run_cross_platform_job,
+        args=(app_obj, job_id, data),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify(
+        {
+            "status": "accepted",
+            "job_id": job_id,
+            "poll_after_seconds": 10,
+            "timeout_seconds": timeout_seconds,
+        }
+    )
+
+
 @marketing_bp.route('/mcp/tools/run_cross_platform_marketing_analysis', methods=['POST'])
 def run_cross_platform_marketing_analysis():
     """
@@ -5128,9 +5162,9 @@ def run_cross_platform_marketing_analysis():
       - sample_limit: optional max rows per platform for comparison (default: 50)
 
     Flow: run LinkedIn, Reddit, Google Ads, and Meta portfolio reports in parallel (each posts its report + progress),
-    then build combined payload -> OpenAI analyst -> post cross-platform summary to Discord.
-    For long runs, increase Cloud Run request timeout (e.g. gcloud run services update
-    mcp-marketing --timeout=3600 --region=europe-north1 for 1 hour).
+    then build combined payload -> LLM analyst -> post cross-platform summary to Discord.
+    Deploy uses request timeout 900s (15 min). For longer runs or to avoid timeouts, use
+    run_cross_platform_marketing_analysis_async and poll get_job_status / get_job_result.
     """
     data = request.json or {}
     relative_range = (data.get("relative_range") or "LAST_30_DAYS").strip().upper()
@@ -5429,9 +5463,8 @@ def run_cross_platform_marketing_analysis():
             payload=json.dumps(combined, indent=2),
         )
 
-        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        completion = openai_client.chat.completions.create(
-            model=model,
+        llm, _ = get_llm_client(feature="marketing", explicit_model=model)
+        analysis_text = llm.complete(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -5440,7 +5473,6 @@ def run_cross_platform_marketing_analysis():
             temperature=0.4,
             timeout=60,
         )
-        analysis_text = completion.choices[0].message.content.strip()
 
         discord_message = (
             "## 📊 Cross-Platform Marketing Budget Analysis\n\n"
@@ -5558,7 +5590,7 @@ def weekly_analytics_report():
             else:
                 # For other templates, use the template service with OpenAI summarization - use current property ID
                 raw_data = service.template_service.run_template_query(template_key, current_property_id)
-                answer = service.openai_service.format_response_obj(raw_data, q)
+                answer = service.marketing_llm_service.format_response_obj(raw_data, q)
             
             # Special handling for underperforming pages: scrape and analyze the page content
             page_content_analysis = None
@@ -5725,14 +5757,12 @@ Return ONLY the JSON, no explanation.
 """
                     
                     try:
-                        response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
-                            model="gpt-4",
+                        llm, _ = get_llm_client(feature="marketing")
+                        content = llm.complete(
                             messages=[{"role": "user", "content": page_analysis_prompt}],
                             max_tokens=200,
                             temperature=0.3
                         )
-                        
-                        content = response.choices[0].message.content.strip()
                         # Extract JSON from response
                         if "```json" in content:
                             content = content.split("```json")[1].split("```")[0].strip()
@@ -5795,14 +5825,12 @@ Return ONLY the JSON, no explanation.
 """
                     
                     try:
-                        response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
-                            model="gpt-4",
+                        llm, _ = get_llm_client(feature="marketing")
+                        content = llm.complete(
                             messages=[{"role": "user", "content": recommendation_prompt}],
                             max_tokens=200,
                             temperature=0.3
                         )
-                        
-                        content = response.choices[0].message.content.strip()
                         # Extract JSON from response
                         if "```json" in content:
                             content = content.split("```json")[1].split("```")[0].strip()
@@ -5826,7 +5854,7 @@ Return ONLY the JSON, no explanation.
             if template_key == "underperforming_pages" and underperforming_metrics_snapshot:
                 message += underperforming_metrics_snapshot
             if should_post_to_discord:
-                post_to_discord(webhook_url, message)
+                post_long_to_discord(webhook_url, message)
             full_report += message + "\n\n"
             
             # Store question and answer in report data with recommendation
@@ -5842,7 +5870,7 @@ Return ONLY the JSON, no explanation.
             error_message = f"Could not answer question '{q}': {e}"
             logger.error(error_message)
             if should_post_to_discord:
-                post_to_discord(webhook_url, error_message)
+                post_long_to_discord(webhook_url, error_message)
             
             # Store error in report data
             report_data["questions"].append({
@@ -5870,7 +5898,7 @@ Return ONLY the JSON, no explanation.
             summary = "Executive Summary: Analytics data processed successfully. Individual recommendations generated for each question."
             
         if should_post_to_discord:
-            post_to_discord(webhook_url, f"📊 Enhanced Analytics Summary:\n{summary}")
+            post_long_to_discord(webhook_url, f"📊 Enhanced Analytics Summary:\n{summary}")
         
         # Store summary in report data
         report_data["summary"] = summary
@@ -6059,7 +6087,7 @@ def analyze_underperforming_pages():
                 pass
 
             header_message += f"\nI'll analyze each page and provide specific improvement suggestions..."
-            post_to_discord(webhook_url, header_message)
+            post_long_to_discord(webhook_url, header_message)
             discord_messages_sent += 1
             
             # If we have page URLs, analyze each underperforming page individually
@@ -6164,15 +6192,13 @@ def analyze_underperforming_pages():
                         Focus on practical, implementable recommendations based on the actual page content. Be specific about what to change, add, or remove. Provide concrete examples and actionable steps.
                         """
                         
-                        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-                        page_analysis_response = openai_client.chat.completions.create(
-                            model="gpt-4",
+                        llm, _ = get_llm_client(feature="marketing")
+                        page_analysis = llm.complete(
                             messages=[{"role": "user", "content": page_analysis_prompt}],
                             max_tokens=800,
                             temperature=0.7,
-                            timeout=30  # Increased timeout for OpenAI call
+                            timeout=30
                         )
-                        page_analysis = page_analysis_response.choices[0].message.content.strip()
                         
                         # Create a formatted Discord message for this page
                         page_message = f"## 📄 {page.get('page_url', 'Unknown Page')}\n\n"
@@ -6184,7 +6210,7 @@ def analyze_underperforming_pages():
                         page_message += f"🎯 **Expert Analysis & Recommendations**:\n\n{page_analysis}\n\n"
                         page_message += "---\n💡 *This analysis is based on actual page content analysis by an expert Digital Marketing Strategist*"
                         
-                        post_to_discord(webhook_url, page_message)
+                        post_long_to_discord(webhook_url, page_message)
                         discord_messages_sent += 1
                         
                         # Add a small delay between messages to avoid rate limiting
@@ -6226,7 +6252,7 @@ def analyze_underperforming_pages():
                         
                         error_message += f"---\n💡 *Expert recommendations require actual page content analysis. Generic advice without real data is not actionable.*"
                         
-                        post_to_discord(webhook_url, error_message)
+                        post_long_to_discord(webhook_url, error_message)
                         discord_messages_sent += 1
             else:
                 # If no page URLs extracted, send a general analysis
@@ -6272,21 +6298,19 @@ def analyze_underperforming_pages():
                 Format your response as a structured analysis with clear action items. Focus on practical recommendations that a solo founder or small team can implement.
                 """
                 
-                openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-                general_analysis_response = openai_client.chat.completions.create(
-                    model="gpt-4",
+                llm, _ = get_llm_client(feature="marketing")
+                general_analysis = llm.complete(
                     messages=[{"role": "user", "content": general_analysis_prompt}],
                     max_tokens=800,
                     temperature=0.7,
-                    timeout=30  # Increased timeout for OpenAI call
+                    timeout=30
                 )
-                general_analysis = general_analysis_response.choices[0].message.content.strip()
                 
                 general_message = f"## 📊 General Underperforming Pages Analysis\n\n"
                 general_message += f"🎯 **Analysis & Recommendations**:\n\n{general_analysis}\n\n"
                 general_message += "---\n💡 *This analysis is based on conversion data and best practices*"
                 
-                post_to_discord(webhook_url, general_message)
+                post_long_to_discord(webhook_url, general_message)
                 discord_messages_sent += 1
         
         return jsonify({
@@ -6325,30 +6349,6 @@ def cleanup_old_reports():
     except Exception as e:
         logger.error(f"Error cleaning up old reports: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
-
-
-def post_long_to_discord(webhook_url, message, chunk_size: int = 1900):
-    """
-    Post message to Discord; if over 2000 chars, split into multiple messages (like LinkedIn/product flow).
-    Discord limit is 2000; we use chunk_size to leave margin and try to split on newlines.
-    """
-    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placehoder"):
-        return
-    msg = (message or "").strip()
-    if not msg:
-        return
-    if len(msg) <= 2000:
-        post_to_discord(webhook_url, msg)
-        return
-    start = 0
-    while start < len(msg):
-        end = min(start + chunk_size, len(msg))
-        # Prefer splitting on a newline for readability
-        nl = msg.rfind("\n", start, end)
-        if nl > start + 200:
-            end = nl + 1
-        post_to_discord(webhook_url, msg[start:end].strip())
-        start = end
 
 
 def post_to_discord(webhook_url, message: str):
@@ -6390,7 +6390,7 @@ def post_long_to_discord(webhook_url: str, text: str, chunk_size: int = 1900):
 
     Splits on newline boundaries where possible to keep sections readable.
     """
-    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placehoder"):
+    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placeholder"):
         logger.info("Discord webhook URL not provided or is placeholder, skipping Discord notification")
         return
 

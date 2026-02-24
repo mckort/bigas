@@ -78,7 +78,7 @@ def review_and_comment_pr():
       - diff (str, required): PR diff text
       - instructions (str, optional): extra instructions for the reviewer
       - github_token (str, optional): override GitHub PAT (else uses GITHUB_TOKEN env)
-      - llm_model (str, optional): override model for this request (default: gpt-4o)
+      - llm_model (str, optional): override model for this request (default: gemini-2.5-pro)
 
     Returns:
       - success, comment_url, review_posted; or error with status 4xx/5xx.
@@ -216,7 +216,7 @@ def get_manifest():
                         },
                         "llm_model": {
                             "type": "string",
-                            "description": "Optional model override (default: gpt-4o)",
+                            "description": "Optional model override (default: gemini-2.5-pro)",
                         },
                     },
                     "required": ["repo", "pr_number", "diff"],

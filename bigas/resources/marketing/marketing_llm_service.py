@@ -1,25 +1,35 @@
 from typing import Dict, List, Optional, Any
-import openai
 import json
 import logging
 from bigas.resources.marketing.utils import generate_basic_analysis
+from bigas.llm.factory import get_llm_client
 
 logger = logging.getLogger(__name__)
 
-class OpenAIService:
-    """Service for handling OpenAI API interactions and natural language processing."""
-    
+class MarketingLLMService:
+    """Service for marketing LLM API interactions and natural language processing.
+
+    Uses the shared bigas.llm abstraction; supports OpenAI and Gemini via
+    model name and BIGAS_MARKETING_LLM_MODEL / LLM_MODEL.
+    """
+
     def __init__(self, openai_api_key: str):
-        """Initialize the OpenAI service with API key.
-        
+        """Initialize the LLM service.
+
         Note: GA4Service should be initialized BEFORE this service, which removes
         GOOGLE_APPLICATION_CREDENTIALS_GA4 to prevent httpx interference.
+
+        openai_api_key is still required for backward compatibility (callers pass it).
+        The actual provider/model is resolved via get_llm_client(feature='marketing').
         """
         if not openai_api_key:
-            raise ValueError("OpenAI API key is required")
+            raise ValueError("API key is required for marketing LLM")
         
-        self.openai_client = openai.OpenAI(api_key=openai_api_key)
-        logger.info("OpenAI client initialized successfully")
+        self._llm, self._model = get_llm_client(
+            feature="marketing",
+            explicit_model=None,
+        )
+        logger.info("LLM client initialized for marketing (model=%s)", self._model)
     
     def parse_query(self, question: str) -> Dict[str, Any]:
         """Use OpenAI to parse the natural language question into structured query parameters."""
@@ -105,22 +115,20 @@ class OpenAIService:
         
         Only include fields that are relevant to the question. Use standard Google Analytics 4 metric and dimension names without the 'ga:' prefix."""
         
-        response = self.openai_client.chat.completions.create(
-            model="gpt-4",
-            max_tokens=2000,
+        response = self._llm.complete(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question}
-            ]
+            ],
+            max_tokens=2000,
         )
         
         try:
-            query_params = json.loads(response.choices[0].message.content)
+            query_params = json.loads(response)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse OpenAI response as JSON: {e}")
-            logger.error(f"Raw response: {response.choices[0].message.content}")
-            # Do not provide fallback - fail properly when OpenAI fails to parse query
-            raise ValueError(f"OpenAI failed to parse query into valid JSON: {e}")
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.error(f"Raw response: {response}")
+            raise ValueError(f"LLM failed to parse query into valid JSON: {e}")
         
         # Ensure we have date dimension for trends
         if "dimensions" not in query_params:
@@ -164,20 +172,22 @@ class OpenAIService:
             "analytics_data": analytics_data
         }
         
-        print(f"🔧 DEBUG: Calling OpenAI API for question: {question[:50]}...")
+        print(f"🔧 DEBUG: Calling LLM API for question: {question[:50]}...")
         try:
-            completion = self.openai_client.chat.completions.create(
-                model="gpt-4",
-                max_tokens=2000,
+            content = self._llm.complete(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(response_data)}
-                ]
+                ],
+                max_tokens=2000,
             )
-            print(f"✅ DEBUG: OpenAI API call successful")
-            return completion.choices[0].message.content
+            print(f"✅ DEBUG: LLM API call successful")
+            text = (content or "").strip()
+            if not text:
+                raise ValueError("LLM returned no content (empty response). Check safety settings or increase max_output_tokens.")
+            return text
         except Exception as e:
-            print(f"❌ DEBUG: OpenAI API call failed: {e}")
+            print(f"❌ DEBUG: LLM API call failed: {e}")
             raise
     
     def format_response_obj(self, data: dict, question: str) -> str:
@@ -225,19 +235,20 @@ class OpenAIService:
         }
         
         try:
-            completion = self.openai_client.chat.completions.create(
-                model="gpt-4",
-                max_tokens=1500,
+            content = self._llm.complete(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(analysis_data)}
-                ]
+                ],
+                max_tokens=2048,
             )
-            return completion.choices[0].message.content
+            text = (content or "").strip()
+            if not text:
+                raise ValueError("LLM returned no content (empty response). Check safety settings or increase max_output_tokens. Cannot provide fallback analysis.")
+            return text
         except Exception as e:
             logger.error(f"Error generating analysis for filtered data: {e}")
-            # Do not provide fallback analysis - fail properly when OpenAI fails
-            raise ValueError(f"OpenAI failed to generate analysis: {e}. Cannot provide fallback analysis.")
+            raise ValueError(f"LLM failed to generate analysis: {e}. Cannot provide fallback analysis.")
     
     def generate_trend_insights(self, formatted_trends: dict, metrics: list, dimensions: list, date_range: str) -> str:
         """Generate AI-powered insights for trend analysis."""
@@ -259,22 +270,22 @@ class OpenAIService:
                 "trend_data": formatted_trends
             }
             
-            completion = self.openai_client.chat.completions.create(
-                model="gpt-4",
+            content = self._llm.complete(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(analysis_data, indent=2)}
                 ],
-                max_tokens=800,
+                max_tokens=2048,
                 temperature=0.7
             )
-            
-            return completion.choices[0].message.content.strip()
+            text = (content or "").strip()
+            if not text:
+                raise ValueError("LLM returned no content (empty response). Check safety settings or increase max_output_tokens. Cannot provide fallback insights.")
+            return text
             
         except Exception as e:
             logger.error(f"Error generating AI insights for trends: {e}")
-            # Do not provide fallback message - fail properly when OpenAI fails
-            raise ValueError(f"OpenAI failed to generate trend insights: {e}. Cannot provide fallback insights.")
+            raise ValueError(f"LLM failed to generate trend insights: {e}. Cannot provide fallback insights.")
     
     def generate_traffic_sources_analysis(self, data: dict) -> str:
         """Generate analysis for traffic sources data."""
@@ -291,14 +302,15 @@ class OpenAIService:
             "analytics_data": data
         }
         
-        completion = self.openai_client.chat.completions.create(
-            model="gpt-4",
+        content = self._llm.complete(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(ai_data)}
             ],
-            max_tokens=500,
+            max_tokens=2048,
             temperature=0.7
         )
-        
-        return completion.choices[0].message.content 
+        text = (content or "").strip()
+        if not text:
+            raise ValueError("LLM returned no content (empty response). Check safety settings or increase max_output_tokens.")
+        return text
