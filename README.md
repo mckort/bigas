@@ -108,6 +108,8 @@ Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_M
 
 All endpoints are available at `https://your-service-url.a.run.app/mcp/tools/`.
 
+All endpoint names in the tables below are **relative to `/mcp/tools/`**. For example, `POST weekly_analytics_report` means `POST /mcp/tools/weekly_analytics_report`.
+
 Find your service URL with:
 ```bash
 gcloud run services describe <your-service-name> --region=your-region --format='value(status.url)'
@@ -172,7 +174,7 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_linkedin_portfolio_re
 | `POST summarize_reddit_ad_analytics` | Summarize an enriched report from GCS → Discord |
 | `GET reddit_ads_health_check` | Verify API access and list ad accounts |
 
-### Google Ads & Meta
+### Paid Ads & Cross-platform
 
 | Endpoint | Description |
 |---|---|
