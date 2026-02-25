@@ -4,6 +4,8 @@ import logging
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 
+from bigas.registry import registry
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -105,8 +107,14 @@ def create_app():
         logger.info("Registered product blueprint.")
         logger.info("Registered CTO blueprint.")
 
+    # Discover configured providers once at startup
+    try:
+        registry.discover()
+    except Exception as e:
+        logger.warning("Provider registry discovery failed (continuing without providers): %s", e)
+
     # Paths that should always remain public, even in restricted mode
-    public_paths = {"/", "/mcp", "/mcp/manifest", "/.well-known/mcp.json", "/openapi.json"}
+    public_paths = {"/", "/mcp", "/mcp/manifest", "/mcp/providers", "/.well-known/mcp.json", "/openapi.json"}
 
     @app.before_request
     def _enforce_access_key():
@@ -143,6 +151,11 @@ def create_app():
     def health_check():
         """Health check endpoint for Cloud Run startup probes."""
         return jsonify({"status": "healthy", "service": "bigas-core"})
+
+    @app.route("/mcp/providers", methods=["GET"])
+    def providers_status():
+        """Return provider discovery status for all domains."""
+        return jsonify(registry.status())
 
     @app.route('/mcp/manifest', methods=['GET'])
     def combined_manifest():

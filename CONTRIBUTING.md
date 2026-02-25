@@ -32,6 +32,92 @@ If you have an idea for a new feature or an enhancement to an existing one, plea
 5. Make sure your code lints.
 6. Issue that pull request!
 
+## Adding New Data Providers
+
+Bigas now supports a **provider-based architecture** so you can add new finance, ads, analytics, or notification sources by dropping a single file into `bigas/providers/...` without changing existing code.
+
+### Provider basics
+
+- **Finance providers**: implement `FinanceProvider` in `bigas/providers/finance/base.py`
+- **Ads providers**: implement `AdsProvider` in `bigas/providers/ads/base.py`
+- **Analytics providers**: implement `AnalyticsProvider` in `bigas/providers/analytics/base.py`
+- **Notification channels**: implement `NotificationChannel` in `bigas/providers/notifications/base.py`
+
+Each concrete provider:
+
+- Declares a short `name` (e.g. `quickbooks`, `tiktok`)
+- Implements `display_name`
+- Implements `is_configured() @classmethod` to check required env vars
+- Implements the domain methods (e.g. `get_revenue`, `get_campaign_performance`, `send`)
+
+The global registry in `bigas/registry.py`:
+
+- Discovers providers under `bigas/providers/**` at startup
+- Instantiates only those where `is_configured()` returns `True`
+- Exposes active providers via `GET /mcp/providers`
+
+### Example: QuickBooks finance provider
+
+To add QuickBooks as a finance provider (see `DESIGN_SPEC.md` for the full example):
+
+1. **Create the provider file**
+
+   Add `bigas/providers/finance/quickbooks.py`:
+
+   ```python
+   import os
+   import requests
+   from typing import List
+   from bigas.providers.finance.base import FinanceProvider, PeriodSummary, Transaction
+
+
+   class QuickBooksProvider(FinanceProvider):
+       name = "quickbooks"
+       display_name = "QuickBooks Online"
+
+       @classmethod
+       def is_configured(cls) -> bool:
+           return all(
+               [
+                   os.getenv("QUICKBOOKS_CLIENT_ID"),
+                   os.getenv("QUICKBOOKS_CLIENT_SECRET"),
+                   os.getenv("QUICKBOOKS_REFRESH_TOKEN"),
+                   os.getenv("QUICKBOOKS_REALM_ID"),
+               ]
+           )
+
+       # Implement get_revenue, get_expenses, get_transactions
+       # using the QuickBooks API and return PeriodSummary/Transaction objects.
+   ```
+
+2. **Configure environment variables**
+
+   In your `.env` or secret manager:
+
+   ```bash
+   QUICKBOOKS_CLIENT_ID=your_client_id
+   QUICKBOOKS_CLIENT_SECRET=your_client_secret
+   QUICKBOOKS_REFRESH_TOKEN=your_refresh_token
+   QUICKBOOKS_REALM_ID=your_realm_id
+   ```
+
+3. **Restart Bigas**
+
+- On startup, `registry.discover()` finds `QuickBooksProvider`
+- `is_configured()` gates activation on the four env vars
+- `GET /mcp/providers` will now include:
+
+  ```json
+  {
+    "finance": ["quickbooks"],
+    "ads": [...],
+    "analytics": [...],
+    "notifications": [...]
+  }
+  ```
+
+If you remove or unset the QuickBooks env vars and restart, the provider silently disappears from `/mcp/providers` without affecting any other tools.
+
 ## Code of Conduct
 
 ### Our Pledge
