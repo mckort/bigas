@@ -110,7 +110,7 @@ All endpoints are available at `https://your-service-url.a.run.app/mcp/tools/`.
 
 Find your service URL with:
 ```bash
-gcloud run services describe bigas-core --region=your-region --format='value(status.url)'
+gcloud run services describe <your-service-name> --region=your-region --format='value(status.url)'
 ```
 
 ### GA4 Web Analytics
