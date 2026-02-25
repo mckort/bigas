@@ -2,6 +2,8 @@
 
 First off, thank you for considering contributing to Bigas! It's people like you that make open source such a great community. We welcome any and all contributions.
 
+For **architecture**, **service design**, and **API implementation details** (including ads caching, storage layout, and data flow), see [docs/architecture.md](docs/architecture.md).
+
 ## How Can I Contribute?
 
 There are many ways to contribute, from writing tutorials or blog posts, improving the documentation, submitting bug reports and feature requests or writing code which can be incorporated into Bigas itself.
