@@ -13,7 +13,7 @@ Follow us on X for the latest updates, feature announcements, and marketing insi
 
 ## 📊 Overview
 
-**Bigas** is an AI team concept designed to provide virtual specialists for different business functions.
+**Bigas** is an MCP server designed to simplify life for solo founders by automating time‑consuming but critical business functions. “Bigas” means *team* in Latin – think of it as a team of virtual specialists that support you across different areas.
 
 Today it includes:
 - **The Senior Marketing Analyst** – GA4 web analytics + **paid ads (Google Ads, Meta, LinkedIn, Reddit)** → insights, weekly reports, portfolio reports, cross-platform budget analysis
@@ -22,33 +22,36 @@ Today it includes:
 
 ### Marketing view of Bigas
 
-Bigas runs in the cloud. You access it to run marketing specialist reports and create release notes (among other things). PR reviews are triggered automatically from GitHub when you open or update a pull request. Scheduled reports (e.g. weekly analytics or ad portfolio reports) are triggered by Google Cloud Scheduler.
+Bigas runs in the cloud. You use it to run marketing specialist reports and create release notes (among other things). By running it in the cloud as an MCP server, you can easily trigger different functions from any location, use any AI MCP client (e.g. Claude, Cursor MCP), or have other systems do so autonomously. For example, PR reviews can be triggered automatically from GitHub when you open or update a pull request, and scheduled reports (e.g. weekly analytics or ad portfolio reports) can be triggered by Google Cloud Scheduler.
 
 ```text
                     ┌─────────────────────────────────────────────────────────┐
-                    │              BIGAS (runs in the cloud)                   │
-                    │         Google Cloud Run · Your deployment URL           │
+                    │                 BIGAS (Cloud Run)                      │
+                    │         Google Cloud Run · Your deployment URL         │
                     └─────────────────────────────────────────────────────────┘
-                                              │
-         ┌───────────────────────────────────┼───────────────────────────────────┐
-         │                                   │                                   │
-         ▼                                   ▼                                   ▼
-┌─────────────────┐               ┌─────────────────────┐               ┌─────────────────┐
-│  You (user)     │               │  GitHub             │               │  Google Cloud   │
-│  access Bigas   │               │  (open/sync PR)     │               │  Scheduler      │
-│  via HTTP/MCP   │               │                     │               │                 │
-└────────┬────────┘               └──────────┬──────────┘               └────────┬────────┘
-         │                                   │                                   │
-         │  Trigger reports,                  │  PR review                       │  Scheduled
-         │  create release notes             │  automatically                   │  reports
-         │  (examples)                       │  triggered                       │  (e.g. weekly)
-         │                                   │                                   │
-         └───────────────────────────────────┼───────────────────────────────────┘
-                                             │
-                                             ▼
+                                      │
+          ┌───────────────────────────┼───────────────────────────┐
+          │                           │                           │
+          ▼                           ▼                           ▼
+┌─────────────────┐        ┌─────────────────────┐      ┌─────────────────┐
+│   You (user)    │        │       GitHub        │      │ Google Cloud    │
+│  access Bigas   │        │   (open/update PR)  │      │ Scheduler       │
+│ via HTTP / MCP  │        │                     │      │ (scheduled jobs)│
+└────────┬────────┘        └──────────┬──────────┘      └────────┬────────┘
+         │                            │                          │
+         │ Manual / on‑demand         │ PR review                │ Scheduled
+         │ reports & release notes    │ automatically triggered  │ reports
+         │ (e.g. weekly analytics,    │ from workflows           │ (e.g. weekly
+         │ ad portfolio, release      │                          │ analytics or
+         │ notes drafts)              │                          │ team progress)
+         └────────────────────────────┼──────────────────────────┘
+                                      │
+                                      ▼
                     ┌─────────────────────────────────────────────────────────┐
-                    │  Bigas produces outputs like reports (via HTTP/Discord), │
-                    │  release notes (HTTP), and PR review comments (GitHub).  │
+                    │  Bigas produces outputs such as:                       │
+                    │  • Marketing reports (HTTP / Discord)                  │
+                    │  • Release notes (HTTP)                                │
+                    │  • PR review comments (GitHub)                         │
                     └─────────────────────────────────────────────────────────┘
 ```
 ### 🎯 Our Goal
@@ -247,6 +250,14 @@ The marketing analytics functionality is organized into focused services:
 The product functionality is organized into focused services:
 
 - **`CreateReleaseNotesService`**: Fetches Jira issues by Fix Version and generates customer-facing release notes + comms pack
+
+### Provider registry
+
+Bigas exposes a **provider registry** for finance, ads, analytics, and notification channels:
+
+- Concrete providers live under `bigas/providers/**` and implement the relevant base classes (see `bigas/providers/*/base.py`)
+- `bigas/registry.py` discovers active providers at startup and exposes them via `GET /mcp/providers`
+- New providers can usually be added by dropping a single file into `bigas/providers/...` and setting the required env vars (see `CONTRIBUTING.md` and `DESIGN_SPEC.md`)
 
 ### Data Flow
 
@@ -1541,31 +1552,25 @@ This project is licensed under the GNU Affero General Public License v3.0 (AGPL-
 
 ## 🔄 Changelog
 
-### v1.3.0
-- ✅ **LLM abstraction**: Provider-agnostic LLM layer (`bigas.llm`) for OpenAI and Gemini. Model resolution: request/body → per-feature env (e.g. `BIGAS_CTO_PR_REVIEW_MODEL`) → `LLM_MODEL` → default `gemini-2.5-pro`. See `bigas/llm/README.md`.
-- ✅ **Gemini support**: Use `GEMINI_API_KEY` and `LLM_MODEL` (e.g. `gemini-2.5-pro`) for PR review, release notes, marketing, and progress updates.
-- ✅ **Cross-platform async**: `run_cross_platform_marketing_analysis_async` for long-running cross-platform reports; poll `get_job_status` / `get_job_result`.
-- ✅ **Longer timeouts**: Gunicorn and Cloud Run request timeout set to 900s (15 min) for sync cross-platform and LinkedIn portfolio runs.
+- **2026-02** – ✅ **LLM abstraction**: Provider-agnostic LLM layer (`bigas.llm`) for OpenAI and Gemini. Model resolution: request/body → per-feature env (e.g. `BIGAS_CTO_PR_REVIEW_MODEL`) → `LLM_MODEL` → default `gemini-2.5-pro`. See `bigas/llm/README.md`.
+- **2026-02** – ✅ **Gemini support**: Use `GEMINI_API_KEY` and `LLM_MODEL` (e.g. `gemini-2.5-pro`) for PR review, release notes, marketing, and progress updates.
+- **2026-02** – ✅ **Cross-platform async**: `run_cross_platform_marketing_analysis_async` for long-running cross-platform reports; poll `get_job_status` / `get_job_result`.
+- **2026-02** – ✅ **Longer timeouts**: Gunicorn and Cloud Run request timeout set to 900s (15 min) for sync cross-platform and LinkedIn portfolio runs.
 
-### v1.2.0
-- ✅ Added web scraping functionality for page content analysis
-- ✅ Enhanced underperforming pages analysis with actual page content
-- ✅ Improved Discord messaging with one message per page
-- ✅ Added specific, actionable suggestions based on real page structure
-- ✅ Implemented page content analysis (CTAs, forms, headings, etc.)
-
-### v1.1.0
-- ✅ Added Google Cloud Storage integration
-- ✅ Implemented URL extraction from GA4 data
-- ✅ Added underperforming pages analysis
-- ✅ Enhanced AI-powered improvement suggestions
-- ✅ Added automatic domain detection from GA4
-
-### v1.0.0
-- ✅ Initial release with weekly analytics reports
-- ✅ Discord integration
-- ✅ Google Analytics 4 integration
-- ✅ OpenAI-powered insights
+- **2025-09** – ✅ Added web scraping functionality for page content analysis
+- **2025-09** – ✅ Enhanced underperforming pages analysis with actual page content
+- **2025-09** – ✅ Improved Discord messaging with one message per page
+- **2025-09** – ✅ Added specific, actionable suggestions based on real page structure
+- **2025-09** – ✅ Implemented page content analysis (CTAs, forms, headings, etc.)
+- **2025-09** – ✅ Added Google Cloud Storage integration
+- **2025-09** – ✅ Implemented URL extraction from GA4 data
+- **2025-09** – ✅ Added underperforming pages analysis
+- **2025-09** – ✅ Enhanced AI-powered improvement suggestions
+- **2025-09** – ✅ Added automatic domain detection from GA4
+- **2025-09** – ✅ Initial release with weekly analytics reports
+- **2025-09** – ✅ Discord integration
+- **2025-09** – ✅ Google Analytics 4 integration
+- **2025-09** – ✅ OpenAI-powered insights
 
 ## 🤖 AI Prompts Reference
 

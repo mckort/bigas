@@ -5229,7 +5229,7 @@ def run_cross_platform_marketing_analysis():
             "start_date": _start_s,
             "end_date": _end_s,
             "customer_id": google_ads_customer_id or None,
-            "store_raw": data.get("store_raw", False),
+            "store_raw": data.get("store_raw", True),
             "store_enriched": data.get("store_enriched", False),
             "post_to_discord": True,
         }
@@ -5237,7 +5237,7 @@ def run_cross_platform_marketing_analysis():
             "start_date": _start_s,
             "end_date": _end_s,
             "account_id": meta_account_id or None,
-            "store_raw": data.get("store_raw", False),
+            "store_raw": data.get("store_raw", True),
             "store_enriched": data.get("store_enriched", False),
             "post_to_discord": True,
         }
