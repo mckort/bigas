@@ -1,9 +1,9 @@
-# Bigas — AI-Powered Marketing + Product Platform
+# Bigas — Modular MCP Server for Your Virtual AI Team
 
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>Automated marketing analytics, paid ads reporting, and product release comms — delivered as an MCP server</strong>
+  <strong>Marketing analytics, product release notes, and CTO code review today — with a pluggable provider architecture for future finance, support, and more.</strong>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
@@ -12,7 +12,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 ## What is Bigas?
 
-**Bigas** (Latin for *team*) is an MCP server that gives solo founders a team of virtual specialists. It typically runs on **Google Cloud Run**, but can also be deployed on **any cloud or infrastructure that can host a Python web service** (for example, other container platforms or bare VMs). It connects to your data sources and delivers AI-powered insights to Discord — or can be triggered directly from any MCP client (Claude, Cursor, etc.) or automated via Cloud Scheduler.
+**Bigas** (Latin for *team*) is an MCP server that gives solo founders a team of virtual specialists across **marketing, product, and engineering**. It is **opinionated** toward Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler), Discord, and Jira/GitHub so you can get going quickly with minimal config. The stack is **modular and provider-based**: you can plug in new data sources and capabilities (for example finance and support), and run the Flask app on other clouds or on-premises if you prefer. Active providers are discoverable via `GET /mcp/providers` (see `CONTRIBUTING.md` and `docs/architecture.md`). It connects to your data sources and delivers AI-powered insights to Discord — or can be triggered directly from any MCP client (Claude, Cursor, etc.) or automated via Cloud Scheduler.
 
 It currently includes three specialists:
 
@@ -228,7 +228,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
                                          │
                                          ▼
                     ┌─────────────────────────────────────────┐
-                    │         Google Cloud Run (Flask)         │
+                    │      Flask app (e.g. Cloud Run)          │
                     │  /mcp/tools/*  — MCP endpoint router     │
                     └────────────────┬────────────────────────┘
                     ┌───────────────┼────────────────────────┐
@@ -245,6 +245,8 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
               GCS Storage           Discord
 ```
 
+*(GCS Storage, Discord, and Google Secret Manager are optional integrations; see `env.example` and `docs/architecture.md` for details.)*
+
 **Services:**
 - **Marketing services**
   - `GA4Service` — Google Analytics 4 data fetching
@@ -256,6 +258,9 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
   - `ProgressUpdatesService` — Jira issues moved to Done → team progress “coach” message
 - **CTO services**
   - `CtoPrReviewService` — GitHub PR diff → AI code review and comment on the PR
+- **Optional infrastructure**
+  - Google Cloud Storage for report persistence
+  - Google Secret Manager for loading env vars at startup when `SECRET_MANAGER=true`
 - **Provider registry**
   - Provider registry in `bigas/registry.py` discovers ads, analytics, and notification providers under `bigas/providers/**` at startup; active providers are listed at `GET /mcp/providers`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [DESIGN_SPEC.md](DESIGN_SPEC.md) to add new providers.
 
