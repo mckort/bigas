@@ -12,7 +12,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 ## What is Bigas?
 
-**Bigas** (Latin for *team*) is an MCP server that gives solo founders a team of virtual specialists. It runs on Google Cloud Run, connects to your data sources, and delivers AI-powered insights to Discord — or can be triggered directly from any MCP client (Claude, Cursor, etc.) or automated via Cloud Scheduler.
+**Bigas** (Latin for *team*) is an MCP server that gives solo founders a team of virtual specialists. It typically runs on **Google Cloud Run**, but can also be deployed on **any cloud or infrastructure that can host a Python web service** (for example, other container platforms or bare VMs). It connects to your data sources and delivers AI-powered insights to Discord — or can be triggered directly from any MCP client (Claude, Cursor, etc.) or automated via Cloud Scheduler.
 
 It currently includes three specialists:
 
@@ -232,7 +232,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
                     ┌───────────────┼────────────────────────┐
                     ▼               ▼                        ▼
              Marketing          Product                  CTO
-           (GA4 + Ads)       (Jira → Notes)         (PR Review)
+        (GA4 + Paid Ads)  (Jira → Notes & Updates)   (PR Review)
                     │
           ┌─────────┼──────────┐
           ▼         ▼          ▼
@@ -244,13 +244,18 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
 ```
 
 **Services:**
-- `GA4Service` — Google Analytics 4 data fetching
-- `LinkedInAdsService` / `RedditAdsService` / `GoogleAdsService` / `MetaAdsService` — OAuth or ADC + ads API with GCS caching
-- `StorageService` — report persistence under `weekly_reports/` and `raw_ads/{platform}/{date}/`
-- `WebScrapingService` — scrapes actual page content for CRO recommendations
-- `CreateReleaseNotesService` — Jira → multi-channel release comms
-- `ProgressUpdatesService` — Jira issues moved to Done → team progress “coach” message
-- **Provider registry** — `bigas/registry.py` discovers ads, analytics, and notification providers under `bigas/providers/**` at startup; active providers are listed at `GET /mcp/providers`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [DESIGN_SPEC.md](DESIGN_SPEC.md) to add new providers.
+- **Marketing services**
+  - `GA4Service` — Google Analytics 4 data fetching
+  - `LinkedInAdsService` / `RedditAdsService` / `GoogleAdsService` / `MetaAdsService` — OAuth or ADC + ads API with GCS caching
+  - `StorageService` — report persistence under `weekly_reports/` and `raw_ads/{platform}/{date}/`
+  - `WebScrapingService` — scrapes actual page content for CRO recommendations
+- **Product services**
+  - `CreateReleaseNotesService` — Jira Fix Version → multi-channel customer release comms (release notes, blog, social)
+  - `ProgressUpdatesService` — Jira issues moved to Done → team progress “coach” message
+- **CTO services**
+  - `CtoPrReviewService` — GitHub PR diff → AI code review and comment on the PR
+- **Provider registry**
+  - Provider registry in `bigas/registry.py` discovers ads, analytics, and notification providers under `bigas/providers/**` at startup; active providers are listed at `GET /mcp/providers`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [DESIGN_SPEC.md](DESIGN_SPEC.md) to add new providers.
 
 ---
 
