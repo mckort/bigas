@@ -6351,6 +6351,18 @@ def cleanup_old_reports():
         return jsonify({"error": str(e)}), 500
 
 
+def send_discord_message(message: str) -> bool:
+    """
+    Post a single message to the default Discord webhook (DISCORD_WEBHOOK_URL_MARKETING or DISCORD_WEBHOOK_URL).
+    Used by the notifications provider. Returns True if a webhook was configured and the post succeeded (or was skipped due to placeholder).
+    """
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
+    if not webhook_url or not webhook_url.strip():
+        return False
+    post_to_discord(webhook_url, message)
+    return True
+
+
 def post_to_discord(webhook_url, message: str):
     """
     Post a single message to Discord, truncating hard at 2000 characters.
