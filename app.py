@@ -1,7 +1,8 @@
 import os
 import json
 import logging
-from flask import Flask, jsonify, request
+import time
+from flask import Flask, jsonify, request, Response, stream_with_context
 from dotenv import load_dotenv
 
 from bigas.registry import registry
@@ -200,17 +201,21 @@ def create_app():
     @app.route('/mcp', methods=['GET', 'POST'])
     def mcp_endpoint():
         """
-        Minimal MCP Streamable-HTTP compatible JSON-RPC endpoint.
-        Supports initialize, tools/list, and tools/call.
+        MCP over SSE: GET returns a long-lived event stream; POST handles JSON-RPC
+        (initialize, notifications/initialized, tools/list, tools/call).
         """
         if request.method == "GET":
-            return jsonify(
-                {
-                    "service": "bigas-mcp",
-                    "status": "ok",
-                    "endpoint": "/mcp",
-                    "note": "Send JSON-RPC requests as HTTP POST to use MCP tools.",
-                }
+            def event_stream():
+                # Initial event so MCP clients see a valid SSE stream
+                yield 'data: {"jsonrpc":"2.0","method":"server/ready","params":{}}\n\n'
+                while True:
+                    time.sleep(25)
+                    yield ": ping\n\n"
+
+            return Response(
+                stream_with_context(event_stream()),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
         # Local auth for /mcp itself. We keep /mcp in public_paths to support clients
@@ -247,6 +252,12 @@ def create_app():
                     },
                 )
             )
+
+        if method == "notifications/initialized":
+            # No-op; MCP clients send this after initialize. Do not return Method not found.
+            if request_id is not None:
+                return jsonify(_jsonrpc_result(request_id, {}))
+            return jsonify({}), 200
 
         if method == "tools/list":
             manifest = combined_manifest().get_json() or {}
