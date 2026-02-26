@@ -30,7 +30,11 @@ It currently includes three specialists:
 
 - Google Cloud CLI (`gcloud`) installed and authenticated
 - A Google Cloud project with Cloud Run and Analytics APIs enabled
-- A service account with `roles/analyticsdata.reader` and `roles/storage.objectAdmin`
+- A **Cloud Run service account** with:
+  - `roles/analyticsdata.reader` — to read from the GA4 Data API
+  - `roles/storage.objectAdmin` — to read/write/delete reports in the GCS bucket
+  - `roles/secretmanager.secretAccessor` — **only if** you enable Secret Manager (`SECRET_MANAGER=true`) for loading env vars at startup
+- A **deploying user or CI account** with permissions to deploy to Cloud Run (for example `roles/run.admin` and `roles/iam.serviceAccountUser` on the execution service account)
 
 ### 1. Configure environment variables
 
