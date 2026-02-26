@@ -11,6 +11,8 @@ from bigas.registry import registry
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+SSE_KEEPALIVE_INTERVAL = 25
+
 
 def _jsonrpc_result(request_id, result):
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
@@ -209,7 +211,7 @@ def create_app():
                 # Initial event so MCP clients see a valid SSE stream
                 yield 'data: {"jsonrpc":"2.0","method":"server/ready","params":{}}\n\n'
                 while True:
-                    time.sleep(25)
+                    time.sleep(SSE_KEEPALIVE_INTERVAL)
                     yield ": ping\n\n"
 
             return Response(
@@ -257,7 +259,7 @@ def create_app():
             # No-op; MCP clients send this after initialize. Do not return Method not found.
             if request_id is not None:
                 return jsonify(_jsonrpc_result(request_id, {}))
-            return jsonify({}), 200
+            return "", 204
 
         if method == "tools/list":
             manifest = combined_manifest().get_json() or {}
