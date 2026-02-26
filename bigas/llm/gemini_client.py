@@ -63,22 +63,21 @@ class GeminiLLMClient(LLMClient):
         temperature: Optional[float] = None,
         **kwargs: Any,
     ) -> str:
-        # Map to Gemini chat format: role "user" or "model" (assistant), with parts list.
-        # System messages are treated as user role so the model sees them in context.
-        gemini_contents: List[Dict[str, Any]] = []
+        # Split system instruction from conversation so we match browser/API behavior.
+        # System message(s) go into GenerativeModel(system_instruction=...); the rest are chat.
+        system_parts: List[str] = []
+        rest: List[Dict[str, Any]] = []
         for m in messages:
             role = (m.get("role") or "user").lower()
-            if role == "assistant":
-                role = "model"
-            elif role == "system":
-                # Gemini's chat history doesn't have a distinct system role;
-                # treat it as the first user message to provide context.
-                role = "user"
             content = (m.get("content") or "").strip()
-            if content:
-                gemini_contents.append({"role": role, "parts": [content]})
+            if not content:
+                continue
+            if role == "system":
+                system_parts.append(content)
+            else:
+                rest.append({"role": "model" if role == "assistant" else "user", "parts": [content]})
 
-        if not gemini_contents:
+        if not rest:
             return ""
 
         generation_config = {}
@@ -91,26 +90,48 @@ class GeminiLLMClient(LLMClient):
             generation_config.update(extra_cfg)
         gen_cfg = generation_config if generation_config else None
 
-        # Last message is the new prompt; previous messages are history.
-        history = gemini_contents[:-1]
-        to_send = gemini_contents[-1]["parts"][0]
+        # Use a model with system_instruction when we have system message(s).
+        system_instruction = "\n\n".join(system_parts) if system_parts else None
+        if system_instruction:
+            model = genai.GenerativeModel(
+                self._model_name,
+                system_instruction=system_instruction,
+            )
+        else:
+            model = self._model
 
-        chat = self._model.start_chat(history=history)
-        # BLOCK_NONE for all harm categories: avoid false blocks on analytics/code-style content.
-        response = chat.send_message(
-            to_send,
-            generation_config=gen_cfg,
-            safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
-            **kwargs,
-        )
-        # Do not use response.text: it raises when the response has no valid Part
-        # (e.g. finish_reason MAX_TOKENS=2, safety block, or empty content).
+        # Single user message: generate_content. Multi-turn: start_chat + send_message.
+        try:
+            if len(rest) == 1 and rest[0]["role"] == "user":
+                prompt_text = rest[0]["parts"][0]
+                response = model.generate_content(
+                    prompt_text,
+                    generation_config=gen_cfg,
+                    safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
+                    **kwargs,
+                )
+            else:
+                history = rest[:-1]
+                to_send = rest[-1]["parts"][0]
+                chat = model.start_chat(history=history)
+                response = chat.send_message(
+                    to_send,
+                    generation_config=gen_cfg,
+                    safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
+                    **kwargs,
+                )
+        except Exception as e:
+            logger.error("Gemini API call failed in complete()", exc_info=True)
+            raise
+
+        # Inspect candidates/parts for text content.
         candidates = getattr(response, "candidates", None) or []
         if not candidates:
             return ""
         candidate = candidates[0]
         content = getattr(candidate, "content", None)
         parts = getattr(content, "parts", None) if content else None or []
+
         text_parts: List[str] = []
         for part in parts:
             part_text = getattr(part, "text", None)
@@ -119,9 +140,11 @@ class GeminiLLMClient(LLMClient):
         if text_parts:
             return "\n".join(text_parts)
         finish_reason = getattr(candidate, "finish_reason", None)
+        safety_ratings = getattr(candidate, "safety_ratings", None)
         logger.warning(
-            "Gemini response had no text parts (finish_reason=%s). Check safety_ratings or increase max_output_tokens.",
+            "Gemini response had no text parts (finish_reason=%s, safety_ratings=%s).",
             finish_reason,
+            safety_ratings,
         )
         return ""
 
