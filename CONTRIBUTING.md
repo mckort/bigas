@@ -58,6 +58,8 @@ The global registry in `bigas/registry.py`:
 - Instantiates only those where `is_configured()` returns `True`
 - Exposes active providers via `GET /mcp/providers`
 
+New tools you add via `@register_tool` appear in `GET /mcp/manifest` and are also available via the MCP JSON-RPC endpoint `POST /mcp` (methods `tools/list` and `tools/call`); no extra wiring is needed.
+
 ### Example: QuickBooks finance provider
 
 To add QuickBooks as a finance provider (see `DESIGN_SPEC.md` for the full example):

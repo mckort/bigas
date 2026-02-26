@@ -1,0 +1,14 @@
+---
+description: Always update README and docs when adding or changing features
+alwaysApply: true
+---
+
+# Keep docs in sync with code
+
+When you add or change functionality (new endpoints, MCP behavior, env vars, architecture):
+
+1. **Update the README** if the change is user-facing: new or changed endpoints, environment variables, quick start, or architecture diagram. Add a short "MCP / SSE endpoint"–style section if you introduce a new way to use the server.
+2. **Update `docs/architecture.md`** when you change how the app is structured, add new transports (e.g. SSE), or change data flow.
+3. **Update `DESIGN_SPEC.md`** or **CONTRIBUTING.md** when you change how contributors add providers or tools.
+
+Before finishing a feature or PR, confirm that README and any relevant architecture/contributing docs reflect the change.

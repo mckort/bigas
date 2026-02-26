@@ -7,7 +7,7 @@
 
 ## Context
 
-bigas is a Flask-based MCP server (`app.py`) with three resource blueprints:
+bigas is a Flask-based MCP server (`app.py`) with three resource blueprints. The server exposes tools in two ways: (1) **HTTP** at `/mcp/tools/*` and `GET /mcp/manifest` for curl and Cloud Scheduler, and (2) **MCP over SSE** at `GET/POST /mcp` for JSON-RPC (initialize, tools/list, tools/call), used by MCP clients such as Claude and Cursor. New tools registered with `@register_tool` appear in both; no changes to the `/mcp` handler are required when adding providers.
 - `bigas/resources/marketing/` — GA4 analytics + ad platforms (LinkedIn, Reddit, Google Ads, Meta)
 - `bigas/resources/product/` — Jira release notes + progress updates
 - `bigas/resources/cto/` — GitHub PR review

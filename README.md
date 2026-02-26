@@ -12,7 +12,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 ## What is Bigas?
 
-**Bigas** (Latin for *team*) is an MCP server that gives solo founders a team of virtual specialists across **marketing, product, and engineering**. It is **opinionated** toward Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler), Discord, and Jira/GitHub so you can get going quickly with minimal config. The stack is **modular and provider-based**: you can plug in new data sources and capabilities (for example finance and support), and run the Flask app on other clouds or on-premises if you prefer. Active providers are discoverable via `GET /mcp/providers` (see `CONTRIBUTING.md` and `docs/architecture.md`). It connects to your data sources and delivers AI-powered insights to Discord — or can be triggered directly from any MCP client (Claude, Cursor, etc.) or automated via Cloud Scheduler.
+**Bigas** (Latin for *team*) is an MCP server that gives solo founders a team of virtual specialists across **marketing, product, and engineering**. It is **opinionated** toward Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler), Discord, and Jira/GitHub so you can get going quickly with minimal config. The stack is **modular and provider-based**: you can plug in new data sources and capabilities (for example finance and support), and run the Flask app on other clouds or on-premises if you prefer. Active providers are discoverable via `GET /mcp/providers` (see `CONTRIBUTING.md` and `docs/architecture.md`). It connects to your data sources and delivers AI-powered insights to Discord — or can be triggered directly from any MCP client (Claude, Cursor, etc.) or automated via Cloud Scheduler. The server exposes an **SSE-based MCP endpoint** at `GET/POST /mcp` for JSON-RPC (initialize, tools/list, tools/call), so clients connect via the standard MCP transport.
 
 It currently includes three specialists:
 
@@ -105,6 +105,17 @@ Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_M
 3. Copy your **Property ID** (Admin → Property Details) into `GA4_PROPERTY_ID`
 
 > If you get a 403 error, wait a few minutes for permissions to propagate.
+
+---
+
+## MCP / SSE endpoint
+
+MCP clients (Claude, Cursor, etc.) can connect using the standard MCP-over-SSE transport:
+
+- **GET /mcp** — Opens a long-lived Server-Sent Events stream. The server sends an initial `server/ready` event and keep-alive comments so the client maintains the connection.
+- **POST /mcp** — Accepts MCP JSON-RPC requests: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
+
+Tools are the same as in the HTTP API; they are listed via `tools/list` and invoked via `tools/call`. The initial GET /mcp connection is unauthenticated. When using restricted access (`BIGAS_ACCESS_MODE=restricted`), you must send your access key in the configured header (e.g. `X-Bigas-Access-Key`) or as `Authorization: Bearer <key>` on subsequent POST requests to `/mcp`.
 
 ---
 
@@ -227,13 +238,13 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
 ```
                     ┌─────────────────────────────────────────┐
                     │            Clients / Triggers            │
-                    │  MCP Client · Cloud Scheduler · curl     │
+                    │  MCP Client (SSE+JSON-RPC) · Scheduler · curl │
                     └─────────────────────────────────────────┘
                                          │
                                          ▼
                     ┌─────────────────────────────────────────┐
                     │      Flask app (e.g. Cloud Run)          │
-                    │  /mcp/tools/*  — MCP endpoint router     │
+                    │  /mcp — SSE + JSON-RPC; /mcp/tools/* — HTTP │
                     └────────────────┬────────────────────────┘
                     ┌───────────────┼────────────────────────┐
                     ▼               ▼                        ▼
