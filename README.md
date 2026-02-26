@@ -113,9 +113,9 @@ Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_M
 MCP clients (Claude, Cursor, etc.) can connect using the standard MCP-over-SSE transport:
 
 - **GET /mcp** — Opens a long-lived Server-Sent Events stream. The server sends an initial `server/ready` event and keep-alive comments so the client maintains the connection.
-- **POST /mcp** — Accepts MCP JSON-RPC requests: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. Tool calls are routed internally to the corresponding `/mcp/tools/*` endpoints.
+- **POST /mcp** — Accepts MCP JSON-RPC requests: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 
-Tools are the same as in the HTTP API; they are listed via `tools/list` and invoked via `tools/call`. When using restricted access (`BIGAS_ACCESS_MODE=restricted`), send your access key in the configured header (e.g. `X-Bigas-Access-Key`) or as `Authorization: Bearer <key>` on POST requests to `/mcp`.
+Tools are the same as in the HTTP API; they are listed via `tools/list` and invoked via `tools/call`. The initial GET /mcp connection is unauthenticated. When using restricted access (`BIGAS_ACCESS_MODE=restricted`), you must send your access key in the configured header (e.g. `X-Bigas-Access-Key`) or as `Authorization: Bearer <key>` on subsequent POST requests to `/mcp`.
 
 ---
 
