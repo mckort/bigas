@@ -6351,20 +6351,44 @@ def cleanup_old_reports():
         return jsonify({"error": str(e)}), 500
 
 
-def post_to_discord(webhook_url, message: str):
+def _get_discord_webhook_url() -> str | None:
+    """
+    Return the Discord webhook URL to use (DISCORD_WEBHOOK_URL_MARKETING or DISCORD_WEBHOOK_URL).
+    Returns None if unset, empty, or placeholder. Shared by send_discord_message and the Discord notification provider.
+    """
+    url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
+    if not url or not url.strip():
+        return None
+    if url.strip().lower().startswith("placeholder"):
+        return None
+    return url.strip()
+
+
+def send_discord_message(message: str) -> bool:
+    """
+    Post a single message to the default Discord webhook. Used by the notifications provider.
+    Returns True only if the message was successfully delivered (HTTP 204).
+    """
+    webhook_url = _get_discord_webhook_url()
+    if not webhook_url:
+        return False
+    return post_to_discord(webhook_url, message)
+
+
+def post_to_discord(webhook_url, message: str) -> bool:
     """
     Post a single message to Discord, truncating hard at 2000 characters.
+    Returns True if the request succeeded (HTTP 204), False otherwise.
 
     NOTE: For longer, multi-part messages use post_long_to_discord instead.
     """
-    # Skip Discord posting if webhook URL is empty, not provided, or placeholder
     if (
         not webhook_url
         or webhook_url.strip() == ""
         or webhook_url.strip().lower().startswith("placeholder")
     ):
         logger.info("Discord webhook URL not provided or is placeholder, skipping Discord notification")
-        return
+        return False
 
     if len(message) > 2000:
         message = message[:1997] + "..."
@@ -6377,10 +6401,12 @@ def post_to_discord(webhook_url, message: str):
         )
         if response.status_code != 204:
             logger.error(f"Failed to post to Discord: {response.status_code}, {response.text}")
-        else:
-            logger.info("Successfully posted to Discord")
+            return False
+        logger.info("Successfully posted to Discord")
+        return True
     except Exception as e:
         logger.error(f"Error posting to Discord: {e}")
+        return False
 
 
 def post_long_to_discord(webhook_url: str, text: str, chunk_size: int = 1900):
