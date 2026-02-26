@@ -128,12 +128,24 @@ class ProgressUpdatesService:
                     {"role": "system", "content": PROGRESS_UPDATES_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=800,
-                temperature=0.4,
+                max_tokens=1500,
+                temperature=0.8,
             )
         except Exception as e:
             logger.error("Progress updates LLM call failed", exc_info=True)
             raise ProgressUpdatesError(f"LLM request failed: {e}") from e
+
+        # Fallback: if the LLM returns an empty message, use a deterministic summary
+        if not (message or "").strip():
+            logger.warning(
+                "Progress updates LLM returned empty message; falling back to deterministic summary. days=%s, stats=%s",
+                days,
+                stats,
+            )
+            message = (
+                f"Here’s what the team completed in the last {days} days:\n\n"
+                f"{done_issues_text}"
+            )
 
         return {
             "ok": True,
