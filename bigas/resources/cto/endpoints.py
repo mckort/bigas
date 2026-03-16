@@ -148,6 +148,10 @@ def review_and_comment_pr():
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
     if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
+        logger.warning(
+            "Review body truncated to %d characters to fit GitHub comment limit.",
+            MAX_GITHUB_COMMENT_CHARS,
+        )
         review_body = (
             review_body[:MAX_GITHUB_COMMENT_CHARS]
             + "\n\n---\n\n_Review truncated for GitHub comment length._"

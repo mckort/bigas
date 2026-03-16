@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 MIN_REVIEW_TOKENS = 1_000
 MAX_REVIEW_TOKENS = 16_000
+DEFAULT_MAX_REVIEW_TOKENS = 8_000
 
 
 # Max diff size (chars); overridable via BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS env.
@@ -40,12 +41,12 @@ def _max_review_tokens() -> int:
     """
     raw = (os.environ.get("BIGAS_CTO_PR_REVIEW_MAX_TOKENS") or "").strip()
     if not raw:
-        return 8000
+        return DEFAULT_MAX_REVIEW_TOKENS
     try:
         # Keep within a safe range across providers; adjust if model limits change.
         return max(MIN_REVIEW_TOKENS, min(MAX_REVIEW_TOKENS, int(raw)))
     except ValueError:
-        return 8000
+        return DEFAULT_MAX_REVIEW_TOKENS
 
 
 class PRReviewError(RuntimeError):
