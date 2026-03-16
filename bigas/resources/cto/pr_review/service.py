@@ -17,6 +17,11 @@ from bigas.resources.cto.pr_review.prompts import (
 
 logger = logging.getLogger(__name__)
 
+MIN_REVIEW_TOKENS = 1_000
+MAX_REVIEW_TOKENS = 16_000
+DEFAULT_MAX_REVIEW_TOKENS = 8_000
+
+
 # Max diff size (chars); overridable via BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS env.
 def _max_diff_chars() -> int:
     raw = os.environ.get("BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS", "").strip()
@@ -26,6 +31,22 @@ def _max_diff_chars() -> int:
         return max(10_000, min(500_000, int(raw)))
     except ValueError:
         return 150_000
+
+
+def _max_review_tokens() -> int:
+    """
+    Max tokens for the LLM review response; overridable via BIGAS_CTO_PR_REVIEW_MAX_TOKENS env.
+
+    This controls how long the generated review can be before the provider stops generation.
+    """
+    raw = (os.environ.get("BIGAS_CTO_PR_REVIEW_MAX_TOKENS") or "").strip()
+    if not raw:
+        return DEFAULT_MAX_REVIEW_TOKENS
+    try:
+        # Keep within a safe range across providers; adjust if model limits change.
+        return max(MIN_REVIEW_TOKENS, min(MAX_REVIEW_TOKENS, int(raw)))
+    except ValueError:
+        return DEFAULT_MAX_REVIEW_TOKENS
 
 
 class PRReviewError(RuntimeError):
@@ -83,7 +104,7 @@ class PRReviewService:
                     {"role": "system", "content": PR_REVIEW_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=4000,
+                max_tokens=_max_review_tokens(),
                 temperature=0.3,
             )
         except Exception as e:

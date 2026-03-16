@@ -25,6 +25,10 @@ cto_bp = Blueprint(
 
 logger = logging.getLogger(__name__)
 
+# Max characters for a GitHub comment to avoid API errors.
+# The official limit is 65,536 bytes, so 60k chars is a safe buffer.
+MAX_GITHUB_COMMENT_CHARS = 60_000
+
 
 def _post_to_discord_cto(message: str) -> None:
     """Post to CTO Discord channel if DISCORD_WEBHOOK_URL_CTO is set (e.g. from Secret Manager).
@@ -142,6 +146,16 @@ def review_and_comment_pr():
         logger.warning("PR review failed: %s", e)
         _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
         return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+    if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
+        logger.warning(
+            "Review body truncated to %d characters to fit GitHub comment limit.",
+            MAX_GITHUB_COMMENT_CHARS,
+        )
+        review_body = (
+            review_body[:MAX_GITHUB_COMMENT_CHARS]
+            + "\n\n---\n\n_Review truncated for GitHub comment length._"
+        )
 
     comment_url = ""
     try:
