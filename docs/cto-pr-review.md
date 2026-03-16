@@ -87,3 +87,12 @@ If `GITHUB_TOKEN` is configured in Bigas (e.g. via Secret Manager), you can omit
 ## Diff size
 
 Diffs larger than 150,000 characters are truncated and a note is prepended to the review. You can change `MAX_DIFF_CHARS` in `bigas/resources/cto/pr_review/service.py` if needed.
+
+## Review length / tokens
+
+The length of the generated review is controlled by the `BIGAS_CTO_PR_REVIEW_MAX_TOKENS` environment variable:
+
+- Default: `8000` tokens (if the env var is unset or invalid).
+- Minimum: `1000`, maximum: `16000` (values outside this range are clamped).
+
+This value is passed as `max_tokens` to the LLM client. If you consistently see reviews ending mid‑sentence in both GitHub and Discord, you can increase this value (within provider limits) to allow longer reviews.

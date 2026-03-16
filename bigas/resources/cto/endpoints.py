@@ -143,6 +143,15 @@ def review_and_comment_pr():
         _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
+    # Guard against GitHub's issue comment size limits by truncating very long reviews
+    # and appending a clear note so truncation is explicit rather than silent.
+    MAX_GITHUB_COMMENT_CHARS = 60_000
+    if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
+        review_body = (
+            review_body[:MAX_GITHUB_COMMENT_CHARS]
+            + "\n\n---\n\n_Review truncated for GitHub comment length._"
+        )
+
     comment_url = ""
     try:
         client = GitHubPRCommentClient(token=github_token)
