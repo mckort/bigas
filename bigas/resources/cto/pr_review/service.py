@@ -17,6 +17,9 @@ from bigas.resources.cto.pr_review.prompts import (
 
 logger = logging.getLogger(__name__)
 
+MIN_REVIEW_TOKENS = 1_000
+MAX_REVIEW_TOKENS = 16_000
+
 
 # Max diff size (chars); overridable via BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS env.
 def _max_diff_chars() -> int:
@@ -40,7 +43,7 @@ def _max_review_tokens() -> int:
         return 8000
     try:
         # Keep within a safe range across providers; adjust if model limits change.
-        return max(1000, min(16000, int(raw)))
+        return max(MIN_REVIEW_TOKENS, min(MAX_REVIEW_TOKENS, int(raw)))
     except ValueError:
         return 8000
 
