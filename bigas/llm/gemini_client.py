@@ -134,11 +134,32 @@ class GeminiLLMClient(LLMClient):
 
         text_parts: List[str] = []
         for part in parts:
-            part_text = getattr(part, "text", None)
+            part_text = None
+            if isinstance(part, dict):
+                part_text = part.get("text")
+            else:
+                part_text = getattr(part, "text", None)
+
             if isinstance(part_text, str) and part_text.strip():
                 text_parts.append(part_text.strip())
         if text_parts:
             return "\n".join(text_parts)
+
+        # Fallback: if we couldn't extract parts[].text, try other SDK-provided
+        # string fields (e.g. response.text / candidate.text / content.text).
+        # This avoids treating a non-empty Gemini output as an "empty response".
+        for label, value in [
+            ("response.text", getattr(response, "text", None)),
+            ("candidate.text", getattr(candidate, "text", None)),
+            ("content.text", getattr(content, "text", None)),
+        ]:
+            if isinstance(value, str) and value.strip():
+                logger.warning(
+                    "Gemini response had no text parts but had %s; using it.",
+                    label,
+                )
+                return value.strip()
+
         finish_reason = getattr(candidate, "finish_reason", None)
         safety_ratings = getattr(candidate, "safety_ratings", None)
         logger.warning(

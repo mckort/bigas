@@ -133,6 +133,18 @@ class CreateReleaseNotesService:
 
         normalized = [_normalize_issue(i) for i in raw_issues]
 
+        logger.info(
+            "Release notes: fetched %d Jira issue(s) for fix_version=%s",
+            len(normalized),
+            fix_version,
+        )
+        if normalized:
+            preview = [
+                f"{i.get('key','')}:{(i.get('summary','') or '')[:120]}"
+                for i in normalized[:2]
+            ]
+            logger.info("Release notes Jira preview: %s", " | ".join(preview))
+
         # Keep the payload compact: exclude internal fields from the JSON passed to the LLM? (keep minimal)
         llm_issues = [
             {
@@ -181,7 +193,7 @@ class CreateReleaseNotesService:
                     {"role": "system", "content": COMMS_PACK_SYSTEM_PROMPT},
                     {"role": "user", "content": comms_prompt},
                 ],
-                max_tokens=2200,
+                max_tokens=2800,
                 temperature=0.3,
             )
             pack = _extract_json(content)
@@ -202,7 +214,7 @@ class CreateReleaseNotesService:
                         {"role": "system", "content": CUSTOMER_COPY_SYSTEM_PROMPT},
                         {"role": "user", "content": copy_prompt},
                     ],
-                    max_tokens=1600,
+                    max_tokens=2200,
                     temperature=0.2,
                 )
                 customer_sections = _extract_json(content)
@@ -233,7 +245,7 @@ class CreateReleaseNotesService:
                 {"role": "system", "content": RELEASE_NOTES_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=1800,
+            max_tokens=2400,
             temperature=0.4,
         )
         result = _extract_json(content2)
