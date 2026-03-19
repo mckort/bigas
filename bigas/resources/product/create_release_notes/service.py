@@ -21,6 +21,12 @@ from bigas.resources.product.create_release_notes.formatter import group_issues,
 
 logger = logging.getLogger(__name__)
 
+# Gemini steps: comms pack prompt is very large (blog example + all issues). If
+# max_output_tokens is too low, the model can hit MAX_TOKENS before emitting any Part.
+RN_COMMS_PACK_MAX_TOKENS = 8192
+RN_CUSTOMER_COPY_MAX_TOKENS = 4096
+RN_MAIN_SCHEMA_MAX_TOKENS = 4096
+
 
 class ReleaseNotesError(RuntimeError):
     pass
@@ -64,6 +70,56 @@ def _extract_json(text: str) -> Dict[str, Any]:
             (t[:500] + ("..." if len(t) > 500 else "")),
         )
         return {}
+
+
+def _deterministic_release_notes_result(
+    *,
+    fix_version: str,
+    customer_sections: Dict[str, Any],
+    social: Dict[str, str],
+    blog_markdown: str,
+    customer_markdown: str,
+    llm_issues: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Build API-shaped release notes without the final LLM JSON step.
+    Used when the model returns no text or parsing fails for that step.
+    """
+    highlights: List[str] = []
+    for key in ("new_features", "improvements", "bug_fixes"):
+        for line in customer_sections.get(key) or []:
+            if isinstance(line, str) and line.strip():
+                highlights.append(line.strip())
+            if len(highlights) >= 5:
+                break
+        if len(highlights) >= 5:
+            break
+
+    return {
+        "release_title": f"Release {fix_version}",
+        "release_version": fix_version,
+        "highlights": highlights,
+        "sections": {
+            "features": list(customer_sections.get("new_features") or []),
+            "improvements": list(customer_sections.get("improvements") or []),
+            "bug_fixes": list(customer_sections.get("bug_fixes") or []),
+            "breaking_changes": [],
+            "known_issues": [],
+        },
+        "email": {
+            "subject": f"Release {fix_version}",
+            "body": customer_markdown,
+        },
+        "social": {
+            "linkedin": social.get("linkedin") or "",
+            "x": social.get("x") or "",
+            "facebook": social.get("facebook") or "",
+            "instagram": social.get("instagram") or "",
+        },
+        "blog_markdown": blog_markdown,
+        "customer_markdown": customer_markdown,
+        "issues_included": llm_issues,
+    }
 
 
 def _validate_fix_version(fix_version: str) -> None:
@@ -193,7 +249,7 @@ class CreateReleaseNotesService:
                     {"role": "system", "content": COMMS_PACK_SYSTEM_PROMPT},
                     {"role": "user", "content": comms_prompt},
                 ],
-                max_tokens=2800,
+                max_tokens=RN_COMMS_PACK_MAX_TOKENS,
                 temperature=0.3,
             )
             pack = _extract_json(content)
@@ -214,7 +270,7 @@ class CreateReleaseNotesService:
                         {"role": "system", "content": CUSTOMER_COPY_SYSTEM_PROMPT},
                         {"role": "user", "content": copy_prompt},
                     ],
-                    max_tokens=2200,
+                    max_tokens=RN_CUSTOMER_COPY_MAX_TOKENS,
                     temperature=0.2,
                 )
                 customer_sections = _extract_json(content)
@@ -240,15 +296,33 @@ class CreateReleaseNotesService:
             fix_version=fix_version,
             issues_compact_json=issues_compact_json,
         )
-        content2 = self._llm.complete(
-            messages=[
-                {"role": "system", "content": RELEASE_NOTES_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=2400,
-            temperature=0.4,
-        )
-        result = _extract_json(content2)
+        try:
+            content2 = self._llm.complete(
+                messages=[
+                    {"role": "system", "content": RELEASE_NOTES_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=RN_MAIN_SCHEMA_MAX_TOKENS,
+                temperature=0.4,
+            )
+            result = _extract_json(content2)
+        except ReleaseNotesError as e:
+            if "Empty LLM response" in str(e):
+                logger.warning(
+                    "Release notes: empty LLM response for main schema step (model=%s); "
+                    "using deterministic payload from Jira + earlier steps.",
+                    self._model,
+                )
+                result = _deterministic_release_notes_result(
+                    fix_version=fix_version,
+                    customer_sections=customer_sections,
+                    social=social,
+                    blog_markdown=blog_markdown,
+                    customer_markdown=customer_markdown,
+                    llm_issues=llm_issues,
+                )
+            else:
+                raise
 
         # Ensure required top-level fields exist (light validation; keep robust)
         result.setdefault("release_title", f"Release {fix_version}")
