@@ -147,18 +147,54 @@ class GeminiLLMClient(LLMClient):
 
         # Fallback: if we couldn't extract parts[].text, try other SDK-provided
         # string fields (e.g. response.text / candidate.text / content.text).
-        # This avoids treating a non-empty Gemini output as an "empty response".
-        for label, value in [
-            ("response.text", getattr(response, "text", None)),
-            ("candidate.text", getattr(candidate, "text", None)),
-            ("content.text", getattr(content, "text", None)),
+        #
+        # Note: these "quick accessors" can throw when Gemini returns candidates
+        # with no valid Part; ensure we never raise from here.
+        for label, getter in [
+            ("response.text", lambda: getattr(response, "text", None)),
+            ("candidate.text", lambda: getattr(candidate, "text", None)),
+            ("content.text", lambda: getattr(content, "text", None)),
         ]:
+            try:
+                value = getter()
+            except Exception:
+                continue
             if isinstance(value, str) and value.strip():
                 logger.warning(
                     "Gemini response had no text parts but had %s; using it.",
                     label,
                 )
                 return value.strip()
+
+        # Last resort: use response.to_dict() (if available) and extract any
+        # nested string values under the "text" key.
+        try:
+            to_dict = getattr(response, "to_dict", None)
+            if callable(to_dict):
+                raw = to_dict() or {}
+
+                found: List[str] = []
+                stack: List[Any] = [raw]
+                while stack and len(found) < 5:
+                    cur = stack.pop()
+                    if isinstance(cur, dict):
+                        for k, v in cur.items():
+                            if k == "text" and isinstance(v, str) and v.strip():
+                                found.append(v.strip())
+                            elif isinstance(v, (dict, list)):
+                                stack.append(v)
+                    elif isinstance(cur, list):
+                        stack.extend(cur)
+
+                if found:
+                    logger.warning(
+                        "Gemini fallback extracted %d text string(s) from response.to_dict().",
+                        len(found),
+                    )
+                    return "\n".join(found)
+        except Exception:
+            # Keep behavior conservative: if we can't extract text, treat as empty.
+            pass
 
         finish_reason = getattr(candidate, "finish_reason", None)
         safety_ratings = getattr(candidate, "safety_ratings", None)
