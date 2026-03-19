@@ -145,29 +145,9 @@ class GeminiLLMClient(LLMClient):
         if text_parts:
             return "\n".join(text_parts)
 
-        # Fallback: if we couldn't extract parts[].text, try other SDK-provided
-        # string fields (e.g. response.text / candidate.text / content.text).
-        #
-        # Note: these "quick accessors" can throw when Gemini returns candidates
-        # with no valid Part; ensure we never raise from here.
-        for label, getter in [
-            ("response.text", lambda: getattr(response, "text", None)),
-            ("candidate.text", lambda: getattr(candidate, "text", None)),
-            ("content.text", lambda: getattr(content, "text", None)),
-        ]:
-            try:
-                value = getter()
-            except Exception:
-                continue
-            if isinstance(value, str) and value.strip():
-                logger.warning(
-                    "Gemini response had no text parts but had %s; using it.",
-                    label,
-                )
-                return value.strip()
-
-        # Last resort: use response.to_dict() (if available) and extract any
-        # nested string values under the "text" key.
+        # Fallback: do NOT use response.text / candidate.text — those SDK "quick
+        # accessors" raise ValueError when no valid Part exists (e.g. MAX_TOKENS
+        # with empty parts). Use to_dict() and collect nested "text" strings only.
         try:
             to_dict = getattr(response, "to_dict", None)
             if callable(to_dict):
