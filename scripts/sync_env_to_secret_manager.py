@@ -11,12 +11,20 @@ import subprocess
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENV_PATH = os.path.join(REPO_ROOT, ".env")
+# Prefer ENV_FILE (e.g. ENV_FILE=.env.bigas-503008), else ./.env
+_ENV_FILE = os.environ.get("ENV_FILE", ".env")
+ENV_PATH = (
+    _ENV_FILE
+    if os.path.isabs(_ENV_FILE)
+    else os.path.join(REPO_ROOT, _ENV_FILE)
+)
 
 # Same list as env.example SECRET_MANAGER_SECRET_NAMES (excl. GOOGLE_PROJECT_ID – must stay in .env)
 SECRET_NAMES = [
     "GA4_PROPERTY_ID",
     "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "LLM_MODEL",
     "BIGAS_PROGRESS_UPDATES_MODEL",
     "JIRA_BASE_URL",
     "JIRA_EMAIL",
@@ -66,8 +74,13 @@ def parse_env(path: str) -> dict[str, str]:
 
 def main() -> None:
     if not os.path.isfile(ENV_PATH):
-        print(f".env not found at {ENV_PATH}. Run from repo root.", file=sys.stderr)
+        print(
+            f"Env file not found at {ENV_PATH}. "
+            "Set ENV_FILE=.env.bigas-503008 or symlink .env, and run from repo root.",
+            file=sys.stderr,
+        )
         sys.exit(1)
+    print(f"Reading secrets from: {ENV_PATH}")
 
     env = parse_env(ENV_PATH)
     project = env.get("GOOGLE_PROJECT_ID", "").strip()

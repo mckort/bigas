@@ -4,8 +4,18 @@ import os
 import requests
 
 from bigas.resources.marketing.utils import sanitize_error_message, validate_request_data
+from bigas.resources.product.create_release_notes.jira_client import normalize_project_keys
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
 from bigas.resources.product.progress_updates.service import ProgressUpdatesService, ProgressUpdatesError
+
+
+def _project_keys_from_request(data: dict):
+    """Accept project_keys (list/str) or project_key (str) from request body."""
+    if data.get("project_keys") is not None:
+        return normalize_project_keys(data.get("project_keys"))
+    if data.get("project_key") is not None:
+        return normalize_project_keys(data.get("project_key"))
+    return None
 
 product_bp = Blueprint(
     'product_bp', __name__,
@@ -71,7 +81,13 @@ def create_release_notes():
     Create release notes by querying Jira issues for a Fix Version.
 
     Request JSON:
-      { "fix_version": "1.1.0", "jql_extra": "AND statusCategory = Done" }  (jql_extra optional)
+      {
+        "fix_version": "1.1.0",
+        "jql_extra": "AND statusCategory = Done",
+        "project_key": "VFA",
+        "project_keys": ["VFA", "WAYW"]
+      }
+      (jql_extra / project_key(s) optional; default uses JIRA_PROJECT_KEY from env, supports "VFA,WAYW")
     """
     data = request.json or {}
     is_valid, error_msg = validate_request_data(data, required_fields=["fix_version"])
@@ -80,9 +96,14 @@ def create_release_notes():
 
     fix_version = data.get("fix_version")
     jql_extra = (data.get("jql_extra") or "").strip()
+    project_keys = _project_keys_from_request(data)
     try:
         service = CreateReleaseNotesService()
-        result = service.create(fix_version=fix_version, jql_extra=jql_extra)
+        result = service.create(
+            fix_version=fix_version,
+            jql_extra=jql_extra,
+            project_keys=project_keys,
+        )
 
         # Optional: post the release notes to the product Discord channel
         webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_PRODUCT")
@@ -144,7 +165,8 @@ def create_release_notes():
 def progress_updates():
     """
     Generate a team progress update from Jira issues moved to Done in the last N days.
-    Request JSON (optional): { "days": 7, "post_to_discord": true, "jql_extra": "..." }
+    Request JSON (optional):
+      { "days": 7, "post_to_discord": true, "jql_extra": "...", "project_keys": ["VFA","WAYW"] }
     Default jql_extra is "AND statusCategory = Done". Specify the period with `days` (default 7).
     """
     data = request.json or {}
@@ -154,10 +176,11 @@ def progress_updates():
     post_to_discord = bool(data.get("post_to_discord", True))
     # Default jql_extra for progress report: narrow to statusCategory = Done (can override via request).
     jql_extra = (data.get("jql_extra") or "AND statusCategory = Done").strip()
+    project_keys = _project_keys_from_request(data)
 
     try:
         service = ProgressUpdatesService()
-        result = service.run(days=days, jql_extra=jql_extra)
+        result = service.run(days=days, jql_extra=jql_extra, project_keys=project_keys)
 
         message = result.get("message", "")
         if post_to_discord and message:
@@ -200,14 +223,20 @@ def get_manifest():
                     "type": "object",
                     "properties": {
                         "fix_version": {"type": "string", "description": "Jira Fix Version, e.g. 1.1.0"},
-                        "jql_extra": {"type": "string", "description": "Optional JQL fragment to narrow results (e.g. AND statusCategory = Done)"}
+                        "jql_extra": {"type": "string", "description": "Optional JQL fragment to narrow results (e.g. AND statusCategory = Done)"},
+                        "project_key": {"type": "string", "description": "Optional single Jira project key override (e.g. VFA)"},
+                        "project_keys": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional Jira project keys override (e.g. [\"VFA\",\"WAYW\"]). Defaults to JIRA_PROJECT_KEY env (supports comma-separated)."
+                        }
                     },
                     "required": ["fix_version"]
                 }
             },
             {
                 "name": "progress_updates",
-                "description": "Generate a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord post). Specify the period with days (default 7). Uses jql_extra default AND statusCategory = Done.",
+                "description": "Generate a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord post). Specify the period with days (default 7). Uses jql_extra default AND statusCategory = Done. Supports multiple Jira projects via project_keys or JIRA_PROJECT_KEY=VFA,WAYW.",
                 "path": "/mcp/tools/progress_updates",
                 "method": "POST",
                 "parameters": {
@@ -215,7 +244,13 @@ def get_manifest():
                     "properties": {
                         "days": {"type": "integer", "description": "Number of days to look back (default 7)", "default": 7},
                         "post_to_discord": {"type": "boolean", "description": "Post the message to product Discord webhook", "default": True},
-                        "jql_extra": {"type": "string", "description": "JQL fragment to narrow results; default AND statusCategory = Done", "default": "AND statusCategory = Done"}
+                        "jql_extra": {"type": "string", "description": "JQL fragment to narrow results; default AND statusCategory = Done", "default": "AND statusCategory = Done"},
+                        "project_key": {"type": "string", "description": "Optional single Jira project key override (e.g. WAYW)"},
+                        "project_keys": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional Jira project keys override. Defaults to all keys in JIRA_PROJECT_KEY env."
+                        }
                     }
                 }
             }

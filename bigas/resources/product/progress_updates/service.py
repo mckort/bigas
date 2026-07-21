@@ -96,16 +96,19 @@ class ProgressUpdatesService:
         *,
         days: int = 7,
         jql_extra: str = "",
+        project_keys: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Fetch issues done in the last `days` days and generate a coach message.
         Caller is responsible for posting the returned message to Discord if desired.
         jql_extra: optional JQL fragment (e.g. "AND statusCategory = Done") to narrow the query.
+        project_keys: optional override of configured Jira project keys (str or list).
         """
         try:
             raw_issues = self._jira.search_issues_done_in_last_n_days(
                 days=days,
                 jql_extra=(jql_extra or "").strip(),
+                project_keys=project_keys,
             )
         except JiraError as e:
             raise ProgressUpdatesError(str(e))

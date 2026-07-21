@@ -1,13 +1,21 @@
 #!/bin/bash
 set -e
 
-# Load environment variables from .env file if it exists (avoid xargs for portability)
-if [ -f .env ]; then
-    echo "Loading environment variables from .env file..."
+# Load env profile. Prefer ENV_FILE (e.g. ENV_FILE=.env.bigas-503008 ./deploy.sh),
+# otherwise use ./.env (often a symlink to the active profile).
+ENV_FILE="${ENV_FILE:-.env}"
+if [ -f "$ENV_FILE" ]; then
+    echo "Loading environment variables from $ENV_FILE..."
     set -a
-    # shellcheck source=.env
-    source ./.env
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
     set +a
+else
+    echo "❌ Error: env file not found: $ENV_FILE"
+    echo "Create a profile (e.g. .env.bigas-503008) and either:"
+    echo "  ln -sfn .env.bigas-503008 .env && ./deploy.sh"
+    echo "  ENV_FILE=.env.bigas-503008 ./deploy.sh"
+    exit 1
 fi
 
 # Check required environment variables

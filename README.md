@@ -90,7 +90,7 @@ Results are posted to your Discord marketing channel.
 | `JIRA_BASE_URL` | Jira instance URL (required for release notes and progress updates) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
-| `JIRA_PROJECT_KEY` | Jira project key |
+| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for multi-project (e.g. `VFA,WAYW`). Per-request override via `project_key` / `project_keys`. |
 | `LINKEDIN_AD_ACCOUNT_URN` | Default LinkedIn ad account URN |
 | `REDDIT_AD_ACCOUNT_ID` | Default Reddit ad account ID |
 
