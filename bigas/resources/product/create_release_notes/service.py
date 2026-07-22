@@ -170,7 +170,7 @@ class CreateReleaseNotesService:
         #   1) openai_model argument
         #   2) BIGAS_RELEASE_NOTES_MODEL
         #   3) LLM_MODEL
-        #   4) "gemini-2.5-pro" (factory default)
+        #   4) "gemini-3.1-pro-preview" (factory default)
         self._llm, self._model = get_llm_client(
             feature="release_notes",
             explicit_model=openai_model,

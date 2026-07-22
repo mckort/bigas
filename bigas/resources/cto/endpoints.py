@@ -9,6 +9,7 @@ import os
 import requests
 from flask import Blueprint, jsonify, request
 
+from bigas.resources.cto.autofix.service import AutofixError, AutofixService
 from bigas.resources.cto.pr_review.github_client import (
     BIGAS_REVIEW_MARKER,
     GitHubPRCommentClient,
@@ -82,7 +83,7 @@ def review_and_comment_pr():
       - diff (str, required): PR diff text
       - instructions (str, optional): extra instructions for the reviewer
       - github_token (str, optional): override GitHub PAT (else uses GITHUB_TOKEN env)
-      - llm_model (str, optional): override model for this request (default: gemini-2.5-pro)
+      - llm_model (str, optional): override model for this request (default: gemini-3.1-pro-preview)
 
     Returns:
       - success, comment_url, review_posted; or error with status 4xx/5xx.
@@ -194,6 +195,87 @@ def review_and_comment_pr():
     })
 
 
+@cto_bp.route("/autofix_pr", methods=["POST"])
+def autofix_pr():
+    """
+    Launch a Cursor cloud agent to fix actionable findings from the Bigas PR review.
+
+    Request JSON:
+      - repo (str, required): "owner/repo"
+      - pr_number (int, required)
+      - force (bool, optional): bypass clean-review / autofix-loop guards
+      - review_body (str, optional): override; else fetch Bigas-marked PR comment
+      - github_token (str, optional): override GITHUB_TOKEN
+      - cursor_api_key (str, optional): override CURSOR_API_KEY
+    """
+    data = request.get_json(silent=True) or {}
+    repo = (data.get("repo") or "").strip()
+    pr_number = data.get("pr_number")
+    force = bool(data.get("force") or False)
+    review_body = data.get("review_body")
+    if isinstance(review_body, str):
+        review_body = review_body.strip() or None
+    else:
+        review_body = None
+    github_token = (data.get("github_token") or "").strip() or None
+    cursor_api_key = (data.get("cursor_api_key") or "").strip() or None
+
+    if not repo or "/" not in repo or repo.count("/") != 1:
+        return jsonify({"error": "repo is required in the form 'owner/repo'"}), 400
+    if pr_number is None:
+        return jsonify({"error": "pr_number is required"}), 400
+    try:
+        pr_number = int(pr_number)
+    except (TypeError, ValueError):
+        return jsonify({"error": "pr_number must be an integer"}), 400
+    if pr_number < 1:
+        return jsonify({"error": "pr_number must be a positive integer"}), 400
+
+    pr_url = f"https://github.com/{repo}/pull/{pr_number}"
+    _post_to_discord_cto(f"**CTO autofix started**\nPR: {pr_url}")
+
+    try:
+        service = AutofixService(
+            cursor_api_key=cursor_api_key,
+            github_token=github_token,
+        )
+        result = service.run(
+            repo=repo,
+            pr_number=pr_number,
+            force=force,
+            review_body=review_body,
+        )
+    except AutofixError as e:
+        err = sanitize_error_message(str(e))
+        logger.warning("Autofix failed: %s", e)
+        _post_to_discord_cto(f"**CTO autofix done**\nNot launched.\nReason: {err}")
+        if "401" in str(e) or "auth" in str(e).lower():
+            status = 401
+        elif "403" in str(e):
+            status = 403
+        elif "404" in str(e):
+            status = 404
+        elif "CURSOR_API_KEY" in str(e) or "GITHUB_TOKEN" in str(e):
+            status = 400
+        else:
+            status = 502
+        return jsonify({"error": err}), status
+
+    if result.get("skipped"):
+        reason = result.get("reason") or "skipped"
+        _post_to_discord_cto(
+            f"**CTO autofix done**\nSkipped.\nReason: {sanitize_error_message(reason)}\nPR: {pr_url}"
+        )
+        return jsonify({"success": True, **result})
+
+    agent_url = result.get("agent_url") or ""
+    agent_id = result.get("agent_id") or ""
+    _post_to_discord_cto(
+        f"**CTO autofix launched**\nPR: {pr_url}\nAgent: {agent_url or agent_id}"
+    )
+    return jsonify({"success": True, **result})
+
+
 def get_manifest():
     """Return the CTO tools manifest for the combined MCP manifest."""
     return {
@@ -230,10 +312,49 @@ def get_manifest():
                         },
                         "llm_model": {
                             "type": "string",
-                            "description": "Optional model override (default: gemini-2.5-pro)",
+                            "description": "Optional model override (default: gemini-3.1-pro-preview)",
                         },
                     },
                     "required": ["repo", "pr_number", "diff"],
+                },
+            },
+            {
+                "name": "autofix_pr",
+                "description": (
+                    "Launch a Cursor cloud agent to fix actionable findings from the "
+                    "Bigas PR review comment on an open pull request."
+                ),
+                "path": "/mcp/tools/autofix_pr",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository in the form 'owner/repo' (required)",
+                        },
+                        "pr_number": {
+                            "type": "integer",
+                            "description": "Pull request number (required)",
+                        },
+                        "force": {
+                            "type": "boolean",
+                            "description": "Bypass clean-review and autofix-loop guards",
+                        },
+                        "review_body": {
+                            "type": "string",
+                            "description": "Optional review text override",
+                        },
+                        "github_token": {
+                            "type": "string",
+                            "description": "Optional GitHub PAT override",
+                        },
+                        "cursor_api_key": {
+                            "type": "string",
+                            "description": "Optional Cursor API key override",
+                        },
+                    },
+                    "required": ["repo", "pr_number"],
                 },
             },
         ],

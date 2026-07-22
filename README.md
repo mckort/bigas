@@ -77,7 +77,7 @@ Results are posted to your Discord marketing channel.
 |---|---|
 | `GEMINI_API_KEY` | Gemini API key — **default LLM**; used when `LLM_MODEL` is unset or starts with `gemini-` |
 | `OPENAI_API_KEY` | OpenAI API key — alternative; used when `LLM_MODEL` starts with `gpt-` |
-| `LLM_MODEL` | Global default model; defaults to `gemini-2.5-pro` if unset |
+| `LLM_MODEL` | Global default model; defaults to `gemini-3.1-pro-preview` if unset |
 
 **Optional:**
 

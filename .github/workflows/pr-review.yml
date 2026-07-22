@@ -1,9 +1,11 @@
 # Run Bigas AI PR review and post/update a single comment on the PR.
+# Optionally launch Cursor autofix when BIGAS_AUTO_FIX=true.
 # This workflow is in the Bigas repo so we can test PR review on Bigas itself.
 # In any repo (including this one), configure:
 #   Settings → Secrets and variables → Actions
 #   - Variable: BIGAS_URL = your Bigas Cloud Run URL (required)
 #   - Secret:   BIGAS_API_KEY = one of your Bigas access keys (BIGAS_ACCESS_KEYS)
+#   - Variable: BIGAS_AUTO_FIX = true  (optional; enables Cursor autofix after review)
 #   - Secret:   GH_PAT_FOR_BIGAS = GitHub PAT with repo scope (optional if GITHUB_TOKEN is in Bigas Secret Manager)
 # Discord: Bigas posts to CTO channel using DISCORD_WEBHOOK_URL_CTO from GCP Secret Manager (no GitHub secret needed).
 name: Bigas PR review
@@ -72,3 +74,31 @@ jobs:
             exit 1
           fi
           echo "Bigas returned 200 OK."
+
+      - name: Trigger Bigas autofix (optional)
+        if: ${{ vars.BIGAS_AUTO_FIX == 'true' }}
+        id: autofix
+        env:
+          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
+        run: |
+          python3 -c "
+          import json, os
+          payload = {
+              'repo': os.environ['GITHUB_REPOSITORY'],
+              'pr_number': ${{ github.event.pull_request.number }},
+          }
+          with open('autofix_payload.json', 'w') as f:
+              json.dump(payload, f)
+          "
+          HTTP_CODE=$(curl -sS -w "%{http_code}" -o autofix_response.txt -X POST "$BIGAS_URL/mcp/tools/autofix_pr" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $BIGAS_API_KEY" \
+            -d @autofix_payload.json)
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "Autofix HTTP $HTTP_CODE"
+          cat autofix_response.txt || true
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Bigas autofix returned HTTP $HTTP_CODE"
+            exit 1
+          fi
