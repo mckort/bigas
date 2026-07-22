@@ -6,11 +6,17 @@ After Bigas posts a PR review comment, you can optionally launch a **Cursor clou
 
 ```text
 PR opened/push
-  → review_and_comment_pr (Gemini) → GitHub comment + Discord
+  → review_and_comment_pr → GitHub comment + Discord
+       → if LGTM: Discord "Ready to merge"
   → if repo var BIGAS_AUTO_FIX=true
       → autofix_pr
           → skip if review is LGTM / nits-only, or last commit is [bigas-autofix]
           → else launch Cursor cloud agent (workOnCurrentBranch)
+      → poll autofix_followup until agent terminal
+          → Discord: autofix completed / failed
+          → re-review updated diff
+          → Discord: re-review done
+          → if LGTM: Discord "Ready to merge"
 ```
 
 No automerge in v1.
@@ -37,7 +43,7 @@ Copy the latest [pr-review.yml](../.github/workflows/pr-review.yml) so it includ
 
 ## API
 
-`POST /mcp/tools/autofix_pr`
+### `POST /mcp/tools/autofix_pr`
 
 ```json
 {
@@ -50,6 +56,22 @@ Copy the latest [pr-review.yml](../.github/workflows/pr-review.yml) so it includ
 - `force: true` bypasses clean-review and `[bigas-autofix]` loop guards (smoke/debug only).
 - Success (launched): `{ "success": true, "launched": true, "agent_url": "...", "agent_id": "bc-..." }`
 - Success (skipped): `{ "success": true, "skipped": true, "reason": "..." }`
+
+### `POST /mcp/tools/autofix_followup`
+
+Polled by GitHub Actions after launch:
+
+```json
+{
+  "repo": "owner/repo",
+  "pr_number": 1,
+  "agent_id": "bc-...",
+  "run_id": "run-..."
+}
+```
+
+- Not done yet: `{ "done": false, "status": "RUNNING", ... }`
+- Done + re-reviewed: `{ "done": true, "ok": true, "rereviewed": true, "ready_to_merge": true, "comment_url": "..." }`
 
 ## Guards
 

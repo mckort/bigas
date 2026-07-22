@@ -153,3 +153,23 @@ class AutofixService:
             "run_id": launched.get("run_id") or "",
             "forced": bool(force),
         }
+
+    def poll_status(
+        self,
+        *,
+        agent_id: str,
+        run_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        client = CursorCloudAgentClient(api_key=self._cursor_key)
+        try:
+            return client.get_run_status(agent_id=agent_id, run_id=run_id)
+        except CursorCloudAgentError as e:
+            raise AutofixError(str(e)) from e
+
+    def fetch_pr_diff(self, *, repo: str, pr_number: int) -> str:
+        owner, repo_name = repo.split("/", 1)
+        gh = GitHubPRCommentClient(token=self._github_token)
+        try:
+            return gh.get_pr_diff(owner=owner, repo=repo_name, pr_number=pr_number)
+        except GitHubPRCommentError as e:
+            raise AutofixError(str(e)) from e

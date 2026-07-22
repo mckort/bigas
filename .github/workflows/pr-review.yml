@@ -1,7 +1,7 @@
 # Run Bigas AI PR review and post/update a single comment on the PR.
-# Optionally launch Cursor autofix when BIGAS_AUTO_FIX=true.
-# This workflow is in the Bigas repo so we can test PR review on Bigas itself.
-# In any repo (including this one), configure:
+# Optionally launch Cursor autofix when BIGAS_AUTO_FIX=true, wait for completion,
+# re-review, and Discord "ready to merge" when clean.
+# In any repo, configure:
 #   Settings → Secrets and variables → Actions
 #   - Variable: BIGAS_URL = your Bigas Cloud Run URL (required)
 #   - Secret:   BIGAS_API_KEY = one of your Bigas access keys (BIGAS_ACCESS_KEYS)
@@ -17,6 +17,7 @@ on:
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,6 +75,7 @@ jobs:
             exit 1
           fi
           echo "Bigas returned 200 OK."
+          cat response_body.txt || true
 
       - name: Trigger Bigas autofix (optional)
         if: ${{ vars.BIGAS_AUTO_FIX == 'true' }}
@@ -102,3 +104,97 @@ jobs:
             echo "::error::Bigas autofix returned HTTP $HTTP_CODE"
             exit 1
           fi
+          python3 -c "
+          import json
+          data = json.load(open('autofix_response.txt'))
+          launched = 'true' if data.get('launched') else 'false'
+          open('autofix_launched.txt','w').write(launched)
+          open('autofix_agent_id.txt','w').write(data.get('agent_id') or '')
+          open('autofix_run_id.txt','w').write(data.get('run_id') or '')
+          print('launched=', launched)
+          print('agent_id=', data.get('agent_id') or '')
+          "
+          echo "launched=$(cat autofix_launched.txt)" >> $GITHUB_OUTPUT
+
+      - name: Wait for autofix + re-review
+        if: ${{ vars.BIGAS_AUTO_FIX == 'true' && steps.autofix.outputs.launched == 'true' }}
+        env:
+          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          AGENT_ID=$(cat autofix_agent_id.txt)
+          if [ -z "$AGENT_ID" ]; then
+            echo "::error::autofix launched but agent_id missing"
+            exit 1
+          fi
+          python3 <<'PY'
+          import json, os, time, urllib.error, urllib.request
+
+          base = os.environ["BIGAS_URL"].rstrip("/")
+          api_key = os.environ["BIGAS_API_KEY"]
+          agent_id = open("autofix_agent_id.txt").read().strip()
+          run_id = open("autofix_run_id.txt").read().strip()
+          payload = {
+              "repo": os.environ["GITHUB_REPOSITORY"],
+              "pr_number": int(os.environ["PR_NUMBER"]),
+              "agent_id": agent_id,
+              "finalize": False,
+          }
+          if run_id:
+              payload["run_id"] = run_id
+
+          def call(body_obj, timeout=180):
+              data = json.dumps(body_obj).encode()
+              req = urllib.request.Request(
+                  f"{base}/mcp/tools/autofix_followup",
+                  data=data,
+                  headers={
+                      "Content-Type": "application/json",
+                      "Authorization": f"Bearer {api_key}",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as resp:
+                      return resp.status, json.loads(resp.read().decode() or "{}")
+              except urllib.error.HTTPError as e:
+                  raw = e.read().decode()
+                  try:
+                      parsed = json.loads(raw) if raw else {}
+                  except Exception:
+                      parsed = {"error": raw[:500]}
+                  return e.code, parsed
+
+          # Poll status only (no Discord) until terminal — ~30 min.
+          attempts = 60
+          sleep_s = 30
+          last = None
+          for i in range(1, attempts + 1):
+              code, last = call(payload)
+              print(
+                  f"poll {i}/{attempts}: HTTP {code} done={last.get('done')} "
+                  f"status={last.get('status')}"
+              )
+              if code >= 500:
+                  time.sleep(sleep_s)
+                  continue
+              if code != 200:
+                  raise SystemExit(f"autofix_followup poll failed: HTTP {code} {last}")
+              if last.get("done"):
+                  break
+              time.sleep(sleep_s)
+          else:
+              raise SystemExit("Timed out waiting for Cursor autofix to finish")
+
+          # Finalize once: Discord completed/failed + re-review + ready-to-merge.
+          finalize_payload = dict(payload)
+          finalize_payload["finalize"] = True
+          code, final = call(finalize_payload, timeout=300)
+          print(f"finalize: HTTP {code} {json.dumps(final)[:1500]}")
+          if code != 200:
+              raise SystemExit(f"autofix_followup finalize failed: HTTP {code}")
+          open("autofix_followup_response.txt", "w").write(json.dumps(final, indent=2))
+          if final.get("done") and not final.get("ok", True):
+              print("Autofix agent finished unsuccessfully; see Discord.")
+          PY

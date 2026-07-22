@@ -178,3 +178,27 @@ class GitHubPRCommentClient:
         cdata = cresp.json() if cresp.text else {}
         message = ((cdata.get("commit") or {}).get("message") or "").strip()
         return sha, message
+
+    def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
+        """Fetch the pull request diff text via the GitHub API."""
+        pr_api = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+        headers = {
+            **self._headers,
+            "Accept": "application/vnd.github.diff",
+        }
+        resp = requests.get(pr_api, headers=headers, timeout=60)
+        if resp.status_code == 404:
+            raise GitHubPRCommentError(
+                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+            )
+        if resp.status_code == 401:
+            raise GitHubPRCommentError("GitHub token is invalid or expired.")
+        if resp.status_code == 403:
+            raise GitHubPRCommentError(
+                "GitHub returned 403. Check token scopes and rate limits."
+            )
+        if resp.status_code >= 400:
+            raise GitHubPRCommentError(
+                f"GitHub API error {resp.status_code}: {resp.text[:300]}"
+            )
+        return resp.text or ""

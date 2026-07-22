@@ -93,3 +93,67 @@ class CursorCloudAgentClient:
             "run_id": run.get("id") or "",
             "raw": data,
         }
+
+    def get_agent(self, agent_id: str) -> dict[str, Any]:
+        aid = (agent_id or "").strip()
+        if not aid:
+            raise CursorCloudAgentError("agent_id is required")
+        return self._get_json(f"{CURSOR_API_BASE}/agents/{aid}")
+
+    def get_run(self, agent_id: str, run_id: str) -> dict[str, Any]:
+        aid = (agent_id or "").strip()
+        rid = (run_id or "").strip()
+        if not aid or not rid:
+            raise CursorCloudAgentError("agent_id and run_id are required")
+        return self._get_json(f"{CURSOR_API_BASE}/agents/{aid}/runs/{rid}")
+
+    def get_run_status(
+        self,
+        *,
+        agent_id: str,
+        run_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Return normalized run status for polling.
+
+        Terminal statuses: FINISHED, ERROR, CANCELLED, EXPIRED.
+        """
+        agent = self.get_agent(agent_id)
+        rid = (run_id or "").strip() or (agent.get("latestRunId") or "").strip()
+        if not rid:
+            raise CursorCloudAgentError("No run_id available for agent")
+        run = self.get_run(agent_id, rid)
+        status = (run.get("status") or "").strip().upper()
+        terminal = status in {"FINISHED", "ERROR", "CANCELLED", "EXPIRED"}
+        agent_url = agent.get("url") or f"https://cursor.com/agents/{agent_id}"
+        return {
+            "agent_id": agent_id,
+            "run_id": rid,
+            "status": status or "UNKNOWN",
+            "done": terminal,
+            "ok": status == "FINISHED",
+            "agent_url": agent_url,
+            "result_text": (run.get("result") or run.get("text") or "")
+            if isinstance(run.get("result"), str)
+            else (run.get("text") or ""),
+            "run": run,
+            "agent": agent,
+        }
+
+    def _get_json(self, url: str) -> dict[str, Any]:
+        try:
+            resp = requests.get(url, auth=(self._api_key, ""), timeout=60)
+        except requests.RequestException as e:
+            raise CursorCloudAgentError(f"Cursor API request failed: {e}") from e
+        if resp.status_code in (401, 403):
+            raise CursorCloudAgentError(
+                f"Cursor API auth error {resp.status_code}: {resp.text[:300]}"
+            )
+        if resp.status_code >= 400:
+            raise CursorCloudAgentError(
+                f"Cursor API error {resp.status_code}: {resp.text[:500]}"
+            )
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            raise CursorCloudAgentError("Cursor API returned unexpected payload")
+        return data

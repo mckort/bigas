@@ -50,3 +50,19 @@ def review_needs_autofix(review_body: str) -> Tuple[bool, str]:
 
 def latest_commit_is_autofix(message: str) -> bool:
     return AUTOFIX_COMMIT_MARKER in (message or "")
+
+
+def review_is_ready_to_merge(review_body: str) -> bool:
+    """True when the review reads as clean enough to merge (no actionable findings)."""
+    should_fix, _reason = review_needs_autofix(review_body)
+    if should_fix:
+        return False
+    body = (review_body or "").strip()
+    if not body:
+        return False
+    # Explicit clean signal, or only nits / ambiguous-but-not-actionable after a review ran.
+    if _CLEAN.search(body):
+        return True
+    if _NIT_ONLY.search(body) and not _ACTIONABLE.search(body):
+        return True
+    return False
