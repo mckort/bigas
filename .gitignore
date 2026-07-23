@@ -5,6 +5,9 @@ __pycache__/
 .env
 .env-old
 .env*.local
+# Per-GCP-project profiles (may contain secrets). Keep env.example committed.
+.env.bigas-*
+.env.archived*
 .DS_Store
 *.log
 .pytest_cache/

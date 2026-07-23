@@ -104,3 +104,101 @@ class GitHubPRCommentClient:
             url,
         )
         return data
+
+    def get_marked_comment_body(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        marker: str = BIGAS_REVIEW_MARKER,
+    ) -> str | None:
+        """Return the body of the PR comment that contains marker, or None."""
+        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        resp = requests.get(comments_url, headers=self._headers, timeout=30)
+        if resp.status_code == 404:
+            raise GitHubPRCommentError(
+                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+            )
+        if resp.status_code == 401:
+            raise GitHubPRCommentError("GitHub token is invalid or expired.")
+        if resp.status_code == 403:
+            raise GitHubPRCommentError(
+                "GitHub returned 403. Check token scopes and rate limits."
+            )
+        resp.raise_for_status()
+        comments = resp.json() if resp.text else []
+        if not isinstance(comments, list):
+            return None
+        for c in comments:
+            body = c.get("body") or ""
+            if marker in body:
+                return body
+        return None
+
+    def get_pr_head_commit(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> tuple[str, str]:
+        """
+        Return (head_sha, commit_message) for the PR head.
+        """
+        pr_api = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+        resp = requests.get(pr_api, headers=self._headers, timeout=30)
+        if resp.status_code == 404:
+            raise GitHubPRCommentError(
+                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+            )
+        if resp.status_code == 401:
+            raise GitHubPRCommentError("GitHub token is invalid or expired.")
+        if resp.status_code == 403:
+            raise GitHubPRCommentError(
+                "GitHub returned 403. Check token scopes and rate limits."
+            )
+        resp.raise_for_status()
+        data = resp.json() if resp.text else {}
+        head = data.get("head") or {}
+        sha = (head.get("sha") or "").strip()
+        if not sha:
+            raise GitHubPRCommentError(
+                f"Could not resolve head SHA for {owner}/{repo}#{pr_number}."
+            )
+
+        commit_api = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
+        cresp = requests.get(commit_api, headers=self._headers, timeout=30)
+        if cresp.status_code >= 400:
+            # Fall back to empty message; loop-guard then only matches on force.
+            logger.warning(
+                "Failed to fetch commit message for %s: %s",
+                sha[:8],
+                cresp.status_code,
+            )
+            return sha, ""
+        cdata = cresp.json() if cresp.text else {}
+        message = ((cdata.get("commit") or {}).get("message") or "").strip()
+        return sha, message
+
+    def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
+        """Fetch the pull request diff text via the GitHub API."""
+        pr_api = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+        headers = {
+            **self._headers,
+            "Accept": "application/vnd.github.diff",
+        }
+        resp = requests.get(pr_api, headers=headers, timeout=60)
+        if resp.status_code == 404:
+            raise GitHubPRCommentError(
+                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+            )
+        if resp.status_code == 401:
+            raise GitHubPRCommentError("GitHub token is invalid or expired.")
+        if resp.status_code == 403:
+            raise GitHubPRCommentError(
+                "GitHub returned 403. Check token scopes and rate limits."
+            )
+        if resp.status_code >= 400:
+            raise GitHubPRCommentError(
+                f"GitHub API error {resp.status_code}: {resp.text[:300]}"
+            )
+        return resp.text or ""

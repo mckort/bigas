@@ -19,11 +19,11 @@ The `bigas.llm` package provides a single provider-agnostic interface for chat-s
   1. `explicit_model` (e.g. request body `llm_model`)
   2. Per-feature env (e.g. `BIGAS_CTO_PR_REVIEW_MODEL`)
   3. `LLM_MODEL` (provider-agnostic)
-  4. Default `gemini-2.5-pro`
+  4. Default `gemini-3.1-pro-preview`
 
 ## Gemini (Google AI API key)
 
-Set `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey). Use a Gemini model name (e.g. `LLM_MODEL=gemini-2.5-pro`) so the provider is inferred.
+Set `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey). Use a Gemini model name (e.g. `LLM_MODEL=gemini-3.1-pro-preview`) so the provider is inferred.
 
 ## Per-feature env overrides
 

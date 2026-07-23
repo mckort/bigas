@@ -22,6 +22,8 @@ In your repo: **Settings → Secrets and variables → Actions**.
 
 On the next PR (open or push), the workflow runs and Bigas posts or updates the review comment.
 
+Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=true` and ensure Bigas has `CURSOR_API_KEY`. See [cto-autofix.md](./cto-autofix.md).
+
 ## Server-side configuration (Bigas)
 
 1. **GitHub Personal Access Token**
@@ -30,7 +32,7 @@ On the next PR (open or push), the workflow runs and Bigas posts or updates the 
 
 2. **OpenAI API**
    - `OPENAI_API_KEY` must be set (already required for other Bigas features).
-   - Optional: `BIGAS_CTO_PR_REVIEW_MODEL` to override the model (default: `gemini-2.5-pro`).
+   - Optional: `BIGAS_CTO_PR_REVIEW_MODEL` to override the model (default: `gemini-3.1-pro-preview`).
 
 ## Request
 
@@ -81,7 +83,7 @@ If `GITHUB_TOKEN` is configured in Bigas (e.g. via Secret Manager), you can omit
 
 ## Response
 
-- **Success**: `{ "success": true, "comment_url": "https://github.com/...", "review_posted": true, "used_model": "gemini-2.5-pro" }`
+- **Success**: `{ "success": true, "comment_url": "https://github.com/...", "review_posted": true, "used_model": "gemini-3.1-pro-preview" }`
 - **Error**: `{ "error": "..." }` with status 400 (validation), 401/403 (GitHub auth), 404 (repo/PR not found), 500 (OpenAI), 502 (GitHub API).
 
 ## Diff size

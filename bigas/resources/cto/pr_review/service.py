@@ -69,7 +69,7 @@ class PRReviewService:
             1) openai_model argument (from llm_model request body)
             2) BIGAS_CTO_PR_REVIEW_MODEL
             3) LLM_MODEL
-            4) "gemini-2.5-pro" (factory default)
+            4) "gemini-3.1-pro-preview" (factory default)
         - Provider is inferred from the model name (gpt-* -> OpenAI, gemini-* -> Gemini),
           falling back to BIGAS_LLM_PROVIDER / OpenAI.
         """

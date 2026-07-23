@@ -85,7 +85,7 @@ class ProgressUpdatesService:
         #   1) openai_model argument
         #   2) BIGAS_PROGRESS_UPDATES_MODEL
         #   3) LLM_MODEL
-        #   4) "gemini-2.5-pro" (factory default)
+        #   4) "gemini-3.1-pro-preview" (factory default)
         self._llm, self._model = get_llm_client(
             feature="progress_updates",
             explicit_model=openai_model,
@@ -96,16 +96,19 @@ class ProgressUpdatesService:
         *,
         days: int = 7,
         jql_extra: str = "",
+        project_keys: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Fetch issues done in the last `days` days and generate a coach message.
         Caller is responsible for posting the returned message to Discord if desired.
         jql_extra: optional JQL fragment (e.g. "AND statusCategory = Done") to narrow the query.
+        project_keys: optional override of configured Jira project keys (str or list).
         """
         try:
             raw_issues = self._jira.search_issues_done_in_last_n_days(
                 days=days,
                 jql_extra=(jql_extra or "").strip(),
+                project_keys=project_keys,
             )
         except JiraError as e:
             raise ProgressUpdatesError(str(e))

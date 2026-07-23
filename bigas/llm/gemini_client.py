@@ -134,11 +134,48 @@ class GeminiLLMClient(LLMClient):
 
         text_parts: List[str] = []
         for part in parts:
-            part_text = getattr(part, "text", None)
+            part_text = None
+            if isinstance(part, dict):
+                part_text = part.get("text")
+            else:
+                part_text = getattr(part, "text", None)
+
             if isinstance(part_text, str) and part_text.strip():
                 text_parts.append(part_text.strip())
         if text_parts:
             return "\n".join(text_parts)
+
+        # Fallback: do NOT use response.text / candidate.text — those SDK "quick
+        # accessors" raise ValueError when no valid Part exists (e.g. MAX_TOKENS
+        # with empty parts). Use to_dict() and collect nested "text" strings only.
+        try:
+            to_dict = getattr(response, "to_dict", None)
+            if callable(to_dict):
+                raw = to_dict() or {}
+
+                found: List[str] = []
+                stack: List[Any] = [raw]
+                while stack and len(found) < 5:
+                    cur = stack.pop()
+                    if isinstance(cur, dict):
+                        for k, v in cur.items():
+                            if k == "text" and isinstance(v, str) and v.strip():
+                                found.append(v.strip())
+                            elif isinstance(v, (dict, list)):
+                                stack.append(v)
+                    elif isinstance(cur, list):
+                        stack.extend(cur)
+
+                if found:
+                    logger.warning(
+                        "Gemini fallback extracted %d text string(s) from response.to_dict().",
+                        len(found),
+                    )
+                    return "\n".join(found)
+        except Exception:
+            # Keep behavior conservative: if we can't extract text, treat as empty.
+            pass
+
         finish_reason = getattr(candidate, "finish_reason", None)
         safety_ratings = getattr(candidate, "safety_ratings", None)
         logger.warning(

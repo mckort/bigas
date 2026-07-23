@@ -34,7 +34,7 @@ def get_llm_client(
       1. explicit_model (e.g. request body llm_model)
       2. per-feature env override
       3. LLM_MODEL (provider-agnostic)
-      4. hard-coded default "gemini-2.5-pro"
+      4. hard-coded default "gemini-3.1-pro-preview"
 
     Optional openai_api_key / gemini_api_key override env (e.g. for per-tenant keys in SaaS).
     """
@@ -52,7 +52,7 @@ def get_llm_client(
         explicit_model
         or (os.environ.get(feature_env) if feature_env else None)
         or model_env
-        or "gemini-2.5-pro"
+        or "gemini-3.1-pro-preview"
     ).strip()
 
     provider = _infer_provider_from_model(model)

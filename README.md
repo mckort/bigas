@@ -77,7 +77,7 @@ Results are posted to your Discord marketing channel.
 |---|---|
 | `GEMINI_API_KEY` | Gemini API key — **default LLM**; used when `LLM_MODEL` is unset or starts with `gemini-` |
 | `OPENAI_API_KEY` | OpenAI API key — alternative; used when `LLM_MODEL` starts with `gpt-` |
-| `LLM_MODEL` | Global default model; defaults to `gemini-2.5-pro` if unset |
+| `LLM_MODEL` | Global default model; defaults to `gemini-3.1-pro-preview` if unset |
 
 **Optional:**
 
@@ -90,7 +90,7 @@ Results are posted to your Discord marketing channel.
 | `JIRA_BASE_URL` | Jira instance URL (required for release notes and progress updates) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
-| `JIRA_PROJECT_KEY` | Jira project key |
+| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for multi-project (e.g. `VFA,WAYW`). Per-request override via `project_key` / `project_keys`. |
 | `LINKEDIN_AD_ACCOUNT_URN` | Default LinkedIn ad account URN |
 | `REDDIT_AD_ACCOUNT_ID` | Default Reddit ad account ID |
 
