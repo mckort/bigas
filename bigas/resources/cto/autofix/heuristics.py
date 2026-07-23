@@ -12,7 +12,7 @@ _CLEAN = re.compile(
 )
 # Note: (?<!non-) avoids matching the "blocking" inside "non-blocking".
 _ACTIONABLE = re.compile(
-    r"(?i)\b(must[- ]fix|(?<!non-)blocking|critical|security|vulnerability|bug\b|"
+    r"(?i)\b(must[- ]fix|(?<!non-)blocking|critical|important|security|vulnerability|bug\b|"
     r"broken|incorrect|regression|failing test|high severity|do not merge)\b"
 )
 _NIT_ONLY = re.compile(

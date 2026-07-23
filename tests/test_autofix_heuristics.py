@@ -20,6 +20,19 @@ def test_blocking_runs():
     assert "actionable" in reason
 
 
+def test_important_runs():
+    ok, reason = review_needs_autofix(
+        "**Important**\n\n"
+        "* **`backend/src/foo.ts` (line 10)**: A confirmed metric should likely "
+        "supersede any unconfirmed peers in its new slot.\n\n"
+        "**Minor / Polish**\n\n"
+        "* Consider wrapping both blocks in a fragment.\n\n"
+        "The rest of the logic looks solid.\n"
+    )
+    assert ok is True
+    assert "actionable" in reason
+
+
 def test_autofix_commit_marker():
     assert latest_commit_is_autofix("fix: auth [bigas-autofix]")
     assert not latest_commit_is_autofix("fix: auth")
