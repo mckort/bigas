@@ -10,6 +10,7 @@ import requests
 from flask import Blueprint, jsonify, request
 
 from bigas.resources.cto.autofix.heuristics import (
+    autofix_max_iterations,
     latest_commit_is_autofix,
     review_is_ready_to_merge,
 )
@@ -37,6 +38,88 @@ logger = logging.getLogger(__name__)
 # Max characters for a GitHub comment to avoid API errors.
 # The official limit is 65,536 bytes, so 60k chars is a safe buffer.
 MAX_GITHUB_COMMENT_CHARS = 60_000
+
+
+def _jira_final_approval_for_pr(
+    *, repo: str, pr_number: int, pr_url: str, github_token: str
+) -> dict:
+    try:
+        from bigas.resources.product.jira_automation.final_approval import (
+            transition_issue_to_final_approval_for_pr,
+        )
+
+        return transition_issue_to_final_approval_for_pr(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=github_token,
+        )
+    except Exception:
+        logger.warning("Jira final-approval hook failed", exc_info=True)
+        return {"ok": False, "error": "final_approval_hook_exception"}
+
+
+def _notify_autofix_loop_protection(
+    *,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    autofix_count: int,
+    max_iterations: int,
+    github_token: str = "",
+) -> None:
+    msg = (
+        f"**CTO autofix stopped (loop protection)**\n"
+        f"Reached {autofix_count}/{max_iterations} automatic fix rounds without a clean review.\n"
+        f"Remaining review comments need **manual handling**.\n"
+        f"PR: {pr_url}"
+    )
+    _post_to_discord_cto(msg)
+    # Best-effort Jira comment on linked issue (no status change).
+    try:
+        from bigas.resources.product.create_release_notes.jira_client import (
+            JiraClient,
+            JiraConfig,
+        )
+        from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
+        from bigas.resources.product.jira_automation.final_approval import (
+            extract_jira_issue_key,
+        )
+
+        token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
+        if not token or "/" not in repo:
+            return
+        owner, name = repo.split("/", 1)
+
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{name}/pulls/{pr_number}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            return
+        pr = resp.json() if resp.text else {}
+        issue_key = extract_jira_issue_key(
+            (pr.get("title") or ""),
+            (pr.get("body") or ""),
+            ((pr.get("head") or {}).get("ref") or ""),
+        )
+        if not issue_key:
+            return
+        jira = JiraClient(JiraConfig.from_env())
+        jira.add_comment(
+            issue_key,
+            f"{BIGAS_COMMENT_MARKER} Autofix loop protection "
+            f"({autofix_count}/{max_iterations}).\n"
+            f"Automatic fixes stopped; remaining PR review comments need manual handling.\n"
+            f"Left in current status.\nPR: {pr_url}",
+        )
+    except Exception:
+        logger.warning("Loop-protection Jira comment failed", exc_info=True)
 
 
 def _post_to_discord_cto(message: str) -> None:
@@ -216,6 +299,14 @@ def review_and_comment_pr():
             f"**Ready to merge**\nPR: {pr_url}\n"
             + (f"Comment: {comment_url}" if comment_url else "")
         )
+        jira_final = _jira_final_approval_for_pr(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=github_token,
+        )
+    else:
+        jira_final = {"skipped": True, "reason": "not_ready"}
 
     return jsonify({
         "success": True,
@@ -224,6 +315,7 @@ def review_and_comment_pr():
         "used_model": review_service._model,
         "ready_to_merge": ready,
         "phase": phase,
+        "jira_final_approval": jira_final,
     })
 
 
@@ -264,7 +356,6 @@ def autofix_pr():
         return jsonify({"error": "pr_number must be a positive integer"}), 400
 
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
-    _post_to_discord_cto(f"**CTO autofix started**\nPR: {pr_url}")
 
     try:
         service = AutofixService(
@@ -295,15 +386,37 @@ def autofix_pr():
 
     if result.get("skipped"):
         reason = result.get("reason") or "skipped"
-        _post_to_discord_cto(
-            f"**CTO autofix done**\nSkipped.\nReason: {sanitize_error_message(reason)}\nPR: {pr_url}"
-        )
+        if result.get("loop_protection"):
+            _notify_autofix_loop_protection(
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=pr_url,
+                autofix_count=int(result.get("autofix_count") or 0),
+                max_iterations=int(
+                    result.get("max_iterations") or autofix_max_iterations()
+                ),
+                github_token=github_token or "",
+            )
+        elif result.get("review_clean"):
+            _post_to_discord_cto(
+                f"**CTO autofix skipped**\n"
+                f"Review does not need autofix ({sanitize_error_message(reason)}).\n"
+                f"PR: {pr_url}"
+            )
+        else:
+            _post_to_discord_cto(
+                f"**CTO autofix skipped**\n"
+                f"Reason: {sanitize_error_message(reason)}\nPR: {pr_url}"
+            )
         return jsonify({"success": True, **result})
 
     agent_url = result.get("agent_url") or ""
     agent_id = result.get("agent_id") or ""
+    round_n = result.get("autofix_round") or "?"
+    max_n = result.get("max_iterations") or autofix_max_iterations()
     _post_to_discord_cto(
-        f"**CTO autofix launched**\nPR: {pr_url}\nAgent: {agent_url or agent_id}"
+        f"**CTO autofix launched** ({round_n}/{max_n})\n"
+        f"PR: {pr_url}\nAgent: {agent_url or agent_id}"
     )
     return jsonify({"success": True, **result})
 
@@ -468,28 +581,41 @@ def autofix_followup():
         f"**CTO PR re-review after autofix done**\nComment posted: {comment_url}\n\n---\n\n**Review:**"
     )
     _post_to_discord_cto_chunks(review_body)
+
+    autofix_count = 0
+    max_iters = autofix_max_iterations()
+    try:
+        autofix_count = service.count_autofix_commits(repo=repo, pr_number=pr_number)
+    except AutofixError:
+        logger.warning("Could not count autofix commits after re-review", exc_info=True)
+
     jira_final = {"skipped": True, "reason": "not_ready"}
     if ready:
         _post_to_discord_cto(
             f"**Ready to merge**\nPR: {pr_url}\nComment: {comment_url}"
         )
-        try:
-            from bigas.resources.product.jira_automation.final_approval import (
-                transition_issue_to_final_approval_for_pr,
-            )
-
-            jira_final = transition_issue_to_final_approval_for_pr(
-                repo=repo,
-                pr_number=pr_number,
-                pr_url=pr_url,
-                github_token=gh_token,
-            )
-        except Exception:
-            logger.warning("Jira final-approval hook failed", exc_info=True)
-            jira_final = {"ok": False, "error": "final_approval_hook_exception"}
+        jira_final = _jira_final_approval_for_pr(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=gh_token,
+        )
+    elif autofix_count >= max_iters:
+        _notify_autofix_loop_protection(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            autofix_count=autofix_count,
+            max_iterations=max_iters,
+            github_token=gh_token,
+        )
     else:
         _post_to_discord_cto(
-            f"**CTO autofix follow-up**\nPR still has findings after autofix.\nPR: {pr_url}"
+            f"**CTO autofix follow-up**\n"
+            f"PR still has findings after autofix round "
+            f"{autofix_count}/{max_iters}.\n"
+            f"Another autofix round may run if under the limit.\n"
+            f"PR: {pr_url}"
         )
 
     base.update({
@@ -498,6 +624,9 @@ def autofix_followup():
         "comment_url": comment_url,
         "ready_to_merge": ready,
         "fixes_pushed": True,
+        "autofix_count": autofix_count,
+        "max_iterations": max_iters,
+        "loop_protection": (not ready) and autofix_count >= max_iters,
         "used_model": review_service._model,
         "jira_final_approval": jira_final,
     })

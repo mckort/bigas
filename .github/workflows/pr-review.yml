@@ -17,7 +17,7 @@ on:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,77 +77,27 @@ jobs:
           echo "Bigas returned 200 OK."
           cat response_body.txt || true
 
-      - name: Trigger Bigas autofix (optional)
+      - name: Autofix loop (up to 3 rounds) + re-review
         if: ${{ vars.BIGAS_AUTO_FIX == 'true' }}
-        id: autofix
-        env:
-          BIGAS_URL: ${{ vars.BIGAS_URL }}
-          BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
-        run: |
-          python3 -c "
-          import json, os
-          payload = {
-              'repo': os.environ['GITHUB_REPOSITORY'],
-              'pr_number': ${{ github.event.pull_request.number }},
-          }
-          with open('autofix_payload.json', 'w') as f:
-              json.dump(payload, f)
-          "
-          HTTP_CODE=$(curl -sS -w "%{http_code}" -o autofix_response.txt -X POST "$BIGAS_URL/mcp/tools/autofix_pr" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $BIGAS_API_KEY" \
-            -d @autofix_payload.json)
-          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
-          echo "Autofix HTTP $HTTP_CODE"
-          cat autofix_response.txt || true
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Bigas autofix returned HTTP $HTTP_CODE"
-            exit 1
-          fi
-          python3 -c "
-          import json
-          data = json.load(open('autofix_response.txt'))
-          launched = 'true' if data.get('launched') else 'false'
-          open('autofix_launched.txt','w').write(launched)
-          open('autofix_agent_id.txt','w').write(data.get('agent_id') or '')
-          open('autofix_run_id.txt','w').write(data.get('run_id') or '')
-          print('launched=', launched)
-          print('agent_id=', data.get('agent_id') or '')
-          "
-          echo "launched=$(cat autofix_launched.txt)" >> $GITHUB_OUTPUT
-
-      - name: Wait for autofix + re-review
-        if: ${{ vars.BIGAS_AUTO_FIX == 'true' && steps.autofix.outputs.launched == 'true' }}
         env:
           BIGAS_URL: ${{ vars.BIGAS_URL }}
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          MAX_AUTOFIX_ROUNDS: "3"
         run: |
-          AGENT_ID=$(cat autofix_agent_id.txt)
-          if [ -z "$AGENT_ID" ]; then
-            echo "::error::autofix launched but agent_id missing"
-            exit 1
-          fi
           python3 <<'PY'
           import json, os, time, urllib.error, urllib.request
 
           base = os.environ["BIGAS_URL"].rstrip("/")
           api_key = os.environ["BIGAS_API_KEY"]
-          agent_id = open("autofix_agent_id.txt").read().strip()
-          run_id = open("autofix_run_id.txt").read().strip()
-          payload = {
-              "repo": os.environ["GITHUB_REPOSITORY"],
-              "pr_number": int(os.environ["PR_NUMBER"]),
-              "agent_id": agent_id,
-              "finalize": False,
-          }
-          if run_id:
-              payload["run_id"] = run_id
+          repo = os.environ["GITHUB_REPOSITORY"]
+          pr_number = int(os.environ["PR_NUMBER"])
+          max_rounds = int(os.environ.get("MAX_AUTOFIX_ROUNDS") or "3")
 
-          def call(body_obj, timeout=180):
+          def call(path, body_obj, timeout=180):
               data = json.dumps(body_obj).encode()
               req = urllib.request.Request(
-                  f"{base}/mcp/tools/autofix_followup",
+                  f"{base}/mcp/tools/{path}",
                   data=data,
                   headers={
                       "Content-Type": "application/json",
@@ -166,35 +116,87 @@ jobs:
                       parsed = {"error": raw[:500]}
                   return e.code, parsed
 
-          # Poll status only (no Discord) until terminal — ~30 min.
-          attempts = 60
-          sleep_s = 30
-          last = None
-          for i in range(1, attempts + 1):
-              code, last = call(payload)
-              print(
-                  f"poll {i}/{attempts}: HTTP {code} done={last.get('done')} "
-                  f"status={last.get('status')}"
-              )
-              if code >= 500:
+          def wait_and_finalize(agent_id, run_id):
+              payload = {
+                  "repo": repo,
+                  "pr_number": pr_number,
+                  "agent_id": agent_id,
+                  "finalize": False,
+              }
+              if run_id:
+                  payload["run_id"] = run_id
+              attempts = 60
+              sleep_s = 30
+              last = None
+              for i in range(1, attempts + 1):
+                  code, last = call("autofix_followup", payload)
+                  print(
+                      f"poll {i}/{attempts}: HTTP {code} done={last.get('done')} "
+                      f"status={last.get('status')}"
+                  )
+                  if code >= 500:
+                      time.sleep(sleep_s)
+                      continue
+                  if code != 200:
+                      raise SystemExit(
+                          f"autofix_followup poll failed: HTTP {code} {last}"
+                      )
+                  if last.get("done"):
+                      break
                   time.sleep(sleep_s)
-                  continue
-              if code != 200:
-                  raise SystemExit(f"autofix_followup poll failed: HTTP {code} {last}")
-              if last.get("done"):
-                  break
-              time.sleep(sleep_s)
-          else:
-              raise SystemExit("Timed out waiting for Cursor autofix to finish")
+              else:
+                  raise SystemExit("Timed out waiting for Cursor autofix to finish")
 
-          # Finalize once: Discord completed/failed + re-review + ready-to-merge.
-          finalize_payload = dict(payload)
-          finalize_payload["finalize"] = True
-          code, final = call(finalize_payload, timeout=300)
-          print(f"finalize: HTTP {code} {json.dumps(final)[:1500]}")
-          if code != 200:
-              raise SystemExit(f"autofix_followup finalize failed: HTTP {code}")
-          open("autofix_followup_response.txt", "w").write(json.dumps(final, indent=2))
-          if final.get("done") and not final.get("ok", True):
-              print("Autofix agent finished unsuccessfully; see Discord.")
+              finalize_payload = dict(payload)
+              finalize_payload["finalize"] = True
+              code, final = call("autofix_followup", finalize_payload, timeout=300)
+              print(f"finalize: HTTP {code} {json.dumps(final)[:1500]}")
+              if code != 200:
+                  raise SystemExit(f"autofix_followup finalize failed: HTTP {code}")
+              return final
+
+          for round_i in range(1, max_rounds + 1):
+              print(f"=== autofix round attempt {round_i}/{max_rounds} ===")
+              code, data = call(
+                  "autofix_pr",
+                  {"repo": repo, "pr_number": pr_number},
+                  timeout=120,
+              )
+              print(f"autofix_pr HTTP {code}: {json.dumps(data)[:800]}")
+              if code != 200:
+                  raise SystemExit(f"autofix_pr failed: HTTP {code} {data}")
+
+              if data.get("loop_protection"):
+                  print("Loop protection reached; stopping.")
+                  break
+
+              if data.get("skipped") or not data.get("launched"):
+                  print(
+                      "Autofix not launched "
+                      f"(reason={data.get('reason') or 'skipped'}). Stopping loop."
+                  )
+                  break
+
+              agent_id = (data.get("agent_id") or "").strip()
+              if not agent_id:
+                  raise SystemExit("autofix launched but agent_id missing")
+
+              final = wait_and_finalize(agent_id, (data.get("run_id") or "").strip())
+              open("autofix_followup_response.txt", "w").write(
+                  json.dumps(final, indent=2)
+              )
+
+              if final.get("ready_to_merge"):
+                  print("Ready to merge after re-review; done.")
+                  break
+              if final.get("loop_protection"):
+                  print("Loop protection after re-review; done.")
+                  break
+              if not final.get("fixes_pushed", True):
+                  print("No fixes pushed this round; stopping loop.")
+                  break
+              # Otherwise continue — Bigas updated the review comment; next autofix_pr
+              # will use it if under the commit-count limit.
+          else:
+              print(f"Completed {max_rounds} autofix attempts in this workflow run.")
           PY
