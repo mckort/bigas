@@ -260,6 +260,7 @@ trap "rm -f $ENV_VARS_FILE" EXIT
 
 # 900s (15 min) request timeout for sync cross-platform report; use *_async endpoints for longer runs
 gcloud run deploy mcp-marketing \
+    --project="$GOOGLE_PROJECT_ID" \
     --image $IMAGE \
     --platform managed \
     --region europe-north1 \

@@ -261,12 +261,129 @@ class JiraClient:
 
         return all_issues
 
+    def get_issue(
+        self,
+        issue_key: str,
+        *,
+        fields: Optional[List[str]] = None,
+        expand: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Fetch a single issue by key."""
+        key = (issue_key or "").strip()
+        if not key:
+            raise JiraError("issue_key is required")
+        params: Dict[str, str] = {}
+        if fields:
+            params["fields"] = ",".join(fields)
+        if expand:
+            params["expand"] = expand
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}"
+        return self._request_with_retry_429("GET", url, params=params)
+
+    def add_comment(self, issue_key: str, body_text: str) -> Dict[str, Any]:
+        """Add a plain-text comment (ADF doc with one paragraph)."""
+        key = (issue_key or "").strip()
+        text = (body_text or "").strip()
+        if not key:
+            raise JiraError("issue_key is required")
+        if not text:
+            raise JiraError("comment body is required")
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}/comment"
+        payload = {"body": _text_to_adf(text)}
+        return self._request_with_retry_429("POST", url, json=payload)
+
+    def update_description(self, issue_key: str, description_markdown: str) -> None:
+        """Replace issue description with markdown converted to ADF."""
+        key = (issue_key or "").strip()
+        if not key:
+            raise JiraError("issue_key is required")
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}"
+        payload = {
+            "fields": {
+                "description": markdown_to_adf(description_markdown or ""),
+            }
+        }
+        self._request_with_retry_429("PUT", url, json=payload, expect_json=False)
+
+    def list_transitions(self, issue_key: str) -> List[Dict[str, Any]]:
+        key = (issue_key or "").strip()
+        if not key:
+            raise JiraError("issue_key is required")
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}/transitions"
+        data = self._request_with_retry_429("GET", url)
+        return list(data.get("transitions") or [])
+
+    def transition_issue(
+        self,
+        issue_key: str,
+        *,
+        to_status_name: str,
+        comment: Optional[str] = None,
+    ) -> None:
+        """
+        Transition an issue to a status by matching transition target status name
+        (case-insensitive). Optionally adds a comment in the same transition.
+        """
+        key = (issue_key or "").strip()
+        target = (to_status_name or "").strip()
+        if not key or not target:
+            raise JiraError("issue_key and to_status_name are required")
+
+        transitions = self.list_transitions(key)
+        match = None
+        target_l = target.lower()
+        for t in transitions:
+            to_status = ((t.get("to") or {}).get("name") or "").strip()
+            name = (t.get("name") or "").strip()
+            if to_status.lower() == target_l or name.lower() == target_l:
+                match = t
+                break
+        if not match:
+            available = [
+                f"{(t.get('name') or '?')} -> {((t.get('to') or {}).get('name') or '?')}"
+                for t in transitions
+            ]
+            raise JiraError(
+                f"No transition to status {target!r} for {key}. Available: {available}"
+            )
+
+        payload: Dict[str, Any] = {"transition": {"id": str(match["id"])}}
+        if (comment or "").strip():
+            payload["update"] = {
+                "comment": [
+                    {
+                        "add": {
+                            "body": _text_to_adf(comment.strip()),
+                        }
+                    }
+                ]
+            }
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}/transitions"
+        self._request_with_retry_429("POST", url, json=payload, expect_json=False)
+
     def _post_with_retry_429(self, url: str, *, json: Dict[str, Any]) -> Dict[str, Any]:
+        return self._request_with_retry_429("POST", url, json=json)
+
+    def _request_with_retry_429(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, str]] = None,
+        expect_json: bool = True,
+    ) -> Dict[str, Any]:
         backoff_s = 1.0
         max_attempts = 5
 
         for attempt in range(1, max_attempts + 1):
-            resp = self._session.post(url, json=json, timeout=self._timeout_s)
+            resp = self._session.request(
+                method,
+                url,
+                json=json,
+                params=params,
+                timeout=self._timeout_s,
+            )
 
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
@@ -284,9 +401,219 @@ class JiraClient:
                 # Avoid leaking payload (may include project key / version); keep concise
                 raise JiraError(f"Jira API error {resp.status_code}: {resp.text[:500]}")
 
+            if not expect_json or resp.status_code == 204 or not (resp.text or "").strip():
+                return {}
+
             try:
                 return resp.json()
             except Exception as e:
                 raise JiraError(f"Failed to parse Jira response as JSON: {e}")
 
         raise JiraError("Jira API rate limit persisted (429). Please try again later.")
+
+
+def adf_to_plain_text(node: Any) -> str:
+    """
+    Extract markdown-ish plain text from an Atlassian Document Format node.
+
+    Preserves heading markers (`#` / `##` / `###`) and bullet prefixes (`- `)
+    so description section contracts (e.g. `## Brief`) survive Jira round-trips.
+    """
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+
+    def inline_text(n: Any) -> str:
+        if isinstance(n, str):
+            return n
+        if isinstance(n, list):
+            return "".join(inline_text(c) for c in n)
+        if not isinstance(n, dict):
+            return ""
+        t = n.get("type")
+        if t == "text":
+            return n.get("text") or ""
+        if t == "hardBreak":
+            return "\n"
+        return "".join(inline_text(c) for c in (n.get("content") or []))
+
+    def list_item_lines(
+        item: Any, *, ordered: bool = False, index: int = 1
+    ) -> List[str]:
+        if not isinstance(item, dict):
+            return []
+        prefix = f"{index}. " if ordered else "- "
+        content = item.get("content") or []
+        lines: List[str] = []
+        first = True
+        for child in content:
+            if not isinstance(child, dict):
+                continue
+            ct = child.get("type")
+            if ct == "paragraph":
+                text = inline_text(child.get("content") or []).strip()
+                if first:
+                    lines.append(f"{prefix}{text}" if text else prefix.rstrip())
+                    first = False
+                elif text:
+                    lines.append(f"  {text}")
+            elif ct in ("bulletList", "orderedList"):
+                nested = block_lines(child)
+                lines.extend(f"  {ln}" if ln else ln for ln in nested)
+            else:
+                nested = block_lines(child)
+                if first and nested:
+                    lines.append(f"{prefix}{nested[0].lstrip()}")
+                    lines.extend(nested[1:])
+                    first = False
+                else:
+                    lines.extend(nested)
+        if first:
+            lines.append(prefix.rstrip())
+        return lines
+
+    def block_lines(n: Any) -> List[str]:
+        if isinstance(n, list):
+            out: List[str] = []
+            for c in n:
+                out.extend(block_lines(c))
+            return out
+        if not isinstance(n, dict):
+            return []
+        t = n.get("type")
+        content = n.get("content") or []
+        if t == "doc":
+            return block_lines(content)
+        if t == "paragraph":
+            text = inline_text(content).rstrip()
+            return [text]
+        if t == "heading":
+            level = int((n.get("attrs") or {}).get("level") or 1)
+            level = max(1, min(level, 6))
+            prefix = "#" * level + " "
+            return [prefix + inline_text(content).strip()]
+        if t == "bulletList":
+            lines: List[str] = []
+            for item in content:
+                lines.extend(list_item_lines(item, ordered=False))
+            return lines
+        if t == "orderedList":
+            lines = []
+            for i, item in enumerate(content, 1):
+                lines.extend(list_item_lines(item, ordered=True, index=i))
+            return lines
+        if t == "listItem":
+            return list_item_lines(n, ordered=False)
+        if t == "blockquote":
+            return [f"> {ln}" if ln else ">" for ln in block_lines(content)]
+        if t == "codeBlock":
+            body = inline_text(content)
+            return ["```", body, "```"] if body else ["```", "```"]
+        if t == "rule":
+            return ["---"]
+        return block_lines(content)
+
+    lines = block_lines(node)
+    # Collapse runs of blank lines to a single blank line for stable briefs
+    cleaned: List[str] = []
+    prev_blank = False
+    for ln in lines:
+        blank = not (ln or "").strip()
+        if blank and prev_blank:
+            continue
+        cleaned.append(ln)
+        prev_blank = blank
+    return "\n".join(cleaned).strip()
+
+
+def _text_to_adf(text: str) -> Dict[str, Any]:
+    """Single-paragraph ADF doc (for comments)."""
+    lines = (text or "").split("\n")
+    content: List[Dict[str, Any]] = []
+    for line in lines:
+        content.append(
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": line}] if line else [],
+            }
+        )
+    if not content:
+        content = [{"type": "paragraph", "content": []}]
+    return {"type": "doc", "version": 1, "content": content}
+
+
+def markdown_to_adf(markdown: str) -> Dict[str, Any]:
+    """
+    Minimal markdown → ADF for descriptions (headings, paragraphs, bullets).
+    Good enough for Brief + AI sections; not a full markdown parser.
+    """
+    lines = (markdown or "").replace("\r\n", "\n").split("\n")
+    content: List[Dict[str, Any]] = []
+    bullet_items: List[Dict[str, Any]] = []
+
+    def flush_bullets() -> None:
+        nonlocal bullet_items
+        if not bullet_items:
+            return
+        content.append({"type": "bulletList", "content": bullet_items})
+        bullet_items = []
+
+    for raw in lines:
+        line = raw.rstrip()
+        if not line.strip():
+            flush_bullets()
+            continue
+        if line.startswith("### "):
+            flush_bullets()
+            content.append(
+                {
+                    "type": "heading",
+                    "attrs": {"level": 3},
+                    "content": [{"type": "text", "text": line[4:].strip()}],
+                }
+            )
+        elif line.startswith("## "):
+            flush_bullets()
+            content.append(
+                {
+                    "type": "heading",
+                    "attrs": {"level": 2},
+                    "content": [{"type": "text", "text": line[3:].strip()}],
+                }
+            )
+        elif line.startswith("# "):
+            flush_bullets()
+            content.append(
+                {
+                    "type": "heading",
+                    "attrs": {"level": 1},
+                    "content": [{"type": "text", "text": line[2:].strip()}],
+                }
+            )
+        elif line.lstrip().startswith("- ") or line.lstrip().startswith("* "):
+            item_text = line.lstrip()[2:].strip()
+            bullet_items.append(
+                {
+                    "type": "listItem",
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": item_text}],
+                        }
+                    ],
+                }
+            )
+        else:
+            flush_bullets()
+            content.append(
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": line}],
+                }
+            )
+
+    flush_bullets()
+    if not content:
+        content = [{"type": "paragraph", "content": []}]
+    return {"type": "doc", "version": 1, "content": content}
