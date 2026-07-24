@@ -21,6 +21,10 @@ from bigas.resources.product.jira_automation.config import (
     HANDLER_RESEARCH,
     JiraAutomationConfig,
 )
+from bigas.resources.product.jira_automation.design import (
+    DesignHandlerError,
+    DesignPlanHandler,
+)
 from bigas.resources.product.jira_automation.idempotency import IdempotencyCache
 from bigas.resources.product.jira_automation.quota import DailyQuota
 from bigas.resources.product.jira_automation.research import (
@@ -215,14 +219,6 @@ class JiraAutomationService:
                 "issue_key": issue_key,
             }
 
-        # Phase 1: only research is implemented
-        if handler == HANDLER_DESIGN:
-            return {
-                "ok": True,
-                "skipped": True,
-                "reason": "design_plan handler not implemented yet (phase 2)",
-                "issue_key": issue_key,
-            }
         if handler == HANDLER_IMPLEMENT:
             return {
                 "ok": True,
@@ -230,13 +226,16 @@ class JiraAutomationService:
                 "reason": "implement handler not implemented yet (phase 3)",
                 "issue_key": issue_key,
             }
-        if handler != HANDLER_RESEARCH:
+        if handler not in (HANDLER_RESEARCH, HANDLER_DESIGN):
             return {
                 "ok": True,
                 "skipped": True,
                 "reason": f"unknown handler {handler}",
                 "issue_key": issue_key,
             }
+
+        notify_channel = "pm" if handler == HANDLER_RESEARCH else "cto"
+        handler_label = "research" if handler == HANDLER_RESEARCH else "design/plan"
 
         idem = idempotency_key or f"{issue_key}:{to_status}:{from_status}"
         cache_key = f"{handler}:{idem}"
@@ -260,9 +259,10 @@ class JiraAutomationService:
                 self._jira.add_comment(issue_key, msg)
             except JiraError:
                 logger.warning("Failed to comment quota skip on %s", issue_key, exc_info=True)
-            self._notify_pm(
+            notify = self._notify_pm if notify_channel == "pm" else self._notify_cto
+            notify(
                 f"**Jira AI quota reached** ({used}/{limit})\n"
-                f"Skipped research for `{issue_key}` — left in `{to_status}`."
+                f"Skipped {handler_label} for `{issue_key}` — left in `{to_status}`."
             )
             return {
                 "ok": True,
@@ -278,35 +278,49 @@ class JiraAutomationService:
             return self._fail(
                 issue_key=issue_key,
                 to_status=to_status,
-                channel="pm",
+                channel=notify_channel,
                 error=f"No GitHub repo mapped for project {project_key}",
                 cache_key=cache_key,
                 release_quota=True,
             )
 
         try:
-            result = ResearchDescribeHandler(jira=self._jira).run(
-                issue_key=issue_key,
-                repo=repo,
-                approval_status=self._config.status_description_approval,
-            )
-        except (ResearchHandlerError, JiraError, Exception) as e:
-            logger.error("Research handler failed for %s", issue_key, exc_info=True)
+            if handler == HANDLER_RESEARCH:
+                result = ResearchDescribeHandler(jira=self._jira).run(
+                    issue_key=issue_key,
+                    repo=repo,
+                    approval_status=self._config.status_description_approval,
+                )
+                approval = self._config.status_description_approval
+                self._notify_pm(
+                    f"**Research complete** `{issue_key}`\n"
+                    f"Moved to **{approval}** for review.\n"
+                    f"Repo: `{repo}` · model: `{result.get('model')}`"
+                )
+            else:
+                result = DesignPlanHandler(jira=self._jira).run(
+                    issue_key=issue_key,
+                    repo=repo,
+                    approval_status=self._config.status_design_approval,
+                )
+                approval = self._config.status_design_approval
+                self._notify_cto(
+                    f"**Design/plan complete** `{issue_key}`\n"
+                    f"Moved to **{approval}** for review.\n"
+                    f"Repo: `{repo}` · model: `{result.get('model')}`"
+                )
+        except (ResearchHandlerError, DesignHandlerError, JiraError, Exception) as e:
+            logger.error("%s handler failed for %s", handler_label, issue_key, exc_info=True)
             return self._fail(
                 issue_key=issue_key,
                 to_status=to_status,
-                channel="pm",
+                channel=notify_channel,
                 error=str(e),
                 cache_key=cache_key,
                 release_quota=True,
             )
 
         # Success: keep cache_key claimed so Automation retries stay no-ops
-        self._notify_pm(
-            f"**Research complete** `{issue_key}`\n"
-            f"Moved to **{self._config.status_description_approval}** for review.\n"
-            f"Repo: `{repo}` · model: `{result.get('model')}`"
-        )
         result["quota_used"] = used
         result["quota_limit"] = limit
         result["from_status"] = from_status

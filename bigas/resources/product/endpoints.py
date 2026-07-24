@@ -417,7 +417,7 @@ def get_manifest():
             },
             {
                 "name": "jira_status_automation",
-                "description": "Jira Automation webhook for AI columns. Phase 1: Research and describe (AI) → enrich description (keep Brief) → Description approval (manual) + Discord PM. Auth via X-Bigas-Webhook-Secret.",
+                "description": "Jira Automation webhook for AI columns. Research and describe → Description approval + Discord PM; Design and plan → Design approval + Discord CTO. Auth via X-Bigas-Webhook-Secret.",
                 "path": "/mcp/tools/jira_status_automation",
                 "method": "POST",
                 "parameters": {

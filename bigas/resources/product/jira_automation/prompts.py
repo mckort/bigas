@@ -51,3 +51,55 @@ Write the research body with these sections:
 ### Open questions / risks
 ### Relevant code / docs pointers
 """
+
+
+DESIGN_SYSTEM_PROMPT = """You are a senior software engineer writing an implementation plan for a Jira issue.
+
+Your job: turn the approved Brief + AI Research (plus repo context) into a concrete design and implementation plan that a Cursor cloud agent (and a human reviewer) can follow.
+
+Rules:
+- Stay within the Brief and Research; do not expand product scope.
+- Be specific about files/modules when the repo context supports it; otherwise mark unknowns.
+- Prefer incremental, testable steps over big-bang rewrites.
+- Include risks, edge cases, and a short test plan.
+- Do NOT include "## Brief", "## AI Research", or "## AI Plan" headings — return only the plan body markdown.
+- Use markdown with short sections and bullets.
+- Do not invent APIs, tables, or files that are not evidenced in the context.
+"""
+
+
+def build_design_user_prompt(
+    *,
+    issue_key: str,
+    summary: str,
+    brief: str,
+    research: str,
+    linked_issues_text: str,
+    repo_context: str,
+) -> str:
+    return f"""Write a software design + implementation plan for this Jira issue.
+
+Issue: {issue_key}
+Summary: {summary}
+
+## Human Brief
+{brief or "(empty)"}
+
+## AI Research (approved context)
+{research or "(empty)"}
+
+## Linked issues
+{linked_issues_text or "(none)"}
+
+## Codebase context
+{repo_context or "(none)"}
+
+Write the plan body with these sections:
+### Technical approach
+### Components / files likely touched
+### Data model / API changes (if any)
+### Step-by-step implementation plan
+### Test plan
+### Rollout / flags / migrations
+### Risks & open questions
+"""

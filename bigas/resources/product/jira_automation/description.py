@@ -118,3 +118,39 @@ def upsert_research_section(
     if plan:
         parts.extend(["", PLAN_HEADING, plan])
     return "\n".join(parts).strip() + "\n"
+
+
+def upsert_plan_section(
+    description: str,
+    *,
+    plan_markdown: str,
+    brief_fallback: Optional[str] = None,
+) -> str:
+    """
+    Rebuild description with Brief + AI Research preserved and AI Plan replaced.
+    """
+    text = _normalize_newlines(description)
+    brief = extract_brief(text)
+    if not brief and brief_fallback:
+        brief = brief_fallback.strip()
+    if not brief:
+        brief = "(No brief provided — please add a short human summary above.)"
+
+    research = extract_section(text, RESEARCH_HEADING)
+    if not research:
+        research = (
+            "(No AI Research section yet — consider running Research and describe first.)"
+        )
+    plan = (plan_markdown or "").strip()
+
+    parts = [
+        BRIEF_HEADING,
+        brief,
+        "",
+        RESEARCH_HEADING,
+        research,
+        "",
+        PLAN_HEADING,
+        plan,
+    ]
+    return "\n".join(parts).strip() + "\n"

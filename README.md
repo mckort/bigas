@@ -206,17 +206,18 @@ All portfolio endpoints support async variants (`run_*_async`) that return a `jo
 
 | Endpoint | Description |
 |---|---|
-| `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns (Phase 1: Research & describe) |
+| `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns (Research & Design) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord |
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub |
 
-#### Jira AI board automation (Phase 1)
+#### Jira AI board automation
 
-Move an issue into a **Research and describe (AI)** column → Bigas researches it (issue text, linked issues, optional GitHub repo context, web snippets), keeps your short human **Brief**, writes an **AI Research** section, moves the issue to **Description approval (manual)**, and posts to Discord.
+1. **Research and describe (AI)** → keep human **Brief**, write **AI Research**, move to **Description approval (manual)**, Discord PM.
+2. **Design and plan (AI)** → write **AI Plan** from Brief + Research + repo context, move to **Design approval (manual)**, Discord CTO.
 
-Wire it with **Jira Automation** → **Send web request** (not the admin “Webhook listener”):
+Wire each status with **Jira Automation** → **Send web request** (not the admin “Webhook listener”). Same URL/headers; different trigger status — see **[docs/jira-automation.md](docs/jira-automation.md)**.
 
 ```bash
 curl -X POST https://your-deployment-url.com/mcp/tools/jira_status_automation \
@@ -225,7 +226,7 @@ curl -X POST https://your-deployment-url.com/mcp/tools/jira_status_automation \
   -H "X-Bigas-Access-Key: $BIGAS_ACCESS_KEYS" \
   -d '{
     "issue_key": "PROJ-123",
-    "to_status": "Research and describe (AI)",
+    "to_status": "Design and plan (AI)",
     "sync": true
   }'
 ```
@@ -294,7 +295,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
   - `StorageService` — report persistence under `weekly_reports/` and `raw_ads/{platform}/{date}/`
   - `WebScrapingService` — scrapes actual page content for CRO recommendations
 - **Product services**
-  - `JiraAutomationService` — Jira status webhook → AI column handlers (Phase 1: research & describe)
+  - `JiraAutomationService` — Jira status webhook → AI column handlers (research & design)
   - `CreateReleaseNotesService` — Jira Fix Version → multi-channel customer release comms (release notes, blog, social)
   - `ProgressUpdatesService` — Jira issues moved to Done → team progress “coach” message
 - **CTO services**

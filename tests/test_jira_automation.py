@@ -11,13 +11,17 @@ from bigas.resources.product.create_release_notes.jira_client import (
     markdown_to_adf,
 )
 from bigas.resources.product.jira_automation.config import (
+    HANDLER_DESIGN,
     HANDLER_RESEARCH,
     JiraAutomationConfig,
 )
 from bigas.resources.product.jira_automation.description import (
     BRIEF_HEADING,
+    PLAN_HEADING,
     RESEARCH_HEADING,
     extract_brief,
+    extract_section,
+    upsert_plan_section,
     upsert_research_section,
 )
 from bigas.resources.product.jira_automation.idempotency import IdempotencyCache
@@ -82,6 +86,30 @@ def test_extract_brief_and_upsert_preserves_plan():
 def test_extract_brief_without_heading_uses_pre_ai_text():
     text = "Human wrote this briefly.\n\n## AI Research (Bigas)\nAI stuff\n"
     assert extract_brief(text) == "Human wrote this briefly."
+
+
+def test_upsert_plan_preserves_brief_and_research():
+    original = (
+        f"{BRIEF_HEADING}\n"
+        "Brand reports with logo\n\n"
+        f"{RESEARCH_HEADING}\n"
+        "### Goals\n"
+        "Allow custom logo on PDF reports\n\n"
+        f"{PLAN_HEADING}\n"
+        "old plan\n"
+    )
+    updated = upsert_plan_section(original, plan_markdown="### Technical approach\nNew plan")
+    assert extract_brief(updated) == "Brand reports with logo"
+    assert "Allow custom logo on PDF reports" in extract_section(updated, RESEARCH_HEADING)
+    assert "New plan" in extract_section(updated, PLAN_HEADING)
+    assert "old plan" not in updated
+
+
+def test_config_maps_design_status(monkeypatch):
+    monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
+    cfg = JiraAutomationConfig.from_env()
+    assert cfg.handler_for_status("Design and plan (AI)") == HANDLER_DESIGN
+    assert cfg.status_design_approval == "Design approval (manual)"
 
 
 def test_verify_webhook_secret_bearer_and_plain():
