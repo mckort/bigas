@@ -1,11 +1,20 @@
 from flask import Blueprint, jsonify, request
 import logging
 import os
+import threading
+import uuid
 import requests
 
 from bigas.resources.marketing.utils import sanitize_error_message, validate_request_data
 from bigas.resources.product.create_release_notes.jira_client import normalize_project_keys
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
+from bigas.resources.product.jira_automation.service import (
+    JiraAutomationError,
+    JiraAutomationService,
+    extract_webhook_secret_from_headers,
+    parse_automation_payload,
+    verify_webhook_secret,
+)
 from bigas.resources.product.progress_updates.service import ProgressUpdatesService, ProgressUpdatesError
 
 
@@ -23,6 +32,9 @@ product_bp = Blueprint(
 )
 
 logger = logging.getLogger(__name__)
+
+_JIRA_AI_JOBS: dict = {}
+_JIRA_AI_JOBS_LOCK = threading.Lock()
 
 
 def _post_to_discord(webhook_url: str, message: str) -> None:
@@ -202,6 +214,125 @@ def progress_updates():
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 
+def _run_jira_automation_job(job_id: str, parsed: dict) -> None:
+    with _JIRA_AI_JOBS_LOCK:
+        _JIRA_AI_JOBS[job_id] = {"status": "running", **parsed}
+    try:
+        service = JiraAutomationService()
+        result = service.handle_event(
+            issue_key=parsed["issue_key"],
+            to_status=parsed["to_status"],
+            from_status=parsed.get("from_status") or "",
+            project_key=parsed.get("project_key") or "",
+            idempotency_key=parsed.get("idempotency_key") or "",
+            sync=False,
+        )
+        with _JIRA_AI_JOBS_LOCK:
+            _JIRA_AI_JOBS[job_id] = {"status": "done", "result": result}
+    except Exception as e:
+        logger.error("jira_status_automation job %s failed", job_id, exc_info=True)
+        with _JIRA_AI_JOBS_LOCK:
+            _JIRA_AI_JOBS[job_id] = {
+                "status": "error",
+                "error": sanitize_error_message(str(e)),
+            }
+
+
+@product_bp.route('/jira_status_automation', methods=['POST'])
+def jira_status_automation():
+    """
+    Jira Automation webhook: when an issue enters an AI column, run the matching handler.
+
+    Auth: header X-Bigas-Webhook-Secret (or Authorization: Bearer <secret>)
+          must match JIRA_AUTOMATION_WEBHOOK_SECRET.
+
+    Body (flexible):
+      {
+        "issue_key": "VFA-1",
+        "to_status": "Research and describe (AI)",
+        "from_status": "To Do",
+        "idempotency_key": "optional-unique-id",
+        "sync": false
+      }
+    Or Jira-shaped: { "issue": { "key": "VFA-1", "fields": { "status": { "name": "..." } } } }
+
+    Default: ack immediately and process in a background thread (Automation-friendly).
+    Pass "sync": true for manual debugging.
+    """
+    data = request.json or {}
+    try:
+        service_cfg = JiraAutomationService().config
+    except Exception as e:
+        logger.error("jira_status_automation config error", exc_info=True)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+    provided = extract_webhook_secret_from_headers(request.headers)
+    # Also allow secret in body for local curl tests only if header missing
+    if not provided:
+        provided = str(data.get("webhook_secret") or "").strip()
+
+    if not verify_webhook_secret(provided, service_cfg.webhook_secret):
+        return jsonify({"error": "unauthorized"}), 401
+
+    parsed = parse_automation_payload(data)
+    if not parsed.get("issue_key") or not parsed.get("to_status"):
+        return jsonify({
+            "error": "issue_key and to_status are required",
+            "hint": "Send issue_key + to_status, or issue.key + issue.fields.status.name",
+        }), 400
+
+    sync = bool(data.get("sync", False))
+    if sync:
+        try:
+            result = JiraAutomationService().handle_event(
+                issue_key=parsed["issue_key"],
+                to_status=parsed["to_status"],
+                from_status=parsed.get("from_status") or "",
+                project_key=parsed.get("project_key") or "",
+                idempotency_key=parsed.get("idempotency_key") or "",
+                sync=True,
+            )
+            status = 200 if result.get("ok", True) else 500
+            return jsonify(result), status
+        except JiraAutomationError as e:
+            return jsonify({"error": sanitize_error_message(str(e))}), 400
+        except Exception as e:
+            logger.error("jira_status_automation sync failed", exc_info=True)
+            return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+    job_id = str(uuid.uuid4())
+    with _JIRA_AI_JOBS_LOCK:
+        _JIRA_AI_JOBS[job_id] = {"status": "queued", **parsed}
+    t = threading.Thread(
+        target=_run_jira_automation_job,
+        args=(job_id, parsed),
+        daemon=True,
+        name=f"jira-ai-{job_id[:8]}",
+    )
+    t.start()
+    return jsonify({
+        "ok": True,
+        "accepted": True,
+        "job_id": job_id,
+        "issue_key": parsed["issue_key"],
+        "to_status": parsed["to_status"],
+    }), 202
+
+
+@product_bp.route('/jira_status_automation_job', methods=['POST'])
+def jira_status_automation_job():
+    """Poll a background jira_status_automation job: { "job_id": "..." }."""
+    data = request.json or {}
+    job_id = str(data.get("job_id") or "").strip()
+    if not job_id:
+        return jsonify({"error": "job_id is required"}), 400
+    with _JIRA_AI_JOBS_LOCK:
+        job = _JIRA_AI_JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify({"job_id": job_id, **job})
+
+
 def get_manifest():
     """Returns the manifest for the product tools."""
     return {
@@ -252,6 +383,36 @@ def get_manifest():
                             "description": "Optional Jira project keys override. Defaults to all keys in JIRA_PROJECT_KEY env."
                         }
                     }
+                }
+            },
+            {
+                "name": "jira_status_automation",
+                "description": "Jira Automation webhook for AI columns. Phase 1: Research and describe (AI) → enrich description (keep Brief) → Description approval (manual) + Discord PM. Auth via X-Bigas-Webhook-Secret.",
+                "path": "/mcp/tools/jira_status_automation",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_key": {"type": "string", "description": "Jira issue key, e.g. VFA-1"},
+                        "to_status": {"type": "string", "description": "Status the issue was moved into"},
+                        "from_status": {"type": "string"},
+                        "idempotency_key": {"type": "string"},
+                        "sync": {"type": "boolean", "description": "If true, run inline and return result (debug). Default false → 202 + job_id.", "default": False}
+                    },
+                    "required": ["issue_key", "to_status"]
+                }
+            },
+            {
+                "name": "jira_status_automation_job",
+                "description": "Poll status/result for a jira_status_automation background job.",
+                "path": "/mcp/tools/jira_status_automation_job",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "job_id": {"type": "string"}
+                    },
+                    "required": ["job_id"]
                 }
             }
         ]

@@ -3,7 +3,7 @@
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>Marketing analytics, product release notes, and CTO code review today — with a pluggable provider architecture for future finance, support, and more.</strong>
+  <strong>Marketing analytics, Jira AI workflows, release notes, and CTO code review — with a pluggable provider architecture for future finance, support, and more.</strong>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
@@ -19,8 +19,8 @@ It currently includes three specialists:
 | Specialist | What it does |
 |---|---|
 | **Senior Marketing Analyst** | GA4 web analytics + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
-| **Product Release Manager** | Jira Fix Version → customer-facing release notes + blog draft + social copy |
-| **CTO** | GitHub PR diff → AI code review comment posted directly to the PR |
+| **Product Manager** | Jira board automation (AI research when issues move into AI columns), Fix Version → release notes + blog/social, Done issues → team progress updates |
+| **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents) |
 
 ---
 
@@ -84,17 +84,20 @@ Results are posted to your Discord marketing channel.
 | Variable | Description |
 |---|---|
 | `DISCORD_WEBHOOK_URL_MARKETING` | Discord webhook for marketing reports |
-| `DISCORD_WEBHOOK_URL_PRODUCT` | Discord webhook for release notes and team progress |
+| `DISCORD_WEBHOOK_URL_PRODUCT` | Discord webhook for release notes, progress updates, and Jira AI research notifications |
+| `DISCORD_WEBHOOK_URL_CTO` | Discord webhook for PR review / engineering notifications |
 | `STORAGE_BUCKET_NAME` | GCS bucket for report storage (default: `bigas-analytics-reports`) |
 | `TARGET_KEYWORDS` | Colon-separated keywords for SEO analysis (e.g. `sustainable_swag:eco_friendly_clothing`) |
-| `JIRA_BASE_URL` | Jira instance URL (required for release notes and progress updates) |
+| `JIRA_BASE_URL` | Jira instance URL (required for release notes, progress updates, and Jira AI automation) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
 | `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for multi-project (e.g. `VFA,WAYW`). Per-request override via `project_key` / `project_keys`. |
+| `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). See [docs/jira-automation.md](docs/jira-automation.md). |
+| `GITHUB_TOKEN` | GitHub token — PR review plus optional repo context for Jira AI research |
 | `LINKEDIN_AD_ACCOUNT_URN` | Default LinkedIn ad account URN |
 | `REDDIT_AD_ACCOUNT_ID` | Default Reddit ad account ID |
 
-Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`. See `env.example` and `bigas/llm/README.md`.
+Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_JIRA_RESEARCH_MODEL`. See `env.example` and `bigas/llm/README.md`.
 
 ---
 
@@ -203,9 +206,31 @@ All portfolio endpoints support async variants (`run_*_async`) that return a `jo
 
 | Endpoint | Description |
 |---|---|
+| `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns (Phase 1: Research & describe) |
+| `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord |
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub |
+
+#### Jira AI board automation (Phase 1)
+
+Move an issue into a **Research and describe (AI)** column → Bigas researches it (issue text, linked issues, optional GitHub repo context, web snippets), keeps your short human **Brief**, writes an **AI Research** section, moves the issue to **Description approval (manual)**, and posts to Discord.
+
+Wire it with **Jira Automation** → **Send web request** (not the admin “Webhook listener”):
+
+```bash
+curl -X POST https://your-deployment-url.com/mcp/tools/jira_status_automation \
+  -H "Content-Type: application/json" \
+  -H "X-Bigas-Webhook-Secret: $JIRA_AUTOMATION_WEBHOOK_SECRET" \
+  -H "X-Bigas-Access-Key: $BIGAS_ACCESS_KEYS" \
+  -d '{
+    "issue_key": "PROJ-123",
+    "to_status": "Research and describe (AI)",
+    "sync": true
+  }'
+```
+
+Full setup (status names, project→repo map, daily quota, Automation rule JSON): **[docs/jira-automation.md](docs/jira-automation.md)**.
 
 ```bash
 # Release notes
@@ -238,7 +263,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
 ```
                     ┌─────────────────────────────────────────┐
                     │            Clients / Triggers            │
-                    │  MCP Client (SSE+JSON-RPC) · Scheduler · curl │
+                    │  MCP · Scheduler · Jira Automation · curl │
                     └─────────────────────────────────────────┘
                                          │
                                          ▼
@@ -249,7 +274,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
                     ┌───────────────┼────────────────────────┐
                     ▼               ▼                        ▼
              Marketing          Product                  CTO
-        (GA4 + Paid Ads)  (Jira → Notes & Updates)   (PR Review)
+        (GA4 + Paid Ads)   (Jira AI + Notes)        (PR Review)
                     │
           ┌─────────┼──────────┐
           ▼         ▼          ▼
@@ -269,6 +294,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
   - `StorageService` — report persistence under `weekly_reports/` and `raw_ads/{platform}/{date}/`
   - `WebScrapingService` — scrapes actual page content for CRO recommendations
 - **Product services**
+  - `JiraAutomationService` — Jira status webhook → AI column handlers (Phase 1: research & describe)
   - `CreateReleaseNotesService` — Jira Fix Version → multi-channel customer release comms (release notes, blog, social)
   - `ProgressUpdatesService` — Jira issues moved to Done → team progress “coach” message
 - **CTO services**

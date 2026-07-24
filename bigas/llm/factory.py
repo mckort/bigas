@@ -44,6 +44,7 @@ def get_llm_client(
         "release_notes": "BIGAS_RELEASE_NOTES_MODEL",
         "marketing": "BIGAS_MARKETING_LLM_MODEL",
         "duplicate_recommendation": "BIGAS_DUPLICATE_RECOMMENDATION_MODEL",
+        "jira_research": "BIGAS_JIRA_RESEARCH_MODEL",
     }
     feature_env = feature_env_map.get(feature)
 
