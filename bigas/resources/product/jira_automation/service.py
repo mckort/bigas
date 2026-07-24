@@ -240,7 +240,7 @@ class JiraAutomationService:
 
         idem = idempotency_key or f"{issue_key}:{to_status}:{from_status}"
         cache_key = f"{handler}:{idem}"
-        if _IDEMPOTENCY.already_processed(cache_key):
+        if not _IDEMPOTENCY.try_claim(cache_key):
             return {
                 "ok": True,
                 "skipped": True,
@@ -251,6 +251,7 @@ class JiraAutomationService:
 
         ok_quota, used, limit = self._quota.try_acquire()
         if not ok_quota:
+            _IDEMPOTENCY.clear(cache_key)
             msg = (
                 f"{BIGAS_COMMENT_MARKER} Skipped AI run: daily quota reached "
                 f"({used}/{limit} UTC). Try again tomorrow or raise BIGAS_JIRA_AI_DAILY_QUOTA."
@@ -272,9 +273,6 @@ class JiraAutomationService:
                 "issue_key": issue_key,
             }
 
-        # Mark before work to reduce double-run from overlapping retries
-        _IDEMPOTENCY.mark_processed(cache_key)
-
         repo = self._config.repo_for_project(project_key)
         if not repo:
             return self._fail(
@@ -282,6 +280,8 @@ class JiraAutomationService:
                 to_status=to_status,
                 channel="pm",
                 error=f"No GitHub repo mapped for project {project_key}",
+                cache_key=cache_key,
+                release_quota=True,
             )
 
         try:
@@ -297,8 +297,11 @@ class JiraAutomationService:
                 to_status=to_status,
                 channel="pm",
                 error=str(e),
+                cache_key=cache_key,
+                release_quota=True,
             )
 
+        # Success: keep cache_key claimed so Automation retries stay no-ops
         self._notify_pm(
             f"**Research complete** `{issue_key}`\n"
             f"Moved to **{self._config.status_description_approval}** for review.\n"
@@ -318,7 +321,14 @@ class JiraAutomationService:
         to_status: str,
         channel: str,
         error: str,
+        cache_key: str = "",
+        release_quota: bool = False,
     ) -> Dict[str, Any]:
+        if cache_key:
+            _IDEMPOTENCY.clear(cache_key)
+        if release_quota:
+            self._quota.release()
+
         comment = (
             f"{BIGAS_COMMENT_MARKER} AI handler failed; left in `{to_status}`.\n"
             f"Error: {error[:1500]}"

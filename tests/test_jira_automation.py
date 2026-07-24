@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from bigas.resources.product.create_release_notes.jira_client import (
@@ -20,7 +22,10 @@ from bigas.resources.product.jira_automation.description import (
 )
 from bigas.resources.product.jira_automation.idempotency import IdempotencyCache
 from bigas.resources.product.jira_automation.quota import DailyQuota
+from bigas.resources.product.jira_automation.research import ResearchHandlerError
+from bigas.resources.product.jira_automation import service as jira_automation_service
 from bigas.resources.product.jira_automation.service import (
+    JiraAutomationService,
     parse_automation_payload,
     verify_webhook_secret,
 )
@@ -31,9 +36,30 @@ def test_markdown_to_adf_roundtrip_plain():
     adf = markdown_to_adf(md)
     assert adf["type"] == "doc"
     text = adf_to_plain_text(adf)
-    assert "Brief" in text
+    assert "## Brief" in text
     assert "Hello" in text
-    assert "one" in text
+    assert "- one" in text
+    assert "- two" in text
+
+
+def test_adf_heading_roundtrip_preserves_brief_contract():
+    """Re-reading ADF must keep ## markers so Brief is not polluted by AI Research."""
+    original = (
+        f"{BRIEF_HEADING}\n"
+        "Ship export from Attio\n\n"
+        f"{RESEARCH_HEADING}\n"
+        "### Goals\n"
+        "old goals\n"
+    )
+    plain = adf_to_plain_text(markdown_to_adf(original))
+    assert extract_brief(plain) == "Ship export from Attio"
+    updated = upsert_research_section(plain, research_markdown="### Goals\nnew goals")
+    assert extract_brief(updated) == "Ship export from Attio"
+    assert "old goals" not in updated
+    assert "new goals" in updated
+    # Second Jira write/read cycle still preserves Brief
+    plain2 = adf_to_plain_text(markdown_to_adf(updated))
+    assert extract_brief(plain2) == "Ship export from Attio"
 
 
 def test_extract_brief_and_upsert_preserves_plan():
@@ -111,8 +137,77 @@ def test_quota_blocks_after_limit():
     assert limit == 2
 
 
+def test_quota_release_restores_slot():
+    q = DailyQuota(1)
+    assert q.try_acquire()[0] is True
+    assert q.try_acquire()[0] is False
+    used, limit = q.release()
+    assert used == 0
+    assert limit == 1
+    assert q.try_acquire()[0] is True
+
+
 def test_idempotency_cache():
     c = IdempotencyCache(ttl_s=60)
     assert c.already_processed("a") is False
     c.mark_processed("a")
     assert c.already_processed("a") is True
+
+
+def test_idempotency_try_claim_and_clear():
+    c = IdempotencyCache(ttl_s=60)
+    assert c.try_claim("k") is True
+    assert c.try_claim("k") is False
+    c.clear("k")
+    assert c.try_claim("k") is True
+
+
+def test_handle_event_failure_clears_idempotency_and_quota(monkeypatch):
+    jira_automation_service._IDEMPOTENCY = IdempotencyCache(ttl_s=60)
+    jira_automation_service._QUOTA = DailyQuota(5)
+
+    cfg = JiraAutomationConfig(
+        webhook_secret="s",
+        allowed_projects=("VFA",),
+        project_repos={"VFA": "mckort/vcfieldassistant"},
+        status_handlers={"research and describe (ai)": HANDLER_RESEARCH},
+        status_description_approval="Description approval (manual)",
+        status_design_approval="Design approval (manual)",
+        status_final_approval="Final approval (manual)",
+        daily_quota=5,
+        discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
+        discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
+    )
+    jira = MagicMock()
+    jira.add_comment = MagicMock()
+
+    class BoomHandler:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, **kwargs):
+            raise ResearchHandlerError("llm down")
+
+    monkeypatch.setattr(
+        jira_automation_service,
+        "ResearchDescribeHandler",
+        BoomHandler,
+    )
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL_PRODUCT", "")
+
+    svc = JiraAutomationService(config=cfg, jira=jira)
+    result = svc.handle_event(
+        issue_key="VFA-1",
+        to_status="Research and describe (AI)",
+        from_status="To Do",
+        project_key="VFA",
+        idempotency_key="stable-1",
+    )
+    assert result["ok"] is False
+    # Failure must be retryable
+    assert not jira_automation_service._IDEMPOTENCY.already_processed(
+        f"{HANDLER_RESEARCH}:stable-1"
+    )
+    used, limit, _day = jira_automation_service._QUOTA.snapshot()
+    assert used == 0
+    assert limit == 5

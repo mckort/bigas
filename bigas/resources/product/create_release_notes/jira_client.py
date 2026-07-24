@@ -413,28 +413,118 @@ class JiraClient:
 
 
 def adf_to_plain_text(node: Any) -> str:
-    """Extract plain text from an Atlassian Document Format node."""
+    """
+    Extract markdown-ish plain text from an Atlassian Document Format node.
+
+    Preserves heading markers (`#` / `##` / `###`) and bullet prefixes (`- `)
+    so description section contracts (e.g. `## Brief`) survive Jira round-trips.
+    """
     if node is None:
         return ""
     if isinstance(node, str):
         return node
-    texts: List[str] = []
 
-    def walk(n: Any) -> None:
-        if isinstance(n, dict):
-            if n.get("type") == "text":
-                texts.append(n.get("text") or "")
-            elif n.get("type") in ("hardBreak", "paragraph", "heading"):
-                if texts and not texts[-1].endswith("\n"):
-                    texts.append("\n")
-            for c in n.get("content") or []:
-                walk(c)
-        elif isinstance(n, list):
+    def inline_text(n: Any) -> str:
+        if isinstance(n, str):
+            return n
+        if isinstance(n, list):
+            return "".join(inline_text(c) for c in n)
+        if not isinstance(n, dict):
+            return ""
+        t = n.get("type")
+        if t == "text":
+            return n.get("text") or ""
+        if t == "hardBreak":
+            return "\n"
+        return "".join(inline_text(c) for c in (n.get("content") or []))
+
+    def list_item_lines(
+        item: Any, *, ordered: bool = False, index: int = 1
+    ) -> List[str]:
+        if not isinstance(item, dict):
+            return []
+        prefix = f"{index}. " if ordered else "- "
+        content = item.get("content") or []
+        lines: List[str] = []
+        first = True
+        for child in content:
+            if not isinstance(child, dict):
+                continue
+            ct = child.get("type")
+            if ct == "paragraph":
+                text = inline_text(child.get("content") or []).strip()
+                if first:
+                    lines.append(f"{prefix}{text}" if text else prefix.rstrip())
+                    first = False
+                elif text:
+                    lines.append(f"  {text}")
+            elif ct in ("bulletList", "orderedList"):
+                nested = block_lines(child)
+                lines.extend(f"  {ln}" if ln else ln for ln in nested)
+            else:
+                nested = block_lines(child)
+                if first and nested:
+                    lines.append(f"{prefix}{nested[0].lstrip()}")
+                    lines.extend(nested[1:])
+                    first = False
+                else:
+                    lines.extend(nested)
+        if first:
+            lines.append(prefix.rstrip())
+        return lines
+
+    def block_lines(n: Any) -> List[str]:
+        if isinstance(n, list):
+            out: List[str] = []
             for c in n:
-                walk(c)
+                out.extend(block_lines(c))
+            return out
+        if not isinstance(n, dict):
+            return []
+        t = n.get("type")
+        content = n.get("content") or []
+        if t == "doc":
+            return block_lines(content)
+        if t == "paragraph":
+            text = inline_text(content).rstrip()
+            return [text]
+        if t == "heading":
+            level = int((n.get("attrs") or {}).get("level") or 1)
+            level = max(1, min(level, 6))
+            prefix = "#" * level + " "
+            return [prefix + inline_text(content).strip()]
+        if t == "bulletList":
+            lines: List[str] = []
+            for item in content:
+                lines.extend(list_item_lines(item, ordered=False))
+            return lines
+        if t == "orderedList":
+            lines = []
+            for i, item in enumerate(content, 1):
+                lines.extend(list_item_lines(item, ordered=True, index=i))
+            return lines
+        if t == "listItem":
+            return list_item_lines(n, ordered=False)
+        if t == "blockquote":
+            return [f"> {ln}" if ln else ">" for ln in block_lines(content)]
+        if t == "codeBlock":
+            body = inline_text(content)
+            return ["```", body, "```"] if body else ["```", "```"]
+        if t == "rule":
+            return ["---"]
+        return block_lines(content)
 
-    walk(node)
-    return "".join(texts).strip()
+    lines = block_lines(node)
+    # Collapse runs of blank lines to a single blank line for stable briefs
+    cleaned: List[str] = []
+    prev_blank = False
+    for ln in lines:
+        blank = not (ln or "").strip()
+        if blank and prev_blank:
+            continue
+        cleaned.append(ln)
+        prev_blank = blank
+    return "\n".join(cleaned).strip()
 
 
 def _text_to_adf(text: str) -> Dict[str, Any]:

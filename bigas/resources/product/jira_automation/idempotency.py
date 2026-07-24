@@ -46,6 +46,28 @@ class IdempotencyCache:
             self._purge(now)
             self._seen[key] = now
 
+    def try_claim(self, key: str) -> bool:
+        """
+        Atomically claim a key for in-flight / completed work.
+        Returns False if the key is already present (duplicate delivery).
+        """
+        if not key:
+            return True
+        now = time.time()
+        with self._lock:
+            self._purge(now)
+            if key in self._seen:
+                return False
+            self._seen[key] = now
+            return True
+
+    def clear(self, key: str) -> None:
+        """Drop a key so a failed run can be retried."""
+        if not key:
+            return
+        with self._lock:
+            self._seen.pop(key, None)
+
     def keys(self) -> Set[str]:
         with self._lock:
             return set(self._seen.keys())

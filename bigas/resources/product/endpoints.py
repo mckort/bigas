@@ -245,6 +245,8 @@ def jira_status_automation():
 
     Auth: header X-Bigas-Webhook-Secret (or Authorization: Bearer <secret>)
           must match JIRA_AUTOMATION_WEBHOOK_SECRET.
+          Body webhook_secret is only accepted when
+          BIGAS_JIRA_ALLOW_BODY_WEBHOOK_SECRET=1 (local curl).
 
     Body (flexible):
       {
@@ -252,12 +254,12 @@ def jira_status_automation():
         "to_status": "Research and describe (AI)",
         "from_status": "To Do",
         "idempotency_key": "optional-unique-id",
-        "sync": false
+        "sync": true
       }
     Or Jira-shaped: { "issue": { "key": "VFA-1", "fields": { "status": { "name": "..." } } } }
 
-    Default: ack immediately and process in a background thread (Automation-friendly).
-    Pass "sync": true for manual debugging.
+    Prefer "sync": true on Cloud Run (background threads are best-effort).
+    Without sync, response is 202 + job_id; poll jira_status_automation_job.
     """
     data = request.json or {}
     try:
@@ -267,8 +269,11 @@ def jira_status_automation():
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
     provided = extract_webhook_secret_from_headers(request.headers)
-    # Also allow secret in body for local curl tests only if header missing
-    if not provided:
+    allow_body_secret = (
+        os.environ.get("BIGAS_JIRA_ALLOW_BODY_WEBHOOK_SECRET", "").strip().lower()
+        in ("1", "true", "yes")
+    )
+    if not provided and allow_body_secret:
         provided = str(data.get("webhook_secret") or "").strip()
 
     if not verify_webhook_secret(provided, service_cfg.webhook_secret):
@@ -281,7 +286,9 @@ def jira_status_automation():
             "hint": "Send issue_key + to_status, or issue.key + issue.fields.status.name",
         }), 400
 
-    sync = bool(data.get("sync", False))
+    # Default sync=true for Cloud Run reliability; Automation can set sync=false
+    # if it needs a fast 202 ack (background work requires CPU-always / min instances).
+    sync = bool(data.get("sync", True))
     if sync:
         try:
             result = JiraAutomationService().handle_event(
@@ -316,13 +323,36 @@ def jira_status_automation():
         "job_id": job_id,
         "issue_key": parsed["issue_key"],
         "to_status": parsed["to_status"],
+        "warning": (
+            "async jobs are process-local and best-effort on Cloud Run; "
+            "prefer sync=true unless CPU-always-allocated + min instances are set"
+        ),
     }), 202
 
 
 @product_bp.route('/jira_status_automation_job', methods=['POST'])
 def jira_status_automation_job():
-    """Poll a background jira_status_automation job: { "job_id": "..." }."""
+    """
+    Poll a background jira_status_automation job: { "job_id": "..." }.
+    Requires the same X-Bigas-Webhook-Secret as the webhook endpoint.
+    """
     data = request.json or {}
+    try:
+        service_cfg = JiraAutomationService().config
+    except Exception as e:
+        logger.error("jira_status_automation_job config error", exc_info=True)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+    provided = extract_webhook_secret_from_headers(request.headers)
+    allow_body_secret = (
+        os.environ.get("BIGAS_JIRA_ALLOW_BODY_WEBHOOK_SECRET", "").strip().lower()
+        in ("1", "true", "yes")
+    )
+    if not provided and allow_body_secret:
+        provided = str(data.get("webhook_secret") or "").strip()
+    if not verify_webhook_secret(provided, service_cfg.webhook_secret):
+        return jsonify({"error": "unauthorized"}), 401
+
     job_id = str(data.get("job_id") or "").strip()
     if not job_id:
         return jsonify({"error": "job_id is required"}), 400
@@ -397,7 +427,7 @@ def get_manifest():
                         "to_status": {"type": "string", "description": "Status the issue was moved into"},
                         "from_status": {"type": "string"},
                         "idempotency_key": {"type": "string"},
-                        "sync": {"type": "boolean", "description": "If true, run inline and return result (debug). Default false → 202 + job_id.", "default": False}
+                        "sync": {"type": "boolean", "description": "If true, run inline and return result (recommended on Cloud Run). Default true. Set false for 202 + job_id (best-effort).", "default": True}
                     },
                     "required": ["issue_key", "to_status"]
                 }

@@ -48,3 +48,18 @@ class DailyQuota:
                 return False, self._count, self._limit
             self._count += 1
             return True, self._count, self._limit
+
+    def release(self) -> Tuple[int, int]:
+        """
+        Return one acquired slot (e.g. after a failed handler).
+        Returns (used_after, limit).
+        """
+        with self._lock:
+            day = self._today()
+            if self._day != day:
+                self._day = day
+                self._count = 0
+                return self._count, self._limit
+            if self._count > 0:
+                self._count -= 1
+            return self._count, self._limit
