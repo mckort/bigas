@@ -44,7 +44,25 @@ Pull request: {pr_url}
 5. Every commit message you create MUST include the exact marker `{AUTOFIX_COMMIT_MARKER}`.
 6. Do not merge the PR, do not force-push, do not rewrite history, and do not open a new PR.
 7. If after inspecting the code there is nothing safe to fix, make no commits and explain why.
+8. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — apply the fixes and push commits immediately. Do not stop after a proposal.
 """
+
+
+def autofix_looks_like_confirmation_stop(result_text: str) -> bool:
+    """True when Cursor run result suggests it stopped to ask for confirmation."""
+    text = (result_text or "").lower()
+    if not text:
+        return False
+    needles = (
+        "shall i proceed",
+        "please confirm",
+        "confirm before",
+        "before i proceed",
+        "want me to proceed",
+        "should i proceed",
+        "do you want me to",
+    )
+    return any(n in text for n in needles)
 
 
 class AutofixService:
@@ -164,6 +182,18 @@ class AutofixService:
         try:
             return client.get_run_status(agent_id=agent_id, run_id=run_id)
         except CursorCloudAgentError as e:
+            raise AutofixError(str(e)) from e
+
+    def get_pr_head_commit(
+        self, *, repo: str, pr_number: int
+    ) -> tuple[str, str]:
+        owner, repo_name = repo.split("/", 1)
+        gh = GitHubPRCommentClient(token=self._github_token)
+        try:
+            return gh.get_pr_head_commit(
+                owner=owner, repo=repo_name, pr_number=pr_number
+            )
+        except GitHubPRCommentError as e:
             raise AutofixError(str(e)) from e
 
     def fetch_pr_diff(self, *, repo: str, pr_number: int) -> str:

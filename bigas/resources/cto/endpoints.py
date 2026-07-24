@@ -9,8 +9,15 @@ import os
 import requests
 from flask import Blueprint, jsonify, request
 
-from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
-from bigas.resources.cto.autofix.service import AutofixError, AutofixService
+from bigas.resources.cto.autofix.heuristics import (
+    latest_commit_is_autofix,
+    review_is_ready_to_merge,
+)
+from bigas.resources.cto.autofix.service import (
+    AutofixError,
+    AutofixService,
+    autofix_looks_like_confirmation_stop,
+)
 from bigas.resources.cto.pr_review.github_client import (
     BIGAS_REVIEW_MARKER,
     GitHubPRCommentClient,
@@ -368,7 +375,42 @@ def autofix_followup():
             f"**CTO autofix failed**\nPR: {pr_url}\n"
             f"Status: {run_status}\nAgent: {agent_url}"
         )
-        base.update({"finalized": True, "ready_to_merge": False})
+        base.update({"finalized": True, "ready_to_merge": False, "fixes_pushed": False})
+        return jsonify(base)
+
+    fixes_pushed = False
+    head_sha = ""
+    try:
+        head_sha, head_message = service.get_pr_head_commit(
+            repo=repo, pr_number=pr_number
+        )
+        fixes_pushed = latest_commit_is_autofix(head_message)
+    except AutofixError as e:
+        logger.warning("Could not read PR head after autofix: %s", e)
+
+    result_text = status.get("result_text") or ""
+    asked_confirm = autofix_looks_like_confirmation_stop(result_text)
+    if not fixes_pushed:
+        why = (
+            "Agent appears to have stopped to ask for confirmation."
+            if asked_confirm
+            else "No `[bigas-autofix]` commit on PR head (nothing pushed, or agent only proposed changes)."
+        )
+        _post_to_discord_cto(
+            f"**CTO autofix finished without commits**\nPR: {pr_url}\n"
+            f"{why}\nAgent: {agent_url}\n"
+            f"Re-run autofix or continue the agent manually."
+        )
+        base.update(
+            {
+                "finalized": True,
+                "ready_to_merge": False,
+                "fixes_pushed": False,
+                "asked_confirmation": asked_confirm,
+                "head_sha": head_sha,
+                "rereviewed": False,
+            }
+        )
         return jsonify(base)
 
     _post_to_discord_cto(
@@ -455,6 +497,7 @@ def autofix_followup():
         "rereviewed": True,
         "comment_url": comment_url,
         "ready_to_merge": ready,
+        "fixes_pushed": True,
         "used_model": review_service._model,
         "jira_final_approval": jira_final,
     })

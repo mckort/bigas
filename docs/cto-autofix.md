@@ -72,6 +72,9 @@ Polled by GitHub Actions after launch:
 
 - Not done yet: `{ "done": false, "status": "RUNNING", ... }`
 - Done + re-reviewed: `{ "done": true, "ok": true, "rereviewed": true, "ready_to_merge": true, "comment_url": "..." }`
+- Done but no `[bigas-autofix]` commit (e.g. agent asked for confirmation): Discord warning, `{ "fixes_pushed": false, "rereviewed": false }` — no fake “completed” message
+
+The autofix prompt instructs the agent **not** to ask for confirmation and to push fixes immediately.
 
 ## Guards
 
