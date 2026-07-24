@@ -14,6 +14,7 @@ from bigas.resources.product.create_release_notes.jira_client import (
     JiraConfig,
     JiraError,
 )
+from bigas.resources.product.jira_automation.comments import issue_discord_label
 from bigas.resources.product.jira_automation.config import (
     BIGAS_COMMENT_MARKER,
     HANDLER_DESIGN,
@@ -26,6 +27,10 @@ from bigas.resources.product.jira_automation.design import (
     DesignPlanHandler,
 )
 from bigas.resources.product.jira_automation.idempotency import IdempotencyCache
+from bigas.resources.product.jira_automation.implement import (
+    ImplementHandler,
+    ImplementHandlerError,
+)
 from bigas.resources.product.jira_automation.quota import DailyQuota
 from bigas.resources.product.jira_automation.research import (
     ResearchDescribeHandler,
@@ -219,14 +224,7 @@ class JiraAutomationService:
                 "issue_key": issue_key,
             }
 
-        if handler == HANDLER_IMPLEMENT:
-            return {
-                "ok": True,
-                "skipped": True,
-                "reason": "implement handler not implemented yet (phase 3)",
-                "issue_key": issue_key,
-            }
-        if handler not in (HANDLER_RESEARCH, HANDLER_DESIGN):
+        if handler not in (HANDLER_RESEARCH, HANDLER_DESIGN, HANDLER_IMPLEMENT):
             return {
                 "ok": True,
                 "skipped": True,
@@ -235,7 +233,11 @@ class JiraAutomationService:
             }
 
         notify_channel = "pm" if handler == HANDLER_RESEARCH else "cto"
-        handler_label = "research" if handler == HANDLER_RESEARCH else "design/plan"
+        handler_label = {
+            HANDLER_RESEARCH: "research",
+            HANDLER_DESIGN: "design/plan",
+            HANDLER_IMPLEMENT: "implement",
+        }.get(handler, handler)
 
         idem = idempotency_key or f"{issue_key}:{to_status}:{from_status}"
         cache_key = f"{handler}:{idem}"
@@ -262,7 +264,7 @@ class JiraAutomationService:
             notify = self._notify_pm if notify_channel == "pm" else self._notify_cto
             notify(
                 f"**Jira AI quota reached** ({used}/{limit})\n"
-                f"Skipped {handler_label} for `{issue_key}` — left in `{to_status}`."
+                f"Skipped {handler_label} for {issue_discord_label(issue_key)} — left in `{to_status}`."
             )
             return {
                 "ok": True,
@@ -292,25 +294,52 @@ class JiraAutomationService:
                     approval_status=self._config.status_description_approval,
                 )
                 approval = self._config.status_description_approval
+                label = issue_discord_label(issue_key, result.get("summary"))
                 self._notify_pm(
-                    f"**Research complete** `{issue_key}`\n"
+                    f"**Research complete** {label}\n"
                     f"Moved to **{approval}** for review.\n"
                     f"Repo: `{repo}` · model: `{result.get('model')}`"
                 )
-            else:
+            elif handler == HANDLER_DESIGN:
                 result = DesignPlanHandler(jira=self._jira).run(
                     issue_key=issue_key,
                     repo=repo,
                     approval_status=self._config.status_design_approval,
                 )
                 approval = self._config.status_design_approval
+                label = issue_discord_label(issue_key, result.get("summary"))
                 self._notify_cto(
-                    f"**Design/plan complete** `{issue_key}`\n"
+                    f"**Design/plan complete** {label}\n"
                     f"Moved to **{approval}** for review.\n"
                     f"Repo: `{repo}` · model: `{result.get('model')}`"
                 )
-        except (ResearchHandlerError, DesignHandlerError, JiraError, Exception) as e:
+            else:
+                result = ImplementHandler(jira=self._jira).run(
+                    issue_key=issue_key,
+                    repo=repo,
+                    base_branch=self._config.default_base_branch,
+                )
+                label = issue_discord_label(issue_key, result.get("summary"))
+                agent_url = result.get("agent_url") or ""
+                self._notify_cto(
+                    f"**Implementation started** {label}\n"
+                    f"Left in **In Progress (AI)** while Cursor works.\n"
+                    f"Repo: `{repo}` · Agent: {agent_url or result.get('agent_id')}"
+                )
+        except (
+            ResearchHandlerError,
+            DesignHandlerError,
+            ImplementHandlerError,
+            JiraError,
+            Exception,
+        ) as e:
             logger.error("%s handler failed for %s", handler_label, issue_key, exc_info=True)
+            summary = ""
+            try:
+                issue = self._jira.get_issue(issue_key, fields=["summary"])
+                summary = ((issue.get("fields") or {}).get("summary") or "").strip()
+            except Exception:
+                pass
             return self._fail(
                 issue_key=issue_key,
                 to_status=to_status,
@@ -318,6 +347,7 @@ class JiraAutomationService:
                 error=str(e),
                 cache_key=cache_key,
                 release_quota=True,
+                summary=summary,
             )
 
         # Success: keep cache_key claimed so Automation retries stay no-ops
@@ -337,6 +367,7 @@ class JiraAutomationService:
         error: str,
         cache_key: str = "",
         release_quota: bool = False,
+        summary: str = "",
     ) -> Dict[str, Any]:
         if cache_key:
             _IDEMPOTENCY.clear(cache_key)
@@ -353,7 +384,7 @@ class JiraAutomationService:
             logger.warning("Failed to write failure comment on %s", issue_key, exc_info=True)
 
         discord_msg = (
-            f"**Jira AI failed** `{issue_key}`\n"
+            f"**Jira AI failed** {issue_discord_label(issue_key, summary)}\n"
             f"Left in `{to_status}`.\n"
             f"Error: {error[:500]}"
         )

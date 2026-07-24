@@ -216,6 +216,7 @@ All portfolio endpoints support async variants (`run_*_async`) that return a `jo
 
 1. **Research and describe (AI)** → keep human **Brief**, write **AI Research**, move to **Description approval (manual)**, Discord PM.
 2. **Design and plan (AI)** → write **AI Plan** from Brief + Research + repo context, move to **Design approval (manual)**, Discord CTO.
+3. **In Progress (AI)** → Cursor cloud agent implements on the mapped repo and opens a PR; Discord CTO. When the PR is autofixed and ready to merge, the issue moves to **Final approval (manual)**.
 
 Wire each status with **Jira Automation** → **Send web request** (not the admin “Webhook listener”). Same URL/headers; different trigger status — see **[docs/jira-automation.md](docs/jira-automation.md)**.
 

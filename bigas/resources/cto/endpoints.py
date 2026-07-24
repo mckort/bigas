@@ -426,10 +426,25 @@ def autofix_followup():
         f"**CTO PR re-review after autofix done**\nComment posted: {comment_url}\n\n---\n\n**Review:**"
     )
     _post_to_discord_cto_chunks(review_body)
+    jira_final = {"skipped": True, "reason": "not_ready"}
     if ready:
         _post_to_discord_cto(
             f"**Ready to merge**\nPR: {pr_url}\nComment: {comment_url}"
         )
+        try:
+            from bigas.resources.product.jira_automation.final_approval import (
+                transition_issue_to_final_approval_for_pr,
+            )
+
+            jira_final = transition_issue_to_final_approval_for_pr(
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=pr_url,
+                github_token=gh_token,
+            )
+        except Exception:
+            logger.warning("Jira final-approval hook failed", exc_info=True)
+            jira_final = {"ok": False, "error": "final_approval_hook_exception"}
     else:
         _post_to_discord_cto(
             f"**CTO autofix follow-up**\nPR still has findings after autofix.\nPR: {pr_url}"
@@ -441,6 +456,7 @@ def autofix_followup():
         "comment_url": comment_url,
         "ready_to_merge": ready,
         "used_model": review_service._model,
+        "jira_final_approval": jira_final,
     })
     return jsonify(base)
 

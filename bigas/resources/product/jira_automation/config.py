@@ -22,7 +22,6 @@ DEFAULT_PROJECT_REPOS: Dict[str, str] = {
 
 DEFAULT_STATUS_HANDLERS: Dict[str, str] = {
     "research and describe (ai)": HANDLER_RESEARCH,
-    # Phase 2/3 hooks (registered later; unknown handlers are skipped safely)
     "design and plan (ai)": HANDLER_DESIGN,
     "in progress (ai)": HANDLER_IMPLEMENT,
 }
@@ -88,6 +87,7 @@ class JiraAutomationConfig:
     status_design_approval: str
     status_final_approval: str
     daily_quota: int
+    default_base_branch: str
     discord_pm_env: str
     discord_cto_env: str
 
@@ -125,6 +125,10 @@ class JiraAutomationConfig:
                 or "Final approval (manual)"
             ).strip(),
             daily_quota=daily_quota,
+            default_base_branch=(
+                os.environ.get("BIGAS_JIRA_DEFAULT_BASE_BRANCH") or "main"
+            ).strip()
+            or "main",
             discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
             discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
         )

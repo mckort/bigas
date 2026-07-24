@@ -6,6 +6,7 @@ Your job: take a short human Brief plus context (linked issues, repo notes, web 
 
 Rules:
 - Preserve the intent of the human Brief; do not invent business requirements that contradict it.
+- Treat human follow-up comments as authoritative clarifications (especially answers to open questions).
 - Prefer concrete, testable acceptance criteria.
 - Call out unknowns and open questions explicitly.
 - Suggest improvements (scope cuts, risks, alternatives) briefly.
@@ -23,6 +24,7 @@ def build_research_user_prompt(
     linked_issues_text: str,
     repo_context: str,
     web_context: str,
+    comments_text: str = "(none)",
 ) -> str:
     return f"""Expand and refine this Jira issue for downstream AI design/implementation.
 
@@ -31,6 +33,9 @@ Summary: {summary}
 
 ## Human Brief
 {brief or "(empty)"}
+
+## Human follow-up comments
+{comments_text or "(none)"}
 
 ## Linked issues
 {linked_issues_text or "(none)"}
@@ -55,10 +60,11 @@ Write the research body with these sections:
 
 DESIGN_SYSTEM_PROMPT = """You are a senior software engineer writing an implementation plan for a Jira issue.
 
-Your job: turn the approved Brief + AI Research (plus repo context) into a concrete design and implementation plan that a Cursor cloud agent (and a human reviewer) can follow.
+Your job: turn the approved Brief + AI Research (plus repo context and human comments) into a concrete design and implementation plan that a Cursor cloud agent (and a human reviewer) can follow.
 
 Rules:
 - Stay within the Brief and Research; do not expand product scope.
+- Human follow-up comments override or clarify open questions from Research when they conflict.
 - Be specific about files/modules when the repo context supports it; otherwise mark unknowns.
 - Prefer incremental, testable steps over big-bang rewrites.
 - Include risks, edge cases, and a short test plan.
@@ -76,6 +82,7 @@ def build_design_user_prompt(
     research: str,
     linked_issues_text: str,
     repo_context: str,
+    comments_text: str = "(none)",
 ) -> str:
     return f"""Write a software design + implementation plan for this Jira issue.
 
@@ -87,6 +94,9 @@ Summary: {summary}
 
 ## AI Research (approved context)
 {research or "(empty)"}
+
+## Human follow-up comments
+{comments_text or "(none)"}
 
 ## Linked issues
 {linked_issues_text or "(none)"}
