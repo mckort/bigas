@@ -157,6 +157,73 @@ def test_extract_jira_issue_key_from_pr_texts():
     assert extract_jira_issue_key("no key here") is None
 
 
+def test_build_implement_prompt_forbids_confirmation():
+    from bigas.resources.product.jira_automation.implement import build_implement_prompt
+
+    prompt = build_implement_prompt(
+        issue_key="VFA-14",
+        summary="Brand reports",
+        brief="logo",
+        research="research",
+        plan="plan",
+        comments_text="(none)",
+        repo="mckort/vcfieldassistant",
+    )
+    assert "Do NOT ask for confirmation" in prompt
+    assert "implement immediately" in prompt
+    assert "VFA-14:" in prompt
+    assert "Jira: VFA-14" in prompt
+
+
+def test_extract_pr_and_branch_from_cursor_payload():
+    from bigas.resources.cto.autofix.cursor_client import extract_pr_and_branch
+
+    pr, branch = extract_pr_and_branch(
+        {
+            "target": {
+                "branchName": "cursor/vfa-14-x",
+                "prUrl": "https://github.com/mckort/vcfieldassistant/pull/99",
+            }
+        }
+    )
+    assert branch == "cursor/vfa-14-x"
+    assert "pull/99" in pr
+
+
+def test_evaluate_implementation_outcome_finished_no_pr(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+
+    monkeypatch.setattr(impl, "lookup_pr_url_for_branch", lambda **_k: "")
+    out = impl.evaluate_implementation_outcome(
+        {
+            "status": "FINISHED",
+            "pr_url": "",
+            "branch_name": "cursor/gone",
+            "agent_url": "https://cursor.com/agents/abc",
+        },
+        repo="mckort/vcfieldassistant",
+    )
+    assert out["kind"] == "finished_no_pr"
+    assert "confirmation" in out["detail"].lower()
+
+
+def test_evaluate_implementation_outcome_pr_opened(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+
+    monkeypatch.setattr(impl, "lookup_pr_url_for_branch", lambda **_k: "")
+    out = impl.evaluate_implementation_outcome(
+        {
+            "status": "FINISHED",
+            "pr_url": "https://github.com/mckort/vcfieldassistant/pull/12",
+            "branch_name": "cursor/ok",
+            "agent_url": "https://cursor.com/agents/abc",
+        },
+        repo="mckort/vcfieldassistant",
+    )
+    assert out["kind"] == "pr_opened"
+    assert out["pr_url"].endswith("/pull/12")
+
+
 def test_config_maps_implement_status(monkeypatch):
     monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
     from bigas.resources.product.jira_automation.config import HANDLER_IMPLEMENT

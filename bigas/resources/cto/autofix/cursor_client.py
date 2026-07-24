@@ -161,8 +161,12 @@ class CursorCloudAgentClient:
             raise CursorCloudAgentError("No run_id available for agent")
         run = self.get_run(agent_id, rid)
         status = (run.get("status") or "").strip().upper()
+        # Some Cursor API versions expose status on the agent, not the run.
+        if not status:
+            status = (agent.get("status") or "").strip().upper()
         terminal = status in {"FINISHED", "ERROR", "CANCELLED", "EXPIRED"}
         agent_url = agent.get("url") or f"https://cursor.com/agents/{agent_id}"
+        pr_url, branch_name = extract_pr_and_branch(agent, run)
         return {
             "agent_id": agent_id,
             "run_id": rid,
@@ -170,12 +174,54 @@ class CursorCloudAgentClient:
             "done": terminal,
             "ok": status == "FINISHED",
             "agent_url": agent_url,
+            "pr_url": pr_url,
+            "branch_name": branch_name,
             "result_text": (run.get("result") or run.get("text") or "")
             if isinstance(run.get("result"), str)
             else (run.get("text") or ""),
             "run": run,
             "agent": agent,
         }
+
+
+def extract_pr_and_branch(*payloads: Any) -> tuple[str, str]:
+    """Best-effort PR URL + branch from Cursor agent/run payloads."""
+    pr_url = ""
+    branch_name = ""
+
+    def walk(obj: Any, depth: int = 0) -> None:
+        nonlocal pr_url, branch_name
+        if depth > 6 or obj is None:
+            return
+        if isinstance(obj, dict):
+            for key, val in obj.items():
+                lk = str(key).lower()
+                if isinstance(val, str) and val.strip():
+                    s = val.strip()
+                    if not pr_url and (
+                        lk in {"prurl", "pr_url", "pullrequesturl"}
+                        or ("github.com" in s and "/pull/" in s)
+                    ):
+                        pr_url = s
+                    if not branch_name and lk in {
+                        "branchname",
+                        "branch_name",
+                        "branch",
+                        "headref",
+                        "head_ref",
+                    }:
+                        branch_name = s
+                elif isinstance(val, (dict, list)):
+                    walk(val, depth + 1)
+        elif isinstance(obj, list):
+            for item in obj[:50]:
+                walk(item, depth + 1)
+
+    for payload in payloads:
+        walk(payload)
+        if pr_url and branch_name:
+            break
+    return pr_url, branch_name
 
     def _get_json(self, url: str) -> dict[str, Any]:
         try:
