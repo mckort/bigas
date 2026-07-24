@@ -321,11 +321,14 @@ class JiraAutomationService:
                 )
                 label = issue_discord_label(issue_key, result.get("summary"))
                 agent_url = result.get("agent_url") or ""
-                self._notify_cto(
-                    f"**Implementation started** {label}\n"
-                    f"Left in **In Progress (AI)** while Cursor works.\n"
-                    f"Repo: `{repo}` · Agent: {agent_url or result.get('agent_id')}"
-                )
+                outcome = result.get("outcome") or {}
+                # If sync-wait already classified the run, handler posted Discord.
+                if not outcome:
+                    self._notify_cto(
+                        f"**Implementation started** {label}\n"
+                        f"Left in **In Progress (AI)** while Cursor works.\n"
+                        f"Repo: `{repo}` · Agent: {agent_url or result.get('agent_id')}"
+                    )
         except (
             ResearchHandlerError,
             DesignHandlerError,
