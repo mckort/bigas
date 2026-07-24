@@ -54,6 +54,43 @@ class CursorCloudAgentClient:
         if model_id:
             payload["model"] = {"id": model_id}
 
+        return self._post_agent(payload, context=pr_url)
+
+    def launch_implementation(
+        self,
+        *,
+        repo_url: str,
+        prompt_text: str,
+        starting_ref: str = "main",
+        name: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Launch a cloud agent on a repo to implement work and open a new PR.
+
+        Creates a Cursor-generated branch from starting_ref and sets autoCreatePR.
+        """
+        ref = (starting_ref or "main").strip() or "main"
+        payload: dict[str, Any] = {
+            "prompt": {"text": prompt_text},
+            "repos": [
+                {
+                    "url": repo_url,
+                    "startingRef": ref,
+                }
+            ],
+            "workOnCurrentBranch": False,
+            "autoCreatePR": True,
+            "skipReviewerRequest": True,
+        }
+        if name:
+            payload["name"] = name[:100]
+        if model_id:
+            payload["model"] = {"id": model_id}
+
+        return self._post_agent(payload, context=repo_url)
+
+    def _post_agent(self, payload: dict[str, Any], *, context: str) -> dict[str, Any]:
         try:
             resp = requests.post(
                 f"{CURSOR_API_BASE}/agents",
@@ -84,7 +121,7 @@ class CursorCloudAgentClient:
         logger.info(
             "Launched Cursor cloud agent %s for %s (run=%s)",
             agent_id,
-            pr_url,
+            context,
             run.get("id"),
         )
         return {

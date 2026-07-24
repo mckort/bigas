@@ -292,6 +292,24 @@ class JiraClient:
         payload = {"body": _text_to_adf(text)}
         return self._request_with_retry_429("POST", url, json=payload)
 
+    def list_comments(
+        self,
+        issue_key: str,
+        *,
+        max_results: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Return issue comments (oldest first), up to max_results."""
+        key = (issue_key or "").strip()
+        if not key:
+            raise JiraError("issue_key is required")
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}/comment"
+        data = self._request_with_retry_429(
+            "GET",
+            url,
+            params={"maxResults": str(max(1, min(int(max_results), 100)))},
+        )
+        return list(data.get("comments") or [])
+
     def update_description(self, issue_key: str, description_markdown: str) -> None:
         """Replace issue description with markdown converted to ADF."""
         key = (issue_key or "").strip()

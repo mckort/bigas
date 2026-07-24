@@ -11,6 +11,7 @@ from bigas.resources.product.create_release_notes.jira_client import (
     JiraError,
     adf_to_plain_text,
 )
+from bigas.resources.product.jira_automation.comments import format_human_comments
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 from bigas.resources.product.jira_automation.description import (
     extract_brief,
@@ -116,6 +117,13 @@ class ResearchDescribeHandler:
         linked_keys = _linked_issue_keys(fields)
         linked_text = _format_linked_issues(self._jira, linked_keys)
 
+        try:
+            raw_comments = self._jira.list_comments(issue_key, max_results=50)
+        except JiraError:
+            logger.warning("Failed to load comments for %s", issue_key, exc_info=True)
+            raw_comments = []
+        comments_text = format_human_comments(raw_comments)
+
         hints = [summary]
         labels = fields.get("labels") or []
         hints.extend(str(l) for l in labels[:5])
@@ -131,6 +139,7 @@ class ResearchDescribeHandler:
             linked_issues_text=linked_text,
             repo_context=repo_context,
             web_context=web_context,
+            comments_text=comments_text,
         )
         try:
             research_body = self._llm.complete(
@@ -178,9 +187,11 @@ class ResearchDescribeHandler:
             "ok": True,
             "handler": "research_describe",
             "issue_key": issue_key,
+            "summary": summary,
             "model": self._model,
             "repo": repo,
             "linked_issues": linked_keys,
             "moved_to": approval_status,
             "research_chars": len(research_body),
+            "human_comments_included": comments_text != "(none)",
         }

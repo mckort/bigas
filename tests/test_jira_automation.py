@@ -10,7 +10,12 @@ from bigas.resources.product.create_release_notes.jira_client import (
     adf_to_plain_text,
     markdown_to_adf,
 )
+from bigas.resources.product.jira_automation.comments import (
+    format_human_comments,
+    issue_discord_label,
+)
 from bigas.resources.product.jira_automation.config import (
+    BIGAS_COMMENT_MARKER,
     HANDLER_DESIGN,
     HANDLER_RESEARCH,
     JiraAutomationConfig,
@@ -112,6 +117,55 @@ def test_config_maps_design_status(monkeypatch):
     assert cfg.status_design_approval == "Design approval (manual)"
 
 
+def test_format_human_comments_skips_bigas_marker():
+    comments = [
+        {
+            "created": "2026-07-24T10:00:00.000+0200",
+            "author": {"displayName": "Marcus"},
+            "body": {"type": "doc", "version": 1, "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Use PNG logos only"}]}
+            ]},
+        },
+        {
+            "created": "2026-07-24T10:01:00.000+0200",
+            "author": {"displayName": "Bigas"},
+            "body": {"type": "doc", "version": 1, "content": [
+                {"type": "paragraph", "content": [
+                    {"type": "text", "text": f"{BIGAS_COMMENT_MARKER} Research complete."}
+                ]}
+            ]},
+        },
+    ]
+    text = format_human_comments(comments)
+    assert "Use PNG logos only" in text
+    assert "Marcus" in text
+    assert BIGAS_COMMENT_MARKER not in text
+
+
+def test_issue_discord_label_includes_summary():
+    assert issue_discord_label("VFA-14", "Brand reports") == "`VFA-14` — Brand reports"
+    assert issue_discord_label("VFA-14", "") == "`VFA-14`"
+
+
+def test_extract_jira_issue_key_from_pr_texts():
+    from bigas.resources.product.jira_automation.final_approval import (
+        extract_jira_issue_key,
+    )
+
+    assert extract_jira_issue_key("VFA-14: Brand reports", "") == "VFA-14"
+    assert extract_jira_issue_key("title", "Jira: WAYW-3\nmore") == "WAYW-3"
+    assert extract_jira_issue_key("no key here") is None
+
+
+def test_config_maps_implement_status(monkeypatch):
+    monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
+    from bigas.resources.product.jira_automation.config import HANDLER_IMPLEMENT
+
+    cfg = JiraAutomationConfig.from_env()
+    assert cfg.handler_for_status("In Progress (AI)") == HANDLER_IMPLEMENT
+    assert cfg.default_base_branch == "main"
+
+
 def test_verify_webhook_secret_bearer_and_plain():
     assert verify_webhook_secret("s3cret", "s3cret")
     assert verify_webhook_secret("Bearer s3cret", "s3cret")
@@ -203,6 +257,7 @@ def test_handle_event_failure_clears_idempotency_and_quota(monkeypatch):
         status_design_approval="Design approval (manual)",
         status_final_approval="Final approval (manual)",
         daily_quota=5,
+        default_base_branch="main",
         discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
         discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
     )
