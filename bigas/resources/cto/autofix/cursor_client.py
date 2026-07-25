@@ -183,6 +183,24 @@ class CursorCloudAgentClient:
             "agent": agent,
         }
 
+    def _get_json(self, url: str) -> dict[str, Any]:
+        try:
+            resp = requests.get(url, auth=(self._api_key, ""), timeout=60)
+        except requests.RequestException as e:
+            raise CursorCloudAgentError(f"Cursor API request failed: {e}") from e
+        if resp.status_code in (401, 403):
+            raise CursorCloudAgentError(
+                f"Cursor API auth error {resp.status_code}: {resp.text[:300]}"
+            )
+        if resp.status_code >= 400:
+            raise CursorCloudAgentError(
+                f"Cursor API error {resp.status_code}: {resp.text[:500]}"
+            )
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            raise CursorCloudAgentError("Cursor API returned unexpected payload")
+        return data
+
 
 def extract_pr_and_branch(*payloads: Any) -> tuple[str, str]:
     """Best-effort PR URL + branch from Cursor agent/run payloads."""
@@ -222,21 +240,3 @@ def extract_pr_and_branch(*payloads: Any) -> tuple[str, str]:
         if pr_url and branch_name:
             break
     return pr_url, branch_name
-
-    def _get_json(self, url: str) -> dict[str, Any]:
-        try:
-            resp = requests.get(url, auth=(self._api_key, ""), timeout=60)
-        except requests.RequestException as e:
-            raise CursorCloudAgentError(f"Cursor API request failed: {e}") from e
-        if resp.status_code in (401, 403):
-            raise CursorCloudAgentError(
-                f"Cursor API auth error {resp.status_code}: {resp.text[:300]}"
-            )
-        if resp.status_code >= 400:
-            raise CursorCloudAgentError(
-                f"Cursor API error {resp.status_code}: {resp.text[:500]}"
-            )
-        data = resp.json() if resp.text else {}
-        if not isinstance(data, dict):
-            raise CursorCloudAgentError("Cursor API returned unexpected payload")
-        return data
