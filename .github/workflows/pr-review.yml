@@ -77,13 +77,13 @@ jobs:
           echo "Bigas returned 200 OK."
           cat response_body.txt || true
 
-      - name: Autofix loop (up to 3 rounds) + re-review
+      - name: Autofix loop (up to 5 rounds) + re-review
         if: ${{ vars.BIGAS_AUTO_FIX == 'true' }}
         env:
           BIGAS_URL: ${{ vars.BIGAS_URL }}
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          MAX_AUTOFIX_ROUNDS: "3"
+          MAX_AUTOFIX_ROUNDS: "5"
         run: |
           python3 <<'PY'
           import json, os, time, urllib.error, urllib.request
@@ -92,7 +92,7 @@ jobs:
           api_key = os.environ["BIGAS_API_KEY"]
           repo = os.environ["GITHUB_REPOSITORY"]
           pr_number = int(os.environ["PR_NUMBER"])
-          max_rounds = int(os.environ.get("MAX_AUTOFIX_ROUNDS") or "3")
+          max_rounds = int(os.environ.get("MAX_AUTOFIX_ROUNDS") or "5")
 
           def call(path, body_obj, timeout=180):
               data = json.dumps(body_obj).encode()
