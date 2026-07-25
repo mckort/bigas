@@ -5,7 +5,7 @@ import re
 from typing import Tuple
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
-DEFAULT_AUTOFIX_MAX_ITERATIONS = 3
+DEFAULT_AUTOFIX_MAX_ITERATIONS = 5
 
 
 def autofix_max_iterations() -> int:

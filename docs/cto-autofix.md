@@ -8,16 +8,16 @@ After Bigas posts a PR review comment, you can optionally launch a **Cursor clou
 PR opened/push
   → review_and_comment_pr → GitHub comment + Discord
        → if LGTM: Discord "Ready to merge" + Jira Final approval (if issue key on PR)
-  → if repo var BIGAS_AUTO_FIX=true (Actions loop, up to 3 rounds):
+  → if repo var BIGAS_AUTO_FIX=true (Actions loop, up to 5 rounds):
       → autofix_pr
           → skip if review is LGTM / nits-only
-          → skip with loop protection if PR already has ≥3 [bigas-autofix] commits
+          → skip with loop protection if PR already has ≥5 [bigas-autofix] commits
           → else launch Cursor cloud agent (workOnCurrentBranch)
       → poll autofix_followup until agent terminal
           → Discord: autofix completed / failed / without commits
           → re-review updated diff
           → if LGTM: Discord "Ready to merge" + Jira Final approval
-          → else if under 3 rounds: next autofix round with updated review
+          → else if under 5 rounds: next autofix round with updated review
           → else: Discord + Jira comment — loop protection, manual handling
 ```
 
@@ -32,7 +32,7 @@ No automerge in v1.
 Optional:
 
 - `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Omit to use Cursor’s default.
-- `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `3`) — max `[bigas-autofix]` commits per PR before loop protection.
+- `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection.
 
 ## Repo config
 
@@ -59,9 +59,9 @@ Copy the latest [pr-review.yml](../.github/workflows/pr-review.yml) so it includ
 ```
 
 - `force: true` bypasses clean-review and loop-protection guards (smoke/debug only).
-- Success (launched): `{ "success": true, "launched": true, "autofix_round": 2, "max_iterations": 3, ... }`
+- Success (launched): `{ "success": true, "launched": true, "autofix_round": 2, "max_iterations": 5, ... }`
 - Success (skipped): `{ "success": true, "skipped": true, "reason": "..." }`
-- Loop protection: `{ "skipped": true, "loop_protection": true, "autofix_count": 3, ... }`
+- Loop protection: `{ "skipped": true, "loop_protection": true, "autofix_count": 5, ... }`
 
 ### `POST /mcp/tools/autofix_followup`
 
@@ -87,5 +87,5 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 
 - Skip when review looks like LGTM / no actionable findings
 - Skip when only non-blocking nits
-- Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 3) commits containing `[bigas-autofix]`
+- Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) commits containing `[bigas-autofix]`
 - Agent prompt requires that marker in any commits it creates
