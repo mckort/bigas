@@ -5,6 +5,21 @@ import re
 from typing import Tuple
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
+DEFAULT_AUTOFIX_MAX_ITERATIONS = 3
+
+
+def autofix_max_iterations() -> int:
+    """Max automatic autofix rounds per PR (env BIGAS_CTO_AUTOFIX_MAX_ITERATIONS)."""
+    import os
+
+    raw = (os.environ.get("BIGAS_CTO_AUTOFIX_MAX_ITERATIONS") or "").strip()
+    if not raw:
+        return DEFAULT_AUTOFIX_MAX_ITERATIONS
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_AUTOFIX_MAX_ITERATIONS
+
 
 _CLEAN = re.compile(
     r"(?i)\b(looks good( to me)?|lgtm|safe to merge|no (blocking )?issues|"

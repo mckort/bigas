@@ -11,7 +11,7 @@ from bigas.resources.cto.autofix.cursor_client import (
 )
 from bigas.resources.cto.autofix.heuristics import (
     AUTOFIX_COMMIT_MARKER,
-    latest_commit_is_autofix,
+    autofix_max_iterations,
     review_needs_autofix,
 )
 from bigas.resources.cto.pr_review.github_client import (
@@ -102,6 +102,7 @@ class AutofixService:
         owner, repo_name = repo.split("/", 1)
         pr_url = f"https://github.com/{repo}/pull/{pr_number}"
         repo_url = f"https://github.com/{repo}"
+        max_iters = autofix_max_iterations()
 
         gh = GitHubPRCommentClient(token=self._github_token)
 
@@ -109,14 +110,24 @@ class AutofixService:
             head_sha, head_message = gh.get_pr_head_commit(
                 owner=owner, repo=repo_name, pr_number=pr_number
             )
+            autofix_count = gh.count_autofix_commits(
+                owner, repo_name, pr_number, marker=AUTOFIX_COMMIT_MARKER
+            )
         except GitHubPRCommentError as e:
             raise AutofixError(str(e)) from e
 
-        if latest_commit_is_autofix(head_message) and not force:
+        if autofix_count >= max_iters and not force:
             return {
                 "skipped": True,
-                "reason": f"latest commit already autofix ({head_sha[:8]})",
+                "loop_protection": True,
+                "reason": (
+                    f"loop protection: {autofix_count}/{max_iters} autofix rounds "
+                    f"already on this PR — remaining review comments need manual handling"
+                ),
                 "pr_url": pr_url,
+                "autofix_count": autofix_count,
+                "max_iterations": max_iters,
+                "head_sha": head_sha,
             }
 
         body = (review_body or "").strip()
@@ -135,6 +146,8 @@ class AutofixService:
                     "skipped": True,
                     "reason": "no Bigas review comment found on PR",
                     "pr_url": pr_url,
+                    "autofix_count": autofix_count,
+                    "max_iterations": max_iters,
                 }
             body = found
 
@@ -145,8 +158,12 @@ class AutofixService:
                     "skipped": True,
                     "reason": reason,
                     "pr_url": pr_url,
+                    "autofix_count": autofix_count,
+                    "max_iterations": max_iters,
+                    "review_clean": True,
                 }
 
+        next_round = autofix_count + 1
         prompt = _build_prompt(
             repo=repo, pr_number=pr_number, pr_url=pr_url, review_body=body
         )
@@ -156,7 +173,7 @@ class AutofixService:
                 repo_url=repo_url,
                 pr_url=pr_url,
                 prompt_text=prompt,
-                name=f"Bigas autofix {repo}#{pr_number}",
+                name=f"Bigas autofix {repo}#{pr_number} ({next_round}/{max_iters})",
                 model_id=self._cursor_model,
             )
         except CursorCloudAgentError as e:
@@ -170,6 +187,11 @@ class AutofixService:
             "agent_url": launched.get("agent_url") or "",
             "run_id": launched.get("run_id") or "",
             "forced": bool(force),
+            "autofix_count": autofix_count,
+            "autofix_round": next_round,
+            "max_iterations": max_iters,
+            "head_sha": head_sha,
+            "head_was_autofix": AUTOFIX_COMMIT_MARKER in (head_message or ""),
         }
 
     def poll_status(
@@ -192,6 +214,16 @@ class AutofixService:
         try:
             return gh.get_pr_head_commit(
                 owner=owner, repo=repo_name, pr_number=pr_number
+            )
+        except GitHubPRCommentError as e:
+            raise AutofixError(str(e)) from e
+
+    def count_autofix_commits(self, *, repo: str, pr_number: int) -> int:
+        owner, repo_name = repo.split("/", 1)
+        gh = GitHubPRCommentClient(token=self._github_token)
+        try:
+            return gh.count_autofix_commits(
+                owner, repo_name, pr_number, marker=AUTOFIX_COMMIT_MARKER
             )
         except GitHubPRCommentError as e:
             raise AutofixError(str(e)) from e

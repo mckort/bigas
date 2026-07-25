@@ -202,3 +202,62 @@ class GitHubPRCommentClient:
                 f"GitHub API error {resp.status_code}: {resp.text[:300]}"
             )
         return resp.text or ""
+
+    def list_pr_commit_messages(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        *,
+        max_commits: int = 250,
+    ) -> list[str]:
+        """Return commit messages on the PR (newest last), paginated."""
+        messages: list[str] = []
+        page = 1
+        per_page = 100
+        while len(messages) < max_commits:
+            url = (
+                f"https://api.github.com/repos/{owner}/{repo}/pulls/"
+                f"{pr_number}/commits"
+            )
+            resp = requests.get(
+                url,
+                headers=self._headers,
+                params={"per_page": per_page, "page": page},
+                timeout=30,
+            )
+            if resp.status_code == 404:
+                raise GitHubPRCommentError(
+                    f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+                )
+            if resp.status_code == 401:
+                raise GitHubPRCommentError("GitHub token is invalid or expired.")
+            if resp.status_code == 403:
+                raise GitHubPRCommentError(
+                    "GitHub returned 403. Check token scopes and rate limits."
+                )
+            resp.raise_for_status()
+            batch = resp.json() if resp.text else []
+            if not isinstance(batch, list) or not batch:
+                break
+            for item in batch:
+                msg = ((item.get("commit") or {}).get("message") or "").strip()
+                messages.append(msg)
+                if len(messages) >= max_commits:
+                    break
+            if len(batch) < per_page:
+                break
+            page += 1
+        return messages
+
+    def count_autofix_commits(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        *,
+        marker: str = "[bigas-autofix]",
+    ) -> int:
+        """Count PR commits whose message contains the autofix marker."""
+        messages = self.list_pr_commit_messages(owner, repo, pr_number)
+        return sum(1 for m in messages if marker in m)

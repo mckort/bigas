@@ -42,6 +42,17 @@ def test_autofix_commit_marker():
     assert not latest_commit_is_autofix("fix: auth")
 
 
+def test_autofix_max_iterations_env(monkeypatch):
+    from bigas.resources.cto.autofix.heuristics import autofix_max_iterations
+
+    monkeypatch.delenv("BIGAS_CTO_AUTOFIX_MAX_ITERATIONS", raising=False)
+    assert autofix_max_iterations() == 3
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_MAX_ITERATIONS", "5")
+    assert autofix_max_iterations() == 5
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_MAX_ITERATIONS", "0")
+    assert autofix_max_iterations() == 1
+
+
 def test_autofix_prompt_forbids_confirmation():
     prompt = _build_prompt(
         repo="mckort/bigas",
