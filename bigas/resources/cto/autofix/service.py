@@ -37,9 +37,9 @@ Pull request: {pr_url}
 {review_body}
 
 ## Instructions
-1. Fix only clear, actionable problems called out in the review (bugs, broken behavior, security, must-fix / blocking items).
-2. Skip pure nits and non-blocking style suggestions unless they are trivial one-line fixes already implied by the review.
-3. Do not expand scope, refactor unrelated code, or change public APIs unless required by a finding.
+1. Fix all Blockers and Important items called out in the review.
+2. Also fix Minor items listed in the same review — they ride along in this round when Blockers/Important already triggered autofix.
+3. Do not invent extra polish beyond what the review lists. Do not expand scope or refactor unrelated code.
 4. Push commits directly to this PR's head branch (already checked out for you).
 5. Every commit message you create MUST include the exact marker `{AUTOFIX_COMMIT_MARKER}`.
 6. Do not merge the PR, do not force-push, do not rewrite history, and do not open a new PR.

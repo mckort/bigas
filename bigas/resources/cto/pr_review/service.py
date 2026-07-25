@@ -11,8 +11,9 @@ from typing import Optional
 from bigas.llm.factory import get_llm_client
 
 from bigas.resources.cto.pr_review.prompts import (
-    PR_REVIEW_SYSTEM_PROMPT,
+    ReviewPhase,
     build_pr_review_user_prompt,
+    system_prompt_for_phase,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,9 @@ class PRReviewService:
         self,
         diff: str,
         instructions: Optional[str] = None,
+        *,
+        phase: ReviewPhase = "initial",
+        previous_review: Optional[str] = None,
     ) -> str:
         """
         Run AI review on the given diff. Returns markdown review text.
@@ -97,15 +101,26 @@ class PRReviewService:
             diff = diff[:max_chars] + "\n\n... (diff truncated for length)\n"
             truncated_note = f"_Review is based on the first {max_chars} characters of the diff._\n\n"
 
-        user_prompt = build_pr_review_user_prompt(diff=diff, instructions=instructions)
+        if phase not in {"initial", "post_autofix"}:
+            phase = "initial"
+
+        user_prompt = build_pr_review_user_prompt(
+            diff=diff,
+            instructions=instructions,
+            phase=phase,
+            previous_review=previous_review,
+        )
+        system_prompt = system_prompt_for_phase(phase)
+        # Slightly lower temperature for more consistent, checklist-driven reviews.
+        temperature = 0.1 if phase == "initial" else 0.0
         try:
             content = self._llm.complete(
                 messages=[
-                    {"role": "system", "content": PR_REVIEW_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=_max_review_tokens(),
-                temperature=0.3,
+                temperature=temperature,
             )
         except Exception as e:
             logger.error("PR review LLM call failed", exc_info=True)

@@ -241,9 +241,26 @@ def review_and_comment_pr():
     owner, repo_name = repo.split("/", 1)
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
 
+    previous_review = None
+    if phase == "post_autofix":
+        try:
+            previous_review = GitHubPRCommentClient(token=github_token).get_marked_comment_body(
+                owner=owner,
+                repo=repo_name,
+                pr_number=pr_number,
+                marker=BIGAS_REVIEW_MARKER,
+            )
+        except GitHubPRCommentError:
+            logger.warning("Could not load previous Bigas review for post_autofix", exc_info=True)
+
     try:
         review_service = PRReviewService(openai_model=llm_model)
-        review_body = review_service.review(diff=diff, instructions=instructions)
+        review_body = review_service.review(
+            diff=diff,
+            instructions=instructions,
+            phase=phase,  # type: ignore[arg-type]
+            previous_review=previous_review,
+        )
     except PRReviewError as e:
         logger.warning("PR review failed: %s", e)
         _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
@@ -540,10 +557,25 @@ def autofix_followup():
         )
         return jsonify({"error": err, **base, "finalized": True, "rereviewed": False}), 502
 
+    gh_token = github_token or os.environ.get("GITHUB_TOKEN") or ""
     _post_to_discord_cto(f"**CTO PR re-review after autofix started**\nPR: {pr_url}")
+    previous_review = None
+    try:
+        previous_review = GitHubPRCommentClient(token=gh_token).get_marked_comment_body(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            marker=BIGAS_REVIEW_MARKER,
+        )
+    except GitHubPRCommentError:
+        logger.warning("Could not load previous Bigas review before post_autofix", exc_info=True)
     try:
         review_service = PRReviewService()
-        review_body = review_service.review(diff=diff)
+        review_body = review_service.review(
+            diff=diff,
+            phase="post_autofix",
+            previous_review=previous_review,
+        )
     except PRReviewError as e:
         err = sanitize_error_message(str(e))
         _post_to_discord_cto(
@@ -557,7 +589,6 @@ def autofix_followup():
             + "\n\n---\n\n_Review truncated for GitHub comment length._"
         )
 
-    gh_token = github_token or os.environ.get("GITHUB_TOKEN") or ""
     comment_url = ""
     try:
         client = GitHubPRCommentClient(token=gh_token)

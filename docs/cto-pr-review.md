@@ -42,6 +42,7 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
   - `pr_number` (required): integer
   - `diff` (required): PR diff text (e.g. from `git diff main...HEAD` or GitHub API)
   - `instructions` (optional): extra instructions for the reviewer
+  - `phase` (optional): `"initial"` (default) or `"post_autofix"`. Initial reviews use an exhaustive checklist prompt; post-autofix reviews verify the previous Bigas comment and only raise new blockers/important issues.
   - `github_token` (optional): override GitHub PAT (if not using `GITHUB_TOKEN` env)
   - `llm_model` (optional): override model for this request
 
