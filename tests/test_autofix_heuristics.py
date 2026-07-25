@@ -37,6 +37,41 @@ def test_important_runs():
     assert "actionable" in reason
 
 
+def test_structured_important_runs():
+    ok, reason = review_needs_autofix(
+        "### Blockers\nNone.\n\n"
+        "### Important\n"
+        "- Validate body.samples before writing to Firestore.\n\n"
+        "### Minor\n"
+        "- Consider extracting a helper.\n\n"
+        "Otherwise solid.\n"
+    )
+    assert ok is True
+    assert "actionable" in reason
+
+
+def test_structured_minor_only_skips():
+    ok, reason = review_needs_autofix(
+        "### Blockers\nNone.\n\n"
+        "### Important\nNone.\n\n"
+        "### Minor\n"
+        "- Consider extracting a helper.\n\n"
+        "Ready to merge.\n"
+    )
+    assert ok is False
+    assert "nit" in reason or "non-blocking" in reason
+
+
+def test_soft_consider_only_skips():
+    ok, reason = review_needs_autofix(
+        "A few optional polish items:\n"
+        "- Consider adding an AbortController for polling.\n"
+        "- Consider leaving a TODO for the duplicate query.\n"
+        "The rest of the implementation looks solid and ready to merge!\n"
+    )
+    assert ok is False
+
+
 def test_autofix_commit_marker():
     assert latest_commit_is_autofix("fix: auth [bigas-autofix]")
     assert not latest_commit_is_autofix("fix: auth")
@@ -62,6 +97,8 @@ def test_autofix_prompt_forbids_confirmation():
     )
     assert "Do NOT ask for confirmation" in prompt
     assert "apply the fixes and push commits immediately" in prompt
+    assert "Also fix Minor items" in prompt
+    assert "Fix all Blockers and Important" in prompt
 
 
 def test_autofix_looks_like_confirmation_stop():

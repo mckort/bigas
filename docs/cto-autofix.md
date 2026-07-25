@@ -86,6 +86,9 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 ## Guards
 
 - Skip when review looks like LGTM / no actionable findings
-- Skip when only non-blocking nits
+- Skip when only non-blocking nits (including structured `### Minor` with empty Blockers/Important)
+- Skip soft-only language (`consider`, `TODO`, `optional`) unless Blockers/Important are present
+- When autofix *does* run (Blockers/Important present), the agent also fixes Minor items from the same review
 - Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) commits containing `[bigas-autofix]`
 - Agent prompt requires that marker in any commits it creates
+- Re-review after autofix uses a verification prompt and the previous Bigas comment, so it should not invent a fresh set of nits each round
