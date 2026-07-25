@@ -32,7 +32,8 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
 
 2. **OpenAI API**
    - `OPENAI_API_KEY` must be set (already required for other Bigas features).
-   - Optional: `BIGAS_CTO_PR_REVIEW_MODEL` to override the model (default: `gemini-3.1-pro-preview`).
+   - Optional: `BIGAS_CTO_PR_REVIEW_MODEL` to override the model (default: `gemini-3.1-pro-preview`; recommended: `gemini-pro-latest`).
+   - Optional: `BIGAS_CTO_PR_REVIEW_MAX_TOKENS` (default `8000`, max `16000`) for longer reviews.
 
 ## Request
 
