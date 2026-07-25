@@ -25,6 +25,7 @@ from bigas.resources.cto.pr_review.github_client import (
     GitHubPRCommentError,
 )
 from bigas.resources.cto.pr_review.service import PRReviewError, PRReviewService
+from bigas.discord_webhook import post_long_to_discord, post_to_discord
 from bigas.resources.marketing.utils import sanitize_error_message
 
 cto_bp = Blueprint(
@@ -122,45 +123,30 @@ def _notify_autofix_loop_protection(
         logger.warning("Loop-protection Jira comment failed", exc_info=True)
 
 
+def _cto_discord_webhook() -> str:
+    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
+    if not webhook or webhook.startswith("placeholder"):
+        return ""
+    return webhook
+
+
 def _post_to_discord_cto(message: str) -> None:
     """Post to CTO Discord channel if DISCORD_WEBHOOK_URL_CTO is set (e.g. from Secret Manager).
     Callers must pass only sanitized messages (use sanitize_error_message for errors) to avoid leaking tokens.
     """
-    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
-    if not webhook or webhook.startswith("placeholder"):
+    webhook = _cto_discord_webhook()
+    if not webhook:
         logger.info("DISCORD_WEBHOOK_URL_CTO not set or placeholder, skipping Discord post")
         return
-    if len(message) > 2000:
-        message = message[:1997] + "..."
-    try:
-        resp = requests.post(webhook, json={"content": message}, timeout=20)
-        if resp.status_code != 204:
-            logger.warning("CTO Discord post failed: %s %s", resp.status_code, resp.text[:200])
-        else:
-            logger.info("CTO Discord post succeeded")
-    except Exception:
-        logger.warning("CTO Discord post failed", exc_info=True)
+    post_to_discord(webhook, message)
 
 
-def _post_to_discord_cto_chunks(message: str, *, chunk_size: int = 1900) -> None:
-    """Post long content to CTO Discord in multiple messages. Discord limit 2000 chars; we use chunk_size margin."""
-    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
-    if not webhook or webhook.startswith("placeholder"):
+def _post_to_discord_cto_chunks(message: str) -> None:
+    """Post long CTO content via the shared Discord long-message helper."""
+    webhook = _cto_discord_webhook()
+    if not webhook or not (message or "").strip():
         return
-    if not message:
-        return
-    msg = message.strip()
-    if len(msg) <= 2000:
-        _post_to_discord_cto(msg)
-        return
-    start = 0
-    while start < len(msg):
-        end = min(start + chunk_size, len(msg))
-        nl = msg.rfind("\n", start, end)
-        if nl > start + 200:
-            end = nl
-        _post_to_discord_cto(msg[start:end].strip())
-        start = end
+    post_long_to_discord(webhook, message.strip())
 
 
 @cto_bp.route("/review_and_comment_pr", methods=["POST"])
