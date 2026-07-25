@@ -6375,72 +6375,8 @@ def send_discord_message(message: str) -> bool:
     return post_to_discord(webhook_url, message)
 
 
-def post_to_discord(webhook_url, message: str) -> bool:
-    """
-    Post a single message to Discord, truncating hard at 2000 characters.
-    Returns True if the request succeeded (HTTP 204), False otherwise.
-
-    NOTE: For longer, multi-part messages use post_long_to_discord instead.
-    """
-    if (
-        not webhook_url
-        or webhook_url.strip() == ""
-        or webhook_url.strip().lower().startswith("placeholder")
-    ):
-        logger.info("Discord webhook URL not provided or is placeholder, skipping Discord notification")
-        return False
-
-    if len(message) > 2000:
-        message = message[:1997] + "..."
-    data = {"content": message}
-    try:
-        response = requests.post(
-            webhook_url,
-            json=data,
-            timeout=DISCORD_HTTP_TIMEOUT,
-        )
-        if response.status_code != 204:
-            logger.error(f"Failed to post to Discord: {response.status_code}, {response.text}")
-            return False
-        logger.info("Successfully posted to Discord")
-        return True
-    except Exception as e:
-        logger.error(f"Error posting to Discord: {e}")
-        return False
-
-
-def post_long_to_discord(webhook_url: str, text: str, chunk_size: int = 1900):
-    """
-    Post a long markdown-like text to Discord, splitting it into multiple
-    messages that respect Discord's 2000 character limit.
-
-    Splits on newline boundaries where possible to keep sections readable.
-    """
-    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placeholder"):
-        logger.info("Discord webhook URL not provided or is placeholder, skipping Discord notification")
-        return
-
-    lines = text.split("\n")
-    parts = []
-    current_lines = []
-    current_len = 0
-
-    for line in lines:
-        # +1 accounts for the newline we'll reinsert
-        projected = current_len + len(line) + 1
-        if projected > chunk_size and current_lines:
-            parts.append("\n".join(current_lines))
-            current_lines = [line]
-            current_len = len(line) + 1
-        else:
-            current_lines.append(line)
-            current_len += len(line) + 1
-
-    if current_lines:
-        parts.append("\n".join(current_lines))
-
-    for part in parts:
-        post_to_discord(webhook_url, part)
+# Backwards-compatible re-exports (canonical implementation: bigas.discord_webhook).
+from bigas.discord_webhook import post_long_to_discord, post_to_discord  # noqa: E402
 
 @marketing_bp.route('/openapi.json', methods=['GET'])
 def openapi_spec():

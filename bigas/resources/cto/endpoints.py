@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 
 import requests
 from flask import Blueprint, jsonify, request
@@ -26,6 +25,7 @@ from bigas.resources.cto.pr_review.github_client import (
     GitHubPRCommentError,
 )
 from bigas.resources.cto.pr_review.service import PRReviewError, PRReviewService
+from bigas.discord_webhook import post_long_to_discord, post_to_discord
 from bigas.resources.marketing.utils import sanitize_error_message
 
 cto_bp = Blueprint(
@@ -123,86 +123,30 @@ def _notify_autofix_loop_protection(
         logger.warning("Loop-protection Jira comment failed", exc_info=True)
 
 
+def _cto_discord_webhook() -> str:
+    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
+    if not webhook or webhook.startswith("placeholder"):
+        return ""
+    return webhook
+
+
 def _post_to_discord_cto(message: str) -> None:
     """Post to CTO Discord channel if DISCORD_WEBHOOK_URL_CTO is set (e.g. from Secret Manager).
     Callers must pass only sanitized messages (use sanitize_error_message for errors) to avoid leaking tokens.
     """
-    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
-    if not webhook or webhook.startswith("placeholder"):
+    webhook = _cto_discord_webhook()
+    if not webhook:
         logger.info("DISCORD_WEBHOOK_URL_CTO not set or placeholder, skipping Discord post")
         return
-    if len(message) > 2000:
-        message = message[:1997] + "..."
-    # Discord webhooks allow ~5 requests / 2s; retry briefly on 429 so chunked
-    # reviews are not silently truncated after the first message.
-    for attempt in range(4):
-        try:
-            resp = requests.post(webhook, json={"content": message}, timeout=20)
-            if resp.status_code == 204:
-                logger.info("CTO Discord post succeeded")
-                return
-            if resp.status_code == 429:
-                retry_after = 1.0
-                try:
-                    retry_after = float(resp.headers.get("Retry-After") or "1")
-                except ValueError:
-                    retry_after = 1.0
-                time.sleep(min(max(retry_after, 0.5), 5.0))
-                continue
-            logger.warning("CTO Discord post failed: %s %s", resp.status_code, resp.text[:200])
-            return
-        except Exception:
-            logger.warning("CTO Discord post failed", exc_info=True)
-            return
-    logger.warning("CTO Discord post failed after retries (rate limited)")
+    post_to_discord(webhook, message)
 
 
-def _discord_chunk_end(msg: str, start: int, chunk_size: int) -> int:
-    """Pick a chunk boundary that prefers paragraph / heading breaks over mid-line cuts."""
-    end = min(start + chunk_size, len(msg))
-    if end >= len(msg):
-        return end
-    para = msg.rfind("\n\n", start, end)
-    if para > start + 120:
-        return para + 2
-    heading = msg.rfind("\n### ", start, end)
-    if heading > start + 120:
-        return heading + 1
-    nl = msg.rfind("\n", start, end)
-    if nl > start + 120:
-        return nl + 1
-    return end
-
-
-def _post_to_discord_cto_chunks(message: str, *, chunk_size: int = 1800) -> None:
-    """Post long content to CTO Discord in multiple messages. Discord limit 2000 chars; we use chunk_size margin."""
-    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
-    if not webhook or webhook.startswith("placeholder"):
+def _post_to_discord_cto_chunks(message: str) -> None:
+    """Post long CTO content via the shared Discord long-message helper."""
+    webhook = _cto_discord_webhook()
+    if not webhook or not (message or "").strip():
         return
-    if not message:
-        return
-    msg = message.strip()
-    if len(msg) <= 2000:
-        _post_to_discord_cto(msg)
-        return
-    start = 0
-    part = 0
-    while start < len(msg):
-        end = _discord_chunk_end(msg, start, chunk_size)
-        if end <= start:
-            end = min(start + chunk_size, len(msg))
-        chunk = msg[start:end].strip()
-        if chunk:
-            part += 1
-            # Label continuations so partial delivery is obvious in Discord.
-            prefix = f"_(continued {part})_\n" if part > 1 else ""
-            body = prefix + chunk
-            if len(body) > 2000:
-                body = body[:1997] + "..."
-            _post_to_discord_cto(body)
-            # Stay under Discord webhook rate limits between chunks.
-            time.sleep(0.45)
-        start = end
+    post_long_to_discord(webhook, message.strip())
 
 
 @cto_bp.route("/review_and_comment_pr", methods=["POST"])
