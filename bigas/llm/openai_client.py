@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import openai
 
 from bigas.llm.client import LLMClient
+from bigas.llm.completion import LLMCompletion
 
 
 class OpenAILLMClient(LLMClient):
@@ -28,6 +29,21 @@ class OpenAILLMClient(LLMClient):
         temperature: Optional[float] = None,
         **kwargs: Any,
     ) -> str:
+        return self.complete_detailed(
+            messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            **kwargs,
+        ).text
+
+    def complete_detailed(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        **kwargs: Any,
+    ) -> LLMCompletion:
         completion = self._client.chat.completions.create(
             model=self._model,
             messages=messages,
@@ -35,5 +51,9 @@ class OpenAILLMClient(LLMClient):
             temperature=temperature,
             **kwargs,
         )
-        return (completion.choices[0].message.content or "").strip()
-
+        choice = completion.choices[0]
+        finish = getattr(choice, "finish_reason", None)
+        return LLMCompletion(
+            text=(choice.message.content or "").strip(),
+            finish_reason=str(finish) if finish is not None else None,
+        )

@@ -29,8 +29,18 @@ except ImportError:  # pragma: no cover - optional dependency
     _SAFETY_BLOCK_NONE = []
 
 from bigas.llm.client import LLMClient
+from bigas.llm.completion import LLMCompletion
 
 logger = logging.getLogger(__name__)
+
+
+def _finish_reason_str(finish_reason: Any) -> Optional[str]:
+    if finish_reason is None:
+        return None
+    name = getattr(finish_reason, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    return str(finish_reason)
 
 
 class GeminiLLMClient(LLMClient):
@@ -63,6 +73,21 @@ class GeminiLLMClient(LLMClient):
         temperature: Optional[float] = None,
         **kwargs: Any,
     ) -> str:
+        return self.complete_detailed(
+            messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            **kwargs,
+        ).text
+
+    def complete_detailed(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        **kwargs: Any,
+    ) -> LLMCompletion:
         # Split system instruction from conversation so we match browser/API behavior.
         # System message(s) go into GenerativeModel(system_instruction=...); the rest are chat.
         system_parts: List[str] = []
@@ -78,13 +103,23 @@ class GeminiLLMClient(LLMClient):
                 rest.append({"role": "model" if role == "assistant" else "user", "parts": [content]})
 
         if not rest:
-            return ""
+            return LLMCompletion(text="", finish_reason=None)
 
-        generation_config = {}
+        generation_config: Dict[str, Any] = {}
         if max_tokens is not None:
             generation_config["max_output_tokens"] = max_tokens
         if temperature is not None:
             generation_config["temperature"] = temperature
+        # Cap thinking so long reviews keep budget for visible text. Gemini thinking
+        # models share max_output_tokens between thinking + answer.
+        thinking_budget = kwargs.pop("thinking_budget", None)
+        if thinking_budget is not None:
+            try:
+                generation_config["thinking_config"] = {
+                    "thinking_budget": int(thinking_budget),
+                }
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid thinking_budget=%r", thinking_budget)
         extra_cfg = kwargs.pop("generation_config", None)
         if isinstance(extra_cfg, dict):
             generation_config.update(extra_cfg)
@@ -120,15 +155,44 @@ class GeminiLLMClient(LLMClient):
                     safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
                     **kwargs,
                 )
-        except Exception as e:
-            logger.error("Gemini API call failed in complete()", exc_info=True)
-            raise
+        except Exception:
+            # Retry once without thinking_config if the SDK/model rejects it.
+            if "thinking_config" in (generation_config or {}):
+                logger.warning(
+                    "Gemini call failed with thinking_config; retrying without it.",
+                    exc_info=True,
+                )
+                generation_config.pop("thinking_config", None)
+                gen_cfg = generation_config if generation_config else None
+                try:
+                    if len(rest) == 1 and rest[0]["role"] == "user":
+                        response = model.generate_content(
+                            rest[0]["parts"][0],
+                            generation_config=gen_cfg,
+                            safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
+                            **kwargs,
+                        )
+                    else:
+                        chat = model.start_chat(history=rest[:-1])
+                        response = chat.send_message(
+                            rest[-1]["parts"][0],
+                            generation_config=gen_cfg,
+                            safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
+                            **kwargs,
+                        )
+                except Exception:
+                    logger.error("Gemini API call failed in complete_detailed()", exc_info=True)
+                    raise
+            else:
+                logger.error("Gemini API call failed in complete_detailed()", exc_info=True)
+                raise
 
-        # Inspect candidates/parts for text content.
         candidates = getattr(response, "candidates", None) or []
         if not candidates:
-            return ""
+            return LLMCompletion(text="", finish_reason=None)
         candidate = candidates[0]
+        finish_reason = _finish_reason_str(getattr(candidate, "finish_reason", None))
+
         content = getattr(candidate, "content", None)
         parts = getattr(content, "parts", None) if content else None or []
 
@@ -143,7 +207,7 @@ class GeminiLLMClient(LLMClient):
             if isinstance(part_text, str) and part_text.strip():
                 text_parts.append(part_text.strip())
         if text_parts:
-            return "\n".join(text_parts)
+            return LLMCompletion(text="\n".join(text_parts), finish_reason=finish_reason)
 
         # Fallback: do NOT use response.text / candidate.text — those SDK "quick
         # accessors" raise ValueError when no valid Part exists (e.g. MAX_TOKENS
@@ -171,17 +235,14 @@ class GeminiLLMClient(LLMClient):
                         "Gemini fallback extracted %d text string(s) from response.to_dict().",
                         len(found),
                     )
-                    return "\n".join(found)
+                    return LLMCompletion(text="\n".join(found), finish_reason=finish_reason)
         except Exception:
-            # Keep behavior conservative: if we can't extract text, treat as empty.
             pass
 
-        finish_reason = getattr(candidate, "finish_reason", None)
         safety_ratings = getattr(candidate, "safety_ratings", None)
         logger.warning(
             "Gemini response had no text parts (finish_reason=%s, safety_ratings=%s).",
             finish_reason,
             safety_ratings,
         )
-        return ""
-
+        return LLMCompletion(text="", finish_reason=finish_reason)

@@ -33,7 +33,8 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
 2. **OpenAI API**
    - `OPENAI_API_KEY` must be set (already required for other Bigas features).
    - Optional: `BIGAS_CTO_PR_REVIEW_MODEL` to override the model (default: `gemini-3.1-pro-preview`; recommended: `gemini-pro-latest`).
-   - Optional: `BIGAS_CTO_PR_REVIEW_MAX_TOKENS` (default `8000`, max `16000`) for longer reviews.
+   - Optional: `BIGAS_CTO_PR_REVIEW_MAX_TOKENS` (default `8000`, max `65536`) for longer reviews.
+   - Optional: `BIGAS_CTO_PR_REVIEW_THINKING_BUDGET` (default `8192`) and `BIGAS_CTO_PR_REVIEW_MAX_CONTINUATIONS` (default `3`) to avoid mid-review cutoffs on Gemini thinking models.
 
 ## Request
 
@@ -94,9 +95,10 @@ Diffs larger than 150,000 characters are truncated and a note is prepended to th
 
 ## Review length / tokens
 
-The length of the generated review is controlled by the `BIGAS_CTO_PR_REVIEW_MAX_TOKENS` environment variable:
+The length of the generated review is controlled by these environment variables:
 
-- Default: `8000` tokens (if the env var is unset or invalid).
-- Minimum: `1000`, maximum: `16000` (values outside this range are clamped).
+- `BIGAS_CTO_PR_REVIEW_MAX_TOKENS` — max output tokens per generation call (default `8000`, min `1000`, max `65536`).
+- `BIGAS_CTO_PR_REVIEW_THINKING_BUDGET` — Gemini thinking budget (default `8192`; set `0`/`off` to omit). Thinking shares the output token budget on Gemini thinking models, so capping it leaves room for the visible review.
+- `BIGAS_CTO_PR_REVIEW_MAX_CONTINUATIONS` — if the model hits `MAX_TOKENS` (or the text looks mid-cut), Bigas continues generation up to this many extra calls (default `3`).
 
-This value is passed as `max_tokens` to the LLM client. If you consistently see reviews ending mid‑sentence in both GitHub and Discord, you can increase this value (within provider limits) to allow longer reviews.
+If reviews still end mid‑sentence, raise `BIGAS_CTO_PR_REVIEW_MAX_TOKENS` and/or lower the thinking budget.
