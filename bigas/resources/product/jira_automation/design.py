@@ -26,7 +26,7 @@ from bigas.resources.product.jira_automation.prompts import (
 )
 from bigas.resources.product.jira_automation.research import (
     _format_linked_issues,
-    _linked_issue_keys,
+    _linked_issue_entries,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,8 +82,9 @@ class DesignPlanHandler:
         brief = extract_brief(description_plain) or description_plain or summary
         research = extract_section(description_plain, RESEARCH_HEADING)
 
-        linked_keys = _linked_issue_keys(fields)
-        linked_text = _format_linked_issues(self._jira, linked_keys)
+        linked_entries = _linked_issue_entries(fields)
+        linked_keys = [e["key"] for e in linked_entries]
+        linked_text = _format_linked_issues(self._jira, linked_keys, entries=linked_entries)
 
         try:
             raw_comments = self._jira.list_comments(issue_key, max_results=50)

@@ -157,6 +157,64 @@ def test_extract_jira_issue_key_from_pr_texts():
     assert extract_jira_issue_key("no key here") is None
 
 
+def test_linked_issue_entries_include_relation_type():
+    from bigas.resources.product.jira_automation.research import (
+        _format_linked_issues,
+        _linked_issue_entries,
+        _linked_issue_keys,
+    )
+
+    fields = {
+        "issuelinks": [
+            {
+                "type": {
+                    "name": "Blocks",
+                    "inward": "is blocked by",
+                    "outward": "blocks",
+                },
+                "outwardIssue": {"key": "VFA-10"},
+            },
+            {
+                "type": {
+                    "name": "Relates",
+                    "inward": "relates to",
+                    "outward": "relates to",
+                },
+                "inwardIssue": {"key": "VFA-8"},
+            },
+        ],
+        "parent": {"key": "VFA-1"},
+    }
+    entries = _linked_issue_entries(fields)
+    assert _linked_issue_keys(fields) == ["VFA-10", "VFA-8", "VFA-1"]
+    by_key = {e["key"]: e for e in entries}
+    assert by_key["VFA-10"]["relation"] == "blocks"
+    assert by_key["VFA-10"]["direction"] == "outward"
+    assert by_key["VFA-8"]["relation"] == "relates to"
+    assert by_key["VFA-8"]["direction"] == "inward"
+    assert by_key["VFA-1"]["relation"] == "parent"
+
+    class FakeJira:
+        def get_issue(self, key, fields=None):
+            return {
+                "fields": {
+                    "summary": f"Summary {key}",
+                    "status": {"name": "To Do"},
+                    "issuetype": {"name": "Story"},
+                    "description": None,
+                }
+            }
+
+    text = _format_linked_issues(
+        FakeJira(),  # type: ignore[arg-type]
+        [],
+        entries=entries,
+    )
+    assert "VFA-10 [blocks →]" in text
+    assert "VFA-8 [relates to ←]" in text
+    assert "VFA-1 [parent ←]" in text
+
+
 def test_build_implement_prompt_forbids_confirmation():
     from bigas.resources.product.jira_automation.implement import build_implement_prompt
 

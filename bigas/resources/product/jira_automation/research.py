@@ -31,28 +31,72 @@ class ResearchHandlerError(RuntimeError):
     pass
 
 
-def _linked_issue_keys(fields: Dict[str, Any]) -> List[str]:
-    keys: List[str] = []
+def _linked_issue_entries(fields: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    Collect linked issues with human-readable relation labels.
+
+    Jira issuelinks expose either outwardIssue or inwardIssue (the other end).
+    We keep type.outward / type.inward so prompts know blocks vs relates-to, etc.
+    """
+    entries: List[Dict[str, str]] = []
     seen = set()
     for link in fields.get("issuelinks") or []:
-        for side in ("outwardIssue", "inwardIssue"):
-            issue = link.get(side) or {}
-            key = (issue.get("key") or "").strip()
-            if key and key not in seen:
-                seen.add(key)
-                keys.append(key)
+        if not isinstance(link, dict):
+            continue
+        link_type = link.get("type") if isinstance(link.get("type"), dict) else {}
+        outward = link.get("outwardIssue") if isinstance(link.get("outwardIssue"), dict) else None
+        inward = link.get("inwardIssue") if isinstance(link.get("inwardIssue"), dict) else None
+        if outward and (outward.get("key") or "").strip():
+            key = (outward.get("key") or "").strip()
+            relation = (link_type.get("outward") or link_type.get("name") or "related").strip()
+            direction = "outward"
+        elif inward and (inward.get("key") or "").strip():
+            key = (inward.get("key") or "").strip()
+            relation = (link_type.get("inward") or link_type.get("name") or "related").strip()
+            direction = "inward"
+        else:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append({"key": key, "relation": relation, "direction": direction})
+
     parent = fields.get("parent") or {}
     parent_key = (parent.get("key") or "").strip()
     if parent_key and parent_key not in seen:
-        keys.append(parent_key)
-    return keys
+        entries.append({"key": parent_key, "relation": "parent", "direction": "inward"})
+    return entries
 
 
-def _format_linked_issues(jira: JiraClient, keys: List[str]) -> str:
-    if not keys:
+def _linked_issue_keys(fields: Dict[str, Any]) -> List[str]:
+    return [e["key"] for e in _linked_issue_entries(fields)]
+
+
+def _format_linked_issues(
+    jira: JiraClient,
+    keys: List[str],
+    *,
+    entries: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """
+    Format linked issues for LLM prompts.
+
+    Prefer ``entries`` (includes relation type). ``keys`` kept for callers that
+    only have keys; relation then shows as ``linked``.
+    """
+    if entries is None:
+        entries = [{"key": k, "relation": "linked", "direction": "outward"} for k in keys]
+    if not entries:
         return "(none)"
+
     lines = []
-    for key in keys[:15]:
+    for entry in entries[:15]:
+        key = entry.get("key") or ""
+        if not key:
+            continue
+        relation = (entry.get("relation") or "linked").strip()
+        direction = (entry.get("direction") or "").strip()
+        arrow = "→" if direction == "outward" else "←" if direction == "inward" else "·"
         try:
             issue = jira.get_issue(
                 key,
@@ -63,9 +107,11 @@ def _format_linked_issues(jira: JiraClient, keys: List[str]) -> str:
             status = ((fields.get("status") or {}).get("name") or "").strip()
             itype = ((fields.get("issuetype") or {}).get("name") or "").strip()
             desc = adf_to_plain_text(fields.get("description"))[:800]
-            lines.append(f"- {key} [{itype}/{status}]: {summary}\n  {desc}")
+            lines.append(
+                f"- {key} [{relation} {arrow}] [{itype}/{status}]: {summary}\n  {desc}"
+            )
         except JiraError as e:
-            lines.append(f"- {key}: (unavailable: {e})")
+            lines.append(f"- {key} [{relation} {arrow}]: (unavailable: {e})")
     return "\n".join(lines)
 
 
@@ -114,8 +160,9 @@ class ResearchDescribeHandler:
         description_plain = adf_to_plain_text(fields.get("description"))
         brief = extract_brief(description_plain) or description_plain or summary
 
-        linked_keys = _linked_issue_keys(fields)
-        linked_text = _format_linked_issues(self._jira, linked_keys)
+        linked_entries = _linked_issue_entries(fields)
+        linked_keys = [e["key"] for e in linked_entries]
+        linked_text = _format_linked_issues(self._jira, linked_keys, entries=linked_entries)
 
         try:
             raw_comments = self._jira.list_comments(issue_key, max_results=50)
