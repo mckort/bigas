@@ -14,6 +14,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Avoid parallel runs on the same PR (autofix pushes would otherwise spawn
+# duplicate review/autofix loops and Discord "N/5" launches).
+concurrency:
+  group: bigas-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: ubuntu-latest
