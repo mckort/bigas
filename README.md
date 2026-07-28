@@ -10,58 +10,158 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 ---
 
+## Table of contents
+
+- [What is Bigas?](#what-is-bigas)
+- [Why Google Cloud Run?](#why-google-cloud-run)
+- [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server)
+- [Environment variables](#environment-variables)
+- [GA4 setup](#ga4-setup)
+- [Walkthrough: from Jira card to merged PR](#walkthrough-from-jira-card-to-merged-pr)
+- [MCP / SSE endpoint](#mcp--sse-endpoint)
+- [API reference](#api-reference)
+- [Automating reports with Cloud Scheduler](#automating-reports-with-cloud-scheduler)
+- [Modular architecture: providers](#modular-architecture-providers)
+- [Architecture](#architecture)
+- [Local development](#local-development)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
 ## What is Bigas?
 
-**Bigas** (Latin for *team*) is an MCP server that gives solo founders a team of virtual specialists across **marketing, product, and engineering**. It is **opinionated** toward Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler), Discord, and Jira/GitHub so you can get going quickly with minimal config. The stack is **modular and provider-based**: you can plug in new data sources and capabilities (for example finance and support), and run the Flask app on other clouds or on-premises if you prefer. Active providers are discoverable via `GET /mcp/providers` (see `CONTRIBUTING.md` and `docs/architecture.md`). It connects to your data sources and delivers AI-powered insights to Discord — or can be triggered directly from any MCP client (Claude, Cursor, etc.) or automated via Cloud Scheduler. The server exposes an **SSE-based MCP endpoint** at `GET/POST /mcp` for JSON-RPC (initialize, tools/list, tools/call), so clients connect via the standard MCP transport.
+**Bigas** (Latin for *team*) is an open-source MCP server that gives a solo founder or small team a virtual staff across **marketing, product, and engineering** — without hiring anyone.
 
-It currently includes three specialists:
+It currently ships three specialists:
 
 | Specialist | What it does |
 |---|---|
 | **Senior Marketing Analyst** | GA4 web analytics + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
-| **Product Manager** | Jira board automation (AI research when issues move into AI columns), Fix Version → release notes + blog/social, Done issues → team progress updates |
+| **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates |
 | **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents) |
+
+Two design decisions shape everything else in this document:
+
+1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler), Discord, and Jira/GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
+2. **It's modular.** Marketing, Product, and CTO are independent resource packages. Ads/finance/analytics/notification integrations are *providers* discovered at startup — enable one by setting its env vars, add a new one (e.g. TikTok Ads, QuickBooks, Slack) by dropping in a file, no core changes required. See [Modular architecture: providers](#modular-architecture-providers).
+
+Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord — or you can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler.
 
 ---
 
-## Quick Start
+## Why Google Cloud Run?
 
-### Prerequisites
+Bigas is built to sit mostly idle and burst occasionally: a weekly analytics report, a Jira card being dragged across a board a few times a day, an occasional PR review. That usage pattern is exactly what **Cloud Run** is priced for:
 
-- Google Cloud CLI (`gcloud`) installed and authenticated
-- A Google Cloud project with Cloud Run and Analytics APIs enabled
-- A **Cloud Run service account** with:
-  - `roles/analyticsdata.reader` — to read from the GA4 Data API
-  - `roles/storage.objectAdmin` — to read/write/delete reports in the GCS bucket
-  - `roles/secretmanager.secretAccessor` — **only if** you enable Secret Manager (`SECRET_MANAGER=true`) for loading env vars at startup
-- A **deploying user or CI account** with permissions to deploy to Cloud Run (for example `roles/run.admin` and `roles/iam.serviceAccountUser` on the execution service account)
+- **Scale to zero.** `deploy.sh` doesn't set `--min-instances`, so Cloud Run defaults to zero — you pay nothing while no request is in flight. There's no server running 24/7 waiting for the next Jira webhook.
+- **Pay only for actual request time**, billed per-request in fractions of a second of CPU/memory, not per hour of a reserved VM. A founder running weekly reports and a handful of Jira/PR events a day typically stays inside Cloud Run's free tier or a few dollars a month.
+- **One container image, one `gcloud run deploy`.** No cluster, no VM patching, no load balancer to configure — `deploy.sh` builds the image, pushes it to Artifact Registry, and deploys it in one shot.
+- **Fits natively with the rest of the stack**: Cloud Scheduler triggers HTTP endpoints on a cron, Secret Manager can feed env vars at startup (`SECRET_MANAGER=true`), and GCS stores reports — all billed the same pay-per-use way.
 
-### 1. Configure environment variables
+None of this is required — Bigas is a stateless Flask app, so it runs equally well on Fly.io, Render, a VPS, or your laptop via `python run_core.py`. Cloud Run is simply the path this project is opinionated and tested toward, because for the "one founder, spiky traffic" use case it tends to be the cheapest place to run it.
+
+---
+
+## Tutorial: deploy your first Bigas server
+
+This walks through a real first deploy, end to end, using `acme-bigas` as a stand-in for your Google Cloud project ID — swap it for your own throughout.
+
+### 1. Prerequisites
+
+- [`gcloud` CLI](https://cloud.google.com/sdk/docs/install) installed and authenticated (`gcloud auth login`)
+- Docker installed and running locally (`deploy.sh` builds the image on your machine and pushes it)
+- A Google Cloud project (`gcloud projects create acme-bigas` if you don't have one yet)
+
+### 2. Enable the APIs and create the plumbing
 
 ```bash
-cp env.example .env
-# Edit .env with your actual values — see Environment Variables below
+gcloud config set project acme-bigas
+
+# APIs Bigas needs
+gcloud services enable run.googleapis.com \
+  analyticsdata.googleapis.com \
+  artifactregistry.googleapis.com \
+  storage.googleapis.com \
+  secretmanager.googleapis.com
+
+# Artifact Registry repo that deploy.sh pushes images to (region must match deploy.sh: europe-north1)
+gcloud artifacts repositories create bigas-repo \
+  --repository-format=docker --location=europe-north1
+gcloud auth configure-docker europe-north1-docker.pkg.dev
+
+# Runtime service account
+gcloud iam service-accounts create bigas-runner \
+  --display-name="Bigas Cloud Run runtime"
+
+# Minimal roles — see the table below for why each is needed
+gcloud projects add-iam-policy-binding acme-bigas \
+  --member="serviceAccount:bigas-runner@acme-bigas.iam.gserviceaccount.com" \
+  --role="roles/analyticsdata.reader"
+gcloud projects add-iam-policy-binding acme-bigas \
+  --member="serviceAccount:bigas-runner@acme-bigas.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
 ```
 
-### 2. Deploy
+| Role | Why the runtime service account needs it |
+|---|---|
+| `roles/analyticsdata.reader` | Read from the GA4 Data API |
+| `roles/storage.objectAdmin` | Read/write/delete reports in the GCS bucket |
+| `roles/secretmanager.secretAccessor` | **Only if** you set `SECRET_MANAGER=true` to load env vars from Secret Manager at startup |
+
+You (or your CI account) also need permission to *deploy* — typically `roles/run.admin` and `roles/iam.serviceAccountUser` on `bigas-runner`, granted to your own user or CI service account.
+
+### 3. Configure environment variables
 
 ```bash
-git clone https://github.com/your-username/bigas.git
+git clone https://github.com/mckort/bigas.git
 cd bigas
+cp env.example .env.acme-bigas
+ln -sfn .env.acme-bigas .env
+```
+
+Edit `.env` and fill in, at minimum:
+
+```bash
+GOOGLE_PROJECT_ID=acme-bigas
+GOOGLE_SERVICE_ACCOUNT_EMAIL=bigas-runner@acme-bigas.iam.gserviceaccount.com
+GA4_PROPERTY_ID=123456789
+GEMINI_API_KEY=your_gemini_api_key           # or OPENAI_API_KEY
+DOCKER_REPO=bigas-repo
+IMAGE_NAME=bigas
+IMAGE_TAG=latest
+```
+
+See [Environment variables](#environment-variables) for the full list — Discord, Jira, GitHub, and ads platforms are all optional and only needed for the specialists you want to use.
+
+### 4. Deploy
+
+```bash
 ./deploy.sh
 ```
 
-### 3. Run your first report
+This builds the Docker image, pushes it to Artifact Registry, and runs `gcloud run deploy`. On success it prints your service URL.
+
+### 5. Run your first report
 
 ```bash
-curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report
+curl -X POST https://your-service-url.a.run.app/mcp/tools/weekly_analytics_report
 ```
 
-Results are posted to your Discord marketing channel.
+If `DISCORD_WEBHOOK_URL_MARKETING` is set, the report is posted to your Discord marketing channel. Try a second one to see the LLM answer an ad-hoc question against your live GA4 data:
+
+```bash
+curl -X POST https://your-service-url.a.run.app/mcp/tools/ask_analytics_question \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Which country had the most active users last week?"}'
+```
+
+From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) for the Product/CTO specialists, or [Cloud Scheduler](#automating-reports-with-cloud-scheduler) to run reports on a cadence instead of by hand.
 
 ---
 
-## Environment Variables
+## Environment variables
 
 **Required (core):**
 
@@ -92,7 +192,7 @@ Results are posted to your Discord marketing channel.
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
 | `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for multi-project (e.g. `VFA,WAYW`). Per-request override via `project_key` / `project_keys`. |
-| `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). See [docs/jira-automation.md](docs/jira-automation.md). |
+| `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
 | `GITHUB_TOKEN` | GitHub token — PR review plus optional repo context for Jira AI research |
 | `LINKEDIN_AD_ACCOUNT_URN` | Default LinkedIn ad account URN |
 | `REDDIT_AD_ACCOUNT_ID` | Default Reddit ad account ID |
@@ -101,13 +201,54 @@ Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_M
 
 ---
 
-## GA4 Setup
+## GA4 setup
 
 1. Go to **Google Analytics → Admin → Property Access Management**
 2. Add your service account email with the **Marketer** role
 3. Copy your **Property ID** (Admin → Property Details) into `GA4_PROPERTY_ID`
 
 > If you get a 403 error, wait a few minutes for permissions to propagate.
+
+---
+
+## Walkthrough: from Jira card to merged PR
+
+This is the flow that makes the **Product Manager** and **CTO** specialists work together: dragging a Jira card triggers AI research, then AI design, then an AI-implemented pull request — with a human approval gate between every AI step.
+
+Say you write a card with just a **Brief** — a couple of sentences on what you want and why — and drag it into the first AI column.
+
+1. **`Research and describe (AI)`** — Bigas reads the Brief, researches the codebase/context, and writes an **AI Research** section onto the issue (your Brief is left untouched). The card moves itself to **Description approval (manual)** and posts to your `bigas-pm` Discord channel. You read the research, edit if needed, and drag the card forward yourself.
+2. **`Design and plan (AI)`** — Bigas reads Brief + Research + repo context and writes an **AI Plan**: the concrete implementation approach. Moves to **Design approval (manual)**, posts to `bigas-cto`. Again, a human reviews and approves by dragging the card.
+3. **`In Progress (AI)`** — Bigas launches a Cursor cloud agent against the repo mapped to this Jira project, which implements the plan and opens a pull request. The PR link is commented on the issue; you get pinged in `bigas-cto`.
+4. Once the CTO specialist's autofix loop reports the PR is **ready to merge**, Bigas finds the Jira key from the PR title/body and moves the card to **Final approval (manual)** automatically — your signal to review the PR and merge.
+
+Every AI step lands in a column with **"(manual)"** in the name — nothing merges or ships without a human dragging a card or approving a PR.
+
+Under the hood, each column is wired the same way: a **Jira Automation** rule (not the admin "Webhook listener") does a **Send web request** to `jira_status_automation` whenever an issue enters that status. One rule per AI status, same URL and headers, different trigger:
+
+```bash
+curl -X POST https://your-service-url.a.run.app/mcp/tools/jira_status_automation \
+  -H "Content-Type: application/json" \
+  -H "X-Bigas-Webhook-Secret: $JIRA_AUTOMATION_WEBHOOK_SECRET" \
+  -d '{
+    "issue_key": "PROJ-123",
+    "to_status": "Design and plan (AI)",
+    "sync": true
+  }'
+```
+
+For the exact column names, the project → repo mapping, the Jira Automation rule JSON, and the daily AI-run quota, see **[docs/jira-automation.md](docs/jira-automation.md)**.
+
+Two more Product tools round out the flow once you're shipping regularly:
+
+```bash
+# Fix Version → release notes + blog draft + social copy (X, LinkedIn, Facebook, Instagram)
+curl -X POST https://your-service-url.a.run.app/mcp/tools/create_release_notes \
+  -H "Content-Type: application/json" \
+  -d '{"fix_version": "1.2.0"}'
+```
+
+`progress_updates` does the same for issues moved to Done in the last N days, posting a team progress summary to Discord instead.
 
 ---
 
@@ -122,18 +263,16 @@ Tools are the same as in the HTTP API; they are listed via `tools/list` and invo
 
 ---
 
-## API Reference
+## API reference
 
-All endpoints are available at `https://your-service-url.a.run.app/mcp/tools/`.
-
-All endpoint names in the tables below are **relative to `/mcp/tools/`**. For example, `POST weekly_analytics_report` means `POST /mcp/tools/weekly_analytics_report`.
+All endpoint names below are **relative to `/mcp/tools/`**. For example, `POST weekly_analytics_report` means `POST /mcp/tools/weekly_analytics_report`.
 
 Find your service URL with:
 ```bash
 gcloud run services describe <your-service-name> --region=your-region --format='value(status.url)'
 ```
 
-### GA4 Web Analytics
+### GA4 web analytics
 
 | Endpoint | Description |
 |---|---|
@@ -147,18 +286,9 @@ gcloud run services describe <your-service-name> --region=your-region --format='
 | `POST fetch_custom_report` | Custom dimensions/metrics report |
 | `POST cleanup_old_reports` | Delete reports older than N days |
 
-**Examples:**
 ```bash
-# Weekly report
-curl -X POST https://your-deployment-url.com/mcp/tools/weekly_analytics_report
-
-# Ask a question
-curl -X POST https://your-deployment-url.com/mcp/tools/ask_analytics_question \
-  -H "Content-Type: application/json" \
-  -d '{"question": "Which country had the most active users last week?"}'
-
 # Analyze underperforming pages
-curl -X POST https://your-deployment-url.com/mcp/tools/analyze_underperforming_pages \
+curl -X POST https://your-service-url.a.run.app/mcp/tools/analyze_underperforming_pages \
   -H "Content-Type: application/json" \
   -d '{"max_pages": 3}'
 ```
@@ -175,12 +305,12 @@ curl -X POST https://your-deployment-url.com/mcp/tools/analyze_underperforming_p
 
 ```bash
 # One-command portfolio report
-curl -X POST https://your-deployment-url.com/mcp/tools/run_linkedin_portfolio_report \
+curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio_report \
   -H "Content-Type: application/json" \
   -d '{"account_urn": "urn:li:sponsoredAccount:123456", "discovery_relative_range": "LAST_30_DAYS"}'
 ```
 
-> Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_refresh": true` to bypass the cache.
+> Ads reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_refresh": true` to bypass the cache.
 
 ### Reddit Ads
 
@@ -192,7 +322,7 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_linkedin_portfolio_re
 | `POST summarize_reddit_ad_analytics` | Summarize an enriched report from GCS → Discord |
 | `GET reddit_ads_health_check` | Verify API access and list ad accounts |
 
-### Paid Ads & Cross-platform
+### Paid ads & cross-platform
 
 | Endpoint | Description |
 |---|---|
@@ -202,50 +332,19 @@ curl -X POST https://your-deployment-url.com/mcp/tools/run_linkedin_portfolio_re
 
 All portfolio endpoints support async variants (`run_*_async`) that return a `job_id` immediately. Poll with `get_job_status` and retrieve results with `get_job_result`.
 
-### Product & Engineering
+### Product & engineering
 
 | Endpoint | Description |
 |---|---|
-| `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns (Research & Design) |
+| `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord |
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub |
 
-#### Jira AI board automation
-
-1. **Research and describe (AI)** → keep human **Brief**, write **AI Research**, move to **Description approval (manual)**, Discord PM.
-2. **Design and plan (AI)** → write **AI Plan** from Brief + Research + repo context, move to **Design approval (manual)**, Discord CTO.
-3. **In Progress (AI)** → Cursor cloud agent implements on the mapped repo and opens a PR; Discord CTO. When the PR is autofixed and ready to merge, the issue moves to **Final approval (manual)**.
-
-Wire each status with **Jira Automation** → **Send web request** (not the admin “Webhook listener”). Same URL/headers; different trigger status — see **[docs/jira-automation.md](docs/jira-automation.md)**.
-
-```bash
-curl -X POST https://your-deployment-url.com/mcp/tools/jira_status_automation \
-  -H "Content-Type: application/json" \
-  -H "X-Bigas-Webhook-Secret: $JIRA_AUTOMATION_WEBHOOK_SECRET" \
-  -H "X-Bigas-Access-Key: $BIGAS_ACCESS_KEYS" \
-  -d '{
-    "issue_key": "PROJ-123",
-    "to_status": "Design and plan (AI)",
-    "sync": true
-  }'
-```
-
-Full setup (status names, project→repo map, daily quota, Automation rule JSON): **[docs/jira-automation.md](docs/jira-automation.md)**.
-
-```bash
-# Release notes
-curl -X POST https://your-deployment-url.com/mcp/tools/create_release_notes \
-  -H "Content-Type: application/json" \
-  -d '{"fix_version": "1.2.0"}'
-```
-
-Release notes output includes `customer_markdown`, `blog_markdown`, and social drafts for X, LinkedIn, Facebook, and Instagram. Every Jira issue is included exactly once under New Features, Improvements, or Bug Fixes.
-
 ---
 
-## Automating Reports with Cloud Scheduler
+## Automating reports with Cloud Scheduler
 
 Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.com/cloudscheduler):
 
@@ -256,7 +355,25 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | LinkedIn portfolio | `0 9 * * 1` | `.../run_linkedin_portfolio_report` |
 | Cleanup old reports | `0 2 1 * *` | `.../cleanup_old_reports` |
 
-All jobs use **HTTP POST** to your Cloud Run service URL.
+All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
+
+---
+
+## Modular architecture: providers
+
+Marketing, Product, and CTO are independent **resources** — you could delete any one of them and the others keep working. Within Marketing, data sources (Google Ads, Meta, LinkedIn, Reddit Ads, GA4, and future finance/support integrations) are **providers**: small classes that implement a domain base class (`AdsProvider`, `AnalyticsProvider`, `FinanceProvider`, `NotificationChannel`) and a `is_configured()` check.
+
+At startup, `bigas/registry.py` scans `bigas/providers/**`, instantiates every provider whose required env vars are set, and exposes the active set at:
+
+```bash
+curl https://your-service-url.a.run.app/mcp/providers
+```
+
+This is what makes the opinionated defaults optional in practice: don't set LinkedIn's env vars, and the LinkedIn provider simply doesn't load — no code path to disable, nothing to comment out. Adding a new provider (e.g. TikTok Ads, QuickBooks, a Slack notification channel) means adding one file under `bigas/providers/...`, not modifying existing services.
+
+Tool registration follows the same pattern: any function decorated with `@register_tool` in `bigas/tools.py` automatically appears in `GET /mcp/manifest` and is callable via both the HTTP API and the MCP `tools/call` JSON-RPC method — no separate wiring per transport.
+
+For the provider base classes, a worked example (adding QuickBooks as a finance provider), and the tool registration decorator, see **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[DESIGN_SPEC.md](DESIGN_SPEC.md)**.
 
 ---
 
@@ -287,29 +404,11 @@ All jobs use **HTTP POST** to your Cloud Run service URL.
               GCS Storage           Discord
 ```
 
-*(GCS Storage, Discord, and Google Secret Manager are optional integrations; see `env.example` and `docs/architecture.md` for details.)*
-
-**Services:**
-- **Marketing services**
-  - `GA4Service` — Google Analytics 4 data fetching
-  - `LinkedInAdsService` / `RedditAdsService` / `GoogleAdsService` / `MetaAdsService` — OAuth or ADC + ads API with GCS caching
-  - `StorageService` — report persistence under `weekly_reports/` and `raw_ads/{platform}/{date}/`
-  - `WebScrapingService` — scrapes actual page content for CRO recommendations
-- **Product services**
-  - `JiraAutomationService` — Jira status webhook → AI column handlers (research & design)
-  - `CreateReleaseNotesService` — Jira Fix Version → multi-channel customer release comms (release notes, blog, social)
-  - `ProgressUpdatesService` — Jira issues moved to Done → team progress “coach” message
-- **CTO services**
-  - `CtoPrReviewService` — GitHub PR diff → AI code review and comment on the PR
-- **Optional infrastructure**
-  - Google Cloud Storage for report persistence
-  - Google Secret Manager for loading env vars at startup when `SECRET_MANAGER=true`
-- **Provider registry**
-  - Provider registry in `bigas/registry.py` discovers ads, analytics, and notification providers under `bigas/providers/**` at startup; active providers are listed at `GET /mcp/providers`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [DESIGN_SPEC.md](DESIGN_SPEC.md) to add new providers.
+GCS Storage, Discord, and Google Secret Manager are optional integrations (see `env.example`). For the full service breakdown, the paid-ads orchestrator, the MCP/SSE bridge internals, and the provider registry implementation, see **[docs/architecture.md](docs/architecture.md)**.
 
 ---
 
-## Local Development
+## Local development
 
 ```bash
 # Install dependencies
@@ -331,7 +430,7 @@ python tests/test_domain_extraction.py
 python tests/health_check.py
 ```
 
-**API docs** (once deployed): `https://your-deployment-url.com/openapi.json`
+**API docs** (once deployed): `https://your-service-url.a.run.app/openapi.json`
 
 ---
 
@@ -348,7 +447,7 @@ python tests/health_check.py
 ## Contributing
 
 1. Fork the repo and create a feature branch
-2. Follow the existing service pattern for new integrations
+2. Follow the existing service pattern for new integrations (see [Modular architecture: providers](#modular-architecture-providers))
 3. Run tests before opening a PR
 4. See [CONTRIBUTING.md](CONTRIBUTING.md) for details
 
