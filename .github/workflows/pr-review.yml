@@ -48,14 +48,16 @@ jobs:
           set -euo pipefail
           # Prefer the GitHub API diff for this PR number. Local `git diff base...HEAD`
           # can be empty if the PR was merged into the base branch before this job ran.
-          # --fail-with-body fails on HTTP 4xx/5xx but still writes the error body for debugging.
-          if ! curl --fail-with-body -sS -o diff.txt \
+          # Use HTTP status (portable across curl versions) and always keep the body in
+          # diff.txt so API error JSON can be printed on failure.
+          HTTP_CODE=$(curl -sS -w "%{http_code}" -o diff.txt \
             -H "Accept: application/vnd.github.diff" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"; then
-            echo "::error::Failed to fetch PR diff from GitHub API"
-            head -c 500 diff.txt || true
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Failed to fetch PR diff from GitHub API (HTTP $HTTP_CODE)"
+            cat diff.txt || true
             exit 1
           fi
           if [ ! -s diff.txt ]; then
