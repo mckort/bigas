@@ -106,6 +106,7 @@ Rules:
 - Prefer incremental, testable steps over big-bang rewrites.
 - Include risks, edge cases, and a short test plan.
 - Call out README impact: whether README (or equivalent docs) should be updated for install/config/run/usage changes.
+- Call out in-app support/help impact: whether end-user help articles (in-app support pages) should be added or updated when the change affects how users use the product.
 - Do NOT include "## Brief", "## AI Research", or "## AI Plan" headings — return only the plan body markdown.
 - Use markdown with short sections and bullets.
 - Do not invent APIs, tables, or files that are not evidenced in the context.
@@ -148,6 +149,7 @@ Write the plan body with these sections:
 ### Data model / API changes (if any)
 ### Step-by-step implementation plan
 ### README / docs impact
+### In-app support / help impact
 ### Test plan
 ### Rollout / flags / migrations
 ### Risks & open questions
@@ -312,11 +314,12 @@ Summary: {summary}
 3. Keep scope tight — do not refactor unrelated code.
 4. Add/update tests when reasonable.
 5. Update the repository README when the change affects how people install, configure, run, or understand the project. Skip README edits for purely internal refactors with no user-facing or ops impact.
-6. Open a pull request when done (autoCreatePR is enabled).
-7. PR title MUST start with `{issue_key}:` followed by a short summary.
-8. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-9. Do not merge the PR.
-10. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+6. Update in-app support/help content (end-user help articles / support pages) when the change affects what users see or how they use the product. Skip when there is no user-facing behavior change, or when the repo has no in-app help.
+7. Open a pull request when done (autoCreatePR is enabled).
+8. PR title MUST start with `{issue_key}:` followed by a short summary.
+9. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
+10. Do not merge the PR.
+11. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
 """
 
 
