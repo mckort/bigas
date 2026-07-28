@@ -42,7 +42,7 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
 - **JSON body**
   - `repo` (required): `"owner/repo"`
   - `pr_number` (required): integer
-  - `diff` (required): PR diff text (e.g. from `git diff main...HEAD` or GitHub API)
+  - `diff` (optional): PR diff text. If omitted or empty, Bigas fetches the PR diff from the GitHub API.
   - `instructions` (optional): extra instructions for the reviewer
   - `phase` (optional): `"initial"` (default) or `"post_autofix"`. Initial reviews use an exhaustive checklist prompt; post-autofix reviews verify the previous Bigas comment and only raise new blockers/important issues.
   - `github_token` (optional): override GitHub PAT (if not using `GITHUB_TOKEN` env)
@@ -51,11 +51,16 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
 ## Example: GitHub Action
 
 ```yaml
-- name: Get PR diff
-  id: diff
+- name: Get PR diff via GitHub API
+  env:
+    GH_TOKEN: ${{ secrets.GH_PAT_FOR_BIGAS || github.token }}
+    PR_NUMBER: ${{ github.event.pull_request.number }}
   run: |
-    git fetch origin ${{ github.base_ref }}
-    git diff origin/${{ github.base_ref }}...HEAD > diff.txt
+    curl -sS -o diff.txt \
+      -H "Accept: application/vnd.github.diff" \
+      -H "Authorization: Bearer $GH_TOKEN" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
 
 - name: Trigger Bigas review + comment
   env:
@@ -82,6 +87,7 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
       -d @payload.json
 ```
 
+Prefer the GitHub API diff over local `git diff`: if the PR is merged into the base branch before the job runs, a local three-dot diff can be empty while the PR diff endpoint still returns the changes. Bigas also fetches the PR diff server-side when `diff` is omitted or blank.
 If `GITHUB_TOKEN` is configured in Bigas (e.g. via Secret Manager), you can omit `github_token` from the request.
 
 ## Response
