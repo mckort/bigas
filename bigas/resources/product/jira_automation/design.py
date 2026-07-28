@@ -21,8 +21,8 @@ from bigas.resources.product.jira_automation.description import (
 )
 from bigas.resources.product.jira_automation.github_context import GitHubRepoContext
 from bigas.resources.product.jira_automation.prompts import (
-    DESIGN_SYSTEM_PROMPT,
-    build_design_user_prompt,
+    design_prompts_for,
+    resolve_workstream,
 )
 from bigas.resources.product.jira_automation.research import (
     _format_linked_issues,
@@ -95,12 +95,14 @@ class DesignPlanHandler:
 
         hints = [summary]
         labels = fields.get("labels") or []
+        workstream = resolve_workstream(labels)
+        system_prompt, build_user_prompt = design_prompts_for(workstream)
         hints.extend(str(l) for l in labels[:5])
         if research:
             hints.append(research[:80])
         repo_context = self._github.fetch_context(repo, query_hints=hints)
 
-        user_prompt = build_design_user_prompt(
+        user_prompt = build_user_prompt(
             issue_key=issue_key,
             summary=summary,
             brief=brief,
@@ -112,7 +114,7 @@ class DesignPlanHandler:
         try:
             plan_body = self._llm.complete(
                 messages=[
-                    {"role": "system", "content": DESIGN_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=4000,
@@ -142,7 +144,8 @@ class DesignPlanHandler:
                 issue_key,
                 to_status_name=approval_status,
                 comment=(
-                    f"{BIGAS_COMMENT_MARKER} Design/plan complete. "
+                    f"{BIGAS_COMMENT_MARKER} Design/plan complete "
+                    f"(workstream={workstream}). "
                     f"Moved to {approval_status} for human review. "
                     f"(model={self._model})"
                 ),
@@ -157,6 +160,7 @@ class DesignPlanHandler:
             "summary": summary,
             "model": self._model,
             "repo": repo,
+            "workstream": workstream,
             "linked_issues": linked_keys,
             "moved_to": approval_status,
             "plan_chars": len(plan_body),

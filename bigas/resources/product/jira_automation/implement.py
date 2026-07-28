@@ -31,6 +31,11 @@ from bigas.resources.product.jira_automation.description import (
     extract_brief,
     extract_section,
 )
+from bigas.resources.product.jira_automation.prompts import (
+    build_implement_prompt_product,
+    implement_prompt_for,
+    resolve_workstream,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,45 +77,8 @@ def _monitor_interval_seconds() -> int:
         return 30
 
 
-def build_implement_prompt(
-    *,
-    issue_key: str,
-    summary: str,
-    brief: str,
-    research: str,
-    plan: str,
-    comments_text: str,
-    repo: str,
-) -> str:
-    return f"""You are implementing a Jira issue in repository {repo}.
-
-Issue: {issue_key}
-Summary: {summary}
-
-## Human Brief
-{brief or "(empty)"}
-
-## AI Research
-{research or "(empty)"}
-
-## AI Plan
-{plan or "(empty)"}
-
-## Human follow-up comments
-{comments_text or "(none)"}
-
-## Instructions
-1. Implement the issue according to the Brief, Research, Plan, and human comments.
-2. Prefer the AI Plan for technical approach; treat human comments as clarifications that override open questions.
-3. Keep scope tight — do not refactor unrelated code.
-4. Add/update tests when reasonable.
-5. Open a pull request when done (autoCreatePR is enabled).
-6. PR title MUST start with `{issue_key}:` followed by a short summary.
-7. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-8. Do not merge the PR.
-9. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
-"""
-
+# Backward-compatible alias (product workstream).
+build_implement_prompt = build_implement_prompt_product
 
 def lookup_pr_url_for_branch(*, repo: str, branch_name: str) -> str:
     """Return open PR URL for branch if found via GitHub API."""
@@ -250,6 +218,8 @@ class ImplementHandler:
         brief = extract_brief(description_plain) or description_plain or summary
         research = extract_section(description_plain, RESEARCH_HEADING)
         plan = extract_section(description_plain, PLAN_HEADING)
+        workstream = resolve_workstream(fields.get("labels") or [])
+        build_prompt = implement_prompt_for(workstream)
 
         try:
             raw_comments = self._jira.list_comments(issue_key, max_results=50)
@@ -263,7 +233,7 @@ class ImplementHandler:
                 "No AI Plan / AI Research sections found — run Research and Design first."
             )
 
-        prompt = build_implement_prompt(
+        prompt = build_prompt(
             issue_key=issue_key,
             summary=summary,
             brief=brief,
@@ -291,7 +261,8 @@ class ImplementHandler:
         run_id = launched.get("run_id") or ""
 
         comment = (
-            f"{BIGAS_COMMENT_MARKER} Implementation started via Cursor cloud agent.\n"
+            f"{BIGAS_COMMENT_MARKER} Implementation started via Cursor cloud agent "
+            f"(workstream={workstream}).\n"
             f"Repo: `{repo}` (base `{base_branch}`)\n"
             f"Agent: {agent_url or agent_id}\n"
             f"agent_id={agent_id} run_id={run_id}\n"
@@ -340,6 +311,7 @@ class ImplementHandler:
             "issue_key": issue_key,
             "summary": summary,
             "repo": repo,
+            "workstream": workstream,
             "base_branch": base_branch,
             "agent_id": agent_id,
             "agent_url": agent_url,

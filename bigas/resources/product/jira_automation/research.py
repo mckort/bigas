@@ -19,8 +19,8 @@ from bigas.resources.product.jira_automation.description import (
 )
 from bigas.resources.product.jira_automation.github_context import GitHubRepoContext
 from bigas.resources.product.jira_automation.prompts import (
-    RESEARCH_SYSTEM_PROMPT,
-    build_research_user_prompt,
+    research_prompts_for,
+    resolve_workstream,
 )
 from bigas.resources.product.jira_automation.web_research import fetch_web_snippets
 
@@ -173,13 +173,15 @@ class ResearchDescribeHandler:
 
         hints = [summary]
         labels = fields.get("labels") or []
+        workstream = resolve_workstream(labels)
+        system_prompt, build_user_prompt = research_prompts_for(workstream)
         hints.extend(str(l) for l in labels[:5])
         repo_context = self._github.fetch_context(repo, query_hints=hints)
 
         web_query = f"{summary} {brief[:120]}".strip()
         web_context = fetch_web_snippets(web_query)
 
-        user_prompt = build_research_user_prompt(
+        user_prompt = build_user_prompt(
             issue_key=issue_key,
             summary=summary,
             brief=brief,
@@ -191,7 +193,7 @@ class ResearchDescribeHandler:
         try:
             research_body = self._llm.complete(
                 messages=[
-                    {"role": "system", "content": RESEARCH_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=3500,
@@ -222,7 +224,8 @@ class ResearchDescribeHandler:
                 issue_key,
                 to_status_name=approval_status,
                 comment=(
-                    f"{BIGAS_COMMENT_MARKER} Research complete. "
+                    f"{BIGAS_COMMENT_MARKER} Research complete "
+                    f"(workstream={workstream}). "
                     f"Moved to {approval_status} for human review. "
                     f"(model={self._model})"
                 ),
@@ -237,6 +240,7 @@ class ResearchDescribeHandler:
             "summary": summary,
             "model": self._model,
             "repo": repo,
+            "workstream": workstream,
             "linked_issues": linked_keys,
             "moved_to": approval_status,
             "research_chars": len(research_body),

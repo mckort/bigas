@@ -224,6 +224,8 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 
 Every AI step lands in a column with **"(manual)"** in the name — nothing merges or ships without a human dragging a card or approving a PR.
 
+**Prompt workstream:** by default Bigas uses **product** Research/Design/Implement prompts. Add the Jira label `marketing` on website/SEO/content issues to switch to marketing-oriented prompts (audience, copy, SEO, site files in the repo).
+
 Under the hood, each column is wired the same way: a **Jira Automation** rule (not the admin "Webhook listener") does a **Send web request** to `jira_status_automation` whenever an issue enters that status. One rule per AI status, same URL and headers, different trigger:
 
 ```bash
