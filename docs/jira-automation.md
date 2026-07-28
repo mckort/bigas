@@ -61,3 +61,12 @@ Headers: `Content-Type: application/json`, `X-Bigas-Webhook-Secret`, and `X-Biga
 ```
 
 Human comments are included in Research / Design / Implement prompts. `[bigas-jira-ai]` system comments are ignored.
+
+## Workstream prompts (label)
+
+| Label | Workstream | Prompts |
+|---|---|---|
+| *(none / other)* | **product** (default) | Current product engineer Research / Design / Implement prompts |
+| `marketing` (case-insensitive) | **marketing** | Website/content/SEO-oriented prompts (copy, pages, metadata, site patterns in-repo) |
+
+Add the Jira label `marketing` on SEO/blog/landing-page issues. Leave unlabeled for normal product work.

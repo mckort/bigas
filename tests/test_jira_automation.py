@@ -233,6 +233,40 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "Jira: VFA-14" in prompt
 
 
+def test_resolve_workstream_defaults_to_product():
+    from bigas.resources.product.jira_automation.prompts import (
+        WORKSTREAM_MARKETING,
+        WORKSTREAM_PRODUCT,
+        implement_prompt_for,
+        research_prompts_for,
+        resolve_workstream,
+    )
+
+    assert resolve_workstream(None) == WORKSTREAM_PRODUCT
+    assert resolve_workstream([]) == WORKSTREAM_PRODUCT
+    assert resolve_workstream(["bug", "backend"]) == WORKSTREAM_PRODUCT
+    assert resolve_workstream(["Marketing"]) == WORKSTREAM_MARKETING
+    assert resolve_workstream(["seo", "marketing"]) == WORKSTREAM_MARKETING
+
+    product_system, _ = research_prompts_for(WORKSTREAM_PRODUCT)
+    marketing_system, _ = research_prompts_for(WORKSTREAM_MARKETING)
+    assert "product engineer" in product_system
+    assert "marketing + web content" in marketing_system
+
+    marketing_impl = implement_prompt_for(WORKSTREAM_MARKETING)(
+        issue_key="WAYW-1",
+        summary="SEO",
+        brief="fix titles",
+        research="r",
+        plan="p",
+        comments_text="(none)",
+        repo="mckort/roadpal",
+    )
+    assert "marketing/website" in marketing_impl
+    assert "SEO basics" in marketing_impl
+    assert "Do NOT ask for confirmation" in marketing_impl
+
+
 def test_extract_pr_and_branch_from_cursor_payload():
     from bigas.resources.cto.autofix.cursor_client import extract_pr_and_branch
 
