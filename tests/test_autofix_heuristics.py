@@ -99,6 +99,18 @@ def test_autofix_prompt_forbids_confirmation():
     assert "apply the fixes and push commits immediately" in prompt
     assert "Also fix Minor items" in prompt
     assert "Fix all Blockers and Important" in prompt
+    assert "already resolved" in prompt or "local wrapper" in prompt
+
+
+def test_pr_review_prompts_respect_project_helpers():
+    from bigas.resources.cto.pr_review.prompts import (
+        PR_REVIEW_INITIAL_SYSTEM_PROMPT,
+        PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT,
+    )
+
+    for text in (PR_REVIEW_INITIAL_SYSTEM_PROMPT, PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT):
+        assert "deleteField()" in text
+        assert "Project helpers" in text
 
 
 def test_autofix_looks_like_confirmation_stop():
