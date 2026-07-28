@@ -48,8 +48,8 @@ jobs:
           set -euo pipefail
           # Prefer the GitHub API diff for this PR number. Local `git diff base...HEAD`
           # can be empty if the PR was merged into the base branch before this job ran.
-          # -f fails on HTTP 4xx/5xx so error JSON is not treated as a valid diff.
-          if ! curl -fsS -o diff.txt \
+          # --fail-with-body fails on HTTP 4xx/5xx but still writes the error body for debugging.
+          if ! curl --fail-with-body -sS -o diff.txt \
             -H "Accept: application/vnd.github.diff" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \

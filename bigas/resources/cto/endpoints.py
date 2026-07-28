@@ -226,7 +226,6 @@ def review_and_comment_pr():
         return _fail("pr_number must be an integer.", 400)
     if pr_number < 1:
         return _fail("pr_number must be positive.", 400, "pr_number must be a positive integer")
-    pr_display = pr_number
     if diff is not None and not isinstance(diff, str):
         return _fail("diff must be a string.", 400)
     if not github_token:
