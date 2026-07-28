@@ -38,6 +38,30 @@ cto_bp = Blueprint(
 logger = logging.getLogger(__name__)
 
 # Max characters for a GitHub comment to avoid API errors.
+
+
+def _resolve_pr_diff_text(
+    *,
+    diff: object,
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    github_token: str,
+) -> str:
+    """
+    Prefer caller-supplied diff; if missing/blank, fetch the PR diff from GitHub.
+
+    This avoids empty-diff races when Actions computes `git diff` after the PR
+    was already merged into the base branch.
+    """
+    if isinstance(diff, str) and diff.strip():
+        return diff
+    return GitHubPRCommentClient(token=github_token).get_pr_diff(
+        owner=owner,
+        repo=repo_name,
+        pr_number=pr_number,
+    )
+
 # The official limit is 65,536 bytes, so 60k chars is a safe buffer.
 MAX_GITHUB_COMMENT_CHARS = 60_000
 
@@ -159,7 +183,7 @@ def review_and_comment_pr():
     Request JSON:
       - repo (str, required): "owner/repo"
       - pr_number (int, required): pull request number
-      - diff (str, required): PR diff text
+      - diff (str, optional): PR diff text; if omitted or empty, Bigas fetches it from GitHub
       - instructions (str, optional): extra instructions for the reviewer
       - github_token (str, optional): override GitHub PAT (else uses GITHUB_TOKEN env)
       - llm_model (str, optional): override model for this request (default: gemini-3.1-pro-preview)
@@ -171,17 +195,6 @@ def review_and_comment_pr():
     phase = (data.get("phase") or "initial").strip().lower()
     if phase not in {"initial", "post_autofix"}:
         phase = "initial"
-    # Post "review started" immediately so Discord is always notified when the endpoint is hit
-    repo_raw = (data.get("repo") or "").strip() or "?"
-    pr_raw = data.get("pr_number", "?")
-    if phase == "post_autofix":
-        _post_to_discord_cto(
-            f"**CTO PR re-review after autofix started**\nPR: https://github.com/{repo_raw}/pull/{pr_raw}"
-        )
-    else:
-        _post_to_discord_cto(
-            f"**CTO PR review started**\nPR: https://github.com/{repo_raw}/pull/{pr_raw}"
-        )
 
     repo = (data.get("repo") or "").strip()
     pr_number = data.get("pr_number")
@@ -190,44 +203,65 @@ def review_and_comment_pr():
     github_token = (data.get("github_token") or "").strip() or os.environ.get("GITHUB_TOKEN") or ""
     llm_model = (data.get("llm_model") or "").strip() or None
 
+    def _fail(reason: str, status: int, error: str | None = None):
+        _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {reason}")
+        return jsonify({"error": error or reason}), status
+
     if not repo:
-        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: repo is required.")
-        return jsonify({"error": "repo is required (e.g. 'owner/repo')"}), 400
+        return _fail("repo is required.", 400, "repo is required (e.g. 'owner/repo')")
     if "/" not in repo or repo.count("/") != 1:
-        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: repo must be owner/repo.")
-        return jsonify({"error": "repo must be in the form 'owner/repo'"}), 400
+        return _fail("repo must be owner/repo.", 400, "repo must be in the form 'owner/repo'")
     if pr_number is None:
-        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: pr_number is required.")
-        return jsonify({"error": "pr_number is required"}), 400
+        return _fail("pr_number is required.", 400)
     try:
         pr_number = int(pr_number)
     except (TypeError, ValueError):
-        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: pr_number must be an integer.")
-        return jsonify({"error": "pr_number must be an integer"}), 400
+        return _fail("pr_number must be an integer.", 400)
     if pr_number < 1:
-        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: pr_number must be positive.")
-        return jsonify({"error": "pr_number must be a positive integer"}), 400
-    if diff is None:
-        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: diff is required.")
-        return jsonify({"error": "diff is required"}), 400
-    if not isinstance(diff, str):
-        _post_to_discord_cto("**CTO PR review done**\nNo comment posted.\nReason: diff must be a string.")
-        return jsonify({"error": "diff must be a string"}), 400
+        return _fail("pr_number must be positive.", 400, "pr_number must be a positive integer")
+    if diff is not None and not isinstance(diff, str):
+        return _fail("diff must be a string.", 400)
     if not github_token:
-        _post_to_discord_cto(
-            "**CTO PR review done**\nNo comment posted.\nReason: GitHub token is required (GITHUB_TOKEN or github_token)."
-        )
-        return (
-            jsonify(
-                {
-                    "error": "GitHub token is required. Set GITHUB_TOKEN in env or pass github_token in the request."
-                }
-            ),
+        return _fail(
+            "GitHub token is required (GITHUB_TOKEN or github_token).",
             400,
+            "GitHub token is required. Set GITHUB_TOKEN in env or pass github_token in the request.",
         )
 
     owner, repo_name = repo.split("/", 1)
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
+
+    try:
+        diff = _resolve_pr_diff_text(
+            diff=diff,
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            github_token=github_token,
+        )
+    except GitHubPRCommentError as e:
+        err_msg = sanitize_error_message(str(e))
+        status = 502
+        if "401" in err_msg or "invalid" in err_msg.lower() or "expired" in err_msg.lower():
+            status = 401
+        elif "403" in err_msg:
+            status = 403
+        elif "404" in err_msg or "not found" in err_msg.lower():
+            status = 404
+        return _fail(err_msg, status)
+
+    if not (diff or "").strip():
+        return _fail("diff is empty (PR has no file changes, or GitHub returned an empty diff).", 400)
+
+    # Notify Discord only once we have a usable diff (avoids started+failed spam).
+    if phase == "post_autofix":
+        _post_to_discord_cto(
+            f"**CTO PR re-review after autofix started**\nPR: https://github.com/{repo}/pull/{pr_number}"
+        )
+    else:
+        _post_to_discord_cto(
+            f"**CTO PR review started**\nPR: https://github.com/{repo}/pull/{pr_number}"
+        )
 
     previous_review = None
     if phase == "post_autofix":
