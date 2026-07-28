@@ -56,7 +56,7 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
     GH_TOKEN: ${{ secrets.GH_PAT_FOR_BIGAS || github.token }}
     PR_NUMBER: ${{ github.event.pull_request.number }}
   run: |
-    curl -sS -o diff.txt \
+    curl -fsS -o diff.txt \
       -H "Accept: application/vnd.github.diff" \
       -H "Authorization: Bearer $GH_TOKEN" \
       -H "X-GitHub-Api-Version: 2022-11-28" \

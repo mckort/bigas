@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 def _resolve_pr_diff_text(
     *,
-    diff: object,
+    diff: str | None,
     owner: str,
     repo_name: str,
     pr_number: int,
@@ -202,9 +202,16 @@ def review_and_comment_pr():
     instructions = (data.get("instructions") or "").strip() or None
     github_token = (data.get("github_token") or "").strip() or os.environ.get("GITHUB_TOKEN") or ""
     llm_model = (data.get("llm_model") or "").strip() or None
+    repo_display = repo or "?"
+    pr_display = pr_number if pr_number is not None else "?"
 
     def _fail(reason: str, status: int, error: str | None = None):
-        _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {reason}")
+        _post_to_discord_cto(
+            "**CTO PR review done**\n"
+            "No comment posted.\n"
+            f"PR: https://github.com/{repo_display}/pull/{pr_display}\n"
+            f"Reason: {reason}"
+        )
         return jsonify({"error": error or reason}), status
 
     if not repo:
@@ -219,6 +226,7 @@ def review_and_comment_pr():
         return _fail("pr_number must be an integer.", 400)
     if pr_number < 1:
         return _fail("pr_number must be positive.", 400, "pr_number must be a positive integer")
+    pr_display = pr_number
     if diff is not None and not isinstance(diff, str):
         return _fail("diff must be a string.", 400)
     if not github_token:
