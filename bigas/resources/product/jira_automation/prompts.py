@@ -105,6 +105,7 @@ Rules:
 - Be specific about files/modules when the repo context supports it; otherwise mark unknowns.
 - Prefer incremental, testable steps over big-bang rewrites.
 - Include risks, edge cases, and a short test plan.
+- Call out README impact: whether README (or equivalent docs) should be updated for install/config/run/usage changes.
 - Do NOT include "## Brief", "## AI Research", or "## AI Plan" headings — return only the plan body markdown.
 - Use markdown with short sections and bullets.
 - Do not invent APIs, tables, or files that are not evidenced in the context.
@@ -146,6 +147,7 @@ Write the plan body with these sections:
 ### Components / files likely touched
 ### Data model / API changes (if any)
 ### Step-by-step implementation plan
+### README / docs impact
 ### Test plan
 ### Rollout / flags / migrations
 ### Risks & open questions
@@ -228,6 +230,7 @@ Rules:
 - Be specific about files/routes when repo context supports it; otherwise mark unknowns.
 - Include SEO checklist items (meta, headings, slug/URL, sitemap/OG if relevant in-repo).
 - Include a short verification plan (what to click/view locally or in preview).
+- Call out README/docs impact when routes, content workflows, or contributor setup change.
 - Do NOT include "## Brief", "## AI Research", or "## AI Plan" headings — return only the plan body markdown.
 - Use markdown with short sections and bullets.
 - Do not invent CMS APIs, routes, or files that are not evidenced in the context.
@@ -269,6 +272,7 @@ Write the plan body with these sections:
 ### Pages, routes, and files likely touched
 ### Copy / media / SEO details to implement
 ### Step-by-step implementation plan
+### README / docs impact
 ### Verification plan (preview checklist)
 ### Rollout notes (publish, redirects, sitemap)
 ### Risks & open questions
@@ -307,11 +311,12 @@ Summary: {summary}
 2. Prefer the AI Plan for technical approach; treat human comments as clarifications that override open questions.
 3. Keep scope tight — do not refactor unrelated code.
 4. Add/update tests when reasonable.
-5. Open a pull request when done (autoCreatePR is enabled).
-6. PR title MUST start with `{issue_key}:` followed by a short summary.
-7. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-8. Do not merge the PR.
-9. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+5. Update the repository README when the change affects how people install, configure, run, or understand the project. Skip README edits for purely internal refactors with no user-facing or ops impact.
+6. Open a pull request when done (autoCreatePR is enabled).
+7. PR title MUST start with `{issue_key}:` followed by a short summary.
+8. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
+9. Do not merge the PR.
+10. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
 """
 
 
@@ -348,11 +353,12 @@ Summary: {summary}
 3. Keep scope tight — do not redesign unrelated pages or refactor the whole site.
 4. Match tone and structure of existing content in the repo when writing copy unless the Brief specifies otherwise.
 5. Include sensible SEO basics when relevant (title/description/headings/slug) using the project's existing conventions.
-6. Open a pull request when done (autoCreatePR is enabled).
-7. PR title MUST start with `{issue_key}:` followed by a short summary.
-8. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-9. Do not merge the PR.
-10. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+6. Update the repository README (or equivalent site docs) when the change affects how content, routes, SEO setup, or contributor workflows are documented. Skip when nothing user- or ops-facing changed.
+7. Open a pull request when done (autoCreatePR is enabled).
+8. PR title MUST start with `{issue_key}:` followed by a short summary.
+9. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
+10. Do not merge the PR.
+11. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
 """
 
 
