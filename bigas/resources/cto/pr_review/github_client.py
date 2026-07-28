@@ -5,7 +5,7 @@ Uses a hidden HTML comment marker so we update the same comment on repeated runs
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import requests
 
@@ -144,6 +144,22 @@ class GitHubPRCommentClient:
         """
         Return (head_sha, commit_message) for the PR head.
         """
+        sha, message, _committed_at = self.get_pr_head_commit_meta(
+            owner, repo, pr_number
+        )
+        return sha, message
+
+    def get_pr_head_commit_meta(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> tuple[str, str, Optional[str]]:
+        """
+        Return (head_sha, commit_message, committed_at_iso) for the PR head.
+
+        ``committed_at_iso`` is the committer date in ISO-8601 when available.
+        """
         pr_api = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
         resp = requests.get(pr_api, headers=self._headers, timeout=30)
         if resp.status_code == 404:
@@ -168,17 +184,21 @@ class GitHubPRCommentClient:
         commit_api = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
         cresp = requests.get(commit_api, headers=self._headers, timeout=30)
         if cresp.status_code >= 400:
-            # Fall back to empty message; loop-guard then only matches on force.
             logger.warning(
                 "Failed to fetch commit message for %s: %s",
                 sha[:8],
                 cresp.status_code,
             )
-            return sha, ""
+            return sha, "", None
         cdata = cresp.json() if cresp.text else {}
-        message = ((cdata.get("commit") or {}).get("message") or "").strip()
-        return sha, message
-
+        commit = cdata.get("commit") or {}
+        message = (commit.get("message") or "").strip()
+        committed_at = (
+            ((commit.get("committer") or {}).get("date") or "").strip()
+            or ((commit.get("author") or {}).get("date") or "").strip()
+            or None
+        )
+        return sha, message, committed_at
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Fetch the pull request diff text via the GitHub API."""
         pr_api = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"

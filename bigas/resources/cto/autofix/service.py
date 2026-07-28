@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bigas.resources.cto.autofix.cursor_client import (
@@ -11,7 +12,9 @@ from bigas.resources.cto.autofix.cursor_client import (
 )
 from bigas.resources.cto.autofix.heuristics import (
     AUTOFIX_COMMIT_MARKER,
+    autofix_cooldown_seconds,
     autofix_max_iterations,
+    format_loop_protection_message,
     review_needs_autofix,
 )
 from bigas.resources.cto.pr_review.github_client import (
@@ -66,6 +69,19 @@ def autofix_looks_like_confirmation_stop(result_text: str) -> bool:
     return any(n in text for n in needles)
 
 
+def _age_seconds_since(iso_ts: Optional[str]) -> Optional[float]:
+    if not iso_ts:
+        return None
+    raw = iso_ts.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds())
+
+
 class AutofixService:
     def __init__(
         self,
@@ -104,12 +120,13 @@ class AutofixService:
         pr_url = f"https://github.com/{repo}/pull/{pr_number}"
         repo_url = f"https://github.com/{repo}"
         max_iters = autofix_max_iterations()
+        cooldown = autofix_cooldown_seconds()
 
         gh = GitHubPRCommentClient(token=self._github_token)
 
         try:
-            head_sha, head_message = gh.get_pr_head_commit(
-                owner=owner, repo=repo_name, pr_number=pr_number
+            head_sha, head_message, committed_at = gh.get_pr_head_commit_meta(
+                owner, repo_name, pr_number
             )
             autofix_count = gh.count_autofix_commits(
                 owner, repo_name, pr_number, marker=AUTOFIX_COMMIT_MARKER
@@ -121,15 +138,39 @@ class AutofixService:
             return {
                 "skipped": True,
                 "loop_protection": True,
-                "reason": (
-                    f"loop protection: {autofix_count}/{max_iters} autofix rounds "
-                    f"already on this PR — remaining review comments need manual handling"
+                "reason": format_loop_protection_message(
+                    autofix_count=autofix_count, max_iterations=max_iters
                 ),
                 "pr_url": pr_url,
                 "autofix_count": autofix_count,
                 "max_iterations": max_iters,
                 "head_sha": head_sha,
             }
+
+        # Prevent overlapping launches while a previous autofix commit is still fresh.
+        if (
+            not force
+            and cooldown > 0
+            and AUTOFIX_COMMIT_MARKER in (head_message or "")
+        ):
+            age = _age_seconds_since(committed_at)
+            if age is not None and age < cooldown:
+                wait_left = int(cooldown - age)
+                return {
+                    "skipped": True,
+                    "cooldown": True,
+                    "reason": (
+                        f"autofix cooldown: latest commit is already `[bigas-autofix]` "
+                        f"({int(age)}s ago). Wait ~{wait_left}s for the previous agent "
+                        f"to finish before launching another round."
+                    ),
+                    "pr_url": pr_url,
+                    "autofix_count": autofix_count,
+                    "max_iterations": max_iters,
+                    "cooldown_seconds": cooldown,
+                    "head_age_seconds": int(age),
+                    "head_sha": head_sha,
+                }
 
         body = (review_body or "").strip()
         if not body:

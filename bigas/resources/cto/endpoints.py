@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, request
 
 from bigas.resources.cto.autofix.heuristics import (
     autofix_max_iterations,
+    format_loop_protection_message,
     latest_commit_is_autofix,
     review_is_ready_to_merge,
 )
@@ -69,10 +70,12 @@ def _notify_autofix_loop_protection(
     max_iterations: int,
     github_token: str = "",
 ) -> None:
+    detail = format_loop_protection_message(
+        autofix_count=autofix_count, max_iterations=max_iterations
+    )
     msg = (
         f"**CTO autofix stopped (loop protection)**\n"
-        f"Reached {autofix_count}/{max_iterations} automatic fix rounds without a clean review.\n"
-        f"Remaining review comments need **manual handling**.\n"
+        f"{detail}\n"
         f"PR: {pr_url}"
     )
     _post_to_discord_cto(msg)
@@ -114,9 +117,8 @@ def _notify_autofix_loop_protection(
         jira = JiraClient(JiraConfig.from_env())
         jira.add_comment(
             issue_key,
-            f"{BIGAS_COMMENT_MARKER} Autofix loop protection "
-            f"({autofix_count}/{max_iterations}).\n"
-            f"Automatic fixes stopped; remaining PR review comments need manual handling.\n"
+            f"{BIGAS_COMMENT_MARKER} Autofix loop protection.\n"
+            f"{detail}\n"
             f"Left in current status.\nPR: {pr_url}",
         )
     except Exception:
@@ -404,6 +406,12 @@ def autofix_pr():
             _post_to_discord_cto(
                 f"**CTO autofix skipped**\n"
                 f"Review does not need autofix ({sanitize_error_message(reason)}).\n"
+                f"PR: {pr_url}"
+            )
+        elif result.get("cooldown"):
+            _post_to_discord_cto(
+                f"**CTO autofix cooldown**\n"
+                f"{sanitize_error_message(reason)}\n"
                 f"PR: {pr_url}"
             )
         else:

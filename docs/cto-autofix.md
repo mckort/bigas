@@ -33,6 +33,7 @@ Optional:
 
 - `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Omit to use Cursor’s default.
 - `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection.
+- `BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS` (default `600`) — skip launching another autofix while the PR head is still a fresh `[bigas-autofix]` commit (reduces overlapping agents).
 
 ## Repo config
 

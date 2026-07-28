@@ -6,6 +6,7 @@ from typing import Tuple
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
 DEFAULT_AUTOFIX_MAX_ITERATIONS = 5
+DEFAULT_AUTOFIX_COOLDOWN_SECONDS = 600
 
 
 def autofix_max_iterations() -> int:
@@ -20,6 +21,30 @@ def autofix_max_iterations() -> int:
     except ValueError:
         return DEFAULT_AUTOFIX_MAX_ITERATIONS
 
+
+def autofix_cooldown_seconds() -> int:
+    """
+    Skip launching a new autofix if the latest head commit is already an autofix
+    and younger than this many seconds (env BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS).
+    """
+    import os
+
+    raw = (os.environ.get("BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS") or "").strip()
+    if not raw:
+        return DEFAULT_AUTOFIX_COOLDOWN_SECONDS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_AUTOFIX_COOLDOWN_SECONDS
+
+
+def format_loop_protection_message(*, autofix_count: int, max_iterations: int) -> str:
+    """Human-readable loop-protection copy for Discord / Jira / API reason."""
+    return (
+        f"Exceeded autofix limit of {max_iterations} "
+        f"(found {autofix_count} `[bigas-autofix]` commits on this PR). "
+        f"Remaining review comments need manual handling."
+    )
 
 _CLEAN = re.compile(
     r"(?i)\b(looks good( to me)?|lgtm|safe to merge|ready to merge|"

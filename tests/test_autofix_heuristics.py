@@ -88,6 +88,24 @@ def test_autofix_max_iterations_env(monkeypatch):
     assert autofix_max_iterations() == 1
 
 
+def test_format_loop_protection_message_is_clear():
+    from bigas.resources.cto.autofix.heuristics import format_loop_protection_message
+
+    msg = format_loop_protection_message(autofix_count=9, max_iterations=5)
+    assert "limit of 5" in msg
+    assert "found 9" in msg
+    assert "manual handling" in msg
+
+
+def test_autofix_cooldown_seconds_env(monkeypatch):
+    from bigas.resources.cto.autofix.heuristics import autofix_cooldown_seconds
+
+    monkeypatch.delenv("BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS", raising=False)
+    assert autofix_cooldown_seconds() == 600
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS", "120")
+    assert autofix_cooldown_seconds() == 120
+
+
 def test_autofix_prompt_forbids_confirmation():
     prompt = _build_prompt(
         repo="mckort/bigas",
