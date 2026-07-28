@@ -298,8 +298,12 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/analyze_underperformin
 | Endpoint | Description |
 |---|---|
 | `POST run_linkedin_portfolio_report` | One-command: discover creatives → fetch analytics → summarize → Discord |
+| `POST run_linkedin_portfolio_report_async` | Async variant of the above — returns a `job_id` immediately |
+| `POST list_linkedin_creatives_for_period` | Discover creatives with activity in a date range (no hard-coded creative IDs) |
 | `POST fetch_linkedin_ad_analytics_report` | Fetch raw LinkedIn adAnalytics, cache in GCS |
+| `POST fetch_linkedin_creative_demographics_portfolio` | Fetch per-creative, per-dimension demographic analytics (job title, function, ...), cache in GCS |
 | `POST summarize_linkedin_ad_analytics` | Summarize an enriched report from GCS → Discord |
+| `POST summarize_linkedin_creative_portfolio` | Summarize per-ad top segments + recommendations across multiple creatives → Discord |
 | `GET linkedin_ads_health_check` | Verify API access and list ad accounts |
 | `POST linkedin_exchange_code` | Exchange OAuth authorization code for refresh token |
 
@@ -317,20 +321,25 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | Endpoint | Description |
 |---|---|
 | `POST run_reddit_portfolio_report` | One-command: fetch performance + audience → summarize → Discord |
+| `POST run_reddit_portfolio_report_async` | Async variant of the above — returns a `job_id` immediately |
 | `POST fetch_reddit_ad_analytics_report` | Fetch Reddit Ads performance report, store in GCS |
 | `POST fetch_reddit_audience_report` | Audience breakdown by interests, communities, or geography |
 | `POST summarize_reddit_ad_analytics` | Summarize an enriched report from GCS → Discord |
 | `GET reddit_ads_health_check` | Verify API access and list ad accounts |
+| `POST reddit_exchange_code` | Exchange OAuth authorization code for refresh token |
 
 ### Paid ads & cross-platform
 
 | Endpoint | Description |
 |---|---|
 | `POST run_google_ads_portfolio_report` | Campaign/ad/audience performance report → Discord |
+| `POST run_google_ads_portfolio_report_async` | Async variant — returns a `job_id` immediately |
 | `POST run_meta_portfolio_report` | Meta (Facebook/Instagram) campaign performance → Discord |
+| `POST run_meta_portfolio_report_async` | Async variant — returns a `job_id` immediately |
 | `POST run_cross_platform_marketing_analysis` | LinkedIn + Reddit + Google Ads + Meta in one report → Discord |
-
-All portfolio endpoints support async variants (`run_*_async`) that return a `job_id` immediately. Poll with `get_job_status` and retrieve results with `get_job_result`.
+| `POST run_cross_platform_marketing_analysis_async` | Async variant — returns a `job_id` immediately (use for long runs instead of a 900s Cloud Run timeout) |
+| `POST get_job_status` | Poll status of any async job by `job_id` |
+| `POST get_job_result` | Fetch the result of a finished async job by `job_id` |
 
 ### Product & engineering
 
@@ -340,7 +349,9 @@ All portfolio endpoints support async variants (`run_*_async`) that return a `jo
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord |
-| `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub |
+| `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub. Details: [docs/cto-pr-review.md](docs/cto-pr-review.md) |
+| `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
+| `POST autofix_followup` | Poll the autofix agent; on completion, re-reviews the PR and posts the result to Discord. Details: [docs/cto-autofix.md](docs/cto-autofix.md) |
 
 ---
 
@@ -371,9 +382,9 @@ curl https://your-service-url.a.run.app/mcp/providers
 
 This is what makes the opinionated defaults optional in practice: don't set LinkedIn's env vars, and the LinkedIn provider simply doesn't load — no code path to disable, nothing to comment out. Adding a new provider (e.g. TikTok Ads, QuickBooks, a Slack notification channel) means adding one file under `bigas/providers/...`, not modifying existing services.
 
-Tool registration follows the same pattern: any function decorated with `@register_tool` in `bigas/tools.py` automatically appears in `GET /mcp/manifest` and is callable via both the HTTP API and the MCP `tools/call` JSON-RPC method — no separate wiring per transport.
+Each resource (`bigas/resources/{marketing,product,cto}/endpoints.py`) exposes its tools as normal Flask routes under `/mcp/tools/*` and lists them in a `get_manifest()` function; `app.py` combines all three into `GET /mcp/manifest`, and the same list is what `POST /mcp` serves for `tools/list`/`tools/call` — one manifest, both transports. `bigas/tools.py` additionally defines a `@register_tool` decorator for new provider tools to self-register into that manifest instead of hand-editing it, so adding a tool for a new provider doesn't mean touching `endpoints.py`.
 
-For the provider base classes, a worked example (adding QuickBooks as a finance provider), and the tool registration decorator, see **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[DESIGN_SPEC.md](DESIGN_SPEC.md)**.
+For the provider base classes and a worked example (adding QuickBooks as a finance provider), see **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[DESIGN_SPEC.md](DESIGN_SPEC.md)**.
 
 ---
 
