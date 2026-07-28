@@ -229,8 +229,39 @@ def test_build_implement_prompt_forbids_confirmation():
     )
     assert "Do NOT ask for confirmation" in prompt
     assert "implement immediately" in prompt
+    assert "Update the repository README" in prompt
     assert "VFA-14:" in prompt
     assert "Jira: VFA-14" in prompt
+
+
+def test_design_prompts_include_readme_impact():
+    from bigas.resources.product.jira_automation.prompts import (
+        WORKSTREAM_MARKETING,
+        WORKSTREAM_PRODUCT,
+        design_prompts_for,
+    )
+
+    _, build_product = design_prompts_for(WORKSTREAM_PRODUCT)
+    product_plan = build_product(
+        issue_key="VFA-1",
+        summary="x",
+        brief="b",
+        research="r",
+        linked_issues_text="(none)",
+        repo_context="(none)",
+    )
+    assert "### README / docs impact" in product_plan
+
+    _, build_marketing = design_prompts_for(WORKSTREAM_MARKETING)
+    marketing_plan = build_marketing(
+        issue_key="WAYW-1",
+        summary="x",
+        brief="b",
+        research="r",
+        linked_issues_text="(none)",
+        repo_context="(none)",
+    )
+    assert "### README / docs impact" in marketing_plan
 
 
 def test_resolve_workstream_defaults_to_product():
@@ -264,6 +295,7 @@ def test_resolve_workstream_defaults_to_product():
     )
     assert "marketing/website" in marketing_impl
     assert "SEO basics" in marketing_impl
+    assert "Update the repository README" in marketing_impl
     assert "Do NOT ask for confirmation" in marketing_impl
 
 
@@ -362,8 +394,10 @@ def test_config_defaults(monkeypatch):
     monkeypatch.delenv("BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS", raising=False)
     cfg = JiraAutomationConfig.from_env()
     assert cfg.webhook_secret == "abc"
-    assert cfg.allowed_projects == ("VFA",)
+    assert cfg.allowed_projects == ("VFA", "WAYW", "BIG", "REM", "GPWW", "FYDA", "MYL")
     assert cfg.repo_for_project("VFA") == "mckort/vcfieldassistant"
+    assert cfg.repo_for_project("MYL") == "mckort/mylifesdeed"
+    assert cfg.repo_for_project("GPWW") == "Green-Promo-Wear-Global/greenpromowear-website"
     assert cfg.handler_for_status("Research and describe (AI)") == HANDLER_RESEARCH
     assert cfg.daily_quota == 20
 
