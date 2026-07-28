@@ -230,6 +230,7 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "Do NOT ask for confirmation" in prompt
     assert "implement immediately" in prompt
     assert "Update the repository README" in prompt
+    assert "Update in-app support/help content" in prompt
     assert "VFA-14:" in prompt
     assert "Jira: VFA-14" in prompt
 
@@ -251,6 +252,10 @@ def test_design_prompts_include_readme_impact():
         repo_context="(none)",
     )
     assert "### README / docs impact" in product_plan
+    assert "### In-app support / help impact" in product_plan
+
+    product_system, _ = design_prompts_for(WORKSTREAM_PRODUCT)
+    assert "in-app support/help impact" in product_system
 
     _, build_marketing = design_prompts_for(WORKSTREAM_MARKETING)
     marketing_plan = build_marketing(
@@ -262,6 +267,7 @@ def test_design_prompts_include_readme_impact():
         repo_context="(none)",
     )
     assert "### README / docs impact" in marketing_plan
+    assert "### In-app support / help impact" not in marketing_plan
 
 
 def test_resolve_workstream_defaults_to_product():
