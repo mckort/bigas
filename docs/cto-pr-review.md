@@ -76,7 +76,7 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
   run: |
     python3 -c "
     import json, os
-    with open('diff.txt') as f:
+    with open('diff.txt', encoding='utf-8', errors='replace') as f:
         diff = f.read()
     payload = {
         'repo': os.environ['GITHUB_REPOSITORY'],
