@@ -12,6 +12,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 BIGAS_REVIEW_MARKER = "<!-- bigas-ai-review-marker -->"
+BIGAS_AUTOFIX_COOLDOWN_MARKER = "<!-- bigas-autofix-cooldown-marker -->"
 
 
 class GitHubPRCommentError(RuntimeError):
