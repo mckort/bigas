@@ -231,6 +231,8 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "implement immediately" in prompt
     assert "Update the repository README" in prompt
     assert "Update in-app support/help content" in prompt
+    assert "small mobile screen" in prompt
+    assert "responsive design" in prompt
     assert "VFA-14:" in prompt
     assert "Jira: VFA-14" in prompt
 
@@ -253,9 +255,12 @@ def test_design_prompts_include_readme_impact():
     )
     assert "### README / docs impact" in product_plan
     assert "### In-app support / help impact" in product_plan
+    assert "### Mobile / responsive considerations (if UI)" in product_plan
 
     product_system, _ = design_prompts_for(WORKSTREAM_PRODUCT)
     assert "in-app support/help impact" in product_system
+    assert "responsive design" in product_system
+    assert "small mobile screen" in product_system
 
     _, build_marketing = design_prompts_for(WORKSTREAM_MARKETING)
     marketing_plan = build_marketing(
@@ -268,6 +273,11 @@ def test_design_prompts_include_readme_impact():
     )
     assert "### README / docs impact" in marketing_plan
     assert "### In-app support / help impact" not in marketing_plan
+    assert "### Mobile / responsive considerations (if UI)" in marketing_plan
+
+    marketing_system, _ = design_prompts_for(WORKSTREAM_MARKETING)
+    assert "responsive design" in marketing_system
+    assert "small mobile screen" in marketing_system
 
 
 def test_resolve_workstream_defaults_to_product():
@@ -302,6 +312,8 @@ def test_resolve_workstream_defaults_to_product():
     assert "marketing/website" in marketing_impl
     assert "SEO basics" in marketing_impl
     assert "Update the repository README" in marketing_impl
+    assert "small mobile screen" in marketing_impl
+    assert "responsive design" in marketing_impl
     assert "Do NOT ask for confirmation" in marketing_impl
 
 

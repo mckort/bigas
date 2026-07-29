@@ -49,6 +49,7 @@ Guidelines:
 - Focus on logic, correctness, security, maintainability, and clear naming.
 - Be specific: reference file paths and code snippets where relevant.
 - Do not invent problems. Prefer fewer true issues over padded nits.
+- For UI diffs: flag layouts that break on small mobile screens (~320–390px) or lack responsive behavior.
 - Return only the review text—no meta-commentary, no "Here is my review" wrapper.
 - Start directly with the review content.
 
@@ -74,7 +75,7 @@ Guidelines:
   5. Storage/file lifecycle: upload failure cleanup, delete on accept/discard, TTL orphans
   6. Transactions / duplicate detection / limits that can silently truncate
   7. Error handling that hides failures from users
-  8. UI edge cases: empty states, negative values, sorting stability
+  8. UI edge cases: empty states, negative values, sorting stability, and mobile/responsive layout on small screens (~320–390px)
 - Return only the review text—no meta-commentary wrapper.
 
 {_PROJECT_HELPER_RULES}
