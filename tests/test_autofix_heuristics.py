@@ -101,9 +101,24 @@ def test_autofix_cooldown_seconds_env(monkeypatch):
     from bigas.resources.cto.autofix.heuristics import autofix_cooldown_seconds
 
     monkeypatch.delenv("BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS", raising=False)
-    assert autofix_cooldown_seconds() == 600
-    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS", "120")
     assert autofix_cooldown_seconds() == 120
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS", "90")
+    assert autofix_cooldown_seconds() == 90
+
+
+def test_age_seconds_since_parses_github_timestamps():
+    from datetime import datetime, timedelta, timezone
+
+    from bigas.resources.cto.autofix.service import _age_seconds_since
+
+    past = (datetime.now(timezone.utc) - timedelta(seconds=45)).isoformat().replace(
+        "+00:00", "Z"
+    )
+    age = _age_seconds_since(past)
+    assert age is not None
+    assert 40 <= age <= 60
+    assert _age_seconds_since(None) is None
+    assert _age_seconds_since("not-a-date") is None
 
 
 def test_autofix_prompt_forbids_confirmation():

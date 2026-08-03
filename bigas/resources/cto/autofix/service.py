@@ -147,14 +147,67 @@ class AutofixService:
                 "head_sha": head_sha,
             }
 
-        # Prevent overlapping launches while a previous autofix commit is still fresh.
+        # Load the review comment early so we can decide whether cooldown applies.
+        body = (review_body or "").strip()
+        review_updated_at: Optional[str] = None
+        if not body:
+            try:
+                marked = gh.get_marked_comment(
+                    owner=owner,
+                    repo=repo_name,
+                    pr_number=pr_number,
+                    marker=BIGAS_REVIEW_MARKER,
+                )
+            except GitHubPRCommentError as e:
+                raise AutofixError(str(e)) from e
+            if not marked:
+                return {
+                    "skipped": True,
+                    "reason": "no Bigas review comment found on PR",
+                    "pr_url": pr_url,
+                    "autofix_count": autofix_count,
+                    "max_iterations": max_iters,
+                }
+            found = marked.get("body") or ""
+            body = found if isinstance(found, str) else ""
+            updated = marked.get("updated_at") or marked.get("created_at")
+            review_updated_at = updated.strip() if isinstance(updated, str) else None
+            if not body.strip():
+                return {
+                    "skipped": True,
+                    "reason": "no Bigas review comment found on PR",
+                    "pr_url": pr_url,
+                    "autofix_count": autofix_count,
+                    "max_iterations": max_iters,
+                }
+
+        # Prevent overlapping launches while a previous autofix agent may still be
+        # finishing. Skip cooldown when a newer Bigas review already exists after the
+        # autofix head commit — that means the previous agent finished and we were
+        # re-reviewed (common when the autofix push cancels/restarts Actions).
         if (
             not force
             and cooldown > 0
             and AUTOFIX_COMMIT_MARKER in (head_message or "")
         ):
             age = _age_seconds_since(committed_at)
-            if age is not None and age < cooldown:
+            review_age_after_head = None
+            if review_updated_at and committed_at:
+                head_age = _age_seconds_since(committed_at)
+                review_age = _age_seconds_since(review_updated_at)
+                if head_age is not None and review_age is not None:
+                    # Positive => review comment is newer than the head commit.
+                    review_age_after_head = head_age - review_age
+            if review_age_after_head is not None and review_age_after_head > 0:
+                logger.info(
+                    "Skipping autofix cooldown for %s#%s: review is %.0fs newer than "
+                    "autofix head %s",
+                    repo,
+                    pr_number,
+                    review_age_after_head,
+                    head_sha[:8],
+                )
+            elif age is not None and age < cooldown:
                 wait_left = int(cooldown - age)
                 return {
                     "skipped": True,
@@ -171,27 +224,6 @@ class AutofixService:
                     "head_age_seconds": int(age),
                     "head_sha": head_sha,
                 }
-
-        body = (review_body or "").strip()
-        if not body:
-            try:
-                found = gh.get_marked_comment_body(
-                    owner=owner,
-                    repo=repo_name,
-                    pr_number=pr_number,
-                    marker=BIGAS_REVIEW_MARKER,
-                )
-            except GitHubPRCommentError as e:
-                raise AutofixError(str(e)) from e
-            if not found:
-                return {
-                    "skipped": True,
-                    "reason": "no Bigas review comment found on PR",
-                    "pr_url": pr_url,
-                    "autofix_count": autofix_count,
-                    "max_iterations": max_iters,
-                }
-            body = found
 
         if not force:
             should, reason = review_needs_autofix(body)

@@ -106,14 +106,14 @@ class GitHubPRCommentClient:
         )
         return data
 
-    def get_marked_comment_body(
+    def get_marked_comment(
         self,
         owner: str,
         repo: str,
         pr_number: int,
         marker: str = BIGAS_REVIEW_MARKER,
-    ) -> str | None:
-        """Return the body of the PR comment that contains marker, or None."""
+    ) -> dict | None:
+        """Return the PR comment dict that contains marker, or None."""
         comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
         resp = requests.get(comments_url, headers=self._headers, timeout=30)
         if resp.status_code == 404:
@@ -132,9 +132,23 @@ class GitHubPRCommentClient:
             return None
         for c in comments:
             body = c.get("body") or ""
-            if marker in body:
-                return body
+            if marker in body and isinstance(c, dict):
+                return c
         return None
+
+    def get_marked_comment_body(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        marker: str = BIGAS_REVIEW_MARKER,
+    ) -> str | None:
+        """Return the body of the PR comment that contains marker, or None."""
+        comment = self.get_marked_comment(owner, repo, pr_number, marker=marker)
+        if not comment:
+            return None
+        body = comment.get("body") or ""
+        return body if isinstance(body, str) else None
 
     def get_pr_head_commit(
         self,
