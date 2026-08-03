@@ -106,6 +106,43 @@ class GitHubPRCommentClient:
         )
         return data
 
+    def delete_marked_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        marker: str,
+    ) -> bool:
+        """
+        Delete the PR comment that contains the marker. Returns True if deleted.
+        """
+        comment = self.get_marked_comment(owner, repo, pr_number, marker=marker)
+        if not comment:
+            return False
+        comment_id = comment.get("id")
+        if not comment_id:
+            return False
+        delete_url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
+        resp = requests.delete(delete_url, headers=self._headers, timeout=30)
+        if resp.status_code == 204:
+            logger.info(
+                "Deleted PR comment %s on %s/%s#%s",
+                comment_id,
+                owner,
+                repo,
+                pr_number,
+            )
+            return True
+        if resp.status_code in (401, 403, 404):
+            logger.warning(
+                "Could not delete PR comment %s: HTTP %s",
+                comment_id,
+                resp.status_code,
+            )
+            return False
+        resp.raise_for_status()
+        return False
+
     def get_marked_comment(
         self,
         owner: str,

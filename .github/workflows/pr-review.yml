@@ -190,7 +190,7 @@ jobs:
                   age_s = int(data.get("head_age_seconds") or 0)
                   # Short slices until the window expires; avoid stopping after a few waits.
                   remaining = max(0, cooldown_s - age_s + 15)
-                  return max(15, min(remaining or 15, 120))
+                  return max(15, min(remaining, 120))
               except (TypeError, ValueError):
                   return 60
 
@@ -201,7 +201,7 @@ jobs:
               print(f"=== autofix round attempt {round_i}/{max_rounds} ===")
               code, data = call(
                   "autofix_pr",
-                  {"repo": repo, "pr_number": pr_number},
+                  {"repo": repo, "pr_number": pr_number, "is_retry": cooldown_waits > 0},
                   timeout=120,
               )
               print(f"autofix_pr HTTP {code}: {json.dumps(data)[:800]}")
