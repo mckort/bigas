@@ -462,11 +462,8 @@ def autofix_pr():
                 wait_left = None
             mins = max(1, int((wait_left + 59) // 60)) if wait_left is not None else None
             wait_txt = f"~{mins} min" if mins is not None else "a few minutes"
-            _post_to_discord_cto(
-                f"**CTO autofix cooldown**\n"
-                f"{sanitize_error_message(reason)}\n"
-                f"PR: {pr_url}"
-            )
+            # Removed Discord notification for cooldowns to avoid spam during
+            # GitHub Action polling loops. The PR comment below is sufficient.
             # Visible on the PR so cooldown does not look like a silent hang.
             gh_token = github_token or (os.environ.get("GITHUB_TOKEN") or "").strip()
             if gh_token:
@@ -503,6 +500,24 @@ def autofix_pr():
     agent_id = result.get("agent_id") or ""
     round_n = result.get("autofix_round") or "?"
     max_n = result.get("max_iterations") or autofix_max_iterations()
+
+    # Delete any stale cooldown comment now that autofix is launching.
+    gh_token = github_token or (os.environ.get("GITHUB_TOKEN") or "").strip()
+    if gh_token:
+        try:
+            owner, repo_name = repo.split("/", 1)
+            GitHubPRCommentClient(token=gh_token).delete_marked_comment(
+                owner=owner,
+                repo=repo_name,
+                pr_number=int(pr_number),
+                marker=BIGAS_AUTOFIX_COOLDOWN_MARKER,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to delete autofix cooldown PR comment",
+                exc_info=True,
+            )
+
     _post_to_discord_cto(
         f"**CTO autofix launched** ({round_n}/{max_n})\n"
         f"PR: {pr_url}\nAgent: {agent_url or agent_id}"

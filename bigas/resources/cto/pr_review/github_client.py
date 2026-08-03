@@ -298,3 +298,58 @@ class GitHubPRCommentClient:
         """Count PR commits whose message contains the autofix marker."""
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
         return sum(1 for m in messages if marker in m)
+
+    def delete_marked_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        marker: str,
+    ) -> bool:
+        """
+        Delete the PR comment that contains the given marker, if it exists.
+        Returns True if a comment was deleted, False otherwise.
+        """
+        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        resp = requests.get(comments_url, headers=self._headers, timeout=30)
+        if resp.status_code >= 400:
+            logger.warning(
+                "Failed to list comments for %s/%s#%s: %s",
+                owner,
+                repo,
+                pr_number,
+                resp.status_code,
+            )
+            return False
+
+        comments = resp.json() if resp.text else []
+        if not isinstance(comments, list):
+            return False
+
+        comment_id = next(
+            (c["id"] for c in comments if marker in (c.get("body") or "")),
+            None,
+        )
+        if not comment_id:
+            return False
+
+        delete_url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
+        del_resp = requests.delete(delete_url, headers=self._headers, timeout=30)
+        if del_resp.status_code == 204:
+            logger.info(
+                "Deleted marked comment %s on %s/%s#%s",
+                comment_id,
+                owner,
+                repo,
+                pr_number,
+            )
+            return True
+        logger.warning(
+            "Failed to delete comment %s on %s/%s#%s: %s",
+            comment_id,
+            owner,
+            repo,
+            pr_number,
+            del_resp.status_code,
+        )
+        return False
