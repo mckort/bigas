@@ -210,6 +210,22 @@ class AutofixService:
                     review_age_after_head,
                     head_sha[:8],
                 )
+            elif review_age_after_head is not None and review_age_after_head <= 0:
+                # Review predates the autofix head commit — the review is stale.
+                # Skip this run; a new Action run will trigger re-review on the
+                # autofix commit, which will call autofix again with fresh findings.
+                return {
+                    "skipped": True,
+                    "stale_review": True,
+                    "reason": (
+                        "Review predates the latest autofix commit; "
+                        "waiting for re-review of autofix commit."
+                    ),
+                    "pr_url": pr_url,
+                    "autofix_count": autofix_count,
+                    "max_iterations": max_iters,
+                    "head_sha": head_sha,
+                }
             elif age is not None and age < cooldown:
                 wait_left = int(cooldown - age)
                 return {

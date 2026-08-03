@@ -434,6 +434,25 @@ def autofix_pr():
             status = 502
         return jsonify({"error": err}), status
 
+    # Delete the cooldown comment if the result is not cooldown (to avoid leaving
+    # an orphaned "Autofix paused (cooldown)" comment on the PR).
+    if not result.get("cooldown"):
+        gh_token = github_token or (os.environ.get("GITHUB_TOKEN") or "").strip()
+        if gh_token:
+            try:
+                owner, repo_name = repo.split("/", 1)
+                GitHubPRCommentClient(token=gh_token).delete_marked_comment(
+                    owner=owner,
+                    repo=repo_name,
+                    pr_number=int(pr_number),
+                    marker=BIGAS_AUTOFIX_COOLDOWN_MARKER,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to delete autofix cooldown PR comment",
+                    exc_info=True,
+                )
+
     if result.get("skipped"):
         reason = result.get("reason") or "skipped"
         if result.get("loop_protection"):
@@ -498,6 +517,12 @@ def autofix_pr():
                             "Failed to post autofix cooldown PR comment",
                             exc_info=True,
                         )
+        elif result.get("stale_review"):
+            _post_to_discord_cto(
+                f"**CTO autofix skipped (stale review)**\n"
+                f"Review predates the latest autofix commit; waiting for re-review.\n"
+                f"PR: {pr_url}"
+            )
         else:
             _post_to_discord_cto(
                 f"**CTO autofix skipped**\n"
@@ -509,22 +534,6 @@ def autofix_pr():
     agent_id = result.get("agent_id") or ""
     round_n = result.get("autofix_round") or "?"
     max_n = result.get("max_iterations") or autofix_max_iterations()
-
-    gh_token = github_token or (os.environ.get("GITHUB_TOKEN") or "").strip()
-    if gh_token:
-        try:
-            owner, repo_name = repo.split("/", 1)
-            GitHubPRCommentClient(token=gh_token).delete_marked_comment(
-                owner=owner,
-                repo=repo_name,
-                pr_number=int(pr_number),
-                marker=BIGAS_AUTOFIX_COOLDOWN_MARKER,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to delete autofix cooldown PR comment",
-                exc_info=True,
-            )
 
     _post_to_discord_cto(
         f"**CTO autofix launched** ({round_n}/{max_n})\n"
