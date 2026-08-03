@@ -318,13 +318,14 @@ class GitHubPRCommentClient:
         marker: str,
     ) -> bool:
         """
-        Delete the PR comment that contains the given marker, if it exists.
-        Returns True if a comment was deleted, False otherwise.
+        Delete all PR comments that contain the given marker.
+        Returns True if at least one comment was deleted, False otherwise.
         """
         base_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
         page = 1
         per_page = 100
-        comment_id = None
+        comment_ids: list[int] = []
+
         while True:
             resp = requests.get(
                 base_url,
@@ -340,42 +341,44 @@ class GitHubPRCommentClient:
                     pr_number,
                     resp.status_code,
                 )
-                return False
+                break
 
             comments = resp.json() if resp.text else []
             if not isinstance(comments, list):
-                return False
-
-            comment_id = next(
-                (c["id"] for c in comments if isinstance(c, dict) and marker in (c.get("body") or "")),
-                None,
-            )
-            if comment_id:
                 break
+
+            for c in comments:
+                if isinstance(c, dict) and marker in (c.get("body") or ""):
+                    comment_ids.append(c["id"])
+
             if len(comments) < per_page:
                 break
             page += 1
 
-        if not comment_id:
+        if not comment_ids:
             return False
 
-        delete_url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
-        del_resp = requests.delete(delete_url, headers=self._headers, timeout=30)
-        if del_resp.status_code == 204:
-            logger.info(
-                "Deleted marked comment %s on %s/%s#%s",
-                comment_id,
-                owner,
-                repo,
-                pr_number,
-            )
-            return True
-        logger.warning(
-            "Failed to delete comment %s on %s/%s#%s: %s",
-            comment_id,
-            owner,
-            repo,
-            pr_number,
-            del_resp.status_code,
-        )
-        return False
+        deleted_any = False
+        for comment_id in comment_ids:
+            delete_url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
+            del_resp = requests.delete(delete_url, headers=self._headers, timeout=30)
+            if del_resp.status_code == 204:
+                logger.info(
+                    "Deleted marked comment %s on %s/%s#%s",
+                    comment_id,
+                    owner,
+                    repo,
+                    pr_number,
+                )
+                deleted_any = True
+            else:
+                logger.warning(
+                    "Failed to delete comment %s on %s/%s#%s: %s",
+                    comment_id,
+                    owner,
+                    repo,
+                    pr_number,
+                    del_resp.status_code,
+                )
+
+        return deleted_any
