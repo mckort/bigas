@@ -114,7 +114,7 @@ class GitHubPRCommentClient:
         marker: str = BIGAS_REVIEW_MARKER,
     ) -> dict | None:
         """Return the PR comment dict that contains marker, or None."""
-        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments?per_page=100"
         resp = requests.get(comments_url, headers=self._headers, timeout=30)
         if resp.status_code == 404:
             raise GitHubPRCommentError(
@@ -310,7 +310,7 @@ class GitHubPRCommentClient:
         Delete the PR comment that contains the given marker, if it exists.
         Returns True if a comment was deleted, False otherwise.
         """
-        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments?per_page=100"
         resp = requests.get(comments_url, headers=self._headers, timeout=30)
         if resp.status_code >= 400:
             logger.warning(
@@ -327,7 +327,7 @@ class GitHubPRCommentClient:
             return False
 
         comment_id = next(
-            (c["id"] for c in comments if marker in (c.get("body") or "")),
+            (c["id"] for c in comments if isinstance(c, dict) and marker in (c.get("body") or "")),
             None,
         )
         if not comment_id:

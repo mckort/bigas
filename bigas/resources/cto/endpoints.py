@@ -494,6 +494,23 @@ def autofix_pr():
                 f"**CTO autofix skipped**\n"
                 f"Reason: {sanitize_error_message(reason)}\nPR: {pr_url}"
             )
+        # Delete any stale cooldown comment when skipped for non-cooldown reasons.
+        if not result.get("cooldown"):
+            gh_token = github_token or (os.environ.get("GITHUB_TOKEN") or "").strip()
+            if gh_token:
+                try:
+                    owner, repo_name = repo.split("/", 1)
+                    GitHubPRCommentClient(token=gh_token).delete_marked_comment(
+                        owner=owner,
+                        repo=repo_name,
+                        pr_number=int(pr_number),
+                        marker=BIGAS_AUTOFIX_COOLDOWN_MARKER,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to delete autofix cooldown PR comment on skip",
+                        exc_info=True,
+                    )
         return jsonify({"success": True, **result})
 
     agent_url = result.get("agent_url") or ""
