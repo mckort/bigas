@@ -6,7 +6,9 @@ from typing import Tuple
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
 DEFAULT_AUTOFIX_MAX_ITERATIONS = 5
-DEFAULT_AUTOFIX_COOLDOWN_SECONDS = 600
+# Short window is enough to avoid overlapping launches; Actions also skips cooldown
+# when a newer Bigas review already exists after the autofix head commit.
+DEFAULT_AUTOFIX_COOLDOWN_SECONDS = 120
 
 
 def autofix_max_iterations() -> int:

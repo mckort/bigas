@@ -110,7 +110,7 @@ jobs:
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MAX_AUTOFIX_ROUNDS: "5"
-          MAX_COOLDOWN_WAITS: "3"
+          MAX_COOLDOWN_WAITS: "20"
         run: |
           python3 <<'PY'
           import json, os, time, urllib.error, urllib.request
@@ -120,7 +120,7 @@ jobs:
           repo = os.environ["GITHUB_REPOSITORY"]
           pr_number = int(os.environ["PR_NUMBER"])
           max_rounds = int(os.environ.get("MAX_AUTOFIX_ROUNDS") or "5")
-          max_cooldown_waits = int(os.environ.get("MAX_COOLDOWN_WAITS") or "3")
+          max_cooldown_waits = int(os.environ.get("MAX_COOLDOWN_WAITS") or "20")
 
           def call(path, body_obj, timeout=180):
               data = json.dumps(body_obj).encode()
@@ -185,12 +185,14 @@ jobs:
 
           def cooldown_wait_seconds(data):
               try:
-                  cooldown_s = int(data.get("cooldown_seconds") or 600)
+                  raw_cooldown = data.get("cooldown_seconds")
+                  cooldown_s = int(raw_cooldown if raw_cooldown is not None else 120)
                   age_s = int(data.get("head_age_seconds") or 0)
-                  # Buffer so the next autofix_pr is past the server cooldown window.
-                  return max(30, cooldown_s - age_s + 15)
+                  # Short slices until the window expires; avoid stopping after a few waits.
+                  remaining = max(0, cooldown_s - age_s + 15)
+                  return max(15, min(remaining or 15, 120))
               except (TypeError, ValueError):
-                  return 120
+                  return 60
 
           round_i = 0
           cooldown_waits = 0
@@ -213,7 +215,7 @@ jobs:
               if data.get("cooldown"):
                   if cooldown_waits >= max_cooldown_waits:
                       print(
-                          "Too many cooldown waits in this run; stopping. "
+                          "Exceeded cooldown wait budget in this run; stopping. "
                           "Re-run the workflow after the cooldown window."
                       )
                       break
