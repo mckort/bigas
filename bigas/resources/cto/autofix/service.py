@@ -199,7 +199,7 @@ class AutofixService:
                 logger.info(
                     "Skipping autofix cooldown for %s#%s: review is %.0fs newer than "
                     "autofix head %s",
-                    repo,
+                    f"{owner}/{repo_name}",
                     pr_number,
                     review_age_after_head,
                     head_sha[:8],

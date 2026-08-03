@@ -114,28 +114,39 @@ class GitHubPRCommentClient:
         marker: str = BIGAS_REVIEW_MARKER,
     ) -> dict | None:
         """Return the PR comment dict that contains marker, or None."""
-        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments?per_page=100"
-        resp = requests.get(comments_url, headers=self._headers, timeout=30)
-        if resp.status_code == 404:
-            raise GitHubPRCommentError(
-                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+        base_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        page = 1
+        per_page = 100
+        while True:
+            resp = requests.get(
+                base_url,
+                headers=self._headers,
+                params={"per_page": per_page, "page": page},
+                timeout=30,
             )
-        if resp.status_code == 401:
-            raise GitHubPRCommentError("GitHub token is invalid or expired.")
-        if resp.status_code == 403:
-            raise GitHubPRCommentError(
-                "GitHub returned 403. Check token scopes and rate limits."
-            )
-        resp.raise_for_status()
-        comments = resp.json() if resp.text else []
-        if not isinstance(comments, list):
-            return None
-        for c in comments:
-            if not isinstance(c, dict):
-                continue
-            body = c.get("body") or ""
-            if marker in body:
-                return c
+            if resp.status_code == 404:
+                raise GitHubPRCommentError(
+                    f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+                )
+            if resp.status_code == 401:
+                raise GitHubPRCommentError("GitHub token is invalid or expired.")
+            if resp.status_code == 403:
+                raise GitHubPRCommentError(
+                    "GitHub returned 403. Check token scopes and rate limits."
+                )
+            resp.raise_for_status()
+            comments = resp.json() if resp.text else []
+            if not isinstance(comments, list):
+                return None
+            for c in comments:
+                if not isinstance(c, dict):
+                    continue
+                body = c.get("body") or ""
+                if marker in body:
+                    return c
+            if len(comments) < per_page:
+                break
+            page += 1
         return None
 
     def get_marked_comment_body(
@@ -310,26 +321,41 @@ class GitHubPRCommentClient:
         Delete the PR comment that contains the given marker, if it exists.
         Returns True if a comment was deleted, False otherwise.
         """
-        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments?per_page=100"
-        resp = requests.get(comments_url, headers=self._headers, timeout=30)
-        if resp.status_code >= 400:
-            logger.warning(
-                "Failed to list comments for %s/%s#%s: %s",
-                owner,
-                repo,
-                pr_number,
-                resp.status_code,
+        base_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        page = 1
+        per_page = 100
+        comment_id = None
+        while True:
+            resp = requests.get(
+                base_url,
+                headers=self._headers,
+                params={"per_page": per_page, "page": page},
+                timeout=30,
             )
-            return False
+            if resp.status_code >= 400:
+                logger.warning(
+                    "Failed to list comments for %s/%s#%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    resp.status_code,
+                )
+                return False
 
-        comments = resp.json() if resp.text else []
-        if not isinstance(comments, list):
-            return False
+            comments = resp.json() if resp.text else []
+            if not isinstance(comments, list):
+                return False
 
-        comment_id = next(
-            (c["id"] for c in comments if isinstance(c, dict) and marker in (c.get("body") or "")),
-            None,
-        )
+            comment_id = next(
+                (c["id"] for c in comments if isinstance(c, dict) and marker in (c.get("body") or "")),
+                None,
+            )
+            if comment_id:
+                break
+            if len(comments) < per_page:
+                break
+            page += 1
+
         if not comment_id:
             return False
 
