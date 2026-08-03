@@ -148,38 +148,41 @@ class AutofixService:
             }
 
         # Load the review comment early so we can decide whether cooldown applies.
+        # Always fetch the comment metadata to get review_updated_at for cooldown
+        # skip logic, even if review_body is provided.
         body = (review_body or "").strip()
         review_updated_at: Optional[str] = None
-        if not body:
-            try:
-                marked = gh.get_marked_comment(
-                    owner=owner,
-                    repo=repo_name,
-                    pr_number=pr_number,
-                    marker=BIGAS_REVIEW_MARKER,
-                )
-            except GitHubPRCommentError as e:
+        try:
+            marked = gh.get_marked_comment(
+                owner=owner,
+                repo=repo_name,
+                pr_number=pr_number,
+                marker=BIGAS_REVIEW_MARKER,
+            )
+        except GitHubPRCommentError as e:
+            # If review_body was provided, we can continue without the metadata.
+            if not body:
                 raise AutofixError(str(e)) from e
-            if not marked:
-                return {
-                    "skipped": True,
-                    "reason": "no Bigas review comment found on PR",
-                    "pr_url": pr_url,
-                    "autofix_count": autofix_count,
-                    "max_iterations": max_iters,
-                }
-            found = marked.get("body") or ""
-            body = found if isinstance(found, str) else ""
+            marked = None
+            logger.warning(
+                "Could not fetch Bigas review metadata for cooldown check: %s", e
+            )
+
+        if marked:
             updated = marked.get("updated_at") or marked.get("created_at")
             review_updated_at = updated.strip() if isinstance(updated, str) else None
-            if not body.strip():
-                return {
-                    "skipped": True,
-                    "reason": "no Bigas review comment found on PR",
-                    "pr_url": pr_url,
-                    "autofix_count": autofix_count,
-                    "max_iterations": max_iters,
-                }
+            if not body:
+                found = marked.get("body") or ""
+                body = found if isinstance(found, str) else ""
+
+        if not body.strip():
+            return {
+                "skipped": True,
+                "reason": "no Bigas review comment found on PR",
+                "pr_url": pr_url,
+                "autofix_count": autofix_count,
+                "max_iterations": max_iters,
+            }
 
         # Prevent overlapping launches while a previous autofix agent may still be
         # finishing. Skip cooldown when a newer Bigas review already exists after the

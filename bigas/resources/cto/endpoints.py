@@ -378,11 +378,14 @@ def autofix_pr():
       - review_body (str, optional): override; else fetch Bigas-marked PR comment
       - github_token (str, optional): override GITHUB_TOKEN
       - cursor_api_key (str, optional): override CURSOR_API_KEY
+      - is_retry (bool, optional): if true, suppress Discord notifications (for
+          cooldown polling loops to avoid spam)
     """
     data = request.get_json(silent=True) or {}
     repo = (data.get("repo") or "").strip()
     pr_number = data.get("pr_number")
     force = bool(data.get("force") or False)
+    is_retry = bool(data.get("is_retry") or False)
     review_body = data.get("review_body")
     if isinstance(review_body, str):
         review_body = review_body.strip() or None
@@ -462,36 +465,39 @@ def autofix_pr():
                 wait_left = None
             mins = max(1, int((wait_left + 59) // 60)) if wait_left is not None else None
             wait_txt = f"~{mins} min" if mins is not None else "a few minutes"
-            _post_to_discord_cto(
-                f"**CTO autofix cooldown**\n"
-                f"{sanitize_error_message(reason)}\n"
-                f"PR: {pr_url}"
-            )
-            # Visible on the PR so cooldown does not look like a silent hang.
-            gh_token = github_token or (os.environ.get("GITHUB_TOKEN") or "").strip()
-            if gh_token:
-                try:
-                    owner, repo_name = repo.split("/", 1)
-                    body = (
-                        "### Autofix paused (cooldown)\n\n"
-                        f"Latest head commit is already `[bigas-autofix]`. "
-                        f"Waiting **{wait_txt}** before launching another Cursor agent "
-                        "so agents do not overlap.\n\n"
-                        "The Actions autofix loop will retry automatically after the wait. "
-                        "You can also re-run **Bigas PR review** manually."
-                    )
-                    GitHubPRCommentClient(token=gh_token).post_or_update_pr_comment(
-                        owner=owner,
-                        repo=repo_name,
-                        pr_number=int(pr_number),
-                        body=body,
-                        marker=BIGAS_AUTOFIX_COOLDOWN_MARKER,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to post autofix cooldown PR comment",
-                        exc_info=True,
-                    )
+            # Only post to Discord on the first call; skip on retries to avoid spam
+            # when the GitHub Action polls in a loop waiting for cooldown to expire.
+            if not is_retry:
+                _post_to_discord_cto(
+                    f"**CTO autofix cooldown**\n"
+                    f"{sanitize_error_message(reason)}\n"
+                    f"PR: {pr_url}"
+                )
+                # Visible on the PR so cooldown does not look like a silent hang.
+                gh_token = github_token or (os.environ.get("GITHUB_TOKEN") or "").strip()
+                if gh_token:
+                    try:
+                        owner, repo_name = repo.split("/", 1)
+                        body = (
+                            "### Autofix paused (cooldown)\n\n"
+                            f"Latest head commit is already `[bigas-autofix]`. "
+                            f"Waiting **{wait_txt}** before launching another Cursor agent "
+                            "so agents do not overlap.\n\n"
+                            "The Actions autofix loop will retry automatically after the wait. "
+                            "You can also re-run **Bigas PR review** manually."
+                        )
+                        GitHubPRCommentClient(token=gh_token).post_or_update_pr_comment(
+                            owner=owner,
+                            repo=repo_name,
+                            pr_number=int(pr_number),
+                            body=body,
+                            marker=BIGAS_AUTOFIX_COOLDOWN_MARKER,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to post autofix cooldown PR comment",
+                            exc_info=True,
+                        )
         else:
             _post_to_discord_cto(
                 f"**CTO autofix skipped**\n"
@@ -812,6 +818,10 @@ def get_manifest():
                         "cursor_api_key": {
                             "type": "string",
                             "description": "Optional Cursor API key override",
+                        },
+                        "is_retry": {
+                            "type": "boolean",
+                            "description": "Suppress Discord notifications on retry polls (for cooldown loops)",
                         },
                     },
                     "required": ["repo", "pr_number"],

@@ -131,8 +131,10 @@ class GitHubPRCommentClient:
         if not isinstance(comments, list):
             return None
         for c in comments:
+            if not isinstance(c, dict):
+                continue
             body = c.get("body") or ""
-            if marker in body and isinstance(c, dict):
+            if marker in body:
                 return c
         return None
 
