@@ -110,6 +110,7 @@ jobs:
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MAX_AUTOFIX_ROUNDS: "5"
+          MAX_COOLDOWN_WAITS: "20"
         run: |
           python3 <<'PY'
           import json, os, time, urllib.error, urllib.request
@@ -119,6 +120,7 @@ jobs:
           repo = os.environ["GITHUB_REPOSITORY"]
           pr_number = int(os.environ["PR_NUMBER"])
           max_rounds = int(os.environ.get("MAX_AUTOFIX_ROUNDS") or "5")
+          max_cooldown_waits = int(os.environ.get("MAX_COOLDOWN_WAITS") or "20")
 
           def call(path, body_obj, timeout=180):
               data = json.dumps(body_obj).encode()
@@ -181,7 +183,21 @@ jobs:
                   raise SystemExit(f"autofix_followup finalize failed: HTTP {code}")
               return final
 
-          for round_i in range(1, max_rounds + 1):
+          def cooldown_wait_seconds(data):
+              try:
+                  raw_cooldown = data.get("cooldown_seconds")
+                  cooldown_s = int(raw_cooldown if raw_cooldown is not None else 120)
+                  age_s = int(data.get("head_age_seconds") or 0)
+                  # Short slices until the window expires; avoid stopping after a few waits.
+                  remaining = max(0, cooldown_s - age_s + 15)
+                  return max(15, min(remaining, 120))
+              except (TypeError, ValueError):
+                  return 60
+
+          round_i = 0
+          cooldown_waits = 0
+          while round_i < max_rounds:
+              round_i += 1
               print(f"=== autofix round attempt {round_i}/{max_rounds} ===")
               code, data = call(
                   "autofix_pr",
@@ -195,6 +211,25 @@ jobs:
               if data.get("loop_protection"):
                   print("Loop protection reached; stopping.")
                   break
+
+              if data.get("cooldown"):
+                  if cooldown_waits >= max_cooldown_waits:
+                      print(
+                          "Exceeded cooldown wait budget in this run; stopping. "
+                          "Re-run the workflow after the cooldown window."
+                      )
+                      break
+                  wait_s = cooldown_wait_seconds(data)
+                  cooldown_waits += 1
+                  print(
+                      f"Autofix cooldown ({cooldown_waits}/{max_cooldown_waits}): "
+                      f"sleeping {wait_s}s then retrying same round "
+                      f"(reason={data.get('reason') or 'cooldown'})."
+                  )
+                  # Do not consume an autofix round for a cooldown skip.
+                  round_i -= 1
+                  time.sleep(wait_s)
+                  continue
 
               if data.get("skipped") or not data.get("launched"):
                   print(

@@ -12,6 +12,7 @@ PR opened/push
       → autofix_pr
           → skip if review is LGTM / nits-only
           → skip with loop protection if PR already has ≥5 [bigas-autofix] commits
+          → if cooldown (fresh [bigas-autofix] head): Discord + PR notice, wait, retry
           → else launch Cursor cloud agent (workOnCurrentBranch)
       → poll autofix_followup until agent terminal
           → Discord: autofix completed / failed / without commits
@@ -33,7 +34,7 @@ Optional:
 
 - `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Omit to use Cursor’s default.
 - `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection.
-- `BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS` (default `600`) — skip launching another autofix while the PR head is still a fresh `[bigas-autofix]` commit (reduces overlapping agents).
+- `BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS` (default `120`) — skip launching another autofix while the PR head is still a fresh `[bigas-autofix]` commit (reduces overlapping agents). Cooldown is **skipped** when a newer Bigas review comment already exists after that head commit (typical after an autofix push cancels/restarts Actions). The Actions loop waits/retries in short slices until the window expires instead of stopping early. Bigas also posts/updates a visible PR comment (`<!-- bigas-autofix-cooldown-marker -->`) so cooldown is not mistaken for a hang.
 
 ## Repo config
 
@@ -91,5 +92,6 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 - Skip soft-only language (`consider`, `TODO`, `optional`) unless Blockers/Important are present
 - When autofix *does* run (Blockers/Important present), the agent also fixes Minor items from the same review
 - Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) commits containing `[bigas-autofix]`
+- Cooldown when head is a fresh `[bigas-autofix]` commit *and* no newer Bigas review exists yet: Actions waits/retries; Bigas posts a PR cooldown notice. If review is already newer than the autofix head, the next agent launches immediately.
 - Agent prompt requires that marker in any commits it creates
 - Re-review after autofix uses a verification prompt and the previous Bigas comment, so it should not invent a fresh set of nits each round

@@ -12,6 +12,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 BIGAS_REVIEW_MARKER = "<!-- bigas-ai-review-marker -->"
+BIGAS_AUTOFIX_COOLDOWN_MARKER = "<!-- bigas-autofix-cooldown-marker -->"
 
 
 class GitHubPRCommentError(RuntimeError):
@@ -105,6 +106,49 @@ class GitHubPRCommentClient:
         )
         return data
 
+    def get_marked_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        marker: str = BIGAS_REVIEW_MARKER,
+    ) -> dict | None:
+        """Return the PR comment dict that contains marker, or None."""
+        base_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        page = 1
+        per_page = 100
+        while True:
+            resp = requests.get(
+                base_url,
+                headers=self._headers,
+                params={"per_page": per_page, "page": page},
+                timeout=30,
+            )
+            if resp.status_code == 404:
+                raise GitHubPRCommentError(
+                    f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+                )
+            if resp.status_code == 401:
+                raise GitHubPRCommentError("GitHub token is invalid or expired.")
+            if resp.status_code == 403:
+                raise GitHubPRCommentError(
+                    "GitHub returned 403. Check token scopes and rate limits."
+                )
+            resp.raise_for_status()
+            comments = resp.json() if resp.text else []
+            if not isinstance(comments, list):
+                return None
+            for c in comments:
+                if not isinstance(c, dict):
+                    continue
+                body = c.get("body") or ""
+                if marker in body:
+                    return c
+            if len(comments) < per_page:
+                break
+            page += 1
+        return None
+
     def get_marked_comment_body(
         self,
         owner: str,
@@ -113,27 +157,11 @@ class GitHubPRCommentClient:
         marker: str = BIGAS_REVIEW_MARKER,
     ) -> str | None:
         """Return the body of the PR comment that contains marker, or None."""
-        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
-        resp = requests.get(comments_url, headers=self._headers, timeout=30)
-        if resp.status_code == 404:
-            raise GitHubPRCommentError(
-                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
-            )
-        if resp.status_code == 401:
-            raise GitHubPRCommentError("GitHub token is invalid or expired.")
-        if resp.status_code == 403:
-            raise GitHubPRCommentError(
-                "GitHub returned 403. Check token scopes and rate limits."
-            )
-        resp.raise_for_status()
-        comments = resp.json() if resp.text else []
-        if not isinstance(comments, list):
+        comment = self.get_marked_comment(owner, repo, pr_number, marker=marker)
+        if not comment:
             return None
-        for c in comments:
-            body = c.get("body") or ""
-            if marker in body:
-                return body
-        return None
+        body = comment.get("body") or ""
+        return body if isinstance(body, str) else None
 
     def get_pr_head_commit(
         self,
@@ -281,3 +309,76 @@ class GitHubPRCommentClient:
         """Count PR commits whose message contains the autofix marker."""
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
         return sum(1 for m in messages if marker in m)
+
+    def delete_marked_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        marker: str,
+    ) -> bool:
+        """
+        Delete all PR comments that contain the given marker.
+        Returns True if at least one comment was deleted, False otherwise.
+        """
+        base_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        page = 1
+        per_page = 100
+        comment_ids: list[int] = []
+
+        while True:
+            resp = requests.get(
+                base_url,
+                headers=self._headers,
+                params={"per_page": per_page, "page": page},
+                timeout=30,
+            )
+            if resp.status_code >= 400:
+                logger.warning(
+                    "Failed to list comments for %s/%s#%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    resp.status_code,
+                )
+                break
+
+            comments = resp.json() if resp.text else []
+            if not isinstance(comments, list):
+                break
+
+            for c in comments:
+                if isinstance(c, dict) and marker in (c.get("body") or ""):
+                    comment_ids.append(c["id"])
+
+            if len(comments) < per_page:
+                break
+            page += 1
+
+        if not comment_ids:
+            return False
+
+        deleted_any = False
+        for comment_id in comment_ids:
+            delete_url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
+            del_resp = requests.delete(delete_url, headers=self._headers, timeout=30)
+            if del_resp.status_code == 204:
+                logger.info(
+                    "Deleted marked comment %s on %s/%s#%s",
+                    comment_id,
+                    owner,
+                    repo,
+                    pr_number,
+                )
+                deleted_any = True
+            else:
+                logger.warning(
+                    "Failed to delete comment %s on %s/%s#%s: %s",
+                    comment_id,
+                    owner,
+                    repo,
+                    pr_number,
+                    del_resp.status_code,
+                )
+
+        return deleted_any
