@@ -188,11 +188,10 @@ class AutofixService:
         # finishing. Skip cooldown when a newer Bigas review already exists after the
         # autofix head commit — that means the previous agent finished and we were
         # re-reviewed (common when the autofix push cancels/restarts Actions).
-        if (
-            not force
-            and cooldown > 0
-            and AUTOFIX_COMMIT_MARKER in (head_message or "")
-        ):
+        #
+        # The stale review check applies regardless of cooldown setting; only the
+        # cooldown wait is gated by cooldown > 0.
+        if not force and AUTOFIX_COMMIT_MARKER in (head_message or ""):
             age = _age_seconds_since(committed_at)
             review_age_after_head = None
             if review_updated_at and committed_at:
@@ -201,16 +200,9 @@ class AutofixService:
                 if head_age is not None and review_age is not None:
                     # Positive => review comment is newer than the head commit.
                     review_age_after_head = head_age - review_age
-            if review_age_after_head is not None and review_age_after_head > 0:
-                logger.info(
-                    "Skipping autofix cooldown for %s#%s: review is %.0fs newer than "
-                    "autofix head %s",
-                    repo,
-                    pr_number,
-                    review_age_after_head,
-                    head_sha[:8],
-                )
-            elif review_age_after_head is not None and review_age_after_head <= 0:
+
+            # Stale review check: applies regardless of cooldown setting.
+            if review_age_after_head is not None and review_age_after_head <= 0:
                 # Review predates the autofix head commit — the review is stale.
                 # Skip this run; a new Action run will trigger re-review on the
                 # autofix commit, which will call autofix again with fresh findings.
@@ -226,23 +218,35 @@ class AutofixService:
                     "max_iterations": max_iters,
                     "head_sha": head_sha,
                 }
-            elif age is not None and age < cooldown:
-                wait_left = int(cooldown - age)
-                return {
-                    "skipped": True,
-                    "cooldown": True,
-                    "reason": (
-                        f"autofix cooldown: latest commit is already `[bigas-autofix]` "
-                        f"({int(age)}s ago). Wait ~{wait_left}s for the previous agent "
-                        f"to finish before launching another round."
-                    ),
-                    "pr_url": pr_url,
-                    "autofix_count": autofix_count,
-                    "max_iterations": max_iters,
-                    "cooldown_seconds": cooldown,
-                    "head_age_seconds": int(age),
-                    "head_sha": head_sha,
-                }
+
+            # Cooldown check: only applies when cooldown > 0.
+            if cooldown > 0:
+                if review_age_after_head is not None and review_age_after_head > 0:
+                    logger.info(
+                        "Skipping autofix cooldown for %s#%s: review is %.0fs newer than "
+                        "autofix head %s",
+                        repo,
+                        pr_number,
+                        review_age_after_head,
+                        head_sha[:8],
+                    )
+                elif age is not None and age < cooldown:
+                    wait_left = int(cooldown - age)
+                    return {
+                        "skipped": True,
+                        "cooldown": True,
+                        "reason": (
+                            f"autofix cooldown: latest commit is already `[bigas-autofix]` "
+                            f"({int(age)}s ago). Wait ~{wait_left}s for the previous agent "
+                            f"to finish before launching another round."
+                        ),
+                        "pr_url": pr_url,
+                        "autofix_count": autofix_count,
+                        "max_iterations": max_iters,
+                        "cooldown_seconds": cooldown,
+                        "head_age_seconds": int(age),
+                        "head_sha": head_sha,
+                    }
 
         if not force:
             should, reason = review_needs_autofix(body)
