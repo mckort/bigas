@@ -152,27 +152,46 @@ class GitHubPRCommentClient:
     ) -> dict | None:
         """Return the PR comment dict that contains marker, or None."""
         comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
-        resp = requests.get(comments_url, headers=self._headers, timeout=30)
-        if resp.status_code == 404:
-            raise GitHubPRCommentError(
-                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
-            )
-        if resp.status_code == 401:
-            raise GitHubPRCommentError("GitHub token is invalid or expired.")
-        if resp.status_code == 403:
-            raise GitHubPRCommentError(
-                "GitHub returned 403. Check token scopes and rate limits."
-            )
-        resp.raise_for_status()
-        comments = resp.json() if resp.text else []
-        if not isinstance(comments, list):
-            return None
-        for c in comments:
-            if not isinstance(c, dict):
-                continue
-            body = c.get("body") or ""
-            if marker in body:
-                return c
+        page = 1
+        per_page = 100
+        while True:
+            try:
+                resp = requests.get(
+                    comments_url,
+                    headers=self._headers,
+                    params={"per_page": per_page, "page": page},
+                    timeout=30,
+                )
+            except requests.exceptions.RequestException as e:
+                raise GitHubPRCommentError(f"GitHub API request failed: {e}") from e
+            if resp.status_code == 404:
+                raise GitHubPRCommentError(
+                    f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+                )
+            if resp.status_code == 401:
+                raise GitHubPRCommentError("GitHub token is invalid or expired.")
+            if resp.status_code == 403:
+                raise GitHubPRCommentError(
+                    "GitHub returned 403. Check token scopes and rate limits."
+                )
+            try:
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                raise GitHubPRCommentError(
+                    f"GitHub API error {resp.status_code}: {resp.text[:300]}"
+                ) from e
+            comments = resp.json() if resp.text else []
+            if not isinstance(comments, list):
+                return None
+            for c in comments:
+                if not isinstance(c, dict):
+                    continue
+                body = c.get("body") or ""
+                if marker in body:
+                    return c
+            if len(comments) < per_page:
+                break
+            page += 1
         return None
 
     def get_marked_comment_body(

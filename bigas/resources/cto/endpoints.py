@@ -518,6 +518,11 @@ def autofix_pr():
                             exc_info=True,
                         )
         elif result.get("stale_review"):
+            logger.info(
+                "Autofix skipped for %s#%s: stale review predates latest autofix commit",
+                repo,
+                pr_number,
+            )
             _post_to_discord_cto(
                 f"**CTO autofix skipped (stale review)**\n"
                 f"Review predates the latest autofix commit; waiting for re-review.\n"
