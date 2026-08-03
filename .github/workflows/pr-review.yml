@@ -190,7 +190,7 @@ jobs:
                   age_s = int(data.get("head_age_seconds") or 0)
                   # Short slices until the window expires; avoid stopping after a few waits.
                   remaining = max(0, cooldown_s - age_s + 15)
-                  return max(15, min(remaining or 15, 120))
+                  return max(15, min(remaining, 120))
               except (TypeError, ValueError):
                   return 60
 
