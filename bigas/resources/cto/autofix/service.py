@@ -148,8 +148,8 @@ class AutofixService:
             }
 
         # Load the review comment early so we can decide whether cooldown applies.
-        # Always fetch the comment metadata to get review_updated_at for cooldown
-        # skip logic, even if review_body is provided.
+        # Always fetch the marked comment metadata to get review_updated_at for
+        # cooldown skip logic, even when review_body is provided externally.
         body = (review_body or "").strip()
         review_updated_at: Optional[str] = None
         try:
@@ -225,7 +225,7 @@ class AutofixService:
                     logger.info(
                         "Skipping autofix cooldown for %s#%s: review is %.0fs newer than "
                         "autofix head %s",
-                        repo,
+                        f"{owner}/{repo_name}",
                         pr_number,
                         review_age_after_head,
                         head_sha[:8],

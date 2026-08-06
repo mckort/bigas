@@ -106,43 +106,6 @@ class GitHubPRCommentClient:
         )
         return data
 
-    def delete_marked_comment(
-        self,
-        owner: str,
-        repo: str,
-        pr_number: int,
-        marker: str,
-    ) -> bool:
-        """
-        Delete the PR comment that contains the marker. Returns True if deleted.
-        """
-        comment = self.get_marked_comment(owner, repo, pr_number, marker=marker)
-        if not comment:
-            return False
-        comment_id = comment.get("id")
-        if not comment_id:
-            return False
-        delete_url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
-        resp = requests.delete(delete_url, headers=self._headers, timeout=30)
-        if resp.status_code == 204:
-            logger.info(
-                "Deleted PR comment %s on %s/%s#%s",
-                comment_id,
-                owner,
-                repo,
-                pr_number,
-            )
-            return True
-        if resp.status_code in (401, 403, 404):
-            logger.warning(
-                "Could not delete PR comment %s: HTTP %s",
-                comment_id,
-                resp.status_code,
-            )
-            return False
-        resp.raise_for_status()
-        return False
-
     def get_marked_comment(
         self,
         owner: str,
@@ -151,19 +114,16 @@ class GitHubPRCommentClient:
         marker: str = BIGAS_REVIEW_MARKER,
     ) -> dict | None:
         """Return the PR comment dict that contains marker, or None."""
-        comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        base_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
         page = 1
         per_page = 100
         while True:
-            try:
-                resp = requests.get(
-                    comments_url,
-                    headers=self._headers,
-                    params={"per_page": per_page, "page": page},
-                    timeout=30,
-                )
-            except requests.exceptions.RequestException as e:
-                raise GitHubPRCommentError(f"GitHub API request failed: {e}") from e
+            resp = requests.get(
+                base_url,
+                headers=self._headers,
+                params={"per_page": per_page, "page": page},
+                timeout=30,
+            )
             if resp.status_code == 404:
                 raise GitHubPRCommentError(
                     f"Repository or PR not found: {owner}/{repo}#{pr_number}."
@@ -174,12 +134,7 @@ class GitHubPRCommentClient:
                 raise GitHubPRCommentError(
                     "GitHub returned 403. Check token scopes and rate limits."
                 )
-            try:
-                resp.raise_for_status()
-            except requests.exceptions.HTTPError as e:
-                raise GitHubPRCommentError(
-                    f"GitHub API error {resp.status_code}: {resp.text[:300]}"
-                ) from e
+            resp.raise_for_status()
             comments = resp.json() if resp.text else []
             if not isinstance(comments, list):
                 return None
@@ -354,3 +309,76 @@ class GitHubPRCommentClient:
         """Count PR commits whose message contains the autofix marker."""
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
         return sum(1 for m in messages if marker in m)
+
+    def delete_marked_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        marker: str,
+    ) -> bool:
+        """
+        Delete all PR comments that contain the given marker.
+        Returns True if at least one comment was deleted, False otherwise.
+        """
+        base_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        page = 1
+        per_page = 100
+        comment_ids: list[int] = []
+
+        while True:
+            resp = requests.get(
+                base_url,
+                headers=self._headers,
+                params={"per_page": per_page, "page": page},
+                timeout=30,
+            )
+            if resp.status_code >= 400:
+                logger.warning(
+                    "Failed to list comments for %s/%s#%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    resp.status_code,
+                )
+                break
+
+            comments = resp.json() if resp.text else []
+            if not isinstance(comments, list):
+                break
+
+            for c in comments:
+                if isinstance(c, dict) and marker in (c.get("body") or ""):
+                    comment_ids.append(c["id"])
+
+            if len(comments) < per_page:
+                break
+            page += 1
+
+        if not comment_ids:
+            return False
+
+        deleted_any = False
+        for comment_id in comment_ids:
+            delete_url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
+            del_resp = requests.delete(delete_url, headers=self._headers, timeout=30)
+            if del_resp.status_code == 204:
+                logger.info(
+                    "Deleted marked comment %s on %s/%s#%s",
+                    comment_id,
+                    owner,
+                    repo,
+                    pr_number,
+                )
+                deleted_any = True
+            else:
+                logger.warning(
+                    "Failed to delete comment %s on %s/%s#%s: %s",
+                    comment_id,
+                    owner,
+                    repo,
+                    pr_number,
+                    del_resp.status_code,
+                )
+
+        return deleted_any

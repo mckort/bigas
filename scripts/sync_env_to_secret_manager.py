@@ -51,6 +51,7 @@ SECRET_NAMES = [
     "TARGET_KEYWORDS",
     "GITHUB_TOKEN",
     "CURSOR_API_KEY",
+    "MONITOR_URLS",
 ]
 
 
