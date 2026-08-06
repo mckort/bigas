@@ -149,8 +149,11 @@ class AutofixService:
 
         # Load the review comment early so we can decide whether cooldown applies.
         # Always fetch the marked comment metadata to get review_updated_at for
-        # cooldown skip logic, even when review_body is provided externally.
+        # cooldown skip logic. When an explicit review_body override is provided,
+        # skip using the GitHub comment timestamp for stale_review (the override
+        # is treated as fresh input from the caller).
         body = (review_body or "").strip()
+        explicit_review_body = bool(body)
         review_updated_at: Optional[str] = None
         try:
             marked = gh.get_marked_comment(
@@ -169,9 +172,11 @@ class AutofixService:
             )
 
         if marked:
-            updated = marked.get("updated_at") or marked.get("created_at")
-            review_updated_at = updated.strip() if isinstance(updated, str) else None
-            if not body:
+            if not explicit_review_body:
+                updated = marked.get("updated_at") or marked.get("created_at")
+                review_updated_at = (
+                    updated.strip() if isinstance(updated, str) else None
+                )
                 found = marked.get("body") or ""
                 body = found if isinstance(found, str) else ""
 
