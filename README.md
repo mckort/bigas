@@ -40,7 +40,7 @@ It currently ships three specialists:
 |---|---|
 | **Senior Marketing Analyst** | GA4 web analytics + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
 | **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates |
-| **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents) |
+| **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord |
 
 Two design decisions shape everything else in this document:
 
@@ -355,7 +355,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub. Details: [docs/cto-pr-review.md](docs/cto-pr-review.md) |
 | `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
 | `POST autofix_followup` | Poll the autofix agent; on completion, re-reviews the PR and posts the result to Discord. Details: [docs/cto-autofix.md](docs/cto-autofix.md) |
-| `POST website_monitor` | Check configured websites for availability and SSL certificate health. Alerts via Discord on failures. |
+| `POST website_monitor` | CTO tool: check configured websites (`MONITOR_URLS`) for availability and SSL certificate health. Alerts via Discord (`DISCORD_WEBHOOK_URL_CTO`) on failures. |
 
 ---
 
@@ -369,7 +369,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Page analysis | `0 10 * * 2` | `.../analyze_underperforming_pages` |
 | LinkedIn portfolio | `0 9 * * 1` | `.../run_linkedin_portfolio_report` |
 | Cleanup old reports | `0 2 1 * *` | `.../cleanup_old_reports` |
-| Website monitoring | `0 * * * *` | `.../website_monitor` |
+| Website monitoring | `0 8 * * *` | `.../website_monitor` |
 
 All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
 
@@ -378,16 +378,21 @@ All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales
 The `website_monitor` endpoint checks your websites for HTTP availability and SSL certificate health. Configure the URLs via the `MONITOR_URLS` environment variable (comma-separated), then set up a Cloud Scheduler job:
 
 ```bash
+# Scheduler location must be a supported region (e.g. europe-west1, not europe-north1).
+# With BIGAS_ACCESS_MODE=restricted, send X-Bigas-Access-Key. Cloud Run is currently
+# --allow-unauthenticated, so OIDC is optional; add --oidc-service-account-email if you
+# later require Cloud Run IAM invoker.
 gcloud scheduler jobs create http bigas-website-monitor \
-  --location=europe-north1 \
-  --schedule="0 * * * *" \
+  --location=europe-west1 \
+  --schedule="0 8 * * *" \
+  --time-zone="Europe/Stockholm" \
   --uri="https://YOUR-SERVICE-URL.a.run.app/mcp/tools/website_monitor" \
   --http-method=POST \
   --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
-  --oidc-service-account-email=YOUR_SERVICE_ACCOUNT@YOUR_PROJECT.iam.gserviceaccount.com
+  --message-body="{}"
 ```
 
-When a site is unreachable (HTTP error, timeout) or its SSL certificate expires in less than 14 days, an alert is posted to the configured Discord webhook (`DISCORD_WEBHOOK_URL_CTO`, falling back to `_PRODUCT` or `_MARKETING`).
+`0 8 * * *` = 08:00 every day. This is a CTO-resource tool (`bigas/resources/cto`); when a site is unreachable (HTTP error, timeout) or its SSL certificate expires in less than 14 days, an alert is posted to the configured Discord webhook (`DISCORD_WEBHOOK_URL_CTO`, falling back to `_PRODUCT` or `_MARKETING`).
 
 ---
 
