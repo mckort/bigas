@@ -29,6 +29,7 @@ from bigas.resources.cto.pr_review.github_client import (
 from bigas.resources.cto.pr_review.service import PRReviewError, PRReviewService
 from bigas.discord_webhook import post_long_to_discord, post_to_discord
 from bigas.resources.marketing.utils import sanitize_error_message
+from bigas.providers.monitoring.service import MonitoringService, run_monitoring_checks
 
 cto_bp = Blueprint(
     "cto_bp",
@@ -768,6 +769,48 @@ def autofix_followup():
     return jsonify(base)
 
 
+@cto_bp.route("/website_monitor", methods=["POST"])
+def website_monitor():
+    """
+    Check configured websites for availability and SSL certificate health.
+
+    Reads URLs from MONITOR_URLS environment variable (comma-separated).
+    For each URL, performs an HTTP GET request and checks SSL certificate expiry.
+    Sends alerts to Discord if any URL is down or has SSL issues.
+
+    Can be triggered by Google Cloud Scheduler on a cron schedule.
+
+    Returns:
+        JSON with monitoring results including total URLs checked,
+        healthy/unhealthy counts, and whether alerts were sent.
+    """
+    try:
+        result = run_monitoring_checks()
+        response = {
+            "status": "ok",
+            "total_urls": result.total_urls,
+            "healthy_count": result.healthy_count,
+            "unhealthy_count": result.unhealthy_count,
+            "alerts_sent": result.alerts_sent,
+            "results": [
+                {
+                    "url": r.url,
+                    "is_healthy": r.is_healthy,
+                    "errors": r.errors,
+                    "http_status": r.http_status,
+                    "ssl_days_until_expiry": r.ssl_days_until_expiry,
+                }
+                for r in result.results
+            ],
+        }
+        if result.alert_message:
+            response["alert_message"] = result.alert_message
+        return jsonify(response)
+    except Exception as e:
+        logger.error("Website monitoring failed", exc_info=True)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
 def get_manifest():
     """Return the CTO tools manifest for the combined MCP manifest."""
     return {
@@ -878,6 +921,20 @@ def get_manifest():
                         },
                     },
                     "required": ["repo", "pr_number", "agent_id"],
+                },
+            },
+            {
+                "name": "website_monitor",
+                "description": (
+                    "Check configured websites for availability and SSL certificate health. "
+                    "Reads URLs from MONITOR_URLS env var. Sends Discord alerts on failures. "
+                    "Ideal for Cloud Scheduler cron triggers."
+                ),
+                "path": "/mcp/tools/website_monitor",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
                 },
             },
         ],
