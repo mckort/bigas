@@ -63,61 +63,68 @@ class TestCheckHttpStatus:
     """Tests for HTTP status checking."""
 
     def test_successful_request(self):
-        """HTTP 200 returns status and no error."""
+        """HTTP 200 returns status, no error, and not a connection failure."""
         mock_response = mock.Mock()
         mock_response.status_code = 200
         with mock.patch("requests.get", return_value=mock_response):
-            status, error = _check_http_status("https://example.com")
+            status, error, is_conn_failure = _check_http_status("https://example.com")
             assert status == 200
             assert error is None
+            assert is_conn_failure is False
 
     def test_redirect_success(self):
         """HTTP redirect followed to 200 returns success."""
         mock_response = mock.Mock()
         mock_response.status_code = 200
         with mock.patch("requests.get", return_value=mock_response):
-            status, error = _check_http_status("https://example.com")
+            status, error, is_conn_failure = _check_http_status("https://example.com")
             assert status == 200
             assert error is None
+            assert is_conn_failure is False
 
     def test_404_error(self):
-        """HTTP 404 returns status and error."""
+        """HTTP 404 returns status, error, and not a connection failure."""
         mock_response = mock.Mock()
         mock_response.status_code = 404
         with mock.patch("requests.get", return_value=mock_response):
-            status, error = _check_http_status("https://example.com")
+            status, error, is_conn_failure = _check_http_status("https://example.com")
             assert status == 404
             assert error == "HTTP 404"
+            assert is_conn_failure is False
 
     def test_500_error(self):
-        """HTTP 500 returns status and error."""
+        """HTTP 500 returns status, error, and not a connection failure."""
         mock_response = mock.Mock()
         mock_response.status_code = 500
         with mock.patch("requests.get", return_value=mock_response):
-            status, error = _check_http_status("https://example.com")
+            status, error, is_conn_failure = _check_http_status("https://example.com")
             assert status == 500
             assert error == "HTTP 500"
+            assert is_conn_failure is False
 
     def test_timeout(self):
-        """Timeout returns None status and error message."""
+        """Timeout returns None status, error message, and is a connection failure."""
         with mock.patch("requests.get", side_effect=requests.exceptions.Timeout()):
-            status, error = _check_http_status("https://example.com")
+            status, error, is_conn_failure = _check_http_status("https://example.com")
             assert status is None
             assert error == "Connection timed out"
+            assert is_conn_failure is True
 
     def test_connection_error(self):
-        """Connection error returns None status and error message."""
+        """Connection error returns None status, error message, and is a connection failure."""
         with mock.patch("requests.get", side_effect=requests.exceptions.ConnectionError("DNS failed")):
-            status, error = _check_http_status("https://example.com")
+            status, error, is_conn_failure = _check_http_status("https://example.com")
             assert status is None
             assert "Connection error" in error
+            assert is_conn_failure is True
 
     def test_ssl_error_in_http_check(self):
-        """SSL error during HTTP check returns error."""
+        """SSL error during HTTP check returns error and is not a connection failure."""
         with mock.patch("requests.get", side_effect=requests.exceptions.SSLError("cert verify failed")):
-            status, error = _check_http_status("https://example.com")
+            status, error, is_conn_failure = _check_http_status("https://example.com")
             assert status is None
             assert "SSL error" in error
+            assert is_conn_failure is False
 
 
 class TestCheckSslCertificate:
@@ -163,25 +170,21 @@ class TestCheckSslCertificate:
                 assert days < 14
                 assert "expires in" in error
 
-    def test_certificate_expired(self):
-        """Expired certificate returns negative days and error."""
-        past_date = datetime.now(timezone.utc) - timedelta(days=5)
-        mock_cert = {"notAfter": past_date.strftime("%b %d %H:%M:%S %Y GMT")}
+    def test_certificate_expired_in_production_raises_ssl_error(self):
+        """In production, expired certificates raise SSLError during handshake.
 
-        mock_sock = mock.MagicMock()
-        mock_ssock = mock.MagicMock()
-        mock_ssock.getpeercert.return_value = mock_cert
-        mock_sock.__enter__ = mock.Mock(return_value=mock_sock)
-        mock_sock.__exit__ = mock.Mock(return_value=False)
-        mock_ssock.__enter__ = mock.Mock(return_value=mock_ssock)
-        mock_ssock.__exit__ = mock.Mock(return_value=False)
-
-        with mock.patch("socket.create_connection", return_value=mock_sock):
-            with mock.patch("ssl.SSLContext.wrap_socket", return_value=mock_ssock):
+        Note: ssl.create_default_context() enforces certificate validation by default,
+        so wrap_socket raises ssl.SSLCertVerificationError if the certificate is expired.
+        This test verifies that SSLError is handled correctly.
+        """
+        with mock.patch("socket.create_connection") as mock_conn:
+            mock_sock = mock.MagicMock()
+            mock_conn.return_value.__enter__ = mock.Mock(return_value=mock_sock)
+            mock_conn.return_value.__exit__ = mock.Mock(return_value=False)
+            with mock.patch("ssl.SSLContext.wrap_socket", side_effect=ssl.SSLError("certificate verify failed")):
                 days, error = _check_ssl_certificate("example.com")
-                assert days is not None
-                assert days < 0
-                assert "expired" in error
+                assert days is None
+                assert "SSL error" in error
 
     def test_ssl_connection_error(self):
         """SSL connection error returns error message."""

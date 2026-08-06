@@ -10,6 +10,7 @@ import logging
 import os
 import socket
 import ssl
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 HTTP_TIMEOUT_SECONDS = 10
 SSL_TIMEOUT_SECONDS = 10
 SSL_EXPIRY_WARNING_DAYS = 14
+USER_AGENT = "Mozilla/5.0 (compatible; BigasMonitor/1.0)"
+MAX_CONCURRENT_CHECKS = 10
 
 
 @dataclass
@@ -47,26 +50,30 @@ class MonitoringResult:
     alerts_sent: bool = False
 
 
-def _check_http_status(url: str) -> tuple[Optional[int], Optional[str]]:
+def _check_http_status(url: str) -> tuple[Optional[int], Optional[str], bool]:
     """
     Perform an HTTP GET request to the URL.
 
     Returns:
-        (status_code, error_message) - error_message is None if successful.
+        (status_code, error_message, is_connection_failure) - error_message is None if successful.
+        is_connection_failure is True if the error was a connection/timeout issue.
     """
+    headers = {"User-Agent": USER_AGENT}
     try:
-        response = requests.get(url, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=True)
+        response = requests.get(
+            url, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=True, headers=headers
+        )
         if response.status_code >= 400:
-            return response.status_code, f"HTTP {response.status_code}"
-        return response.status_code, None
+            return response.status_code, f"HTTP {response.status_code}", False
+        return response.status_code, None, False
     except requests.exceptions.Timeout:
-        return None, "Connection timed out"
+        return None, "Connection timed out", True
     except requests.exceptions.SSLError as e:
-        return None, f"SSL error: {str(e)[:100]}"
+        return None, f"SSL error: {str(e)[:100]}", False
     except requests.exceptions.ConnectionError as e:
-        return None, f"Connection error: {str(e)[:100]}"
+        return None, f"Connection error: {str(e)[:100]}", True
     except requests.exceptions.RequestException as e:
-        return None, f"Request failed: {str(e)[:100]}"
+        return None, f"Request failed: {str(e)[:100]}", False
 
 
 def _check_ssl_certificate(hostname: str, port: int = 443) -> tuple[Optional[int], Optional[str]]:
@@ -89,13 +96,11 @@ def _check_ssl_certificate(hostname: str, port: int = 443) -> tuple[Optional[int
                 if not not_after_str:
                     return None, "Certificate missing notAfter field"
 
-                not_after = datetime.strptime(not_after_str, "%b %d %H:%M:%S %Y %Z")
-                not_after = not_after.replace(tzinfo=timezone.utc)
+                timestamp = ssl.cert_time_to_seconds(not_after_str)
+                not_after = datetime.fromtimestamp(timestamp, tz=timezone.utc)
                 now = datetime.now(timezone.utc)
                 days_until_expiry = (not_after - now).days
 
-                if days_until_expiry < 0:
-                    return days_until_expiry, f"SSL certificate expired {abs(days_until_expiry)} days ago"
                 if days_until_expiry < SSL_EXPIRY_WARNING_DAYS:
                     return days_until_expiry, f"SSL certificate expires in {days_until_expiry} days"
 
@@ -125,13 +130,13 @@ def check_url(url: str) -> UrlCheckResult:
     http_status: Optional[int] = None
     ssl_days: Optional[int] = None
 
-    status, http_error = _check_http_status(url)
+    status, http_error, is_connection_failure = _check_http_status(url)
     http_status = status
     if http_error:
         errors.append(http_error)
 
     parsed = urlparse(url)
-    if parsed.scheme == "https" and parsed.hostname:
+    if parsed.scheme == "https" and parsed.hostname and not is_connection_failure:
         port = parsed.port or 443
         ssl_days, ssl_error = _check_ssl_certificate(parsed.hostname, port)
         if ssl_error:
@@ -196,7 +201,8 @@ def run_monitoring_checks() -> MonitoringResult:
     Run monitoring checks on all configured URLs.
 
     Reads URLs from MONITOR_URLS environment variable, checks each for HTTP
-    availability and SSL certificate health, and sends alerts for any failures.
+    availability and SSL certificate health concurrently, and sends alerts
+    for any failures.
 
     Returns:
         MonitoringResult with details about all checks.
@@ -214,14 +220,25 @@ def run_monitoring_checks() -> MonitoringResult:
         )
 
     results: list[UrlCheckResult] = []
-    for url in urls:
-        logger.info("Checking URL: %s", url)
-        result = check_url(url)
-        results.append(result)
-        if result.is_healthy:
-            logger.info("URL %s is healthy", url)
-        else:
-            logger.warning("URL %s has issues: %s", url, result.errors)
+    with ThreadPoolExecutor(max_workers=min(len(urls), MAX_CONCURRENT_CHECKS)) as executor:
+        future_to_url = {executor.submit(check_url, url): url for url in urls}
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            logger.info("Checking URL: %s", url)
+            try:
+                result = future.result()
+            except Exception as e:
+                logger.error("Unexpected error checking URL %s: %s", url, e)
+                result = UrlCheckResult(
+                    url=url,
+                    is_healthy=False,
+                    errors=[f"Unexpected error: {str(e)[:100]}"],
+                )
+            results.append(result)
+            if result.is_healthy:
+                logger.info("URL %s is healthy", url)
+            else:
+                logger.warning("URL %s has issues: %s", url, result.errors)
 
     unhealthy = [r for r in results if not r.is_healthy]
     healthy_count = len(results) - len(unhealthy)
