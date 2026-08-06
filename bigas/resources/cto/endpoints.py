@@ -379,14 +379,14 @@ def autofix_pr():
       - review_body (str, optional): override; else fetch Bigas-marked PR comment
       - github_token (str, optional): override GITHUB_TOKEN
       - cursor_api_key (str, optional): override CURSOR_API_KEY
-      - is_retry (bool, optional): accepted for Actions cooldown-loop payload compat
-          (cooldown Discord notifications are not sent)
+      - is_retry (bool, optional): suppress Discord skip notifications on Actions
+          cooldown/retry polls (cooldown itself never posts Discord)
     """
     data = request.get_json(silent=True) or {}
     repo = (data.get("repo") or "").strip()
     pr_number = data.get("pr_number")
     force = bool(data.get("force") or False)
-    is_retry = bool(data.get("is_retry") or False)  # kept for Actions workflow payload compat
+    is_retry = bool(data.get("is_retry") or False)
     review_body = data.get("review_body")
     if isinstance(review_body, str):
         review_body = review_body.strip() or None
@@ -498,12 +498,13 @@ def autofix_pr():
                 repo,
                 pr_number,
             )
-            _post_to_discord_cto(
-                f"**CTO autofix skipped (stale review)**\n"
-                f"Review predates the latest autofix commit; waiting for re-review.\n"
-                f"PR: {pr_url}"
-            )
-        else:
+            if not is_retry:
+                _post_to_discord_cto(
+                    f"**CTO autofix skipped (stale review)**\n"
+                    f"Review predates the latest autofix commit; waiting for re-review.\n"
+                    f"PR: {pr_url}"
+                )
+        elif not is_retry:
             _post_to_discord_cto(
                 f"**CTO autofix skipped**\n"
                 f"Reason: {sanitize_error_message(reason)}\nPR: {pr_url}"

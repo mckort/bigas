@@ -148,10 +148,9 @@ class AutofixService:
             }
 
         # Load the review comment early so we can decide whether cooldown applies.
-        # Always fetch the marked comment metadata to get review_updated_at for
-        # cooldown skip logic. When an explicit review_body override is provided,
-        # skip using the GitHub comment timestamp for stale_review (the override
-        # is treated as fresh input from the caller).
+        # Always fetch marked-comment metadata for review_updated_at (cooldown skip).
+        # An explicit review_body override still uses that timestamp for cooldown
+        # skip, but bypasses the stale_review gate (override = fresh caller input).
         body = (review_body or "").strip()
         explicit_review_body = bool(body)
         review_updated_at: Optional[str] = None
@@ -172,11 +171,13 @@ class AutofixService:
             )
 
         if marked:
+            # Always capture review timestamp for cooldown skip logic, even when
+            # an explicit review_body override is provided.
+            updated = marked.get("updated_at") or marked.get("created_at")
+            review_updated_at = (
+                updated.strip() if isinstance(updated, str) else None
+            )
             if not explicit_review_body:
-                updated = marked.get("updated_at") or marked.get("created_at")
-                review_updated_at = (
-                    updated.strip() if isinstance(updated, str) else None
-                )
                 found = marked.get("body") or ""
                 body = found if isinstance(found, str) else ""
 
@@ -207,7 +208,13 @@ class AutofixService:
                     review_age_after_head = head_age - review_age
 
             # Stale review check: applies regardless of cooldown setting.
-            if review_age_after_head is not None and review_age_after_head <= 0:
+            # Skip when an explicit review_body override is provided — that
+            # override is treated as fresh input even if the PR comment is older.
+            if (
+                not explicit_review_body
+                and review_age_after_head is not None
+                and review_age_after_head <= 0
+            ):
                 # Review predates the autofix head commit — the review is stale.
                 # Skip this run; a new Action run will trigger re-review on the
                 # autofix commit, which will call autofix again with fresh findings.
