@@ -201,7 +201,7 @@ jobs:
               print(f"=== autofix round attempt {round_i}/{max_rounds} ===")
               code, data = call(
                   "autofix_pr",
-                  {"repo": repo, "pr_number": pr_number},
+                  {"repo": repo, "pr_number": pr_number, "is_retry": cooldown_waits > 0},
                   timeout=120,
               )
               print(f"autofix_pr HTTP {code}: {json.dumps(data)[:800]}")

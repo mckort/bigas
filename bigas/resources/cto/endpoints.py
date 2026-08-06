@@ -379,11 +379,14 @@ def autofix_pr():
       - review_body (str, optional): override; else fetch Bigas-marked PR comment
       - github_token (str, optional): override GITHUB_TOKEN
       - cursor_api_key (str, optional): override CURSOR_API_KEY
+      - is_retry (bool, optional): suppress Discord skip notifications on Actions
+          cooldown/retry polls (cooldown itself never posts Discord)
     """
     data = request.get_json(silent=True) or {}
     repo = (data.get("repo") or "").strip()
     pr_number = data.get("pr_number")
     force = bool(data.get("force") or False)
+    is_retry = bool(data.get("is_retry") or False)
     review_body = data.get("review_body")
     if isinstance(review_body, str):
         review_body = review_body.strip() or None
@@ -463,8 +466,7 @@ def autofix_pr():
                 wait_left = None
             mins = max(1, int((wait_left + 59) // 60)) if wait_left is not None else None
             wait_txt = f"~{mins} min" if mins is not None else "a few minutes"
-            # Removed Discord notification for cooldowns to avoid spam during
-            # GitHub Action polling loops. The PR comment below is sufficient.
+            # No Discord for cooldowns — Action polling would spam. PR comment is enough.
             # Visible on the PR so cooldown does not look like a silent hang.
             gh_token = github_token or (os.environ.get("GITHUB_TOKEN") or "").strip()
             if gh_token:
@@ -490,7 +492,19 @@ def autofix_pr():
                         "Failed to post autofix cooldown PR comment",
                         exc_info=True,
                     )
-        else:
+        elif result.get("stale_review"):
+            logger.info(
+                "Autofix skipped for %s#%s: stale review predates latest autofix commit",
+                repo,
+                pr_number,
+            )
+            if not is_retry:
+                _post_to_discord_cto(
+                    f"**CTO autofix skipped (stale review)**\n"
+                    f"Review predates the latest autofix commit; waiting for re-review.\n"
+                    f"PR: {pr_url}"
+                )
+        elif not is_retry:
             _post_to_discord_cto(
                 f"**CTO autofix skipped**\n"
                 f"Reason: {sanitize_error_message(reason)}\nPR: {pr_url}"
@@ -887,6 +901,10 @@ def get_manifest():
                         "cursor_api_key": {
                             "type": "string",
                             "description": "Optional Cursor API key override",
+                        },
+                        "is_retry": {
+                            "type": "boolean",
+                            "description": "Suppress Discord notifications on retry polls (for cooldown loops)",
                         },
                     },
                     "required": ["repo", "pr_number"],

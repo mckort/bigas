@@ -148,9 +148,11 @@ class AutofixService:
             }
 
         # Load the review comment early so we can decide whether cooldown applies.
-        # Always fetch the marked comment metadata to get review_updated_at for
-        # cooldown skip logic, even when review_body is provided externally.
+        # Always fetch marked-comment metadata for review_updated_at (cooldown skip).
+        # An explicit review_body override still uses that timestamp for cooldown
+        # skip, but bypasses the stale_review gate (override = fresh caller input).
         body = (review_body or "").strip()
+        explicit_review_body = bool(body)
         review_updated_at: Optional[str] = None
         try:
             marked = gh.get_marked_comment(
@@ -160,12 +162,22 @@ class AutofixService:
                 marker=BIGAS_REVIEW_MARKER,
             )
         except GitHubPRCommentError as e:
-            raise AutofixError(str(e)) from e
+            # If review_body was provided, we can continue without the metadata.
+            if not body:
+                raise AutofixError(str(e)) from e
+            marked = None
+            logger.warning(
+                "Could not fetch Bigas review metadata for cooldown check: %s", e
+            )
 
         if marked:
+            # Always capture review timestamp for cooldown skip logic, even when
+            # an explicit review_body override is provided.
             updated = marked.get("updated_at") or marked.get("created_at")
-            review_updated_at = updated.strip() if isinstance(updated, str) else None
-            if not body:
+            review_updated_at = (
+                updated.strip() if isinstance(updated, str) else None
+            )
+            if not explicit_review_body:
                 found = marked.get("body") or ""
                 body = found if isinstance(found, str) else ""
 
@@ -182,11 +194,10 @@ class AutofixService:
         # finishing. Skip cooldown when a newer Bigas review already exists after the
         # autofix head commit — that means the previous agent finished and we were
         # re-reviewed (common when the autofix push cancels/restarts Actions).
-        if (
-            not force
-            and cooldown > 0
-            and AUTOFIX_COMMIT_MARKER in (head_message or "")
-        ):
+        #
+        # The stale review check applies regardless of cooldown setting; only the
+        # cooldown wait is gated by cooldown > 0.
+        if not force and AUTOFIX_COMMIT_MARKER in (head_message or ""):
             age = _age_seconds_since(committed_at)
             review_age_after_head = None
             if review_updated_at and committed_at:
@@ -195,32 +206,59 @@ class AutofixService:
                 if head_age is not None and review_age is not None:
                     # Positive => review comment is newer than the head commit.
                     review_age_after_head = head_age - review_age
-            if review_age_after_head is not None and review_age_after_head > 0:
-                logger.info(
-                    "Skipping autofix cooldown for %s#%s: review is %.0fs newer than "
-                    "autofix head %s",
-                    f"{owner}/{repo_name}",
-                    pr_number,
-                    review_age_after_head,
-                    head_sha[:8],
-                )
-            elif age is not None and age < cooldown:
-                wait_left = int(cooldown - age)
+
+            # Stale review check: applies regardless of cooldown setting.
+            # Skip when an explicit review_body override is provided — that
+            # override is treated as fresh input even if the PR comment is older.
+            if (
+                not explicit_review_body
+                and review_age_after_head is not None
+                and review_age_after_head <= 0
+            ):
+                # Review predates the autofix head commit — the review is stale.
+                # Skip this run; a new Action run will trigger re-review on the
+                # autofix commit, which will call autofix again with fresh findings.
                 return {
                     "skipped": True,
-                    "cooldown": True,
+                    "stale_review": True,
                     "reason": (
-                        f"autofix cooldown: latest commit is already `[bigas-autofix]` "
-                        f"({int(age)}s ago). Wait ~{wait_left}s for the previous agent "
-                        f"to finish before launching another round."
+                        "Review predates the latest autofix commit; "
+                        "waiting for re-review of autofix commit."
                     ),
                     "pr_url": pr_url,
                     "autofix_count": autofix_count,
                     "max_iterations": max_iters,
-                    "cooldown_seconds": cooldown,
-                    "head_age_seconds": int(age),
                     "head_sha": head_sha,
                 }
+
+            # Cooldown check: only applies when cooldown > 0.
+            if cooldown > 0:
+                if review_age_after_head is not None and review_age_after_head > 0:
+                    logger.info(
+                        "Skipping autofix cooldown for %s#%s: review is %.0fs newer than "
+                        "autofix head %s",
+                        f"{owner}/{repo_name}",
+                        pr_number,
+                        review_age_after_head,
+                        head_sha[:8],
+                    )
+                elif age is not None and age < cooldown:
+                    wait_left = int(cooldown - age)
+                    return {
+                        "skipped": True,
+                        "cooldown": True,
+                        "reason": (
+                            f"autofix cooldown: latest commit is already `[bigas-autofix]` "
+                            f"({int(age)}s ago). Wait ~{wait_left}s for the previous agent "
+                            f"to finish before launching another round."
+                        ),
+                        "pr_url": pr_url,
+                        "autofix_count": autofix_count,
+                        "max_iterations": max_iters,
+                        "cooldown_seconds": cooldown,
+                        "head_age_seconds": int(age),
+                        "head_sha": head_sha,
+                    }
 
         if not force:
             should, reason = review_needs_autofix(body)
