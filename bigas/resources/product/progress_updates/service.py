@@ -141,7 +141,7 @@ class ProgressUpdatesService:
         try:
             resolved_keys = normalize_project_keys(project_keys)
             if not resolved_keys:
-                resolved_keys = normalize_project_keys(JiraConfig.from_env().project_keys)
+                resolved_keys = list(self._jira._config.project_keys)
             raw_issues = self._jira.search_issues_done_in_last_n_days(
                 days=days,
                 jql_extra=(jql_extra or "").strip(),
