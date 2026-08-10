@@ -41,20 +41,17 @@ def _usage_from_gemini_response(response: Any) -> TokenUsage:
         return TokenUsage()
     if isinstance(meta, dict):
         return usage_from_mapping(meta)
+    # Collect both snake_case and camelCase attributes — usage_from_mapping handles key resolution.
     raw = {
         "prompt_token_count": getattr(meta, "prompt_token_count", None),
         "candidates_token_count": getattr(meta, "candidates_token_count", None),
         "thoughts_token_count": getattr(meta, "thoughts_token_count", None),
         "total_token_count": getattr(meta, "total_token_count", None),
+        "promptTokenCount": getattr(meta, "promptTokenCount", None),
+        "candidatesTokenCount": getattr(meta, "candidatesTokenCount", None),
+        "thoughtsTokenCount": getattr(meta, "thoughtsTokenCount", None),
+        "totalTokenCount": getattr(meta, "totalTokenCount", None),
     }
-    # Newer SDKs may expose camelCase attributes only.
-    if all(v is None for v in raw.values()):
-        raw = {
-            "promptTokenCount": getattr(meta, "promptTokenCount", None),
-            "candidatesTokenCount": getattr(meta, "candidatesTokenCount", None),
-            "thoughtsTokenCount": getattr(meta, "thoughtsTokenCount", None),
-            "totalTokenCount": getattr(meta, "totalTokenCount", None),
-        }
     return usage_from_mapping(raw)
 
 

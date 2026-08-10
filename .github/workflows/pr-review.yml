@@ -143,12 +143,16 @@ jobs:
                   except Exception:
                       parsed = {"error": raw[:500]}
                   return e.code, parsed
-              except TimeoutError as e:
-                  # Do not auto-retry launches: the server may still be working and
-                  # a second POST could start a duplicate Cursor agent.
-                  raise TimeoutError(
-                      f"{path} timed out after {timeout}s: {e}"
-                  ) from e
+              except urllib.error.URLError as e:
+                  # urlopen wraps socket timeouts in URLError; check e.reason.
+                  import socket
+                  if isinstance(e.reason, (TimeoutError, socket.timeout)):
+                      # Do not auto-retry launches: the server may still be working and
+                      # a second POST could start a duplicate Cursor agent.
+                      raise TimeoutError(
+                          f"{path} timed out after {timeout}s: {e}"
+                      ) from e
+                  raise
 
           def wait_and_finalize(agent_id, run_id):
               payload = {
