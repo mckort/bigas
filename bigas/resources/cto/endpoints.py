@@ -11,8 +11,8 @@ from flask import Blueprint, jsonify, request
 
 from bigas.resources.cto.autofix.heuristics import (
     autofix_max_iterations,
+    autofix_pushed_new_commit,
     format_loop_protection_message,
-    latest_commit_is_autofix,
     review_is_ready_to_merge,
 )
 from bigas.resources.cto.autofix.service import (
@@ -591,6 +591,9 @@ def autofix_followup():
     Request JSON:
       - repo, pr_number, agent_id (required)
       - run_id (optional)
+      - baseline_head_sha (optional): PR head SHA at autofix launch; required to detect
+        whether *this* agent pushed a new `[bigas-autofix]` commit
+      - autofix_round (optional): launched round number for Discord copy (e.g. 2 of 5)
       - finalize (bool, default false): if true and agent terminal, Discord + re-review
     """
     data = request.get_json(silent=True) or {}
@@ -598,6 +601,12 @@ def autofix_followup():
     pr_number = data.get("pr_number")
     agent_id = (data.get("agent_id") or "").strip()
     run_id = (data.get("run_id") or "").strip() or None
+    baseline_head_sha = (data.get("baseline_head_sha") or data.get("head_sha") or "").strip() or None
+    autofix_round = data.get("autofix_round")
+    try:
+        autofix_round_n = int(autofix_round) if autofix_round is not None else None
+    except (TypeError, ValueError):
+        autofix_round_n = None
     finalize = bool(data.get("finalize") or False)
     github_token = (data.get("github_token") or "").strip() or None
     cursor_api_key = (data.get("cursor_api_key") or "").strip() or None
@@ -655,26 +664,41 @@ def autofix_followup():
 
     fixes_pushed = False
     head_sha = ""
+    head_message = ""
     try:
         head_sha, head_message = service.get_pr_head_commit(
             repo=repo, pr_number=pr_number
         )
-        fixes_pushed = latest_commit_is_autofix(head_message)
+        fixes_pushed = autofix_pushed_new_commit(
+            head_sha=head_sha,
+            head_message=head_message,
+            baseline_head_sha=baseline_head_sha,
+        )
     except AutofixError as e:
         logger.warning("Could not read PR head after autofix: %s", e)
 
     result_text = status.get("result_text") or ""
     asked_confirm = autofix_looks_like_confirmation_stop(result_text)
     if not fixes_pushed:
-        why = (
-            "Agent appears to have stopped to ask for confirmation."
-            if asked_confirm
-            else "No `[bigas-autofix]` commit on PR head (nothing pushed, or agent only proposed changes)."
-        )
+        round_bit = ""
+        if autofix_round_n is not None:
+            round_bit = f" (launched as round {autofix_round_n})"
+        if asked_confirm:
+            why = "Agent appears to have stopped to ask for confirmation."
+        elif baseline_head_sha and head_sha and baseline_head_sha == head_sha:
+            why = (
+                "PR head SHA unchanged since launch — agent finished without pushing "
+                "a new `[bigas-autofix]` commit (same review would be re-posted otherwise)."
+            )
+        else:
+            why = (
+                "No new `[bigas-autofix]` commit on PR head "
+                "(nothing pushed, or agent only proposed changes)."
+            )
         _post_to_discord_cto(
-            f"**CTO autofix finished without commits**\nPR: {pr_url}\n"
+            f"**CTO autofix finished without commits**{round_bit}\nPR: {pr_url}\n"
             f"{why}\nAgent: {agent_url}\n"
-            f"Re-run autofix or continue the agent manually."
+            f"Stopping autofix loop for this run (no re-review without a new commit)."
         )
         base.update(
             {
@@ -683,6 +707,8 @@ def autofix_followup():
                 "fixes_pushed": False,
                 "asked_confirmation": asked_confirm,
                 "head_sha": head_sha,
+                "baseline_head_sha": baseline_head_sha,
+                "autofix_round": autofix_round_n,
                 "rereviewed": False,
             }
         )
@@ -790,11 +816,15 @@ def autofix_followup():
             github_token=gh_token,
         )
     else:
+        # autofix_count = number of `[bigas-autofix]` commits on the PR after this push.
+        # That is the completed round index (1-based), not "attempts that did nothing".
+        completed_round = autofix_count
         _post_to_discord_cto(
             f"**CTO autofix follow-up**\n"
             f"PR still has findings after autofix round "
-            f"{autofix_count}/{max_iters}.\n"
-            f"Another autofix round may run if under the limit.\n"
+            f"{completed_round}/{max_iters} "
+            f"({autofix_count} `[bigas-autofix]` commit(s) on the PR).\n"
+            f"Actions may launch another round if under the limit.\n"
             f"PR: {pr_url}"
         )
 
@@ -804,7 +834,10 @@ def autofix_followup():
         "comment_url": comment_url,
         "ready_to_merge": ready,
         "fixes_pushed": True,
+        "head_sha": head_sha,
+        "baseline_head_sha": baseline_head_sha,
         "autofix_count": autofix_count,
+        "autofix_round": autofix_round_n or autofix_count,
         "max_iterations": max_iters,
         "loop_protection": (not ready) and autofix_count >= max_iters,
         "used_model": review_result.model,

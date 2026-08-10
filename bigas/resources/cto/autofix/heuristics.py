@@ -141,6 +141,29 @@ def latest_commit_is_autofix(message: str) -> bool:
     return AUTOFIX_COMMIT_MARKER in (message or "")
 
 
+def autofix_pushed_new_commit(
+    *,
+    head_sha: str,
+    head_message: str,
+    baseline_head_sha: str | None,
+) -> bool:
+    """
+    True only when PR head is a new `[bigas-autofix]` commit since launch.
+
+    Important: HEAD already being an autofix commit is not enough — that is the
+    common case when a later agent finishes without pushing, and must not be
+    treated as a successful fix round (which would re-review the same SHA).
+    """
+    if not latest_commit_is_autofix(head_message):
+        return False
+    baseline = (baseline_head_sha or "").strip()
+    current = (head_sha or "").strip()
+    if baseline and current and baseline == current:
+        return False
+    # No baseline (legacy callers): keep prior behavior — autofix head counts.
+    return bool(current)
+
+
 def review_is_ready_to_merge(review_body: str) -> bool:
     """True when the review reads as clean enough to merge (no actionable findings)."""
     should_fix, _reason = review_needs_autofix(review_body)

@@ -1,4 +1,5 @@
 from bigas.resources.cto.autofix.heuristics import (
+    autofix_pushed_new_commit,
     latest_commit_is_autofix,
     review_needs_autofix,
 )
@@ -156,3 +157,43 @@ def test_autofix_looks_like_confirmation_stop():
     assert autofix_looks_like_confirmation_stop("Please confirm before I proceed.")
     assert not autofix_looks_like_confirmation_stop("Pushed [bigas-autofix] commits.")
     assert not autofix_looks_like_confirmation_stop("")
+
+
+def test_autofix_pushed_new_commit_requires_sha_change():
+    msg = "fix stuff [bigas-autofix]"
+    # Same SHA as launch → agent did not push.
+    assert (
+        autofix_pushed_new_commit(
+            head_sha="abc123",
+            head_message=msg,
+            baseline_head_sha="abc123",
+        )
+        is False
+    )
+    # New autofix commit after launch.
+    assert (
+        autofix_pushed_new_commit(
+            head_sha="def456",
+            head_message=msg,
+            baseline_head_sha="abc123",
+        )
+        is True
+    )
+    # Non-autofix head never counts.
+    assert (
+        autofix_pushed_new_commit(
+            head_sha="def456",
+            head_message="regular commit",
+            baseline_head_sha="abc123",
+        )
+        is False
+    )
+    # Legacy callers without baseline: autofix head still counts.
+    assert (
+        autofix_pushed_new_commit(
+            head_sha="abc123",
+            head_message=msg,
+            baseline_head_sha=None,
+        )
+        is True
+    )
