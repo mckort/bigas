@@ -892,7 +892,9 @@ def fetch_ai_usage_endpoint():
       - feature_prefix (str, default "cto_")
       - post_to_discord (bool, default false)
     """
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
     try:
         days = int(data.get("days") if data.get("days") is not None else 7)
     except (TypeError, ValueError):
@@ -910,16 +912,18 @@ def fetch_ai_usage_endpoint():
         provider=provider,
         feature_prefix=feature_prefix or None,
     )
+
+    if post_to_discord:
+        _post_to_discord_cto(format_weekly_cto_ai_report(report))
+
     # Cap events in HTTP response to keep payloads manageable.
+    # Truncation must happen AFTER formatting Discord report so counts are accurate.
     events = report.get("events") or []
     truncated = False
     if len(events) > 200:
         report = {**report, "events": events[:200]}
         truncated = True
         report["events_truncated"] = True
-
-    if post_to_discord:
-        _post_to_discord_cto(format_weekly_cto_ai_report(report))
 
     report["truncated"] = truncated
     return jsonify(report)
@@ -934,7 +938,9 @@ def weekly_cto_ai_report():
       - days (int, default 7)
       - post_to_discord (bool, default true)
     """
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
     try:
         days = int(data.get("days") if data.get("days") is not None else 7)
     except (TypeError, ValueError):

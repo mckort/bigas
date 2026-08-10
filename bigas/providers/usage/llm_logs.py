@@ -48,7 +48,8 @@ def _parse_log_payload(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             except json.JSONDecodeError:
                 pass
         # Sometimes the JSON is embedded after a log prefix.
-        m = re.search(r"\{.*\"event\"\s*:\s*\"llm_usage\".*\}", text)
+        # Use re.DOTALL so .* matches newlines in multi-line JSON payloads.
+        m = re.search(r"\{.*\"event\"\s*:\s*\"llm_usage\".*\}", text, re.DOTALL)
         if m:
             try:
                 data = json.loads(m.group(0))

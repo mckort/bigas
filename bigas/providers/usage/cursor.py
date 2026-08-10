@@ -4,8 +4,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
 from bigas.providers.usage.base import UsageEvent, UsageProvider
@@ -93,6 +94,7 @@ class CursorCloudAgentUsageProvider(UsageProvider):
         end = end.astimezone(timezone.utc)
 
         events: List[UsageEvent] = []
+        agents_to_fetch: List[dict] = []
         cursor: Optional[str] = None
         pages = 0
         max_pages = 50
@@ -116,7 +118,7 @@ class CursorCloudAgentUsageProvider(UsageProvider):
                 created = _parse_iso(item.get("createdAt") or item.get("created_at"))
                 if created is not None and created < start:
                     stop_paging = True
-                    continue
+                    break
                 if created is not None and created > end:
                     continue
 
@@ -128,15 +130,14 @@ class CursorCloudAgentUsageProvider(UsageProvider):
                 if not agent_id:
                     continue
 
-                event = self._event_for_agent(
-                    agent_id=agent_id,
-                    name=name,
-                    created_at=created.isoformat() if created else start.isoformat(),
-                    latest_run_id=(item.get("latestRunId") or item.get("latest_run_id") or ""),
-                    agent_url=(item.get("url") or ""),
-                )
-                if event is not None:
-                    events.append(event)
+                # Collect agent metadata for concurrent usage fetching.
+                agents_to_fetch.append({
+                    "agent_id": agent_id,
+                    "name": name,
+                    "created_at": created.isoformat() if created else start.isoformat(),
+                    "latest_run_id": (item.get("latestRunId") or item.get("latest_run_id") or ""),
+                    "agent_url": (item.get("url") or ""),
+                })
 
             if stop_paging:
                 break
@@ -144,6 +145,30 @@ class CursorCloudAgentUsageProvider(UsageProvider):
             if not next_cursor:
                 break
             cursor = str(next_cursor)
+
+        # Fetch usage concurrently to avoid N+1 sequential API calls that can
+        # exceed frontend/gateway timeouts when there are many agents.
+        max_workers = min(10, len(agents_to_fetch)) if agents_to_fetch else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    self._event_for_agent,
+                    agent_id=agent["agent_id"],
+                    name=agent["name"],
+                    created_at=agent["created_at"],
+                    latest_run_id=agent["latest_run_id"],
+                    agent_url=agent["agent_url"],
+                ): agent["agent_id"]
+                for agent in agents_to_fetch
+            }
+            for future in as_completed(futures):
+                try:
+                    event = future.result()
+                    if event is not None:
+                        events.append(event)
+                except Exception as e:
+                    agent_id = futures[future]
+                    logger.warning("Concurrent get_usage failed for %s: %s", agent_id, e)
 
         return events
 
