@@ -144,6 +144,47 @@ class CursorCloudAgentClient:
             raise CursorCloudAgentError("agent_id and run_id are required")
         return self._get_json(f"{CURSOR_API_BASE}/agents/{aid}/runs/{rid}")
 
+    def list_agents(
+        self,
+        *,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+        pr_url: Optional[str] = None,
+        include_archived: bool = True,
+    ) -> dict[str, Any]:
+        """List cloud agents (newest first)."""
+        params: dict[str, Any] = {
+            "limit": max(1, min(int(limit or 100), 100)),
+            "includeArchived": "true" if include_archived else "false",
+        }
+        if cursor:
+            params["cursor"] = cursor
+        if pr_url:
+            params["prUrl"] = pr_url
+        return self._get_json(f"{CURSOR_API_BASE}/agents", params=params)
+
+    def get_usage(
+        self,
+        agent_id: str,
+        *,
+        run_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Token usage for an agent, optionally scoped to one run.
+
+        GET /v1/agents/{id}/usage
+        """
+        aid = (agent_id or "").strip()
+        if not aid:
+            raise CursorCloudAgentError("agent_id is required")
+        params: dict[str, Any] = {}
+        if run_id:
+            params["runId"] = (run_id or "").strip()
+        return self._get_json(
+            f"{CURSOR_API_BASE}/agents/{aid}/usage",
+            params=params or None,
+        )
+
     def get_run_status(
         self,
         *,
@@ -183,9 +224,19 @@ class CursorCloudAgentClient:
             "agent": agent,
         }
 
-    def _get_json(self, url: str) -> dict[str, Any]:
+    def _get_json(
+        self,
+        url: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         try:
-            resp = requests.get(url, auth=(self._api_key, ""), timeout=60)
+            resp = requests.get(
+                url,
+                auth=(self._api_key, ""),
+                params=params,
+                timeout=60,
+            )
         except requests.RequestException as e:
             raise CursorCloudAgentError(f"Cursor API request failed: {e}") from e
         if resp.status_code in (401, 403):
