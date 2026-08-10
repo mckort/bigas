@@ -182,9 +182,14 @@ class ProgressUpdatesService:
                 days,
                 stats,
             )
+            by_project = stats.get("by_project") or {}
+            empty_keys = [k for k, n in by_project.items() if int(n or 0) <= 0]
+            empty_line = (
+                f"\nNo Done items: {', '.join(empty_keys)}" if empty_keys else ""
+            )
             message = (
                 f"Here’s what the team completed in the last {days} days:\n\n"
-                f"{done_issues_text}"
+                f"{done_issues_text}{empty_line}"
             )
 
         return {
