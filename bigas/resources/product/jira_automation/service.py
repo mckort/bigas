@@ -317,7 +317,7 @@ class JiraAutomationService:
                 result = ImplementHandler(jira=self._jira).run(
                     issue_key=issue_key,
                     repo=repo,
-                    base_branch=self._config.default_base_branch,
+                    base_branch=self._config.base_branch_for_repo(repo),
                 )
                 label = issue_discord_label(issue_key, result.get("summary"))
                 agent_url = result.get("agent_url") or ""

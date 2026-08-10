@@ -25,7 +25,8 @@ When `autofix_followup` reports **ready to merge**, Bigas finds the Jira key on 
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret header |
 | `BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS` | Default `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL` |
 | `BIGAS_JIRA_PROJECT_REPO_MAP` | `VFA:mckort/vcfieldassistant,WAYW:mckort/roadpal,BIG:mckort/bigas,REM:mckort/remotebrief,GPWW:Green-Promo-Wear-Global/greenpromowear-website,FYDA:mckort/fulfillourdreamadventure,MYL:mckort/mylifesdeed` |
-| `BIGAS_JIRA_DEFAULT_BASE_BRANCH` | Default `main` (Cursor starting ref) |
+| `BIGAS_JIRA_REPO_BASE_BRANCH_MAP` | Per-repo Cursor starting ref, e.g. `mckort/fulfillourdreamadventure:master,mckort/vcfieldassistant:main`. Defaults include FYDA→`master`; others→`main`. |
+| `BIGAS_JIRA_DEFAULT_BASE_BRANCH` | Fallback when repo is not in the map (default `main`) |
 | `BIGAS_JIRA_STATUS_*_APPROVAL` | Manual gate status names |
 | `BIGAS_JIRA_AI_DAILY_QUOTA` | Default `20` |
 | `CURSOR_API_KEY` | Required for Implement |

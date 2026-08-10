@@ -24,6 +24,17 @@ DEFAULT_PROJECT_REPOS: Dict[str, str] = {
     "MYL": "mckort/mylifesdeed",
 }
 
+# owner/repo → default branch for Cursor implement startingRef
+DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
+    "mckort/vcfieldassistant": "main",
+    "mckort/roadpal": "main",
+    "mckort/bigas": "main",
+    "mckort/remotebrief": "main",
+    "Green-Promo-Wear-Global/greenpromowear-website": "main",
+    "mckort/fulfillourdreamadventure": "master",
+    "mckort/mylifesdeed": "main",
+}
+
 DEFAULT_STATUS_HANDLERS: Dict[str, str] = {
     "research and describe (ai)": HANDLER_RESEARCH,
     "design and plan (ai)": HANDLER_DESIGN,
@@ -61,6 +72,24 @@ def _parse_project_repo_map(raw: Optional[str]) -> Dict[str, str]:
     return out
 
 
+def _parse_repo_base_branch_map(raw: Optional[str]) -> Dict[str, str]:
+    """Parse `mckort/fulfillourdreamadventure:master,mckort/vcfieldassistant:main`."""
+    out = dict(DEFAULT_REPO_BASE_BRANCHES)
+    if not (raw or "").strip():
+        return out
+    for part in raw.split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        # owner/repo:branch — split on the last colon so org/repo stays intact
+        repo, branch = part.rsplit(":", 1)
+        r = repo.strip()
+        b = branch.strip()
+        if r and b and "/" in r:
+            out[r] = b
+    return out
+
+
 def _parse_status_handlers(raw: Optional[str]) -> Dict[str, str]:
     """
     Optional override: `Research and describe (AI)=research_describe;Design and plan (AI)=design_plan`
@@ -92,6 +121,7 @@ class JiraAutomationConfig:
     status_final_approval: str
     daily_quota: int
     default_base_branch: str
+    repo_base_branches: Dict[str, str]
     discord_pm_env: str
     discord_cto_env: str
 
@@ -134,6 +164,9 @@ class JiraAutomationConfig:
                 os.environ.get("BIGAS_JIRA_DEFAULT_BASE_BRANCH") or "main"
             ).strip()
             or "main",
+            repo_base_branches=_parse_repo_base_branch_map(
+                os.environ.get("BIGAS_JIRA_REPO_BASE_BRANCH_MAP")
+            ),
             discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
             discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
         )
@@ -143,6 +176,13 @@ class JiraAutomationConfig:
 
     def repo_for_project(self, project_key: str) -> Optional[str]:
         return self.project_repos.get((project_key or "").strip().upper())
+
+    def base_branch_for_repo(self, repo: str) -> str:
+        """Return Cursor startingRef for owner/repo, else default_base_branch."""
+        r = (repo or "").strip()
+        if r and r in self.repo_base_branches:
+            return self.repo_base_branches[r]
+        return self.default_base_branch
 
     def is_project_allowed(self, project_key: str) -> bool:
         return (project_key or "").strip().upper() in self.allowed_projects
