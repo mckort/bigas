@@ -373,6 +373,20 @@ def test_config_maps_implement_status(monkeypatch):
     cfg = JiraAutomationConfig.from_env()
     assert cfg.handler_for_status("In Progress (AI)") == HANDLER_IMPLEMENT
     assert cfg.default_base_branch == "main"
+    assert cfg.base_branch_for_repo("mckort/vcfieldassistant") == "main"
+    assert cfg.base_branch_for_repo("mckort/fulfillourdreamadventure") == "master"
+
+
+def test_repo_base_branch_map_env_override(monkeypatch):
+    monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
+    monkeypatch.setenv(
+        "BIGAS_JIRA_REPO_BASE_BRANCH_MAP",
+        "mckort/fulfillourdreamadventure:develop,mckort/vcfieldassistant:main",
+    )
+    cfg = JiraAutomationConfig.from_env()
+    assert cfg.base_branch_for_repo("mckort/fulfillourdreamadventure") == "develop"
+    assert cfg.base_branch_for_repo("mckort/vcfieldassistant") == "main"
+    assert cfg.base_branch_for_repo("mckort/unknown-repo") == "main"
 
 
 def test_verify_webhook_secret_bearer_and_plain():
@@ -469,6 +483,7 @@ def test_handle_event_failure_clears_idempotency_and_quota(monkeypatch):
         status_final_approval="Final approval (manual)",
         daily_quota=5,
         default_base_branch="main",
+        repo_base_branches={"mckort/vcfieldassistant": "main"},
         discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
         discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
     )
