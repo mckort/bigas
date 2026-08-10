@@ -145,7 +145,7 @@ class ProgressUpdatesService:
             raw_issues = self._jira.search_issues_done_in_last_n_days(
                 days=days,
                 jql_extra=(jql_extra or "").strip(),
-                project_keys=project_keys,
+                project_keys=resolved_keys,
             )
         except JiraError as e:
             raise ProgressUpdatesError(str(e))
