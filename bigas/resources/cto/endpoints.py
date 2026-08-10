@@ -251,16 +251,10 @@ def review_and_comment_pr():
     instructions = (data.get("instructions") or "").strip() or None
     github_token = (data.get("github_token") or "").strip() or os.environ.get("GITHUB_TOKEN") or ""
     llm_model = (data.get("llm_model") or "").strip() or None
-    repo_display = repo or "?"
-    pr_display = pr_number if pr_number is not None else "?"
 
     def _fail(reason: str, status: int, error: str | None = None):
-        _post_to_discord_cto(
-            "**CTO PR review done**\n"
-            "No comment posted.\n"
-            f"PR: https://github.com/{repo_display}/pull/{pr_display}\n"
-            f"Reason: {reason}"
-        )
+        # Input / pre-start failures stay in the HTTP response only.
+        # Discord is reserved for outcomes after "CTO PR review started".
         return jsonify({"error": error or reason}), status
 
     if not repo:
