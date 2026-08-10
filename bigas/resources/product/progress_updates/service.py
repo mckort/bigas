@@ -71,7 +71,7 @@ def _aggregate_stats(
         by_type[t] = by_type.get(t, 0) + 1
         a = i.get("assignee") or "Unassigned"
         by_assignee[a] = by_assignee.get(a, 0) + 1
-        p = (i.get("project_key") or "UNKNOWN").strip().upper() or "UNKNOWN"
+        p = i.get("project_key", "UNKNOWN")
         by_project[p] = by_project.get(p, 0) + 1
     return {
         "total": len(normalized),
@@ -87,7 +87,7 @@ def _format_done_issues_for_prompt(normalized: List[Dict[str, Any]]) -> str:
         return "(No issues moved to Done in this period.)"
     by_project: Dict[str, List[Dict[str, Any]]] = {}
     for i in normalized:
-        p = (i.get("project_key") or "UNKNOWN").strip().upper() or "UNKNOWN"
+        p = i.get("project_key", "UNKNOWN")
         by_project.setdefault(p, []).append(i)
 
     lines: List[str] = []
@@ -141,7 +141,7 @@ class ProgressUpdatesService:
         try:
             resolved_keys = normalize_project_keys(project_keys)
             if not resolved_keys:
-                resolved_keys = list(JiraConfig.from_env().project_keys)
+                resolved_keys = normalize_project_keys(JiraConfig.from_env().project_keys)
             raw_issues = self._jira.search_issues_done_in_last_n_days(
                 days=days,
                 jql_extra=(jql_extra or "").strip(),
