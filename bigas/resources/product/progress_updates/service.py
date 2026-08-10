@@ -6,7 +6,12 @@ import os
 
 from bigas.llm.factory import get_llm_client
 
-from bigas.resources.product.create_release_notes.jira_client import JiraClient, JiraConfig, JiraError
+from bigas.resources.product.create_release_notes.jira_client import (
+    JiraClient,
+    JiraConfig,
+    JiraError,
+    normalize_project_keys,
+)
 from bigas.resources.product.progress_updates.prompts import (
     PROGRESS_UPDATES_SYSTEM_PROMPT,
     build_progress_updates_user_prompt,
@@ -17,6 +22,14 @@ logger = logging.getLogger(__name__)
 
 class ProgressUpdatesError(RuntimeError):
     pass
+
+
+def _project_key_from_issue_key(issue_key: str) -> str:
+    """Return Jira project key from an issue key like VFA-12."""
+    raw = (issue_key or "").strip()
+    if "-" not in raw:
+        return raw or "UNKNOWN"
+    return raw.split("-", 1)[0].strip().upper() or "UNKNOWN"
 
 
 def _normalize_done_issue(issue: Dict[str, Any]) -> Dict[str, Any]:
@@ -30,41 +43,62 @@ def _normalize_done_issue(issue: Dict[str, Any]) -> Dict[str, Any]:
     else:
         assignee_display = str(assignee)
 
+    key = issue.get("key", "") or ""
     return {
-        "key": issue.get("key", ""),
+        "key": key,
+        "project_key": _project_key_from_issue_key(key),
         "summary": (fields.get("summary") or "").strip(),
         "issue_type": (fields.get("issuetype") or {}).get("name") or "Task",
         "assignee": assignee_display,
     }
 
 
-def _aggregate_stats(normalized: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Compute total, by_type, and by_assignee from normalized done issues."""
+def _aggregate_stats(
+    normalized: List[Dict[str, Any]],
+    *,
+    project_keys: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Compute total, by_type, by_assignee, and by_project from normalized done issues."""
     by_type: Dict[str, int] = {}
     by_assignee: Dict[str, int] = {}
+    by_project: Dict[str, int] = {}
+    for key in project_keys or []:
+        k = (key or "").strip().upper()
+        if k:
+            by_project[k] = 0
     for i in normalized:
         t = i.get("issue_type") or "Task"
         by_type[t] = by_type.get(t, 0) + 1
         a = i.get("assignee") or "Unassigned"
         by_assignee[a] = by_assignee.get(a, 0) + 1
+        p = i.get("project_key", "UNKNOWN")
+        by_project[p] = by_project.get(p, 0) + 1
     return {
         "total": len(normalized),
         "by_type": by_type,
         "by_assignee": by_assignee,
+        "by_project": by_project,
     }
 
 
 def _format_done_issues_for_prompt(normalized: List[Dict[str, Any]]) -> str:
-    """Format the list of done issues as readable text for the LLM."""
+    """Format the list of done issues as readable text for the LLM, grouped by project."""
     if not normalized:
         return "(No issues moved to Done in this period.)"
-    lines = []
+    by_project: Dict[str, List[Dict[str, Any]]] = {}
     for i in normalized:
-        key = i.get("key", "")
-        summary = i.get("summary", "")
-        issue_type = i.get("issue_type", "Task")
-        assignee = i.get("assignee", "Unassigned")
-        lines.append(f"- [{key}] {issue_type}: {summary} ({assignee})")
+        p = i.get("project_key", "UNKNOWN")
+        by_project.setdefault(p, []).append(i)
+
+    lines: List[str] = []
+    for project in sorted(by_project.keys()):
+        lines.append(f"### {project}")
+        for i in by_project[project]:
+            key = i.get("key", "")
+            summary = i.get("summary", "")
+            issue_type = i.get("issue_type", "Task")
+            assignee = i.get("assignee", "Unassigned")
+            lines.append(f"- [{key}] {issue_type}: {summary} ({assignee})")
     return "\n".join(lines)
 
 
@@ -105,10 +139,13 @@ class ProgressUpdatesService:
         project_keys: optional override of configured Jira project keys (str or list).
         """
         try:
+            resolved_keys = normalize_project_keys(project_keys)
+            if not resolved_keys:
+                resolved_keys = normalize_project_keys(self._jira._config.project_keys)
             raw_issues = self._jira.search_issues_done_in_last_n_days(
                 days=days,
                 jql_extra=(jql_extra or "").strip(),
-                project_keys=project_keys,
+                project_keys=resolved_keys,
             )
         except JiraError as e:
             raise ProgressUpdatesError(str(e))
@@ -116,7 +153,7 @@ class ProgressUpdatesService:
             raise ProgressUpdatesError(str(e))
 
         normalized = [_normalize_done_issue(i) for i in raw_issues]
-        stats = _aggregate_stats(normalized)
+        stats = _aggregate_stats(normalized, project_keys=resolved_keys)
         done_issues_text = _format_done_issues_for_prompt(normalized)
 
         # Build and call LLM
