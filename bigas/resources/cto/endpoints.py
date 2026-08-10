@@ -34,6 +34,11 @@ from bigas.resources.cto.pr_review.service import (
 from bigas.discord_webhook import post_long_to_discord, post_to_discord
 from bigas.resources.marketing.utils import sanitize_error_message
 from bigas.providers.monitoring.service import MonitoringService, run_monitoring_checks
+from bigas.resources.cto.usage.service import (
+    fetch_ai_usage,
+    fetch_cursor_run_usage,
+    format_weekly_cto_ai_report,
+)
 
 cto_bp = Blueprint(
     "cto_bp",
@@ -58,6 +63,30 @@ def _discord_llm_cost_line(review_result: PRReviewResult) -> str:
         f"Estimated LLM cost: ~${float(est):.4f} "
         f"({review_result.model}, {attempts} {attempt_label})"
     )
+
+
+def _discord_cursor_usage_suffix(
+    *,
+    agent_id: str,
+    run_id: str | None = None,
+    cursor_api_key: str | None = None,
+) -> str:
+    """Best-effort Cursor usage lines for autofix Discord notifications."""
+    try:
+        result = fetch_cursor_run_usage(
+            agent_id=agent_id,
+            run_id=run_id,
+            api_key=cursor_api_key,
+        )
+    except Exception:
+        logger.warning("Cursor usage fetch failed for Discord", exc_info=True)
+        return ""
+    if not result.get("ok"):
+        return ""
+    lines = result.get("discord_lines") or []
+    if not lines:
+        return ""
+    return "\n" + "\n".join(str(line) for line in lines)
 
 
 def _resolve_pr_diff_text(
@@ -654,10 +683,15 @@ def autofix_followup():
 
     agent_url = status.get("agent_url") or ""
     run_status = status.get("status") or "UNKNOWN"
+    usage_suffix = _discord_cursor_usage_suffix(
+        agent_id=agent_id,
+        run_id=status.get("run_id") or run_id,
+        cursor_api_key=cursor_api_key,
+    )
     if not status.get("ok"):
         _post_to_discord_cto(
             f"**CTO autofix failed**\nPR: {pr_url}\n"
-            f"Status: {run_status}\nAgent: {agent_url}"
+            f"Status: {run_status}\nAgent: {agent_url}{usage_suffix}"
         )
         base.update({"finalized": True, "ready_to_merge": False, "fixes_pushed": False})
         return jsonify(base)
@@ -697,7 +731,7 @@ def autofix_followup():
             )
         _post_to_discord_cto(
             f"**CTO autofix finished without commits**{round_bit}\nPR: {pr_url}\n"
-            f"{why}\nAgent: {agent_url}\n"
+            f"{why}\nAgent: {agent_url}{usage_suffix}\n"
             f"Stopping autofix loop for this run (no re-review without a new commit)."
         )
         base.update(
@@ -716,7 +750,7 @@ def autofix_followup():
 
     _post_to_discord_cto(
         f"**CTO autofix completed**\nPR: {pr_url}\n"
-        f"Fixes pushed to the PR branch.\nAgent: {agent_url}"
+        f"Fixes pushed to the PR branch.\nAgent: {agent_url}{usage_suffix}"
     )
 
     try:
@@ -845,6 +879,87 @@ def autofix_followup():
         "jira_final_approval": jira_final,
     })
     return jsonify(base)
+
+
+@cto_bp.route("/fetch_ai_usage", methods=["POST"])
+def fetch_ai_usage_endpoint():
+    """
+    Fetch historical AI usage from configured usage providers.
+
+    Request JSON:
+      - days (int, default 7, max 90)
+      - provider (str, default "all"): all | cursor | llm_logs
+      - feature_prefix (str, default "cto_")
+      - post_to_discord (bool, default false)
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        days = int(data.get("days") if data.get("days") is not None else 7)
+    except (TypeError, ValueError):
+        return jsonify({"error": "days must be an integer"}), 400
+    provider = (data.get("provider") or "all").strip() or "all"
+    feature_prefix = data.get("feature_prefix")
+    if feature_prefix is None:
+        feature_prefix = "cto_"
+    else:
+        feature_prefix = str(feature_prefix)
+    post_to_discord = bool(data.get("post_to_discord") or False)
+
+    report = fetch_ai_usage(
+        days=days,
+        provider=provider,
+        feature_prefix=feature_prefix or None,
+    )
+    # Cap events in HTTP response to keep payloads manageable.
+    events = report.get("events") or []
+    truncated = False
+    if len(events) > 200:
+        report = {**report, "events": events[:200]}
+        truncated = True
+        report["events_truncated"] = True
+
+    if post_to_discord:
+        _post_to_discord_cto(format_weekly_cto_ai_report(report))
+
+    report["truncated"] = truncated
+    return jsonify(report)
+
+
+@cto_bp.route("/weekly_cto_ai_report", methods=["POST"])
+def weekly_cto_ai_report():
+    """
+    Weekly CTO AI cost summary from all active usage providers → Discord.
+
+    Request JSON:
+      - days (int, default 7)
+      - post_to_discord (bool, default true)
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        days = int(data.get("days") if data.get("days") is not None else 7)
+    except (TypeError, ValueError):
+        return jsonify({"error": "days must be an integer"}), 400
+    post_to_discord = True if data.get("post_to_discord") is None else bool(
+        data.get("post_to_discord")
+    )
+
+    report = fetch_ai_usage(days=days, provider="all", feature_prefix="cto_")
+    message = format_weekly_cto_ai_report(report)
+    if post_to_discord:
+        _post_to_discord_cto(message)
+
+    events = report.get("events") or []
+    if len(events) > 200:
+        report = {**report, "events": events[:200], "events_truncated": True}
+
+    return jsonify(
+        {
+            "success": True,
+            "posted_to_discord": post_to_discord,
+            "message": message,
+            "report": report,
+        }
+    )
 
 
 @cto_bp.route("/website_monitor", methods=["POST"])
@@ -1003,6 +1118,60 @@ def get_manifest():
                         },
                     },
                     "required": ["repo", "pr_number", "agent_id"],
+                },
+            },
+            {
+                "name": "fetch_ai_usage",
+                "description": (
+                    "Fetch historical AI usage from configured usage providers "
+                    "(Cursor cloud agents API and/or LLM Cloud Logging). "
+                    "Returns list-price estimates and token totals."
+                ),
+                "path": "/mcp/tools/fetch_ai_usage",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "days": {
+                            "type": "integer",
+                            "description": "Lookback window in days (default 7, max 90)",
+                        },
+                        "provider": {
+                            "type": "string",
+                            "description": 'Usage provider: "all" (default), "cursor", or "llm_logs"',
+                        },
+                        "feature_prefix": {
+                            "type": "string",
+                            "description": 'Optional feature filter prefix (default "cto_")',
+                        },
+                        "post_to_discord": {
+                            "type": "boolean",
+                            "description": "Post a summary to the CTO Discord channel",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "weekly_cto_ai_report",
+                "description": (
+                    "Weekly CTO AI cost summary across active usage providers "
+                    "(Cursor autofix + LLM reviews from Cloud Logging). "
+                    "Posts to Discord by default — suitable for Cloud Scheduler."
+                ),
+                "path": "/mcp/tools/weekly_cto_ai_report",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "days": {
+                            "type": "integer",
+                            "description": "Lookback window in days (default 7)",
+                        },
+                        "post_to_discord": {
+                            "type": "boolean",
+                            "description": "Post to CTO Discord (default true)",
+                        },
+                    },
                 },
             },
             {

@@ -24,6 +24,8 @@ PR opened/push
 
 No automerge in v1.
 
+After each autofix round finalizes, Discord includes Cursor token usage + a list-price estimate when available. For weekly rollups across Cursor autofix and LLM review logs, see [cto-ai-usage.md](./cto-ai-usage.md).
+
 ## Server config (Bigas)
 
 1. `CURSOR_API_KEY` in `.env.bigas-*` and Secret Manager (`SECRET_MANAGER_SECRET_NAMES`).
