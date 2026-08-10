@@ -143,6 +143,16 @@ jobs:
                   except Exception:
                       parsed = {"error": raw[:500]}
                   return e.code, parsed
+              except urllib.error.URLError as e:
+                  # urlopen wraps socket timeouts in URLError; check e.reason.
+                  import socket
+                  if isinstance(e.reason, (TimeoutError, socket.timeout)):
+                      # Do not auto-retry launches: the server may still be working and
+                      # a second POST could start a duplicate Cursor agent.
+                      raise TimeoutError(
+                          f"{path} timed out after {timeout}s: {e}"
+                      ) from e
+                  raise
 
           def wait_and_finalize(agent_id, run_id):
               payload = {
@@ -199,10 +209,12 @@ jobs:
           while round_i < max_rounds:
               round_i += 1
               print(f"=== autofix round attempt {round_i}/{max_rounds} ===")
+              # Launch can be slow (GitHub fetch + Cursor API). 120s was too short
+              # in practice and failed the Actions job after a successful review.
               code, data = call(
                   "autofix_pr",
                   {"repo": repo, "pr_number": pr_number, "is_retry": cooldown_waits > 0},
-                  timeout=120,
+                  timeout=300,
               )
               print(f"autofix_pr HTTP {code}: {json.dumps(data)[:800]}")
               if code != 200:

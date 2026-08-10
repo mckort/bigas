@@ -30,8 +30,29 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from bigas.llm.client import LLMClient
 from bigas.llm.completion import LLMCompletion
+from bigas.llm.usage import TokenUsage, usage_from_mapping
 
 logger = logging.getLogger(__name__)
+
+
+def _usage_from_gemini_response(response: Any) -> TokenUsage:
+    meta = getattr(response, "usage_metadata", None)
+    if meta is None:
+        return TokenUsage()
+    if isinstance(meta, dict):
+        return usage_from_mapping(meta)
+    # Collect both snake_case and camelCase attributes — usage_from_mapping handles key resolution.
+    raw = {
+        "prompt_token_count": getattr(meta, "prompt_token_count", None),
+        "candidates_token_count": getattr(meta, "candidates_token_count", None),
+        "thoughts_token_count": getattr(meta, "thoughts_token_count", None),
+        "total_token_count": getattr(meta, "total_token_count", None),
+        "promptTokenCount": getattr(meta, "promptTokenCount", None),
+        "candidatesTokenCount": getattr(meta, "candidatesTokenCount", None),
+        "thoughtsTokenCount": getattr(meta, "thoughtsTokenCount", None),
+        "totalTokenCount": getattr(meta, "totalTokenCount", None),
+    }
+    return usage_from_mapping(raw)
 
 
 def _finish_reason_str(finish_reason: Any) -> Optional[str]:
@@ -187,9 +208,10 @@ class GeminiLLMClient(LLMClient):
                 logger.error("Gemini API call failed in complete_detailed()", exc_info=True)
                 raise
 
+        usage = _usage_from_gemini_response(response)
         candidates = getattr(response, "candidates", None) or []
         if not candidates:
-            return LLMCompletion(text="", finish_reason=None)
+            return LLMCompletion(text="", finish_reason=None, usage=usage)
         candidate = candidates[0]
         finish_reason = _finish_reason_str(getattr(candidate, "finish_reason", None))
 
@@ -207,7 +229,11 @@ class GeminiLLMClient(LLMClient):
             if isinstance(part_text, str) and part_text.strip():
                 text_parts.append(part_text.strip())
         if text_parts:
-            return LLMCompletion(text="\n".join(text_parts), finish_reason=finish_reason)
+            return LLMCompletion(
+                text="\n".join(text_parts),
+                finish_reason=finish_reason,
+                usage=usage,
+            )
 
         # Fallback: do NOT use response.text / candidate.text — those SDK "quick
         # accessors" raise ValueError when no valid Part exists (e.g. MAX_TOKENS
@@ -235,7 +261,11 @@ class GeminiLLMClient(LLMClient):
                         "Gemini fallback extracted %d text string(s) from response.to_dict().",
                         len(found),
                     )
-                    return LLMCompletion(text="\n".join(found), finish_reason=finish_reason)
+                    return LLMCompletion(
+                        text="\n".join(found),
+                        finish_reason=finish_reason,
+                        usage=usage,
+                    )
         except Exception:
             pass
 
@@ -245,4 +275,4 @@ class GeminiLLMClient(LLMClient):
             finish_reason,
             safety_ratings,
         )
-        return LLMCompletion(text="", finish_reason=finish_reason)
+        return LLMCompletion(text="", finish_reason=finish_reason, usage=usage)

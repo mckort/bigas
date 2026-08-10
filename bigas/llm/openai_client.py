@@ -6,6 +6,7 @@ import openai
 
 from bigas.llm.client import LLMClient
 from bigas.llm.completion import LLMCompletion
+from bigas.llm.usage import TokenUsage, usage_from_mapping
 
 
 class OpenAILLMClient(LLMClient):
@@ -53,7 +54,21 @@ class OpenAILLMClient(LLMClient):
         )
         choice = completion.choices[0]
         finish = getattr(choice, "finish_reason", None)
+        usage_obj = getattr(completion, "usage", None)
+        usage = TokenUsage()
+        if usage_obj is not None:
+            if isinstance(usage_obj, dict):
+                usage = usage_from_mapping(usage_obj)
+            else:
+                usage = usage_from_mapping(
+                    {
+                        "prompt_tokens": getattr(usage_obj, "prompt_tokens", None),
+                        "completion_tokens": getattr(usage_obj, "completion_tokens", None),
+                        "total_tokens": getattr(usage_obj, "total_tokens", None),
+                    }
+                )
         return LLMCompletion(
             text=(choice.message.content or "").strip(),
             finish_reason=str(finish) if finish is not None else None,
+            usage=usage,
         )
