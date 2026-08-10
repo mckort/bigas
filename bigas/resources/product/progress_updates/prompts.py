@@ -8,10 +8,13 @@ Guidelines:
 - Keep the tone clear, professional, and balanced; moderate enthusiasm is fine, but avoid hype or overly informal language.
 - Do not repeat internal ticket IDs (like SCRUM-123) or individual assignee names; instead, talk about the team’s work at a collective level.
 - Summarize outcomes rather than step-by-step technical or operational details.
-- When multiple Jira projects are listed, structure the update with one short section per project (use the project key as the heading). Include projects with zero completed issues as a single line noting no Done items this period.
-- Keep the overall message concise but informative; suitable for a stakeholder or team Discord update.
-- Always return a non-empty response.
-- Return a plain-text message suitable for posting in a team or stakeholder channel."""
+- Keep the message compact for Discord: short sections, no blank lines between inactive projects, no fluff.
+- When multiple Jira projects are listed:
+  - Write a short **ProjectKey** heading + 2–5 bullets (or one short paragraph) only for projects that have Done items.
+  - Put all projects with zero Done items on a single line: `No Done items: KEY1, KEY2, KEY3`.
+  - Do not give each empty project its own section.
+- End with a brief **Outlook** (1–2 sentences).
+- Always return a non-empty plain-text message suitable for a team Discord channel."""
 
 
 def build_progress_updates_user_prompt(
@@ -22,19 +25,35 @@ def build_progress_updates_user_prompt(
 ) -> str:
     """Build the user prompt with stats and the list of completed issues."""
     by_project = stats.get("by_project") or {}
+    active = [k for k, n in by_project.items() if int(n or 0) > 0]
+    empty = [k for k, n in by_project.items() if int(n or 0) <= 0]
+
     project_lines = []
     if by_project:
         project_lines.append("Per project:")
         for key, count in by_project.items():
             project_lines.append(f"- {key}: {count} issue(s) moved to Done")
+        if active:
+            project_lines.append(f"Projects with Done items (expand these): {', '.join(active)}")
+        if empty:
+            project_lines.append(
+                f"Projects with zero Done items (collapse to one line): {', '.join(empty)}"
+            )
     project_block = "\n".join(project_lines)
 
     return f"""Below are the progress stats and the list of work completed in the last {days} days.
 
-Using this data, write a concise progress report for the period.
-If more than one project appears below, present progress **project by project** with a clear heading for each project key (e.g. "## VFA"), then 2–5 short bullets or one short paragraph for that project. Mention projects with 0 Done items briefly.
-Focus on themes, outcomes, and impact — not internal ticket IDs or individual team members. Do not mention Jira issue keys (like SCRUM-123) or personal names; describe the work at the level of “the team” or “we”.
-End with one brief, balanced outlook for the upcoming period. Always provide a non-empty answer.
+Write a **compact** Discord progress report for the period.
+
+Format requirements:
+1. Optional one-line intro.
+2. For each project with Done items only: a bold/heading project key, then 2–5 short bullets (or one short paragraph).
+3. If any projects have 0 Done items, add exactly one line:
+   `No Done items: KEY1, KEY2, …`
+   Do **not** create a section per empty project.
+4. End with a short **Outlook** (1–2 sentences).
+
+Focus on themes, outcomes, and impact — not internal ticket IDs or individual team members. Do not mention Jira issue keys (like SCRUM-123) or personal names; describe the work at the level of “the team” or “we”. Always provide a non-empty answer.
 
 Stats:
 - Total issues moved to Done: {stats.get('total', 0)}
