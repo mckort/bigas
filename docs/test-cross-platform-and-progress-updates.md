@@ -74,15 +74,24 @@ gcloud run services describe mcp-marketing --region=europe-north1 --format='valu
 
 ---
 
-## Cloud Scheduler: weekly progress report (every Friday, last 7 days)
+## Cloud Scheduler: weekly progress report (Sunday 16:00 Europe/Stockholm)
 
-Runs `progress_updates` every Friday and posts the coach message to Discord for **last week’s** work (7 days).
+Runs `progress_updates` and posts the coach message to Discord for **last week’s** work (7 days).
+
+The report combines:
+- Jira issues moved to Done (per project)
+- Git commits on each mapped default branch from `BIGAS_JIRA_PROJECT_REPO_MAP` (merge commits skipped; `[bigas-autofix]` tagged). Requires `GITHUB_TOKEN`.
 
 **Request body** (use this in Cloud Scheduler HTTP target):
 
 ```json
-{"days":7,"post_to_discord":true}
+{
+  "days": 7,
+  "post_to_discord": true,
+  "project_keys": ["VFA", "WAYW", "BIG", "REM", "GPWW", "FYDA", "MYL"]
+}
 ```
+
 
 **Create the job with gcloud:**
 

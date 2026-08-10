@@ -12,6 +12,10 @@ from bigas.resources.product.create_release_notes.jira_client import (
     JiraError,
     normalize_project_keys,
 )
+from bigas.resources.product.progress_updates.github_commits import (
+    fetch_commits_for_projects,
+    format_commits_for_prompt,
+)
 from bigas.resources.product.progress_updates.prompts import (
     PROGRESS_UPDATES_SYSTEM_PROMPT,
     build_progress_updates_user_prompt,
@@ -71,7 +75,7 @@ def _aggregate_stats(
         by_type[t] = by_type.get(t, 0) + 1
         a = i.get("assignee") or "Unassigned"
         by_assignee[a] = by_assignee.get(a, 0) + 1
-        p = i.get("project_key", "UNKNOWN")
+        p = (i.get("project_key") or "UNKNOWN").strip().upper() or "UNKNOWN"
         by_project[p] = by_project.get(p, 0) + 1
     return {
         "total": len(normalized),
@@ -87,7 +91,7 @@ def _format_done_issues_for_prompt(normalized: List[Dict[str, Any]]) -> str:
         return "(No issues moved to Done in this period.)"
     by_project: Dict[str, List[Dict[str, Any]]] = {}
     for i in normalized:
-        p = i.get("project_key", "UNKNOWN")
+        p = (i.get("project_key") or "UNKNOWN").strip().upper() or "UNKNOWN"
         by_project.setdefault(p, []).append(i)
 
     lines: List[str] = []
@@ -102,6 +106,18 @@ def _format_done_issues_for_prompt(normalized: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _inactive_project_keys(stats: Dict[str, Any], git_stats: Dict[str, Any]) -> List[str]:
+    by_project = stats.get("by_project") or {}
+    keys = sorted(set(list(by_project.keys()) + list(git_stats.keys())))
+    inactive = []
+    for key in keys:
+        jira_n = int((by_project.get(key) if by_project else 0) or 0)
+        git_n = int(((git_stats.get(key) or {}).get("total")) or 0)
+        if jira_n <= 0 and git_n <= 0:
+            inactive.append(key)
+    return inactive
+
+
 class ProgressUpdatesService:
     def __init__(
         self,
@@ -109,10 +125,18 @@ class ProgressUpdatesService:
         jira_client: Optional[JiraClient] = None,
         openai_api_key: Optional[str] = None,
         openai_model: Optional[str] = None,
+        github_token: Optional[str] = None,
+        include_git: bool = True,
     ):
         if jira_client is None:
             jira_client = JiraClient(JiraConfig.from_env())
         self._jira = jira_client
+        self._github_token = (
+            (github_token or "").strip()
+            or (os.environ.get("GITHUB_TOKEN") or "").strip()
+            or None
+        )
+        self._include_git = include_git
 
         # Use shared LLM abstraction; ignore openai_api_key in favor of env-based config.
         # Model resolution order:
@@ -133,10 +157,9 @@ class ProgressUpdatesService:
         project_keys: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
-        Fetch issues done in the last `days` days and generate a coach message.
+        Fetch Jira Done issues (+ optional git commits) for the last `days` days
+        and generate a coach message.
         Caller is responsible for posting the returned message to Discord if desired.
-        jql_extra: optional JQL fragment (e.g. "AND statusCategory = Done") to narrow the query.
-        project_keys: optional override of configured Jira project keys (str or list).
         """
         try:
             resolved_keys = normalize_project_keys(project_keys)
@@ -156,11 +179,34 @@ class ProgressUpdatesService:
         stats = _aggregate_stats(normalized, project_keys=resolved_keys)
         done_issues_text = _format_done_issues_for_prompt(normalized)
 
-        # Build and call LLM
+        git_payload: Dict[str, Any] = {
+            "by_project": {},
+            "stats": {},
+            "errors": [],
+        }
+        if self._include_git:
+            git_payload = fetch_commits_for_projects(
+                project_keys=resolved_keys,
+                days=days,
+                token=self._github_token,
+            )
+            if git_payload.get("errors"):
+                logger.warning(
+                    "Git commit fetch had errors: %s", git_payload.get("errors")
+                )
+
+        git_stats = git_payload.get("stats") or {}
+        git_commits_text = format_commits_for_prompt(
+            git_payload.get("by_project") or {},
+            stats=git_stats,
+        )
+
         user_prompt = build_progress_updates_user_prompt(
             stats=stats,
             done_issues_text=done_issues_text,
             days=days,
+            git_commits_text=git_commits_text,
+            git_stats=git_stats,
         )
         try:
             message = self._llm.complete(
@@ -168,33 +214,33 @@ class ProgressUpdatesService:
                     {"role": "system", "content": PROGRESS_UPDATES_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=1500,
+                max_tokens=2000,
                 temperature=0.8,
             )
         except Exception as e:
             logger.error("Progress updates LLM call failed", exc_info=True)
             raise ProgressUpdatesError(f"LLM request failed: {e}") from e
 
-        # Fallback: if the LLM returns an empty message, use a deterministic summary
         if not (message or "").strip():
             logger.warning(
                 "Progress updates LLM returned empty message; falling back to deterministic summary. days=%s, stats=%s",
                 days,
                 stats,
             )
-            by_project = stats.get("by_project") or {}
-            empty_keys = [k for k, n in by_project.items() if int(n or 0) <= 0]
+            inactive = _inactive_project_keys(stats, git_stats)
             empty_line = (
-                f"\nNo Done items: {', '.join(empty_keys)}" if empty_keys else ""
+                f"\nNo activity: {', '.join(inactive)}" if inactive else ""
             )
             message = (
                 f"Here’s what the team completed in the last {days} days:\n\n"
-                f"{done_issues_text}{empty_line}"
+                f"{done_issues_text}\n\nGit:\n{git_commits_text}{empty_line}"
             )
 
         return {
             "ok": True,
             "stats": stats,
             "done_issues": normalized,
+            "git_stats": git_stats,
+            "git_errors": git_payload.get("errors") or [],
             "message": message,
         }
