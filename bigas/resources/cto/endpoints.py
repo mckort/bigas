@@ -26,7 +26,11 @@ from bigas.resources.cto.pr_review.github_client import (
     GitHubPRCommentClient,
     GitHubPRCommentError,
 )
-from bigas.resources.cto.pr_review.service import PRReviewError, PRReviewService
+from bigas.resources.cto.pr_review.service import (
+    PRReviewError,
+    PRReviewResult,
+    PRReviewService,
+)
 from bigas.discord_webhook import post_long_to_discord, post_to_discord
 from bigas.resources.marketing.utils import sanitize_error_message
 from bigas.providers.monitoring.service import MonitoringService, run_monitoring_checks
@@ -40,6 +44,20 @@ cto_bp = Blueprint(
 logger = logging.getLogger(__name__)
 
 # Max characters for a GitHub comment to avoid API errors.
+
+
+def _discord_llm_cost_line(review_result: PRReviewResult) -> str:
+    """One-line list-price estimate for Discord done notifications."""
+    usage = review_result.usage_dict()
+    est = usage.get("est_cost_usd")
+    if est is None:
+        return ""
+    attempts = usage.get("attempts") or review_result.attempts
+    attempt_label = "attempt" if attempts == 1 else "attempts"
+    return (
+        f"Estimated LLM cost: ~${float(est):.4f} "
+        f"({review_result.model}, {attempts} {attempt_label})"
+    )
 
 
 def _resolve_pr_diff_text(
@@ -286,12 +304,13 @@ def review_and_comment_pr():
 
     try:
         review_service = PRReviewService(openai_model=llm_model)
-        review_body = review_service.review(
+        review_result = review_service.review(
             diff=diff,
             instructions=instructions,
             phase=phase,  # type: ignore[arg-type]
             previous_review=previous_review,
         )
+        review_body = review_result.text
     except PRReviewError as e:
         logger.warning("PR review failed: %s", e)
         _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
@@ -336,11 +355,17 @@ def review_and_comment_pr():
         if phase == "post_autofix"
         else "**CTO PR review done**"
     )
+    cost_line = _discord_llm_cost_line(review_result)
+    cost_suffix = f"\n{cost_line}" if cost_line else ""
     if comment_url:
-        _post_to_discord_cto(f"{done_label}\nComment posted: {comment_url}\n\n---\n\n**Review:**")
+        _post_to_discord_cto(
+            f"{done_label}\nComment posted: {comment_url}{cost_suffix}\n\n---\n\n**Review:**"
+        )
         _post_to_discord_cto_chunks(review_body)
     else:
-        _post_to_discord_cto(f"{done_label}\nNo comment posted. (No URL returned from GitHub.)")
+        _post_to_discord_cto(
+            f"{done_label}\nNo comment posted. (No URL returned from GitHub.){cost_suffix}"
+        )
 
     if ready:
         _post_to_discord_cto(
@@ -360,7 +385,8 @@ def review_and_comment_pr():
         "success": True,
         "comment_url": comment_url,
         "review_posted": bool(comment_url),
-        "used_model": review_service._model,
+        "used_model": review_result.model,
+        "usage": review_result.usage_dict(),
         "ready_to_merge": ready,
         "phase": phase,
         "jira_final_approval": jira_final,
@@ -690,11 +716,12 @@ def autofix_followup():
         logger.warning("Could not load previous Bigas review before post_autofix", exc_info=True)
     try:
         review_service = PRReviewService()
-        review_body = review_service.review(
+        review_result = review_service.review(
             diff=diff,
             phase="post_autofix",
             previous_review=previous_review,
         )
+        review_body = review_result.text
     except PRReviewError as e:
         err = sanitize_error_message(str(e))
         _post_to_discord_cto(
@@ -727,8 +754,11 @@ def autofix_followup():
         return jsonify({"error": err, **base, "finalized": True, "rereviewed": False}), 502
 
     ready = review_is_ready_to_merge(review_body)
+    cost_line = _discord_llm_cost_line(review_result)
+    cost_suffix = f"\n{cost_line}" if cost_line else ""
     _post_to_discord_cto(
-        f"**CTO PR re-review after autofix done**\nComment posted: {comment_url}\n\n---\n\n**Review:**"
+        f"**CTO PR re-review after autofix done**\n"
+        f"Comment posted: {comment_url}{cost_suffix}\n\n---\n\n**Review:**"
     )
     _post_to_discord_cto_chunks(review_body)
 
@@ -777,7 +807,8 @@ def autofix_followup():
         "autofix_count": autofix_count,
         "max_iterations": max_iters,
         "loop_protection": (not ready) and autofix_count >= max_iters,
-        "used_model": review_service._model,
+        "used_model": review_result.model,
+        "usage": review_result.usage_dict(),
         "jira_final_approval": jira_final,
     })
     return jsonify(base)

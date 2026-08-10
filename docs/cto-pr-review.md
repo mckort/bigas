@@ -98,8 +98,10 @@ If `GITHUB_TOKEN` is configured in Bigas (e.g. via Secret Manager), you can omit
 
 ## Response
 
-- **Success**: `{ "success": true, "comment_url": "https://github.com/...", "review_posted": true, "used_model": "gemini-3.1-pro-preview" }`
+- **Success**: `{ "success": true, "comment_url": "https://github.com/...", "review_posted": true, "used_model": "gemini-pro-latest", "usage": { "model": "...", "attempts": 1, "prompt_tokens": 42000, "candidates_tokens": 3100, "thoughts_tokens": 7200, "total_tokens": 52300, "est_cost_usd": 0.18, "cost_estimate": true } }`
 - **Error**: `{ "error": "..." }` with status 400 (validation), 401/403 (GitHub auth), 404 (repo/PR not found), 500 (OpenAI), 502 (GitHub API).
+
+`usage.est_cost_usd` is a **list-price estimate** (thinking tokens billed as output). It is also logged as a JSON line with `"event": "llm_usage"` / `"feature": "cto_pr_review"` in Cloud Run logs for each attempt and once as a review total. The same estimate is appended to the Discord **done** notification (not the started message), e.g. `Estimated LLM cost: ~$0.1800 (gemini-pro-latest, 1 attempt)`.
 
 ## Diff size
 

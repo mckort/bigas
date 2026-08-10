@@ -4,13 +4,16 @@ Uses Gemini by default (GEMINI_API_KEY); override via BIGAS_CTO_PR_REVIEW_MODEL 
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from bigas.llm.completion import LLMCompletion
 from bigas.llm.factory import get_llm_client
+from bigas.llm.usage import TokenUsage, estimate_cost_usd, usage_log_payload
 
 from bigas.resources.cto.pr_review.prompts import (
     ReviewPhase,
@@ -127,6 +130,28 @@ class PRReviewError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class PRReviewResult:
+    """Markdown review plus aggregated provider token usage / cost estimate."""
+
+    text: str
+    model: str
+    usage: TokenUsage
+    attempts: int = 1
+
+    def usage_dict(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "attempts": self.attempts,
+            **self.usage.as_dict(),
+        }
+        est = estimate_cost_usd(self.model, self.usage)
+        if est is not None:
+            payload["est_cost_usd"] = est
+            payload["cost_estimate"] = True
+        return payload
+
+
 class PRReviewService:
     def __init__(
         self,
@@ -160,9 +185,9 @@ class PRReviewService:
         *,
         phase: ReviewPhase = "initial",
         previous_review: Optional[str] = None,
-    ) -> str:
+    ) -> PRReviewResult:
         """
-        Run AI review on the given diff. Returns markdown review text.
+        Run AI review on the given diff. Returns markdown review text plus usage.
         If diff exceeds MAX_DIFF_CHARS, it is truncated and a note is prepended to the review.
         Continues generation when the model hits MAX_TOKENS mid-review.
         """
@@ -196,6 +221,8 @@ class PRReviewService:
             {"role": "user", "content": user_prompt},
         ]
         chunks: List[str] = []
+        usage_total = TokenUsage()
+        attempts_used = 0
 
         try:
             for attempt in range(max_continuations + 1):
@@ -208,6 +235,26 @@ class PRReviewService:
                     call_kwargs["thinking_budget"] = thinking_budget
 
                 result = _complete_detailed(self._llm, **call_kwargs)
+                attempts_used = attempt + 1
+                if result.usage.has_counts:
+                    usage_total = usage_total.merge(result.usage)
+                    logger.info(
+                        json.dumps(
+                            usage_log_payload(
+                                feature="cto_pr_review",
+                                model=str(self._model),
+                                usage=result.usage,
+                                extra={
+                                    "phase": phase,
+                                    "attempt": attempt,
+                                    "finish_reason": result.finish_reason,
+                                },
+                            ),
+                            ensure_ascii=True,
+                            sort_keys=True,
+                        )
+                    )
+
                 piece = (result.text or "").strip()
                 if not piece:
                     if attempt == 0:
@@ -255,4 +302,28 @@ class PRReviewService:
         content = "\n".join(chunks).strip()
         if truncated_note:
             content = truncated_note + content
-        return content
+
+        review_result = PRReviewResult(
+            text=content,
+            model=str(self._model),
+            usage=usage_total,
+            attempts=max(1, attempts_used),
+        )
+        if usage_total.has_counts:
+            logger.info(
+                json.dumps(
+                    usage_log_payload(
+                        feature="cto_pr_review",
+                        model=str(self._model),
+                        usage=usage_total,
+                        extra={
+                            "phase": phase,
+                            "attempt": "total",
+                            "attempts": review_result.attempts,
+                        },
+                    ),
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        return review_result
