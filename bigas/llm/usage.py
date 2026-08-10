@@ -87,8 +87,9 @@ def estimate_cost_usd(model: str, usage: TokenUsage) -> Optional[float]:
     """
     Estimate USD cost for one completion.
 
-    Thinking/thoughts tokens are billed as output. When candidates_tokens is
-    missing but total/prompt are present, treat the remainder as output.
+    Thinking tokens are billed as output, but provider totals already include
+    them: Gemini ``candidates_token_count`` and OpenAI ``completion_tokens``
+    cover visible + thinking tokens. Do not add ``thoughts_tokens`` on top.
     """
     prices = resolve_model_price_usd_per_mtok(model)
     if prices is None or not usage.has_counts:
@@ -99,14 +100,13 @@ def estimate_cost_usd(model: str, usage: TokenUsage) -> Optional[float]:
     if prompt is None:
         return None
 
-    thoughts = usage.thoughts_tokens or 0
     if usage.candidates_tokens is not None:
-        output = usage.candidates_tokens + thoughts
+        # Already includes thoughts/reasoning tokens when the provider reports them.
+        output = usage.candidates_tokens
     elif usage.total_tokens is not None and usage.total_tokens >= prompt:
-        # Remainder may already include thoughts; do not double-count.
         output = max(0, usage.total_tokens - prompt)
     else:
-        output = thoughts
+        output = usage.thoughts_tokens or 0
 
     cost = (prompt / 1_000_000.0) * input_rate + (output / 1_000_000.0) * output_rate
     return round(cost, 6)

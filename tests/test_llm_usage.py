@@ -47,14 +47,25 @@ class TokenUsageTests(unittest.TestCase):
     def test_pro_latest_price(self):
         self.assertEqual(resolve_model_price_usd_per_mtok("gemini-pro-latest"), (2.00, 12.00))
 
-    def test_flash_estimate_includes_thoughts_as_output(self):
+    def test_flash_estimate_does_not_double_count_thoughts(self):
+        # Realistic Gemini shape: candidates already includes thoughts.
         usage = TokenUsage(
             prompt_tokens=1_000_000,
-            candidates_tokens=0,
+            candidates_tokens=1_000_000,
             thoughts_tokens=1_000_000,
             total_tokens=2_000_000,
         )
-        # gemini-2.5-flash: $0.30 in + $2.50 out
+        # gemini-2.5-flash: $0.30 in + $2.50 out on 1M billed output tokens
+        cost = estimate_cost_usd("gemini-2.5-flash", usage)
+        self.assertEqual(cost, 0.30 + 2.50)
+
+    def test_thoughts_only_fallback_when_candidates_missing(self):
+        usage = TokenUsage(
+            prompt_tokens=1_000_000,
+            candidates_tokens=None,
+            thoughts_tokens=1_000_000,
+            total_tokens=None,
+        )
         cost = estimate_cost_usd("gemini-2.5-flash", usage)
         self.assertEqual(cost, 0.30 + 2.50)
 
