@@ -20,6 +20,11 @@ class GitHubPRCommentError(RuntimeError):
     pass
 
 
+class GitHubMergeNotReadyError(GitHubPRCommentError):
+    """Merge blocked for now (required checks pending, unstable, or similar)."""
+    pass
+
+
 class GitHubPRCommentClient:
     """
     Post or update a single PR comment identified by a marker.
@@ -357,7 +362,7 @@ class GitHubPRCommentClient:
                 detail = (resp.json() or {}).get("message") or ""
             except Exception:
                 detail = (resp.text or "").strip()[:200]
-            raise GitHubPRCommentError(
+            raise GitHubMergeNotReadyError(
                 detail
                 or f"PR {owner}/{repo}#{pr_number} is not mergeable "
                 "(already merged, closed, or checks blocking)."
@@ -385,6 +390,125 @@ class GitHubPRCommentClient:
                 (data.get("message") or "GitHub reported merged=false").strip()
             )
         return data
+
+    def get_pull_request(self, owner: str, repo: str, pr_number: int) -> dict[str, Any]:
+        """Return the pull request JSON (includes node_id for GraphQL)."""
+        url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+        resp = requests.get(url, headers=self._headers, timeout=30)
+        if resp.status_code == 401:
+            raise GitHubPRCommentError("GitHub token is invalid or expired.")
+        if resp.status_code == 403:
+            raise GitHubPRCommentError(
+                "GitHub returned 403. Check token scopes and rate limits."
+            )
+        if resp.status_code == 404:
+            raise GitHubPRCommentError(
+                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+            )
+        if resp.status_code >= 400:
+            detail = (resp.text or "").strip()[:300]
+            raise GitHubPRCommentError(
+                f"GitHub PR fetch failed ({resp.status_code}): {detail or 'unknown error'}"
+            )
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            raise GitHubPRCommentError("GitHub PR fetch returned unexpected payload")
+        return data
+
+    def enable_pull_request_auto_merge(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        *,
+        merge_method: str = "squash",
+    ) -> dict[str, Any]:
+        """
+        Enable GitHub native auto-merge (waits for required checks) via GraphQL.
+
+        Requires repository setting "Allow auto-merge" and a token that can merge.
+        """
+        method = (merge_method or "squash").strip().upper() or "SQUASH"
+        if method not in {"MERGE", "SQUASH", "REBASE"}:
+            raise GitHubPRCommentError(
+                f"Invalid merge_method {merge_method!r}; use merge, squash, or rebase."
+            )
+
+        pr = self.get_pull_request(owner, repo, pr_number)
+        node_id = (pr.get("node_id") or "").strip()
+        if not node_id:
+            raise GitHubPRCommentError(
+                f"Could not resolve GraphQL node_id for {owner}/{repo}#{pr_number}."
+            )
+
+        mutation = """
+        mutation EnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+          enablePullRequestAutoMerge(input: {
+            pullRequestId: $pullRequestId,
+            mergeMethod: $mergeMethod
+          }) {
+            pullRequest {
+              id
+              number
+              autoMergeRequest {
+                enabledAt
+                mergeMethod
+              }
+            }
+          }
+        }
+        """
+        payload = {
+            "query": mutation,
+            "variables": {
+                "pullRequestId": node_id,
+                "mergeMethod": method,
+            },
+        }
+        resp = requests.post(
+            "https://api.github.com/graphql",
+            headers=self._headers,
+            json=payload,
+            timeout=60,
+        )
+        if resp.status_code == 401:
+            raise GitHubPRCommentError("GitHub token is invalid or expired.")
+        if resp.status_code == 403:
+            raise GitHubPRCommentError(
+                "GitHub returned 403 enabling auto-merge. Check token scopes."
+            )
+        if resp.status_code >= 400:
+            detail = (resp.text or "").strip()[:300]
+            raise GitHubPRCommentError(
+                f"GitHub GraphQL failed ({resp.status_code}): {detail or 'unknown error'}"
+            )
+
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            raise GitHubPRCommentError("GitHub GraphQL returned unexpected payload")
+        errors = data.get("errors") or []
+        if errors:
+            messages = "; ".join(
+                str(e.get("message") or e) for e in errors if isinstance(e, dict)
+            ) or str(errors)
+            raise GitHubPRCommentError(
+                f"Failed to enable auto-merge on {owner}/{repo}#{pr_number}: {messages}"
+            )
+        result = ((data.get("data") or {}).get("enablePullRequestAutoMerge") or {})
+        pr_out = result.get("pullRequest") or {}
+        auto_req = pr_out.get("autoMergeRequest") or {}
+        if not auto_req:
+            raise GitHubPRCommentError(
+                f"Auto-merge was not enabled on {owner}/{repo}#{pr_number}. "
+                "Ensure the repo allows auto-merge and required checks are configured."
+            )
+        return {
+            "enabled": True,
+            "merge_method": (auto_req.get("mergeMethod") or method).lower(),
+            "enabled_at": auto_req.get("enabledAt"),
+            "node_id": node_id,
+            "pr_number": pr_out.get("number") or pr_number,
+        }
 
     def delete_marked_comment(
         self,

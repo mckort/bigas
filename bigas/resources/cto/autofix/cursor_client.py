@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Optional
 
 import requests
@@ -9,10 +10,23 @@ import requests
 logger = logging.getLogger(__name__)
 
 CURSOR_API_BASE = "https://api.cursor.com/v1"
+# Cursor sometimes returns HTTP 400 pr_resolution_failed when *its* GitHub
+# fetch of the PR is rate-limited. Brief retries usually clear it.
+_CURSOR_PR_RATE_LIMIT_RETRIES = 3
+_CURSOR_PR_RATE_LIMIT_SLEEP_SECONDS = 20
 
 
 class CursorCloudAgentError(RuntimeError):
     pass
+
+
+def _is_pr_resolution_rate_limit(status_code: int, body: str) -> bool:
+    if status_code != 400:
+        return False
+    text = (body or "").lower()
+    return "pr_resolution_failed" in text or (
+        "rate limited" in text and "pull request" in text
+    )
 
 
 class CursorCloudAgentClient:
@@ -91,45 +105,62 @@ class CursorCloudAgentClient:
         return self._post_agent(payload, context=repo_url)
 
     def _post_agent(self, payload: dict[str, Any], *, context: str) -> dict[str, Any]:
-        try:
-            resp = requests.post(
-                f"{CURSOR_API_BASE}/agents",
-                auth=(self._api_key, ""),
-                headers={"Content-Type": "application/json"},
-                json=payload,
-                timeout=60,
-            )
-        except requests.RequestException as e:
-            raise CursorCloudAgentError(f"Cursor API request failed: {e}") from e
+        last_error = ""
+        for attempt in range(1, _CURSOR_PR_RATE_LIMIT_RETRIES + 1):
+            try:
+                resp = requests.post(
+                    f"{CURSOR_API_BASE}/agents",
+                    auth=(self._api_key, ""),
+                    headers={"Content-Type": "application/json"},
+                    json=payload,
+                    timeout=60,
+                )
+            except requests.RequestException as e:
+                raise CursorCloudAgentError(f"Cursor API request failed: {e}") from e
 
-        if resp.status_code in (401, 403):
-            raise CursorCloudAgentError(
-                f"Cursor API auth error {resp.status_code}: {resp.text[:300]}"
-            )
-        if resp.status_code >= 400:
-            raise CursorCloudAgentError(
-                f"Cursor API error {resp.status_code}: {resp.text[:500]}"
-            )
+            if resp.status_code in (401, 403):
+                raise CursorCloudAgentError(
+                    f"Cursor API auth error {resp.status_code}: {resp.text[:300]}"
+                )
+            if resp.status_code >= 400:
+                last_error = f"Cursor API error {resp.status_code}: {resp.text[:500]}"
+                if (
+                    _is_pr_resolution_rate_limit(resp.status_code, resp.text)
+                    and attempt < _CURSOR_PR_RATE_LIMIT_RETRIES
+                ):
+                    logger.warning(
+                        "Cursor PR resolution rate-limited for %s "
+                        "(attempt %s/%s); retrying in %ss",
+                        context,
+                        attempt,
+                        _CURSOR_PR_RATE_LIMIT_RETRIES,
+                        _CURSOR_PR_RATE_LIMIT_SLEEP_SECONDS,
+                    )
+                    time.sleep(_CURSOR_PR_RATE_LIMIT_SLEEP_SECONDS)
+                    continue
+                raise CursorCloudAgentError(last_error)
 
-        data = resp.json() if resp.text else {}
-        agent = data.get("agent") or {}
-        run = data.get("run") or {}
-        agent_id = agent.get("id") or ""
-        agent_url = agent.get("url") or (
-            f"https://cursor.com/agents/{agent_id}" if agent_id else ""
-        )
-        logger.info(
-            "Launched Cursor cloud agent %s for %s (run=%s)",
-            agent_id,
-            context,
-            run.get("id"),
-        )
-        return {
-            "agent_id": agent_id,
-            "agent_url": agent_url,
-            "run_id": run.get("id") or "",
-            "raw": data,
-        }
+            data = resp.json() if resp.text else {}
+            agent = data.get("agent") or {}
+            run = data.get("run") or {}
+            agent_id = agent.get("id") or ""
+            agent_url = agent.get("url") or (
+                f"https://cursor.com/agents/{agent_id}" if agent_id else ""
+            )
+            logger.info(
+                "Launched Cursor cloud agent %s for %s (run=%s)",
+                agent_id,
+                context,
+                run.get("id"),
+            )
+            return {
+                "agent_id": agent_id,
+                "agent_url": agent_url,
+                "run_id": run.get("id") or "",
+                "raw": data,
+            }
+
+        raise CursorCloudAgentError(last_error or "Cursor API launch failed")
 
     def get_agent(self, agent_id: str) -> dict[str, Any]:
         aid = (agent_id or "").strip()

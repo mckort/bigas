@@ -24,6 +24,7 @@ from bigas.resources.cto.autofix.service import (
 from bigas.resources.cto.pr_review.github_client import (
     BIGAS_AUTOFIX_COOLDOWN_MARKER,
     BIGAS_REVIEW_MARKER,
+    GitHubMergeNotReadyError,
     GitHubPRCommentClient,
     GitHubPRCommentError,
 )
@@ -145,6 +146,9 @@ def _maybe_auto_merge_pr(
     """
     Squash-merge the PR when BIGAS_CTO_AUTO_MERGE is enabled.
 
+    Tries an immediate merge first. If required checks (or similar) block it,
+    falls back to GitHub native auto-merge so the PR merges once checks pass.
+
     Best-effort: returns skipped/ok/error payload; posts Discord on success or failure.
     """
     if not auto_merge_enabled():
@@ -153,15 +157,89 @@ def _maybe_auto_merge_pr(
         err = "GITHUB_TOKEN missing"
         _post_to_discord_cto(f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}")
         return {"ok": False, "merged": False, "error": err}
+    if "/" not in repo or repo.count("/") != 1:
+        err = "repo must be owner/repo"
+        _post_to_discord_cto(f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}")
+        return {"ok": False, "merged": False, "error": err}
 
     owner, repo_name = repo.split("/", 1)
+    client = GitHubPRCommentClient(token=github_token)
+
     try:
-        result = GitHubPRCommentClient(token=github_token).merge_pull_request(
+        result = client.merge_pull_request(
             owner=owner,
             repo=repo_name,
             pr_number=pr_number,
             merge_method="squash",
         )
+    except GitHubMergeNotReadyError as e:
+        sync_err = sanitize_error_message(str(e))
+        logger.info(
+            "Immediate merge not ready for %s#%s (%s); enabling GitHub auto-merge",
+            repo,
+            pr_number,
+            sync_err,
+        )
+        try:
+            enabled = client.enable_pull_request_auto_merge(
+                owner=owner,
+                repo=repo_name,
+                pr_number=pr_number,
+                merge_method="squash",
+            )
+        except GitHubPRCommentError as enable_err:
+            err = sanitize_error_message(str(enable_err))
+            logger.warning(
+                "Auto-merge enable failed for %s#%s after sync block: %s",
+                repo,
+                pr_number,
+                err,
+            )
+            _post_to_discord_cto(
+                f"**PR auto-merge failed**\nPR: {pr_url}\n"
+                f"Immediate merge blocked: {sync_err}\n"
+                f"Enable auto-merge failed: {err}"
+            )
+            return {
+                "ok": False,
+                "merged": False,
+                "auto_merge_enabled": False,
+                "error": err,
+                "sync_error": sync_err,
+            }
+        except Exception as enable_err:
+            err = sanitize_error_message(str(enable_err))
+            logger.warning(
+                "Auto-merge enable unexpected error for %s#%s",
+                repo,
+                pr_number,
+                exc_info=True,
+            )
+            _post_to_discord_cto(
+                f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+            )
+            return {
+                "ok": False,
+                "merged": False,
+                "auto_merge_enabled": False,
+                "error": err,
+                "sync_error": sync_err,
+            }
+
+        method = (enabled.get("merge_method") or "squash").lower()
+        _post_to_discord_cto(
+            f"**PR auto-merge enabled** ({method})\n"
+            f"Waiting for required checks, then GitHub will squash-merge.\n"
+            f"PR: {pr_url}"
+        )
+        return {
+            "ok": True,
+            "merged": False,
+            "auto_merge_enabled": True,
+            "merge_method": method,
+            "enabled_at": enabled.get("enabled_at"),
+            "sync_error": sync_err,
+        }
     except GitHubPRCommentError as e:
         err = sanitize_error_message(str(e))
         logger.warning("Auto-merge failed for %s#%s: %s", repo, pr_number, err)
@@ -185,6 +263,7 @@ def _maybe_auto_merge_pr(
     return {
         "ok": True,
         "merged": True,
+        "auto_merge_enabled": False,
         "merge_method": "squash",
         "sha": sha or None,
         "message": (result.get("message") or "").strip() or None,
