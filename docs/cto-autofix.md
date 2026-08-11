@@ -8,6 +8,7 @@ After Bigas posts a PR review comment, you can optionally launch a **Cursor clou
 PR opened/push
   → review_and_comment_pr → GitHub comment + Discord
        → if LGTM: Discord "Ready to merge" + Jira Final approval (if issue key on PR)
+         → if BIGAS_CTO_AUTO_MERGE=true: squash-merge PR (or enable GitHub auto-merge if checks pending) + Discord
   → if repo var BIGAS_AUTO_FIX=true (Actions loop, up to 5 rounds):
       → autofix_pr
           → skip if review is LGTM / nits-only
@@ -18,11 +19,12 @@ PR opened/push
           → Discord: autofix completed / failed / without commits
           → re-review updated diff
           → if LGTM: Discord "Ready to merge" + Jira Final approval
+            → if BIGAS_CTO_AUTO_MERGE=true: squash-merge or enable GitHub auto-merge + Discord
           → else if under 5 rounds: next autofix round with updated review
           → else: Discord + Jira comment — loop protection, manual handling
 ```
 
-No automerge in v1.
+Optional auto-merge is off by default (`BIGAS_CTO_AUTO_MERGE=false`). When enabled, Bigas tries an immediate squash-merge once the review has no Blockers/Important; if required checks block it, Bigas enables GitHub native auto-merge instead. Jira still moves to Final approval.
 
 After each autofix round finalizes, Discord includes Cursor token usage + a list-price estimate when available. For weekly rollups across Cursor autofix and LLM review logs, see [cto-ai-usage.md](./cto-ai-usage.md).
 
@@ -37,6 +39,7 @@ Optional:
 - `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Prefer `composer-2.5` (standard tier; much cheaper than `composer-2.5-fast`). Omit to use Cursor’s default (often fast).
 - `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection.
 - `BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS` (default `120`) — skip launching another autofix while the PR head is still a fresh `[bigas-autofix]` commit (reduces overlapping agents). Cooldown is **skipped** when a newer Bigas review comment already exists after that head commit (typical after an autofix push cancels/restarts Actions). The Actions loop waits/retries in short slices until the window expires instead of stopping early. Bigas also posts/updates a visible PR comment (`<!-- bigas-autofix-cooldown-marker -->`) so cooldown is not mistaken for a hang.
+- `BIGAS_CTO_AUTO_MERGE` (default `false`) — when `true`, squash-merge the PR after a clean review (no Blockers/Important) and post **PR auto-merged** to Discord. If required checks block an immediate merge, Bigas enables GitHub native auto-merge and posts **PR auto-merge enabled** instead. Requires `GITHUB_TOKEN` with merge permission and repo setting **Allow auto-merge**. Jira Final approval still runs.
 
 ## Repo config
 
@@ -81,7 +84,7 @@ Polled by GitHub Actions after launch:
 ```
 
 - Not done yet: `{ "done": false, "status": "RUNNING", ... }`
-- Done + re-reviewed: `{ "done": true, "ok": true, "rereviewed": true, "ready_to_merge": true, "comment_url": "..." }`
+- Done + re-reviewed: `{ "done": true, "ok": true, "rereviewed": true, "ready_to_merge": true, "comment_url": "...", "auto_merge": { ... } }`
 - Done but no **new** `[bigas-autofix]` commit since launch (pass `baseline_head_sha` from `autofix_pr.head_sha`): Discord warning, `{ "fixes_pushed": false, "rereviewed": false }` — does **not** rewrite the PR review comment
 - After max rounds without LGTM: `{ "loop_protection": true }` + Discord/Jira manual-handling notice
 

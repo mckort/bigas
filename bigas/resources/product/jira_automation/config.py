@@ -20,7 +20,7 @@ DEFAULT_PROJECT_REPOS: Dict[str, str] = {
     "BIG": "mckort/bigas",
     "REM": "mckort/remotebrief",
     "GPWW": "Green-Promo-Wear-Global/greenpromowear-website",
-    "FYDA": "mckort/fulfillourdreamadventure",
+    "FYDA": "mckort/fulfillyourdreamadventure",
     "MYL": "mckort/mylifesdeed",
 }
 
@@ -31,7 +31,7 @@ DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
     "mckort/bigas": "main",
     "mckort/remotebrief": "main",
     "Green-Promo-Wear-Global/greenpromowear-website": "main",
-    "mckort/fulfillourdreamadventure": "master",
+    "mckort/fulfillyourdreamadventure": "master",
     "mckort/mylifesdeed": "main",
 }
 
@@ -73,7 +73,7 @@ def _parse_project_repo_map(raw: Optional[str]) -> Dict[str, str]:
 
 
 def _parse_repo_base_branch_map(raw: Optional[str]) -> Dict[str, str]:
-    """Parse `mckort/fulfillourdreamadventure:master,mckort/vcfieldassistant:main`."""
+    """Parse `mckort/fulfillyourdreamadventure:master,mckort/vcfieldassistant:main`."""
     out = dict(DEFAULT_REPO_BASE_BRANCHES)
     if not (raw or "").strip():
         return out

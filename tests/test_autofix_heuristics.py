@@ -1,4 +1,5 @@
 from bigas.resources.cto.autofix.heuristics import (
+    auto_merge_enabled,
     autofix_pushed_new_commit,
     latest_commit_is_autofix,
     review_needs_autofix,
@@ -197,3 +198,20 @@ def test_autofix_pushed_new_commit_requires_sha_change():
         )
         is True
     )
+
+
+def test_auto_merge_enabled_defaults_false(monkeypatch):
+    monkeypatch.delenv("BIGAS_CTO_AUTO_MERGE", raising=False)
+    assert auto_merge_enabled() is False
+
+
+def test_auto_merge_enabled_true_values(monkeypatch):
+    for value in ("true", "TRUE", "1", "yes", "on"):
+        monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", value)
+        assert auto_merge_enabled() is True, value
+
+
+def test_auto_merge_enabled_false_values(monkeypatch):
+    for value in ("false", "0", "no", "off", ""):
+        monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", value)
+        assert auto_merge_enabled() is False, value

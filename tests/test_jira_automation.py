@@ -374,17 +374,17 @@ def test_config_maps_implement_status(monkeypatch):
     assert cfg.handler_for_status("In Progress (AI)") == HANDLER_IMPLEMENT
     assert cfg.default_base_branch == "main"
     assert cfg.base_branch_for_repo("mckort/vcfieldassistant") == "main"
-    assert cfg.base_branch_for_repo("mckort/fulfillourdreamadventure") == "master"
+    assert cfg.base_branch_for_repo("mckort/fulfillyourdreamadventure") == "master"
 
 
 def test_repo_base_branch_map_env_override(monkeypatch):
     monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
     monkeypatch.setenv(
         "BIGAS_JIRA_REPO_BASE_BRANCH_MAP",
-        "mckort/fulfillourdreamadventure:develop,mckort/vcfieldassistant:main",
+        "mckort/fulfillyourdreamadventure:develop,mckort/vcfieldassistant:main",
     )
     cfg = JiraAutomationConfig.from_env()
-    assert cfg.base_branch_for_repo("mckort/fulfillourdreamadventure") == "develop"
+    assert cfg.base_branch_for_repo("mckort/fulfillyourdreamadventure") == "develop"
     assert cfg.base_branch_for_repo("mckort/vcfieldassistant") == "main"
     assert cfg.base_branch_for_repo("mckort/unknown-repo") == "main"
 

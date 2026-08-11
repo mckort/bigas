@@ -10,6 +10,7 @@ import requests
 from flask import Blueprint, jsonify, request
 
 from bigas.resources.cto.autofix.heuristics import (
+    auto_merge_enabled,
     autofix_max_iterations,
     autofix_pushed_new_commit,
     format_loop_protection_message,
@@ -23,6 +24,7 @@ from bigas.resources.cto.autofix.service import (
 from bigas.resources.cto.pr_review.github_client import (
     BIGAS_AUTOFIX_COOLDOWN_MARKER,
     BIGAS_REVIEW_MARKER,
+    GitHubMergeNotReadyError,
     GitHubPRCommentClient,
     GitHubPRCommentError,
 )
@@ -132,6 +134,140 @@ def _jira_final_approval_for_pr(
     except Exception:
         logger.warning("Jira final-approval hook failed", exc_info=True)
         return {"ok": False, "error": "final_approval_hook_exception"}
+
+
+def _maybe_auto_merge_pr(
+    *,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    github_token: str,
+) -> dict:
+    """
+    Squash-merge the PR when BIGAS_CTO_AUTO_MERGE is enabled.
+
+    Tries an immediate merge first. If required checks (or similar) block it,
+    falls back to GitHub native auto-merge so the PR merges once checks pass.
+
+    Best-effort: returns skipped/ok/error payload; posts Discord on success or failure.
+    """
+    if not auto_merge_enabled():
+        return {"skipped": True, "reason": "BIGAS_CTO_AUTO_MERGE not enabled"}
+    if not (github_token or "").strip():
+        err = "GITHUB_TOKEN missing"
+        _post_to_discord_cto(f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}")
+        return {"ok": False, "merged": False, "error": err}
+    if "/" not in repo or repo.count("/") != 1:
+        err = "repo must be owner/repo"
+        _post_to_discord_cto(f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}")
+        return {"ok": False, "merged": False, "error": err}
+
+    owner, repo_name = repo.split("/", 1)
+    client = GitHubPRCommentClient(token=github_token)
+
+    try:
+        result = client.merge_pull_request(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            merge_method="squash",
+        )
+    except GitHubMergeNotReadyError as e:
+        sync_err = sanitize_error_message(str(e))
+        logger.info(
+            "Immediate merge not ready for %s#%s (%s); enabling GitHub auto-merge",
+            repo,
+            pr_number,
+            sync_err,
+        )
+        try:
+            enabled = client.enable_pull_request_auto_merge(
+                owner=owner,
+                repo=repo_name,
+                pr_number=pr_number,
+                merge_method="squash",
+            )
+        except GitHubPRCommentError as enable_err:
+            err = sanitize_error_message(str(enable_err))
+            logger.warning(
+                "Auto-merge enable failed for %s#%s after sync block: %s",
+                repo,
+                pr_number,
+                err,
+            )
+            _post_to_discord_cto(
+                f"**PR auto-merge failed**\nPR: {pr_url}\n"
+                f"Immediate merge blocked: {sync_err}\n"
+                f"Enable auto-merge failed: {err}"
+            )
+            return {
+                "ok": False,
+                "merged": False,
+                "auto_merge_enabled": False,
+                "error": err,
+                "sync_error": sync_err,
+            }
+        except Exception as enable_err:
+            err = sanitize_error_message(str(enable_err))
+            logger.warning(
+                "Auto-merge enable unexpected error for %s#%s",
+                repo,
+                pr_number,
+                exc_info=True,
+            )
+            _post_to_discord_cto(
+                f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+            )
+            return {
+                "ok": False,
+                "merged": False,
+                "auto_merge_enabled": False,
+                "error": err,
+                "sync_error": sync_err,
+            }
+
+        method = (enabled.get("merge_method") or "squash").lower()
+        _post_to_discord_cto(
+            f"**PR auto-merge enabled** ({method})\n"
+            f"Waiting for required checks, then GitHub will squash-merge.\n"
+            f"PR: {pr_url}"
+        )
+        return {
+            "ok": True,
+            "merged": False,
+            "auto_merge_enabled": True,
+            "merge_method": method,
+            "enabled_at": enabled.get("enabled_at"),
+            "sync_error": sync_err,
+        }
+    except GitHubPRCommentError as e:
+        err = sanitize_error_message(str(e))
+        logger.warning("Auto-merge failed for %s#%s: %s", repo, pr_number, err)
+        _post_to_discord_cto(
+            f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+        )
+        return {"ok": False, "merged": False, "error": err}
+    except Exception as e:
+        err = sanitize_error_message(str(e))
+        logger.warning("Auto-merge unexpected error for %s#%s", repo, pr_number, exc_info=True)
+        _post_to_discord_cto(
+            f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+        )
+        return {"ok": False, "merged": False, "error": err}
+
+    sha = (result.get("sha") or "").strip()
+    sha_line = f"\nSHA: `{sha}`" if sha else ""
+    _post_to_discord_cto(
+        f"**PR auto-merged** (squash)\nPR: {pr_url}{sha_line}"
+    )
+    return {
+        "ok": True,
+        "merged": True,
+        "auto_merge_enabled": False,
+        "merge_method": "squash",
+        "sha": sha or None,
+        "message": (result.get("message") or "").strip() or None,
+    }
 
 
 def _notify_autofix_loop_protection(
@@ -390,12 +526,19 @@ def review_and_comment_pr():
             f"{done_label}\nNo comment posted. (No URL returned from GitHub.){cost_suffix}"
         )
 
+    auto_merge: dict = {"skipped": True, "reason": "not_ready"}
     if ready:
         _post_to_discord_cto(
             f"**Ready to merge**\nPR: {pr_url}\n"
             + (f"Comment: {comment_url}" if comment_url else "")
         )
         jira_final = _jira_final_approval_for_pr(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=github_token,
+        )
+        auto_merge = _maybe_auto_merge_pr(
             repo=repo,
             pr_number=pr_number,
             pr_url=pr_url,
@@ -413,6 +556,7 @@ def review_and_comment_pr():
         "ready_to_merge": ready,
         "phase": phase,
         "jira_final_approval": jira_final,
+        "auto_merge": auto_merge,
     })
 
 
@@ -824,11 +968,18 @@ def autofix_followup():
         logger.warning("Could not count autofix commits after re-review", exc_info=True)
 
     jira_final = {"skipped": True, "reason": "not_ready"}
+    auto_merge: dict = {"skipped": True, "reason": "not_ready"}
     if ready:
         _post_to_discord_cto(
             f"**Ready to merge**\nPR: {pr_url}\nComment: {comment_url}"
         )
         jira_final = _jira_final_approval_for_pr(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=gh_token,
+        )
+        auto_merge = _maybe_auto_merge_pr(
             repo=repo,
             pr_number=pr_number,
             pr_url=pr_url,
@@ -871,6 +1022,7 @@ def autofix_followup():
         "used_model": review_result.model,
         "usage": review_result.usage_dict(),
         "jira_final_approval": jira_final,
+        "auto_merge": auto_merge,
     })
     return jsonify(base)
 

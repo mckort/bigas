@@ -24,10 +24,13 @@ On the next PR (open or push), the workflow runs and Bigas posts or updates the 
 
 Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=true` and ensure Bigas has `CURSOR_API_KEY`. See [cto-autofix.md](./cto-autofix.md).
 
+Optional auto-merge: set Bigas env `BIGAS_CTO_AUTO_MERGE=true` to squash-merge when the review has no Blockers/Important (Discord **PR auto-merged**, or **PR auto-merge enabled** if checks are still pending). Default is off. Repo must allow auto-merge.
+
 ## Server-side configuration (Bigas)
 
 1. **GitHub Personal Access Token**
    - Create a PAT with `repo` scope (or at least read/write for pull request comments).
+   - For auto-merge (`BIGAS_CTO_AUTO_MERGE=true`), the token must also be allowed to merge PRs (Contents + Pull requests write; branch protection must permit the token).
    - Store it as `GITHUB_TOKEN` in your environment or in Google Secret Manager (add `GITHUB_TOKEN` to `SECRET_MANAGER_SECRET_NAMES` and sync with `scripts/sync_env_to_secret_manager.py`).
 
 2. **OpenAI API**

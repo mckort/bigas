@@ -40,6 +40,18 @@ def autofix_cooldown_seconds() -> int:
         return DEFAULT_AUTOFIX_COOLDOWN_SECONDS
 
 
+def auto_merge_enabled() -> bool:
+    """
+    When true, squash-merge the PR after a clean review (no Blockers/Important).
+
+    Env: BIGAS_CTO_AUTO_MERGE=true|false (default false — Ready to merge only).
+    """
+    import os
+
+    raw = (os.environ.get("BIGAS_CTO_AUTO_MERGE") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def format_loop_protection_message(*, autofix_count: int, max_iterations: int) -> str:
     """Human-readable loop-protection copy for Discord / Jira / API reason."""
     return (
