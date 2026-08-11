@@ -10,6 +10,7 @@ import requests
 from flask import Blueprint, jsonify, request
 
 from bigas.resources.cto.autofix.heuristics import (
+    auto_merge_enabled,
     autofix_max_iterations,
     autofix_pushed_new_commit,
     format_loop_protection_message,
@@ -132,6 +133,62 @@ def _jira_final_approval_for_pr(
     except Exception:
         logger.warning("Jira final-approval hook failed", exc_info=True)
         return {"ok": False, "error": "final_approval_hook_exception"}
+
+
+def _maybe_auto_merge_pr(
+    *,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    github_token: str,
+) -> dict:
+    """
+    Squash-merge the PR when BIGAS_CTO_AUTO_MERGE is enabled.
+
+    Best-effort: returns skipped/ok/error payload; posts Discord on success or failure.
+    """
+    if not auto_merge_enabled():
+        return {"skipped": True, "reason": "BIGAS_CTO_AUTO_MERGE not enabled"}
+    if not (github_token or "").strip():
+        err = "GITHUB_TOKEN missing"
+        _post_to_discord_cto(f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}")
+        return {"ok": False, "merged": False, "error": err}
+
+    owner, repo_name = repo.split("/", 1)
+    try:
+        result = GitHubPRCommentClient(token=github_token).merge_pull_request(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            merge_method="squash",
+        )
+    except GitHubPRCommentError as e:
+        err = sanitize_error_message(str(e))
+        logger.warning("Auto-merge failed for %s#%s: %s", repo, pr_number, err)
+        _post_to_discord_cto(
+            f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+        )
+        return {"ok": False, "merged": False, "error": err}
+    except Exception as e:
+        err = sanitize_error_message(str(e))
+        logger.warning("Auto-merge unexpected error for %s#%s", repo, pr_number, exc_info=True)
+        _post_to_discord_cto(
+            f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+        )
+        return {"ok": False, "merged": False, "error": err}
+
+    sha = (result.get("sha") or "").strip()
+    sha_line = f"\nSHA: `{sha}`" if sha else ""
+    _post_to_discord_cto(
+        f"**PR auto-merged** (squash)\nPR: {pr_url}{sha_line}"
+    )
+    return {
+        "ok": True,
+        "merged": True,
+        "merge_method": "squash",
+        "sha": sha or None,
+        "message": (result.get("message") or "").strip() or None,
+    }
 
 
 def _notify_autofix_loop_protection(
@@ -390,12 +447,19 @@ def review_and_comment_pr():
             f"{done_label}\nNo comment posted. (No URL returned from GitHub.){cost_suffix}"
         )
 
+    auto_merge: dict = {"skipped": True, "reason": "not_ready"}
     if ready:
         _post_to_discord_cto(
             f"**Ready to merge**\nPR: {pr_url}\n"
             + (f"Comment: {comment_url}" if comment_url else "")
         )
         jira_final = _jira_final_approval_for_pr(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=github_token,
+        )
+        auto_merge = _maybe_auto_merge_pr(
             repo=repo,
             pr_number=pr_number,
             pr_url=pr_url,
@@ -413,6 +477,7 @@ def review_and_comment_pr():
         "ready_to_merge": ready,
         "phase": phase,
         "jira_final_approval": jira_final,
+        "auto_merge": auto_merge,
     })
 
 
@@ -824,11 +889,18 @@ def autofix_followup():
         logger.warning("Could not count autofix commits after re-review", exc_info=True)
 
     jira_final = {"skipped": True, "reason": "not_ready"}
+    auto_merge: dict = {"skipped": True, "reason": "not_ready"}
     if ready:
         _post_to_discord_cto(
             f"**Ready to merge**\nPR: {pr_url}\nComment: {comment_url}"
         )
         jira_final = _jira_final_approval_for_pr(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=gh_token,
+        )
+        auto_merge = _maybe_auto_merge_pr(
             repo=repo,
             pr_number=pr_number,
             pr_url=pr_url,
@@ -871,6 +943,7 @@ def autofix_followup():
         "used_model": review_result.model,
         "usage": review_result.usage_dict(),
         "jira_final_approval": jira_final,
+        "auto_merge": auto_merge,
     })
     return jsonify(base)
 

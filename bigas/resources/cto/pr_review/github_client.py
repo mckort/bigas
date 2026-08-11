@@ -310,6 +310,82 @@ class GitHubPRCommentClient:
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
         return sum(1 for m in messages if marker in m)
 
+    def merge_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        *,
+        merge_method: str = "squash",
+        commit_title: Optional[str] = None,
+        commit_message: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Squash-merge (default) a pull request via the GitHub API.
+
+        Returns the API payload (merged, sha, message). Raises GitHubPRCommentError
+        on auth/permission/conflict failures.
+        """
+        method = (merge_method or "squash").strip().lower() or "squash"
+        if method not in {"merge", "squash", "rebase"}:
+            raise GitHubPRCommentError(
+                f"Invalid merge_method {merge_method!r}; use merge, squash, or rebase."
+            )
+
+        url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/merge"
+        payload: dict[str, Any] = {"merge_method": method}
+        if commit_title and commit_title.strip():
+            payload["commit_title"] = commit_title.strip()
+        if commit_message and commit_message.strip():
+            payload["commit_message"] = commit_message.strip()
+
+        resp = requests.put(url, headers=self._headers, json=payload, timeout=60)
+        if resp.status_code == 401:
+            raise GitHubPRCommentError("GitHub token is invalid or expired.")
+        if resp.status_code == 403:
+            raise GitHubPRCommentError(
+                "GitHub returned 403 merging PR. Token needs permission to merge "
+                "(Contents + Pull requests write) and branch protection must allow it."
+            )
+        if resp.status_code == 404:
+            raise GitHubPRCommentError(
+                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+            )
+        if resp.status_code == 405:
+            detail = ""
+            try:
+                detail = (resp.json() or {}).get("message") or ""
+            except Exception:
+                detail = (resp.text or "").strip()[:200]
+            raise GitHubPRCommentError(
+                detail
+                or f"PR {owner}/{repo}#{pr_number} is not mergeable "
+                "(already merged, closed, or checks blocking)."
+            )
+        if resp.status_code == 409:
+            detail = ""
+            try:
+                detail = (resp.json() or {}).get("message") or ""
+            except Exception:
+                detail = (resp.text or "").strip()[:200]
+            raise GitHubPRCommentError(
+                detail or f"Merge conflict on {owner}/{repo}#{pr_number}."
+            )
+        if resp.status_code >= 400:
+            detail = (resp.text or "").strip()[:300]
+            raise GitHubPRCommentError(
+                f"GitHub merge failed ({resp.status_code}): {detail or 'unknown error'}"
+            )
+
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            data = {}
+        if data.get("merged") is False:
+            raise GitHubPRCommentError(
+                (data.get("message") or "GitHub reported merged=false").strip()
+            )
+        return data
+
     def delete_marked_comment(
         self,
         owner: str,
