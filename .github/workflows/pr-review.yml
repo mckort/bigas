@@ -37,10 +37,12 @@ jobs:
             echo "Skip: PR is closed/merged."
             exit 0
           fi
-          msg="$(git log -1 --pretty=%B)"
+          # Match subject only — full body (%B) false-positives when docs/commits
+          # mention the marker (e.g. "gate [bigas-autofix] heads").
+          msg="$(git log -1 --pretty=%s)"
           if printf '%s' "$msg" | grep -Fq '[bigas-autofix]'; then
             echo "continue=false" >> "$GITHUB_OUTPUT"
-            echo "Skip: head commit is [bigas-autofix]; autofix_followup owns re-review."
+            echo "Skip: head commit subject is [bigas-autofix]; autofix_followup owns re-review."
             exit 0
           fi
           echo "continue=true" >> "$GITHUB_OUTPUT"
