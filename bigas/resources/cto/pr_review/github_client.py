@@ -25,6 +25,35 @@ class GitHubMergeNotReadyError(GitHubPRCommentError):
     pass
 
 
+def _github_error_detail(resp: requests.Response, *, limit: int = 300) -> str:
+    """Best-effort extract of GitHub REST/GraphQL error text for logs and exceptions."""
+    try:
+        data = resp.json() if resp.text else None
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        message = (data.get("message") or "").strip()
+        errors = data.get("errors")
+        if isinstance(errors, list) and errors:
+            parts = []
+            for err in errors:
+                if isinstance(err, dict):
+                    parts.append(str(err.get("message") or err))
+                else:
+                    parts.append(str(err))
+            joined = "; ".join(p for p in parts if p).strip()
+            if message and joined:
+                detail = f"{message} ({joined})"
+            else:
+                detail = message or joined
+        else:
+            detail = message
+        if detail:
+            return detail[:limit]
+    text = (resp.text or "").strip()
+    return text[:limit] if text else ""
+
+
 class GitHubPRCommentClient:
     """
     Post or update a single PR comment identified by a marker.
@@ -348,36 +377,40 @@ class GitHubPRCommentClient:
         if resp.status_code == 401:
             raise GitHubPRCommentError("GitHub token is invalid or expired.")
         if resp.status_code == 403:
+            detail = _github_error_detail(resp)
+            logger.warning(
+                "GitHub 403 merging %s/%s#%s: %s",
+                owner,
+                repo,
+                pr_number,
+                detail or "(empty body)",
+            )
+            hint = (
+                "Token needs permission to merge (Contents + Pull requests write) "
+                "and branch protection must allow it."
+            )
             raise GitHubPRCommentError(
-                "GitHub returned 403 merging PR. Token needs permission to merge "
-                "(Contents + Pull requests write) and branch protection must allow it."
+                f"GitHub returned 403 merging PR. {hint}"
+                + (f" GitHub: {detail}" if detail else "")
             )
         if resp.status_code == 404:
             raise GitHubPRCommentError(
                 f"Repository or PR not found: {owner}/{repo}#{pr_number}."
             )
         if resp.status_code == 405:
-            detail = ""
-            try:
-                detail = (resp.json() or {}).get("message") or ""
-            except Exception:
-                detail = (resp.text or "").strip()[:200]
+            detail = _github_error_detail(resp, limit=200)
             raise GitHubMergeNotReadyError(
                 detail
                 or f"PR {owner}/{repo}#{pr_number} is not mergeable "
                 "(already merged, closed, or checks blocking)."
             )
         if resp.status_code == 409:
-            detail = ""
-            try:
-                detail = (resp.json() or {}).get("message") or ""
-            except Exception:
-                detail = (resp.text or "").strip()[:200]
+            detail = _github_error_detail(resp, limit=200)
             raise GitHubPRCommentError(
                 detail or f"Merge conflict on {owner}/{repo}#{pr_number}."
             )
         if resp.status_code >= 400:
-            detail = (resp.text or "").strip()[:300]
+            detail = _github_error_detail(resp) or (resp.text or "").strip()[:300]
             raise GitHubPRCommentError(
                 f"GitHub merge failed ({resp.status_code}): {detail or 'unknown error'}"
             )
@@ -398,15 +431,24 @@ class GitHubPRCommentClient:
         if resp.status_code == 401:
             raise GitHubPRCommentError("GitHub token is invalid or expired.")
         if resp.status_code == 403:
+            detail = _github_error_detail(resp)
+            logger.warning(
+                "GitHub 403 fetching PR %s/%s#%s: %s",
+                owner,
+                repo,
+                pr_number,
+                detail or "(empty body)",
+            )
             raise GitHubPRCommentError(
                 "GitHub returned 403. Check token scopes and rate limits."
+                + (f" GitHub: {detail}" if detail else "")
             )
         if resp.status_code == 404:
             raise GitHubPRCommentError(
                 f"Repository or PR not found: {owner}/{repo}#{pr_number}."
             )
         if resp.status_code >= 400:
-            detail = (resp.text or "").strip()[:300]
+            detail = _github_error_detail(resp) or (resp.text or "").strip()[:300]
             raise GitHubPRCommentError(
                 f"GitHub PR fetch failed ({resp.status_code}): {detail or 'unknown error'}"
             )
@@ -474,11 +516,20 @@ class GitHubPRCommentClient:
         if resp.status_code == 401:
             raise GitHubPRCommentError("GitHub token is invalid or expired.")
         if resp.status_code == 403:
+            detail = _github_error_detail(resp)
+            logger.warning(
+                "GitHub 403 enabling auto-merge on %s/%s#%s: %s",
+                owner,
+                repo,
+                pr_number,
+                detail or "(empty body)",
+            )
             raise GitHubPRCommentError(
                 "GitHub returned 403 enabling auto-merge. Check token scopes."
+                + (f" GitHub: {detail}" if detail else "")
             )
         if resp.status_code >= 400:
-            detail = (resp.text or "").strip()[:300]
+            detail = _github_error_detail(resp) or (resp.text or "").strip()[:300]
             raise GitHubPRCommentError(
                 f"GitHub GraphQL failed ({resp.status_code}): {detail or 'unknown error'}"
             )
