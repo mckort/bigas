@@ -170,6 +170,24 @@ def test_merge_pull_request_conflict_raises(mock_put):
         client.merge_pull_request(owner="acme", repo="app", pr_number=3)
 
 
+@patch("bigas.resources.cto.pr_review.github_client.requests.put")
+def test_merge_pull_request_403_includes_github_message(mock_put):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 403
+    mock_resp.text = '{"message": "Resource not accessible by personal access token"}'
+    mock_resp.json.return_value = {
+        "message": "Resource not accessible by personal access token"
+    }
+    mock_put.return_value = mock_resp
+
+    client = GitHubPRCommentClient(token="tok")
+    with pytest.raises(
+        GitHubPRCommentError,
+        match="Resource not accessible by personal access token",
+    ):
+        client.merge_pull_request(owner="acme", repo="app", pr_number=3)
+
+
 @patch("bigas.resources.cto.pr_review.github_client.requests.post")
 @patch.object(GitHubPRCommentClient, "get_pull_request")
 def test_enable_pull_request_auto_merge_graphql(mock_get_pr, mock_post):
