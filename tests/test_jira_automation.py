@@ -157,6 +157,61 @@ def test_extract_jira_issue_key_from_pr_texts():
     assert extract_jira_issue_key("no key here") is None
 
 
+def test_final_approval_skips_when_already_in_status(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+
+    posted: list[str] = []
+
+    class FakeJira:
+        def get_issue(self, key, fields=None):
+            return {
+                "fields": {
+                    "summary": "Optimize website",
+                    "status": {"name": "Final approval (manual)"},
+                }
+            }
+
+        def transition_issue(self, *args, **kwargs):
+            raise AssertionError("should not transition when already in status")
+
+    class FakeCfg:
+        status_final_approval = "Final approval (manual)"
+
+        def is_project_allowed(self, project_key: str) -> bool:
+            return project_key == "FYDA"
+
+    class FakeResp:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {
+                "title": "FYDA-1: Optimize website",
+                "body": "Jira: FYDA-1",
+                "head": {"ref": "feature"},
+            }
+
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: FakeCfg()))
+    monkeypatch.setattr(fa, "JiraClient", lambda cfg: FakeJira())
+    monkeypatch.setattr(
+        fa, "JiraConfig", type("JC", (), {"from_env": staticmethod(lambda: object())})
+    )
+    monkeypatch.setattr(fa.requests, "get", lambda *a, **k: FakeResp())
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: posted.append(msg))
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+
+    result = fa.transition_issue_to_final_approval_for_pr(
+        repo="mckort/fundlyourdreamadventure",
+        pr_number=2,
+        pr_url="https://github.com/mckort/fundlyourdreamadventure/pull/2",
+        github_token="tok",
+    )
+    assert result.get("ok") is True
+    assert result.get("skipped") is True
+    assert result.get("reason") == "already_in_final_approval"
+    assert posted == []
+
+
 def test_linked_issue_entries_include_relation_type():
     from bigas.resources.product.jira_automation.research import (
         _format_linked_issues,

@@ -104,6 +104,19 @@ def transition_issue_to_final_approval_for_pr(
         summary = (fields.get("summary") or "").strip()
         current = ((fields.get("status") or {}).get("name") or "").strip()
 
+        # Already there (e.g. duplicate review after auto-merge) — no Discord spam.
+        if current.casefold() == cfg.status_final_approval.casefold():
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "already_in_final_approval",
+                "issue_key": issue_key,
+                "summary": summary,
+                "from_status": current,
+                "moved_to": cfg.status_final_approval,
+                "pr_url": pr_url,
+            }
+
         jira.transition_issue(
             issue_key,
             to_status_name=cfg.status_final_approval,

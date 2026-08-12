@@ -100,5 +100,7 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 - When autofix *does* run (Blockers/Important present), the agent also fixes Minor items from the same review
 - Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) commits containing `[bigas-autofix]`
 - Cooldown when head is a fresh `[bigas-autofix]` commit *and* no newer Bigas review exists yet: Actions waits/retries; Bigas posts a PR cooldown notice. If review is already newer than the autofix head, the next agent launches immediately.
+
+**Actions note:** `pr-review.yml` skips workflow runs whose head commit contains `[bigas-autofix]` (gate job). That prevents the autofix push from cancelling the in-flight job or starting a second full review/merge cycle. Bigas also skips review / final-approval Discord / auto-merge quietly when the PR is already merged.
 - Agent prompt requires that marker in any commits it creates
 - Re-review after autofix uses a verification prompt and the previous Bigas comment, so it should not invent a fresh set of nits each round
