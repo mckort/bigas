@@ -12,18 +12,51 @@ name: Bigas PR review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
-
-# Avoid parallel runs on the same PR (autofix pushes would otherwise spawn
-# duplicate review/autofix loops and Discord "N/5" launches).
-concurrency:
-  group: bigas-pr-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
+  # Gate runs without concurrency so an autofix push does not cancel the
+  # in-flight review/autofix job that owns re-review + merge.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      continue: ${{ steps.gate.outputs.continue }}
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Decide whether to run review
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.pull_request.state }}" = "closed" ] || [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            echo "continue=false" >> "$GITHUB_OUTPUT"
+            echo "Skip: PR is closed/merged."
+            exit 0
+          fi
+          # Match subject only — full body (%B) false-positives when docs/commits
+          # mention the marker (e.g. "gate [bigas-autofix] heads").
+          msg="$(git log -1 --pretty=%s)"
+          if printf '%s' "$msg" | grep -Fq '[bigas-autofix]'; then
+            echo "continue=false" >> "$GITHUB_OUTPUT"
+            echo "Skip: head commit subject is [bigas-autofix]; autofix_followup owns re-review."
+            exit 0
+          fi
+          echo "continue=true" >> "$GITHUB_OUTPUT"
+
   review:
+    needs: gate
+    if: needs.gate.outputs.continue == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # Only cancel overlapping non-autofix runs (user pushes). Autofix pushes
+    # never reach this job (gate skips), so their synchronize cannot cancel us.
+    concurrency:
+      group: bigas-pr-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -29,11 +29,66 @@ def test_maybe_auto_merge_skipped_when_disabled(mock_discord, monkeypatch):
 
 @patch("bigas.resources.cto.endpoints._post_to_discord_cto")
 @patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_skips_quietly_when_already_merged(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    client.get_pull_request.return_value = {"merged": True, "node_id": "PR_x"}
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+    )
+
+    assert result.get("skipped") is True
+    assert result.get("reason") == "pr_already_merged"
+    assert result.get("merged") is True
+    client.merge_pull_request.assert_not_called()
+    mock_discord.assert_not_called()
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_skips_quietly_on_405_when_merged(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    # First check (pre-merge) says open; merge 405; re-check says merged.
+    client.get_pull_request.side_effect = [
+        {"merged": False, "node_id": "PR_x"},
+        {"merged": True, "node_id": "PR_x"},
+    ]
+    client.merge_pull_request.side_effect = GitHubMergeNotReadyError(
+        "Pull Request is not mergeable"
+    )
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+    )
+
+    assert result.get("skipped") is True
+    assert result.get("reason") == "pr_already_merged"
+    client.enable_pull_request_auto_merge.assert_not_called()
+    mock_discord.assert_not_called()
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
 def test_maybe_auto_merge_success_posts_discord(
     mock_client_cls, mock_discord, monkeypatch
 ):
     monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
     client = MagicMock()
+    client.get_pull_request.return_value = {"merged": False, "node_id": "PR_x"}
     client.merge_pull_request.return_value = {
         "merged": True,
         "sha": "abc123def",
@@ -72,6 +127,7 @@ def test_maybe_auto_merge_enables_native_when_checks_block(
 ):
     monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
     client = MagicMock()
+    client.get_pull_request.return_value = {"merged": False, "node_id": "PR_x"}
     client.merge_pull_request.side_effect = GitHubMergeNotReadyError(
         "Required status check pending"
     )
@@ -110,6 +166,7 @@ def test_maybe_auto_merge_failure_posts_discord(
 ):
     monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
     client = MagicMock()
+    client.get_pull_request.return_value = {"merged": False, "node_id": "PR_x"}
     client.merge_pull_request.side_effect = GitHubPRCommentError("Merge conflict")
     mock_client_cls.return_value = client
 

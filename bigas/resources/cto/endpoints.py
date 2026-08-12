@@ -136,6 +136,32 @@ def _jira_final_approval_for_pr(
         return {"ok": False, "error": "final_approval_hook_exception"}
 
 
+def _pr_already_merged(
+    *,
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    github_token: str,
+) -> bool:
+    """Return True when the PR is already merged (best-effort; False on fetch errors)."""
+    try:
+        pr = GitHubPRCommentClient(token=github_token).get_pull_request(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+        )
+    except GitHubPRCommentError:
+        logger.warning(
+            "Could not check merged state for %s/%s#%s",
+            owner,
+            repo_name,
+            pr_number,
+            exc_info=True,
+        )
+        return False
+    return bool(pr.get("merged"))
+
+
 def _maybe_auto_merge_pr(
     *,
     repo: str,
@@ -165,6 +191,20 @@ def _maybe_auto_merge_pr(
     owner, repo_name = repo.split("/", 1)
     client = GitHubPRCommentClient(token=github_token)
 
+    # Quiet skip when a parallel review already merged (no Discord spam).
+    if _pr_already_merged(
+        owner=owner,
+        repo_name=repo_name,
+        pr_number=pr_number,
+        github_token=github_token,
+    ):
+        return {
+            "skipped": True,
+            "reason": "pr_already_merged",
+            "merged": True,
+            "ok": True,
+        }
+
     try:
         result = client.merge_pull_request(
             owner=owner,
@@ -174,6 +214,20 @@ def _maybe_auto_merge_pr(
         )
     except GitHubMergeNotReadyError as e:
         sync_err = sanitize_error_message(str(e))
+        # Already merged races often surface as 405 "not mergeable".
+        if _pr_already_merged(
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            github_token=github_token,
+        ):
+            return {
+                "skipped": True,
+                "reason": "pr_already_merged",
+                "merged": True,
+                "ok": True,
+                "sync_error": sync_err,
+            }
         logger.info(
             "Immediate merge not ready for %s#%s (%s); enabling GitHub auto-merge",
             repo,
@@ -416,6 +470,25 @@ def review_and_comment_pr():
 
     owner, repo_name = repo.split("/", 1)
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
+
+    # Parallel Actions runs (or a late followup) should not re-review / Discord
+    # after the PR was already squash-merged.
+    if _pr_already_merged(
+        owner=owner,
+        repo_name=repo_name,
+        pr_number=pr_number,
+        github_token=github_token,
+    ):
+        return jsonify(
+            {
+                "success": True,
+                "skipped": True,
+                "reason": "pr_already_merged",
+                "ready_to_merge": True,
+                "review_posted": False,
+                "phase": phase,
+            }
+        )
 
     try:
         diff = _resolve_pr_diff_text(
@@ -817,6 +890,26 @@ def autofix_followup():
     }
 
     if not status.get("done") or not finalize:
+        return jsonify(base)
+
+    gh_token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
+    if gh_token and _pr_already_merged(
+        owner=owner,
+        repo_name=repo_name,
+        pr_number=pr_number,
+        github_token=gh_token,
+    ):
+        # Another path already merged (or a late finalize after auto-merge).
+        base.update(
+            {
+                "finalized": True,
+                "skipped": True,
+                "reason": "pr_already_merged",
+                "ready_to_merge": True,
+                "fixes_pushed": False,
+                "rereviewed": False,
+            }
+        )
         return jsonify(base)
 
     agent_url = status.get("agent_url") or ""
