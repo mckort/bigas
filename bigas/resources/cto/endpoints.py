@@ -222,6 +222,7 @@ def _maybe_auto_merge_pr(
                 owner=owner,
                 repo=repo_name,
                 pr_number=pr_number,
+                node_id=pr.get("node_id"),
             )
             converted_draft = True
             logger.info(

@@ -313,6 +313,7 @@ def test_maybe_auto_merge_marks_draft_ready_then_merges(
         owner="acme",
         repo="app",
         pr_number=12,
+        node_id="PR_x",
     )
     client.merge_pull_request.assert_called_once()
     posted = mock_discord.call_args[0][0]
@@ -358,17 +359,23 @@ def test_maybe_auto_merge_draft_convert_failure_skips_merge(
 def test_mark_pull_request_ready_for_review_posts(mock_post):
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = '{"draft": false, "html_url": "https://github.com/acme/app/pull/3"}'
+    mock_resp.text = '{"data":{}}'
     mock_resp.json.return_value = {
-        "draft": False,
-        "html_url": "https://github.com/acme/app/pull/3",
-        "node_id": "PR_kwDOTest",
+        "data": {
+            "markPullRequestReadyForReview": {
+                "pullRequest": {
+                    "id": "PR_kwDOTest",
+                    "isDraft": False,
+                    "url": "https://github.com/acme/app/pull/3",
+                }
+            }
+        }
     }
     mock_post.return_value = mock_resp
 
     client = GitHubPRCommentClient(token="tok")
     data = client.mark_pull_request_ready_for_review(
-        owner="acme", repo="app", pr_number=3
+        owner="acme", repo="app", pr_number=3, node_id="PR_kwDOTest"
     )
 
     assert data["ok"] is True
@@ -376,24 +383,31 @@ def test_mark_pull_request_ready_for_review_posts(mock_post):
     assert data["draft"] is False
     mock_post.assert_called_once()
     args, kwargs = mock_post.call_args
-    assert args[0].endswith("/repos/acme/app/pulls/3/ready_for_review")
+    assert args[0] == "https://api.github.com/graphql"
+    assert kwargs["json"]["variables"]["pullRequestId"] == "PR_kwDOTest"
 
 
 @patch("bigas.resources.cto.pr_review.github_client.requests.post")
 @patch.object(GitHubPRCommentClient, "get_pull_request")
-def test_mark_pull_request_ready_for_review_422_already_ready(
+def test_mark_pull_request_ready_for_review_graphql_error_already_ready(
     mock_get_pr, mock_post
 ):
     mock_resp = MagicMock()
-    mock_resp.status_code = 422
-    mock_resp.text = '{"message": "Validation Failed"}'
-    mock_resp.json.return_value = {"message": "Validation Failed"}
+    mock_resp.status_code = 200
+    mock_resp.text = '{"errors":[{"message":"Validation Failed"}]}'
+    mock_resp.json.return_value = {
+        "errors": [{"message": "Validation Failed"}],
+    }
     mock_post.return_value = mock_resp
-    mock_get_pr.return_value = {"draft": False, "node_id": "PR_x"}
+    mock_get_pr.return_value = {
+        "draft": False,
+        "node_id": "PR_x",
+        "html_url": "https://github.com/acme/app/pull/3",
+    }
 
     client = GitHubPRCommentClient(token="tok")
     data = client.mark_pull_request_ready_for_review(
-        owner="acme", repo="app", pr_number=3
+        owner="acme", repo="app", pr_number=3, node_id="PR_x"
     )
 
     assert data["ok"] is True
@@ -402,18 +416,20 @@ def test_mark_pull_request_ready_for_review_422_already_ready(
 
 @patch("bigas.resources.cto.pr_review.github_client.requests.post")
 @patch.object(GitHubPRCommentClient, "get_pull_request")
-def test_mark_pull_request_ready_for_review_422_still_draft_raises(
+def test_mark_pull_request_ready_for_review_graphql_error_still_draft_raises(
     mock_get_pr, mock_post
 ):
     mock_resp = MagicMock()
-    mock_resp.status_code = 422
-    mock_resp.text = '{"message": "Pull request is in draft"}'
-    mock_resp.json.return_value = {"message": "Pull request is in draft"}
+    mock_resp.status_code = 200
+    mock_resp.text = '{"errors":[{"message":"Pull request is in draft"}]}'
+    mock_resp.json.return_value = {
+        "errors": [{"message": "Pull request is in draft"}],
+    }
     mock_post.return_value = mock_resp
     mock_get_pr.return_value = {"draft": True, "node_id": "PR_x"}
 
     client = GitHubPRCommentClient(token="tok")
     with pytest.raises(GitHubPRCommentError, match="ready for review"):
         client.mark_pull_request_ready_for_review(
-            owner="acme", repo="app", pr_number=3
+            owner="acme", repo="app", pr_number=3, node_id="PR_x"
         )

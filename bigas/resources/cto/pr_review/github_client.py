@@ -462,18 +462,45 @@ class GitHubPRCommentClient:
         owner: str,
         repo: str,
         pr_number: int,
+        *,
+        node_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """
-        Convert a draft PR to ready for review.
+        Convert a draft PR to ready for review via GraphQL.
 
         GitHub will not merge drafts (and will not enable native auto-merge on them).
         Idempotent: if the PR is already ready, returns already_ready=True.
         """
-        url = (
-            f"https://api.github.com/repos/{owner}/{repo}/pulls/"
-            f"{pr_number}/ready_for_review"
+        resolved_node_id = (node_id or "").strip()
+        if not resolved_node_id:
+            pr = self.get_pull_request(owner, repo, pr_number)
+            resolved_node_id = (pr.get("node_id") or "").strip()
+        if not resolved_node_id:
+            raise GitHubPRCommentError(
+                f"Could not resolve GraphQL node_id for {owner}/{repo}#{pr_number}."
+            )
+
+        mutation = """
+        mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+          markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+            pullRequest {
+              id
+              isDraft
+              url
+            }
+          }
+        }
+        """
+        payload = {
+            "query": mutation,
+            "variables": {"pullRequestId": resolved_node_id},
+        }
+        resp = requests.post(
+            "https://api.github.com/graphql",
+            headers=self._headers,
+            json=payload,
+            timeout=60,
         )
-        resp = requests.post(url, headers=self._headers, timeout=30)
         if resp.status_code == 401:
             raise GitHubPRCommentError("GitHub token is invalid or expired.")
         if resp.status_code == 403:
@@ -490,30 +517,38 @@ class GitHubPRCommentClient:
                 "Token needs Pull requests write."
                 + (f" GitHub: {detail}" if detail else "")
             )
-        if resp.status_code == 404:
-            raise GitHubPRCommentError(
-                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
-            )
-        if resp.status_code == 422:
-            # Already ready, or GitHub still considers it a draft for another reason.
-            pr = self.get_pull_request(owner, repo, pr_number)
-            if not pr.get("draft"):
-                return {"ok": True, "already_ready": True, "draft": False}
-            detail = _github_error_detail(resp)
-            raise GitHubPRCommentError(
-                f"Could not mark {owner}/{repo}#{pr_number} ready for review"
-                + (f": {detail}" if detail else ".")
-            )
         if resp.status_code >= 400:
             detail = _github_error_detail(resp) or (resp.text or "").strip()[:300]
             raise GitHubPRCommentError(
-                f"GitHub ready-for-review failed ({resp.status_code}): "
+                f"GitHub GraphQL failed ({resp.status_code}): "
                 f"{detail or 'unknown error'}"
             )
 
         data = resp.json() if resp.text else {}
         if not isinstance(data, dict):
-            data = {}
+            raise GitHubPRCommentError("GitHub GraphQL returned unexpected payload")
+        errors = data.get("errors") or []
+        if errors:
+            messages = "; ".join(
+                str(e.get("message") or e) for e in errors if isinstance(e, dict)
+            ) or str(errors)
+            pr = self.get_pull_request(owner, repo, pr_number)
+            if not pr.get("draft"):
+                return {
+                    "ok": True,
+                    "already_ready": True,
+                    "draft": False,
+                    "node_id": resolved_node_id,
+                    "html_url": pr.get("html_url"),
+                }
+            raise GitHubPRCommentError(
+                f"Could not mark {owner}/{repo}#{pr_number} ready for review: "
+                f"{messages}"
+            )
+
+        result = ((data.get("data") or {}).get("markPullRequestReadyForReview") or {})
+        pr_out = result.get("pullRequest") or {}
+        is_draft = bool(pr_out.get("isDraft"))
         logger.info(
             "Marked %s/%s#%s ready for review (was draft)",
             owner,
@@ -523,9 +558,9 @@ class GitHubPRCommentClient:
         return {
             "ok": True,
             "already_ready": False,
-            "draft": bool(data.get("draft", False)),
-            "node_id": data.get("node_id"),
-            "html_url": data.get("html_url"),
+            "draft": is_draft,
+            "node_id": pr_out.get("id") or resolved_node_id,
+            "html_url": pr_out.get("url"),
         }
 
     def enable_pull_request_auto_merge(
