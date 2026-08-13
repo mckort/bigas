@@ -174,6 +174,7 @@ def _maybe_auto_merge_pr(
 
     Tries an immediate merge first. If required checks (or similar) block it,
     falls back to GitHub native auto-merge so the PR merges once checks pass.
+    Draft PRs are marked ready for review first — GitHub will not merge drafts.
 
     Best-effort: returns skipped/ok/error payload; posts Discord on success or failure.
     """
@@ -191,19 +192,67 @@ def _maybe_auto_merge_pr(
     owner, repo_name = repo.split("/", 1)
     client = GitHubPRCommentClient(token=github_token)
 
+    pr: dict = {}
+    try:
+        pr = client.get_pull_request(
+            owner=owner, repo=repo_name, pr_number=pr_number
+        )
+    except GitHubPRCommentError:
+        logger.warning(
+            "Could not fetch PR before auto-merge for %s/%s#%s",
+            owner,
+            repo_name,
+            pr_number,
+            exc_info=True,
+        )
+
     # Quiet skip when a parallel review already merged (no Discord spam).
-    if _pr_already_merged(
-        owner=owner,
-        repo_name=repo_name,
-        pr_number=pr_number,
-        github_token=github_token,
-    ):
+    if pr.get("merged"):
         return {
             "skipped": True,
             "reason": "pr_already_merged",
             "merged": True,
             "ok": True,
         }
+
+    converted_draft = False
+    if pr.get("draft"):
+        try:
+            client.mark_pull_request_ready_for_review(
+                owner=owner,
+                repo=repo_name,
+                pr_number=pr_number,
+            )
+            converted_draft = True
+            logger.info(
+                "Marked %s#%s ready for review before auto-merge (was draft)",
+                repo,
+                pr_number,
+            )
+        except GitHubPRCommentError as e:
+            err = sanitize_error_message(str(e))
+            logger.warning(
+                "Could not mark %s#%s ready for review: %s",
+                repo,
+                pr_number,
+                err,
+            )
+            _post_to_discord_cto(
+                f"**PR auto-merge failed**\nPR: {pr_url}\n"
+                f"PR is still a draft; could not mark ready for review.\n"
+                f"Reason: {err}"
+            )
+            return {
+                "ok": False,
+                "merged": False,
+                "draft": True,
+                "draft_converted": False,
+                "error": err,
+            }
+
+    draft_line = (
+        "\nMarked draft as ready for review." if converted_draft else ""
+    )
 
     try:
         result = client.merge_pull_request(
@@ -258,6 +307,7 @@ def _maybe_auto_merge_pr(
                 "ok": False,
                 "merged": False,
                 "auto_merge_enabled": False,
+                "draft_converted": converted_draft,
                 "error": err,
                 "sync_error": sync_err,
             }
@@ -276,13 +326,14 @@ def _maybe_auto_merge_pr(
                 "ok": False,
                 "merged": False,
                 "auto_merge_enabled": False,
+                "draft_converted": converted_draft,
                 "error": err,
                 "sync_error": sync_err,
             }
 
         method = (enabled.get("merge_method") or "squash").lower()
         _post_to_discord_cto(
-            f"**PR auto-merge enabled** ({method})\n"
+            f"**PR auto-merge enabled** ({method}){draft_line}\n"
             f"Waiting for required checks, then GitHub will squash-merge.\n"
             f"PR: {pr_url}"
         )
@@ -290,6 +341,7 @@ def _maybe_auto_merge_pr(
             "ok": True,
             "merged": False,
             "auto_merge_enabled": True,
+            "draft_converted": converted_draft,
             "merge_method": method,
             "enabled_at": enabled.get("enabled_at"),
             "sync_error": sync_err,
@@ -300,24 +352,35 @@ def _maybe_auto_merge_pr(
         _post_to_discord_cto(
             f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
         )
-        return {"ok": False, "merged": False, "error": err}
+        return {
+            "ok": False,
+            "merged": False,
+            "draft_converted": converted_draft,
+            "error": err,
+        }
     except Exception as e:
         err = sanitize_error_message(str(e))
         logger.warning("Auto-merge unexpected error for %s#%s", repo, pr_number, exc_info=True)
         _post_to_discord_cto(
             f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
         )
-        return {"ok": False, "merged": False, "error": err}
+        return {
+            "ok": False,
+            "merged": False,
+            "draft_converted": converted_draft,
+            "error": err,
+        }
 
     sha = (result.get("sha") or "").strip()
     sha_line = f"\nSHA: `{sha}`" if sha else ""
     _post_to_discord_cto(
-        f"**PR auto-merged** (squash)\nPR: {pr_url}{sha_line}"
+        f"**PR auto-merged** (squash){draft_line}\nPR: {pr_url}{sha_line}"
     )
     return {
         "ok": True,
         "merged": True,
         "auto_merge_enabled": False,
+        "draft_converted": converted_draft,
         "merge_method": "squash",
         "sha": sha or None,
         "message": (result.get("message") or "").strip() or None,

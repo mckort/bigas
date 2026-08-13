@@ -114,10 +114,12 @@ def test_maybe_auto_merge_success_posts_discord(
         merge_method="squash",
     )
     client.enable_pull_request_auto_merge.assert_not_called()
+    client.mark_pull_request_ready_for_review.assert_not_called()
     posted = mock_discord.call_args[0][0]
     assert "PR auto-merged" in posted
     assert "squash" in posted
     assert "https://github.com/acme/app/pull/12" in posted
+    assert "draft" not in posted.lower()
 
 
 @patch("bigas.resources.cto.endpoints._post_to_discord_cto")
@@ -276,3 +278,142 @@ def test_enable_pull_request_auto_merge_graphql(mock_get_pr, mock_post):
     assert data["merge_method"] == "squash"
     _, kwargs = mock_post.call_args
     assert kwargs["json"]["variables"]["mergeMethod"] == "SQUASH"
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_marks_draft_ready_then_merges(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "draft": True,
+        "node_id": "PR_x",
+    }
+    client.merge_pull_request.return_value = {
+        "merged": True,
+        "sha": "abc123def",
+        "message": "Pull Request successfully merged",
+    }
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+    )
+
+    assert result.get("ok") is True
+    assert result.get("merged") is True
+    assert result.get("draft_converted") is True
+    client.mark_pull_request_ready_for_review.assert_called_once_with(
+        owner="acme",
+        repo="app",
+        pr_number=12,
+    )
+    client.merge_pull_request.assert_called_once()
+    posted = mock_discord.call_args[0][0]
+    assert "PR auto-merged" in posted
+    assert "Marked draft as ready for review" in posted
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_draft_convert_failure_skips_merge(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "draft": True,
+        "node_id": "PR_x",
+    }
+    client.mark_pull_request_ready_for_review.side_effect = GitHubPRCommentError(
+        "GitHub returned 403 marking PR ready for review."
+    )
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+    )
+
+    assert result.get("ok") is False
+    assert result.get("merged") is False
+    assert result.get("draft") is True
+    assert result.get("draft_converted") is False
+    client.merge_pull_request.assert_not_called()
+    posted = mock_discord.call_args[0][0]
+    assert "PR auto-merge failed" in posted
+    assert "draft" in posted.lower()
+
+
+@patch("bigas.resources.cto.pr_review.github_client.requests.post")
+def test_mark_pull_request_ready_for_review_posts(mock_post):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '{"draft": false, "html_url": "https://github.com/acme/app/pull/3"}'
+    mock_resp.json.return_value = {
+        "draft": False,
+        "html_url": "https://github.com/acme/app/pull/3",
+        "node_id": "PR_kwDOTest",
+    }
+    mock_post.return_value = mock_resp
+
+    client = GitHubPRCommentClient(token="tok")
+    data = client.mark_pull_request_ready_for_review(
+        owner="acme", repo="app", pr_number=3
+    )
+
+    assert data["ok"] is True
+    assert data["already_ready"] is False
+    assert data["draft"] is False
+    mock_post.assert_called_once()
+    args, kwargs = mock_post.call_args
+    assert args[0].endswith("/repos/acme/app/pulls/3/ready_for_review")
+
+
+@patch("bigas.resources.cto.pr_review.github_client.requests.post")
+@patch.object(GitHubPRCommentClient, "get_pull_request")
+def test_mark_pull_request_ready_for_review_422_already_ready(
+    mock_get_pr, mock_post
+):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 422
+    mock_resp.text = '{"message": "Validation Failed"}'
+    mock_resp.json.return_value = {"message": "Validation Failed"}
+    mock_post.return_value = mock_resp
+    mock_get_pr.return_value = {"draft": False, "node_id": "PR_x"}
+
+    client = GitHubPRCommentClient(token="tok")
+    data = client.mark_pull_request_ready_for_review(
+        owner="acme", repo="app", pr_number=3
+    )
+
+    assert data["ok"] is True
+    assert data["already_ready"] is True
+
+
+@patch("bigas.resources.cto.pr_review.github_client.requests.post")
+@patch.object(GitHubPRCommentClient, "get_pull_request")
+def test_mark_pull_request_ready_for_review_422_still_draft_raises(
+    mock_get_pr, mock_post
+):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 422
+    mock_resp.text = '{"message": "Pull request is in draft"}'
+    mock_resp.json.return_value = {"message": "Pull request is in draft"}
+    mock_post.return_value = mock_resp
+    mock_get_pr.return_value = {"draft": True, "node_id": "PR_x"}
+
+    client = GitHubPRCommentClient(token="tok")
+    with pytest.raises(GitHubPRCommentError, match="ready for review"):
+        client.mark_pull_request_ready_for_review(
+            owner="acme", repo="app", pr_number=3
+        )

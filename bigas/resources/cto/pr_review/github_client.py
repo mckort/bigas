@@ -457,6 +457,77 @@ class GitHubPRCommentClient:
             raise GitHubPRCommentError("GitHub PR fetch returned unexpected payload")
         return data
 
+    def mark_pull_request_ready_for_review(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> dict[str, Any]:
+        """
+        Convert a draft PR to ready for review.
+
+        GitHub will not merge drafts (and will not enable native auto-merge on them).
+        Idempotent: if the PR is already ready, returns already_ready=True.
+        """
+        url = (
+            f"https://api.github.com/repos/{owner}/{repo}/pulls/"
+            f"{pr_number}/ready_for_review"
+        )
+        resp = requests.post(url, headers=self._headers, timeout=30)
+        if resp.status_code == 401:
+            raise GitHubPRCommentError("GitHub token is invalid or expired.")
+        if resp.status_code == 403:
+            detail = _github_error_detail(resp)
+            logger.warning(
+                "GitHub 403 marking %s/%s#%s ready for review: %s",
+                owner,
+                repo,
+                pr_number,
+                detail or "(empty body)",
+            )
+            raise GitHubPRCommentError(
+                "GitHub returned 403 marking PR ready for review. "
+                "Token needs Pull requests write."
+                + (f" GitHub: {detail}" if detail else "")
+            )
+        if resp.status_code == 404:
+            raise GitHubPRCommentError(
+                f"Repository or PR not found: {owner}/{repo}#{pr_number}."
+            )
+        if resp.status_code == 422:
+            # Already ready, or GitHub still considers it a draft for another reason.
+            pr = self.get_pull_request(owner, repo, pr_number)
+            if not pr.get("draft"):
+                return {"ok": True, "already_ready": True, "draft": False}
+            detail = _github_error_detail(resp)
+            raise GitHubPRCommentError(
+                f"Could not mark {owner}/{repo}#{pr_number} ready for review"
+                + (f": {detail}" if detail else ".")
+            )
+        if resp.status_code >= 400:
+            detail = _github_error_detail(resp) or (resp.text or "").strip()[:300]
+            raise GitHubPRCommentError(
+                f"GitHub ready-for-review failed ({resp.status_code}): "
+                f"{detail or 'unknown error'}"
+            )
+
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            data = {}
+        logger.info(
+            "Marked %s/%s#%s ready for review (was draft)",
+            owner,
+            repo,
+            pr_number,
+        )
+        return {
+            "ok": True,
+            "already_ready": False,
+            "draft": bool(data.get("draft", False)),
+            "node_id": data.get("node_id"),
+            "html_url": data.get("html_url"),
+        }
+
     def enable_pull_request_auto_merge(
         self,
         owner: str,
