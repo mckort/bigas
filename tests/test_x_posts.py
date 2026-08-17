@@ -170,6 +170,42 @@ def test_generate_skip_does_not_store():
     assert "Only minor" in format_discord_message(result)
 
 
+def test_generate_does_not_skip_when_model_lists_newsworthy_and_tweets(monkeypatch):
+    monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
+    monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
+    store = InMemoryDraftStore()
+    provider = XProvider(
+        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
+    )
+    llm = SimpleNamespace(
+        complete=lambda **_kwargs: json.dumps(
+            {
+                "newsworthy": ["Add an articles of association section"],
+                "skip": True,
+                "reason": "Mostly chores",
+                "tweets": ["VC Field Assistant now captures articles of association."],
+            }
+        )
+    )
+    service = XPostsService(x_provider=provider, draft_store=store)
+    service._llm = llm
+    service._model = "test-model"
+    with patch(
+        "bigas.resources.product.x_posts.service.fetch_commits_for_projects",
+        return_value={"by_project": {}, "stats": {"VFA": {"total": 8}}, "errors": []},
+    ), patch(
+        "bigas.resources.product.x_posts.service.format_commits_for_prompt",
+        return_value="- Add Articles of association section\n- Fix type pin",
+    ), patch(
+        "bigas.resources.product.x_posts.service.project_repo_map_from_env",
+        return_value={"VFA": "mckort/vcfieldassistant"},
+    ):
+        result = service.generate(days=7, project_keys=["VFA"], dry_run=True)
+    assert result["skip"] is False
+    assert result["newsworthy"] == ["Add an articles of association section"]
+    assert result["tweets"] == ["VC Field Assistant now captures articles of association."]
+
+
 def test_generate_stores_draft_and_review_url(monkeypatch):
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
     monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
@@ -216,7 +252,8 @@ def test_product_label_and_x_prompt_discourages_skip():
         product_label="VC Field Assistant",
     )
     assert "VC Field Assistant" in prompt
-    assert "skip=true only if" in prompt
+    assert "newsworthy" in prompt
+    assert "skip=true only if newsworthy is empty" in prompt
     assert "autofix" in prompt.lower()
 
 

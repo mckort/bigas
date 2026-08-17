@@ -5,21 +5,17 @@ import json
 from typing import Any, Dict, Optional, Sequence
 
 X_POSTS_SYSTEM_PROMPT = """You are a product marketer writing public updates for X (Twitter).
-You evaluate a week's shipping activity and decide whether it is worth posting.
+You read a week's git commits and decide whether customers of the product would care.
 
-Rules:
-- Draft a post when there is user-facing shipping: new features, billing/signup, UI the customer sees, analysis quality, or meaningful product improvements.
-- Subjects that start with Fix/Harden/Align can still be newsworthy if they describe user-visible behavior.
-- Discard only true internals: CI, lockfiles, typo-only commits, refactors with no user impact, and comments about omitted autofix.
-- Autofix/automation commits have already been removed from the list. Do not skip just because stats mention autofix_omitted.
-- Skip only when the remaining commit list is empty or clearly all internal.
-- Do not invent features or metrics.
-- Do not include Jira keys, commit SHAs, PR numbers, or personal names.
-- Name the product in the tweet when it is provided.
-- Each tweet must be at most 280 characters.
-- Prefer one tweet. Use a short thread only when a single tweet cannot cover the user-facing news.
-- Maximum 5 tweets in a thread.
-- Return ONLY valid JSON matching the requested schema.
+Do this in order:
+1. Read the entire commit list. Do not judge the week from volume, from Fix/Harden/Align prefixes, or from the first few lines.
+2. Extract customer-relevant product improvements: a change a customer would notice in the product itself (new capability, new or improved workflow, analysis quality, signup/billing they use, visible product UI). Paraphrase each in plain language.
+3. Ignore internals even if they are numerous: CI, lockfiles, type pins, review tooling, layout spacing, copy nits, refactors with no user impact, comments about omitted autofix.
+4. If the extracted list is empty, skip. If it has anything, draft tweets about those items only. A mixed week of chores plus real product changes is still a draft week.
+5. Do not invent features or metrics. Do not include Jira keys, commit SHAs, PR numbers, or personal names.
+6. Name the product in the tweet when it is provided.
+7. Each tweet must be at most 280 characters. Prefer one tweet; at most 5.
+8. Return ONLY valid JSON matching the requested schema.
 """
 
 _PRODUCT_NAMES = {
@@ -64,21 +60,21 @@ def build_x_posts_user_prompt(
 ) -> str:
     product = (product_label or "the product").strip() or "the product"
     stats: Dict[str, Any] = git_stats if isinstance(git_stats, dict) else {}
-    return f"""Evaluate git activity from the last {days} days and draft an X update for {product}'s community.
+    return f"""Draft an X update for {product}'s community from git activity in the last {days} days.
 
-Autofix/automation commits are omitted from the list below. Git stats (JSON):
+Autofix/automation commits are already omitted. Git stats (JSON):
 {json.dumps(stats)}
 
-User-facing (non-autofix) commits on default branches:
+Commits on default branches (mixed product work and internals — you must filter):
 {git_commits_text}
 
 Return JSON with this schema:
 {{
+  "newsworthy": ["short paraphrase of each customer-relevant product improvement"],
   "skip": false,
-  "reason": "string — required when skip is true; why this week is not worth posting",
+  "reason": "string — required when skip is true; why nothing is customer-relevant",
   "tweets": ["string (<= 280 chars)", "..."]
 }}
 
-Set skip=true only if the remaining commits are empty or clearly all internal (CI, lockfiles, typo-only, no user impact).
-If there is any user-facing shipping (features, billing, signup, UI, analysis quality, workflow), set skip=false and write 1–5 tweets. Mention {product}. Clear professional voice. No hashtag stuffing.
+Fill newsworthy first. Set skip=true only if newsworthy is empty. If newsworthy is not empty, skip must be false and tweets must cover those improvements. Mention {product}. Clear professional voice. No hashtag stuffing.
 """

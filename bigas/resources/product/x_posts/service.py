@@ -100,6 +100,19 @@ def _normalize_tweets(raw: Any) -> List[str]:
     return tweets
 
 
+def _normalize_newsworthy(raw: Any) -> List[str]:
+    if not isinstance(raw, list):
+        return []
+    items: List[str] = []
+    for item in raw:
+        text = str(item or "").strip()
+        if text:
+            items.append(text)
+        if len(items) >= 10:
+            break
+    return items
+
+
 def _normalize_edited_tweets(raw: Any) -> List[str]:
     if not isinstance(raw, list):
         return []
@@ -197,6 +210,7 @@ class XPostsService:
 
         git_stats: Dict[str, Any] = {}
         git_errors: List[Any] = []
+        newsworthy: List[str] = []
         if forced_tweets is not None:
             skip = False
             reason = "Manual tweet override"
@@ -232,16 +246,19 @@ class XPostsService:
                         {"role": "system", "content": X_POSTS_SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt},
                     ],
-                    max_tokens=1200,
+                    max_tokens=1600,
                     temperature=0.4,
                 )
             except Exception as e:
                 raise XPostsError(f"LLM request failed: {e}") from e
 
             parsed = _extract_json(content)
+            newsworthy = _normalize_newsworthy(parsed.get("newsworthy"))
             skip = bool(parsed.get("skip"))
             reason = str(parsed.get("reason") or "").strip()
             drafted = _normalize_tweets(parsed.get("tweets"))
+            if newsworthy and drafted:
+                skip = False
             if not drafted and not skip:
                 skip = True
                 reason = reason or "No newsworthy user-facing changes this period."
@@ -252,6 +269,7 @@ class XPostsService:
             "skip": skip,
             "reason": reason,
             "tweets": drafted,
+            "newsworthy": newsworthy,
             "accounts": target_accounts,
             "days": days,
             "model": model_name,
