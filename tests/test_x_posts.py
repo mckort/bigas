@@ -18,6 +18,10 @@ from bigas.providers.notifications.x import (
 )
 from bigas.resources.product.x_posts.drafts import GcsDraftStore, InMemoryDraftStore, is_expired
 from bigas.resources.product.x_posts.endpoints import x_posts_bp
+from bigas.resources.product.x_posts.prompts import (
+    build_x_posts_user_prompt,
+    product_label_for_project_keys,
+)
 from bigas.resources.product.x_posts.service import (
     XPostsError,
     XPostsService,
@@ -200,6 +204,59 @@ def test_generate_stores_draft_and_review_url(monkeypatch):
     token = sign_draft_id(draft_id, secret="secret")
     assert token in result["review_url"]
     assert verify_draft_token(draft_id, token, secret="secret")
+
+
+def test_product_label_and_x_prompt_discourages_skip():
+    assert product_label_for_project_keys(["VFA"]) == "VC Field Assistant"
+    assert product_label_for_project_keys(["BIG", "VFA"]) == "Bigas and VC Field Assistant"
+    prompt = build_x_posts_user_prompt(
+        days=7,
+        git_commits_text="- Add Stripe Checkout trial",
+        git_stats={"VFA": {"total": 1, "autofix_omitted": 23}},
+        product_label="VC Field Assistant",
+    )
+    assert "VC Field Assistant" in prompt
+    assert "skip=true only if" in prompt
+    assert "autofix" in prompt.lower()
+
+
+def test_generate_omits_autofix_commits(monkeypatch):
+    monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
+    monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
+    store = InMemoryDraftStore()
+    provider = XProvider(
+        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
+    )
+    captured = {}
+
+    def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return {
+            "by_project": {
+                "VFA": [{"subject": "Add Stripe trial", "is_autofix": False}]
+            },
+            "stats": {"VFA": {"total": 1, "autofix_omitted": 23, "repo": "mckort/vcfieldassistant"}},
+            "errors": [],
+        }
+
+    llm = SimpleNamespace(
+        complete=lambda **_kwargs: json.dumps(
+            {"skip": False, "reason": "", "tweets": ["VC Field Assistant now has a Stripe trial."]}
+        )
+    )
+    service = XPostsService(x_provider=provider, draft_store=store)
+    service._llm = llm
+    service._model = "test-model"
+    with patch(
+        "bigas.resources.product.x_posts.service.fetch_commits_for_projects",
+        side_effect=fake_fetch,
+    ), patch(
+        "bigas.resources.product.x_posts.service.project_repo_map_from_env",
+        return_value={"VFA": "mckort/vcfieldassistant"},
+    ):
+        result = service.generate(days=7, project_keys=["VFA"], dry_run=True)
+    assert captured.get("exclude_autofix") is True
+    assert result["skip"] is False
 
 
 def test_generate_manual_tweets_skips_llm(monkeypatch):
