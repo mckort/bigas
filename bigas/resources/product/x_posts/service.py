@@ -32,6 +32,7 @@ from bigas.resources.product.x_posts.drafts import (
 from bigas.resources.product.x_posts.prompts import (
     X_POSTS_SYSTEM_PROMPT,
     build_x_posts_user_prompt,
+    product_label_for_project_keys,
 )
 from bigas.resources.product.x_posts.signing import sign_draft_id, signing_secret
 
@@ -209,6 +210,7 @@ class XPostsService:
                 project_keys=resolved_keys,
                 days=days,
                 token=self._github_token,
+                exclude_autofix=True,
             )
             git_stats = git_payload.get("stats") or {}
             git_errors = git_payload.get("errors") or []
@@ -216,11 +218,13 @@ class XPostsService:
                 git_payload.get("by_project") or {},
                 stats=git_stats,
             )
+            product_label = product_label_for_project_keys(resolved_keys)
 
             user_prompt = build_x_posts_user_prompt(
                 days=days,
                 git_commits_text=git_commits_text,
                 git_stats=git_stats,
+                product_label=product_label,
             )
             try:
                 content = self._llm_client().complete(

@@ -132,6 +132,7 @@ def fetch_commits_for_projects(
     token: Optional[str] = None,
     repo_map: Optional[Dict[str, str]] = None,
     max_commits_per_repo: int = 40,
+    exclude_autofix: bool = False,
 ) -> Dict[str, Any]:
     """
     Fetch normalized commits for mapped repos.
@@ -175,17 +176,22 @@ def fetch_commits_for_projects(
             continue
 
         normalized: List[Dict[str, Any]] = []
+        autofix_omitted = 0
         for item in raw:
             n = normalize_commit(item, project_key=key, repo=repo)
-            if n is not None:
+            if n is None:
+                continue
+            if exclude_autofix and n.get("is_autofix"):
+                autofix_omitted += 1
+                continue
+            if len(normalized) < max_commits_per_repo:
                 normalized.append(n)
-            if len(normalized) >= max_commits_per_repo:
-                break
 
         by_project[key] = normalized
         stats[key] = {
             "total": len(normalized),
-            "autofix": sum(1 for c in normalized if c.get("is_autofix")),
+            "autofix": 0 if exclude_autofix else sum(1 for c in normalized if c.get("is_autofix")),
+            "autofix_omitted": autofix_omitted,
             "repo": repo,
         }
 

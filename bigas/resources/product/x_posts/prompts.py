@@ -1,27 +1,75 @@
 """Prompts for weekly X post drafts."""
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, Optional, Sequence
 
 X_POSTS_SYSTEM_PROMPT = """You are a product marketer writing public updates for X (Twitter).
 You evaluate a week's shipping activity and decide whether it is worth posting.
 
 Rules:
-- Keep only new features, meaningful improvements, and major bug fixes.
-- Discard minor bug fixes, refactors, chores, autofix/automation noise, and internal tooling unless it clearly helps users.
+- Draft a post when there is user-facing shipping: new features, billing/signup, UI the customer sees, analysis quality, or meaningful product improvements.
+- Subjects that start with Fix/Harden/Align can still be newsworthy if they describe user-visible behavior.
+- Discard only true internals: CI, lockfiles, typo-only commits, refactors with no user impact, and comments about omitted autofix.
+- Autofix/automation commits have already been removed from the list. Do not skip just because stats mention autofix_omitted.
+- Skip only when the remaining commit list is empty or clearly all internal.
 - Do not invent features or metrics.
 - Do not include Jira keys, commit SHAs, PR numbers, or personal names.
+- Name the product in the tweet when it is provided.
 - Each tweet must be at most 280 characters.
 - Prefer one tweet. Use a short thread only when a single tweet cannot cover the user-facing news.
 - Maximum 5 tweets in a thread.
 - Return ONLY valid JSON matching the requested schema.
 """
 
+_PRODUCT_NAMES = {
+    "VFA": "VC Field Assistant",
+    "BIG": "Bigas",
+    "WAYW": "Roadpal",
+    "REM": "Remotebrief",
+    "GPWW": "Green Promo Wear",
+    "FYDA": "Fulfil Your Dream Adventure",
+    "MYL": "My Life's Deed",
+}
 
-def build_x_posts_user_prompt(*, days: int, git_commits_text: str, git_stats: dict) -> str:
-    return f"""Evaluate git activity from the last {days} days and draft an X update for the product's community.
 
-Git stats (JSON):
-{git_stats}
+def product_label_for_project_keys(project_keys: Optional[Sequence[str]] = None) -> str:
+    if project_keys is None:
+        project_keys = []
+    elif isinstance(project_keys, str):
+        project_keys = [project_keys]
+    keys = list(
+        dict.fromkeys(
+            str(k).strip().upper()
+            for k in project_keys
+            if k is not None and str(k).strip()
+        )
+    )
+    labels = [_PRODUCT_NAMES.get(k, k) for k in keys]
+    if not labels:
+        return "the product"
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return ", ".join(labels[:-1]) + f", and {labels[-1]}"
 
-Git commits on default branches (reference only):
+
+def build_x_posts_user_prompt(
+    *,
+    days: int,
+    git_commits_text: str,
+    git_stats: dict,
+    product_label: str = "the product",
+) -> str:
+    product = (product_label or "the product").strip() or "the product"
+    stats: Dict[str, Any] = git_stats if isinstance(git_stats, dict) else {}
+    return f"""Evaluate git activity from the last {days} days and draft an X update for {product}'s community.
+
+Autofix/automation commits are omitted from the list below. Git stats (JSON):
+{json.dumps(stats)}
+
+User-facing (non-autofix) commits on default branches:
 {git_commits_text}
 
 Return JSON with this schema:
@@ -31,6 +79,6 @@ Return JSON with this schema:
   "tweets": ["string (<= 280 chars)", "..."]
 }}
 
-If there is nothing newsworthy (only minor fixes, no user-facing work, or empty activity), set skip=true, tweets=[], and explain why in reason.
-If skip=false, tweets must contain 1–5 non-empty strings. Write in a clear, professional voice. No hashtag stuffing.
+Set skip=true only if the remaining commits are empty or clearly all internal (CI, lockfiles, typo-only, no user impact).
+If there is any user-facing shipping (features, billing, signup, UI, analysis quality, workflow), set skip=false and write 1–5 tweets. Mention {product}. Clear professional voice. No hashtag stuffing.
 """
