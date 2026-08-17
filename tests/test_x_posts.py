@@ -16,9 +16,10 @@ from bigas.providers.notifications.x import (
     load_account_credentials,
     parse_account_names,
 )
-from bigas.resources.product.x_posts.drafts import InMemoryDraftStore, is_expired
+from bigas.resources.product.x_posts.drafts import GcsDraftStore, InMemoryDraftStore, is_expired
 from bigas.resources.product.x_posts.endpoints import x_posts_bp
 from bigas.resources.product.x_posts.service import (
+    XPostsError,
     XPostsService,
     _extract_json,
     format_discord_message,
@@ -353,6 +354,11 @@ def test_hitl_http_approve_and_decline(monkeypatch):
         assert store.load("hitl1") is not None
         assert fake_x.threads == []
 
+        missing = client.post(f"/api/x-posts/hitl1/approve?token={token}")
+        assert missing.status_code == 400
+        assert store.load("hitl1") is not None
+        assert fake_x.threads == []
+
         ok = client.post(
             f"/api/x-posts/hitl1/approve?token={token}",
             data={"tweets": "Edited and approved"},
@@ -377,3 +383,84 @@ def test_hitl_http_approve_and_decline(monkeypatch):
         assert b"Draft declined" in declined.data
         assert store.load("hitl2") is None
         assert len(fake_x.threads) == 1
+
+
+class _BoomX(_FakeX):
+    def post_thread(self, account, tweets):
+        self.threads.append((account, tweets))
+        raise RuntimeError("402 Payment Required")
+
+
+def test_approve_deletes_draft_before_post_so_retry_cannot_duplicate():
+    store = InMemoryDraftStore()
+    fake_x = _BoomX()
+    service = XPostsService(x_provider=fake_x, draft_store=store)
+    store.save(
+        "dup",
+        {
+            "id": "dup",
+            "accounts": ["demo"],
+            "tweets": ["Hello once"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    try:
+        service.approve("dup")
+        assert False, "expected post to fail"
+    except RuntimeError:
+        pass
+    assert store.load("dup") is None
+    assert fake_x.threads == [("demo", ["Hello once"])]
+    try:
+        service.approve("dup")
+        assert False, "expected missing draft"
+    except XPostsError as e:
+        assert "not found" in str(e).lower()
+    assert fake_x.threads == [("demo", ["Hello once"])]
+
+
+def test_cleanup_expired_drafts_keeps_fresh_ones():
+    store = InMemoryDraftStore()
+    service = XPostsService(x_provider=_FakeX(), draft_store=store)
+    store.save(
+        "old",
+        {
+            "id": "old",
+            "created_at": (datetime.now(timezone.utc) - timedelta(hours=49)).isoformat(),
+        },
+    )
+    store.save(
+        "fresh",
+        {
+            "id": "fresh",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert service.cleanup_expired_drafts() == 1
+    assert store.load("old") is None
+    assert store.load("fresh") is not None
+
+
+def test_gcs_cleanup_expired_uses_blob_age():
+    now = datetime.now(timezone.utc)
+
+    class FakeBlob:
+        def __init__(self, name, time_created):
+            self.name = name
+            self.time_created = time_created
+            self.deleted = False
+
+        def delete(self):
+            self.deleted = True
+
+    old = FakeBlob("x_drafts/old.json", now - timedelta(hours=72))
+    fresh = FakeBlob("x_drafts/fresh.json", now - timedelta(hours=1))
+
+    class FakeBucket:
+        def list_blobs(self, prefix=""):
+            return [old, fresh]
+
+    store = GcsDraftStore(bucket=FakeBucket())
+    assert store.cleanup_expired(ttl_hours=48) == 1
+    assert old.deleted is True
+    assert fresh.deleted is False

@@ -299,6 +299,9 @@ class XPostsService:
         if not tweets or not accounts:
             self._store_or_default().delete(draft_id)
             raise XPostsError("Draft is missing tweets or accounts")
+        # Remove the draft before calling X so a partial API failure cannot be
+        # retried from the start (which would duplicate already-posted tweets).
+        self._store_or_default().delete(draft_id)
         posted: List[Dict[str, Any]] = []
         for account in accounts:
             ids = self._x.post_thread(account, tweets)
@@ -309,8 +312,16 @@ class XPostsService:
                     "urls": [f"https://x.com/{account}/status/{tid}" for tid in ids],
                 }
             )
-        self._store_or_default().delete(draft_id)
         return {"ok": True, "posted": posted}
+
+    def cleanup_expired_drafts(self, *, max_to_delete: int = 50) -> int:
+        return int(
+            self._store_or_default().cleanup_expired(
+                ttl_hours=_ttl_hours(),
+                max_to_delete=max_to_delete,
+            )
+            or 0
+        )
 
     def decline(self, draft_id: str) -> Dict[str, Any]:
         payload = self._store_or_default().load(draft_id)

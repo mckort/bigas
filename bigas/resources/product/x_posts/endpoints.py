@@ -52,7 +52,7 @@ def approve_x_post(draft_id: str):
         return _html(error_page(title="Invalid link", message="This approval link is invalid."), 403)
     try:
         edited = [str(t) for t in request.form.getlist("tweets")]
-        result = _service().approve(draft_id, tweets=edited or None)
+        result = _service().approve(draft_id, tweets=edited)
     except XPostsError as e:
         status = 404 if "not found" in str(e).lower() or "expired" in str(e).lower() else 400
         return _html(error_page(title="Could not post", message=str(e)), status)

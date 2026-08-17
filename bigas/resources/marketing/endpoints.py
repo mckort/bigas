@@ -6338,13 +6338,26 @@ def cleanup_old_reports():
     try:
         service = MarketingAnalyticsService(OPENAI_API_KEY)
         deleted_count = service.storage_service.delete_old_reports(keep_days, max_reports_to_delete)
-        
+        deleted_x_drafts = 0
+        try:
+            from bigas.resources.product.x_posts.service import XPostsService
+
+            deleted_x_drafts = XPostsService().cleanup_expired_drafts(
+                max_to_delete=max_reports_to_delete
+            )
+        except Exception:
+            logger.warning("Failed to clean expired X drafts", exc_info=True)
+
         return jsonify({
             "status": "success",
             "deleted_reports": deleted_count,
+            "deleted_x_drafts": deleted_x_drafts,
             "keep_days": keep_days,
             "max_reports_to_delete": max_reports_to_delete,
-            "message": f"Cleaned up {deleted_count} old reports, keeping reports from the last {keep_days} days"
+            "message": (
+                f"Cleaned up {deleted_count} old reports, keeping reports from the last {keep_days} days; "
+                f"deleted {deleted_x_drafts} expired X drafts"
+            )
         })
     except Exception as e:
         logger.error(f"Error cleaning up old reports: {traceback.format_exc()}")

@@ -235,7 +235,10 @@ def generate_weekly_x_post():
       }
     """
     data = request.json or {}
-    days = int(data.get("days", 7))
+    try:
+        days = int(data.get("days", 7))
+    except (TypeError, ValueError):
+        return jsonify({"error": "days must be an integer between 1 and 365"}), 400
     if days < 1 or days > 365:
         return jsonify({"error": "days must be between 1 and 365"}), 400
     post_to_discord = bool(data.get("post_to_discord", True))
