@@ -184,9 +184,8 @@ def fetch_commits_for_projects(
             if exclude_autofix and n.get("is_autofix"):
                 autofix_omitted += 1
                 continue
-            normalized.append(n)
-            if len(normalized) >= max_commits_per_repo:
-                break
+            if len(normalized) < max_commits_per_repo:
+                normalized.append(n)
 
         by_project[key] = normalized
         stats[key] = {

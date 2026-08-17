@@ -1,6 +1,7 @@
 """Prompts for weekly X post drafts."""
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Optional, Sequence
 
 X_POSTS_SYSTEM_PROMPT = """You are a product marketer writing public updates for X (Twitter).
@@ -33,7 +34,17 @@ _PRODUCT_NAMES = {
 
 
 def product_label_for_project_keys(project_keys: Optional[Sequence[str]] = None) -> str:
-    keys = [str(k).strip().upper() for k in (project_keys or []) if str(k).strip()]
+    if project_keys is None:
+        project_keys = []
+    elif isinstance(project_keys, str):
+        project_keys = [project_keys]
+    keys = list(
+        dict.fromkeys(
+            str(k).strip().upper()
+            for k in project_keys
+            if k is not None and str(k).strip()
+        )
+    )
     labels = [_PRODUCT_NAMES.get(k, k) for k in keys]
     if not labels:
         return "the product"
@@ -56,7 +67,7 @@ def build_x_posts_user_prompt(
     return f"""Evaluate git activity from the last {days} days and draft an X update for {product}'s community.
 
 Autofix/automation commits are omitted from the list below. Git stats (JSON):
-{stats}
+{json.dumps(stats)}
 
 User-facing (non-autofix) commits on default branches:
 {git_commits_text}
