@@ -266,6 +266,7 @@ trap "rm -f $ENV_VARS_FILE" EXIT
   [ -n "$SECRET_MANAGER" ] && echo "SECRET_MANAGER: \"$SECRET_MANAGER\""
   [ -n "$SECRET_MANAGER_SECRET_NAMES" ] && echo "SECRET_MANAGER_SECRET_NAMES: \"$SECRET_MANAGER_SECRET_NAMES\""
   [ -n "$GOOGLE_PROJECT_ID" ] && echo "GOOGLE_PROJECT_ID: \"$GOOGLE_PROJECT_ID\""
+  [ -n "$SERVER_URL" ] && echo "SERVER_URL: \"$SERVER_URL\""
 } >> "$ENV_VARS_FILE"
 
 # 900s (15 min) request timeout for sync cross-platform report; use *_async endpoints for longer runs

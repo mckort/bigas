@@ -39,7 +39,7 @@ It currently ships three specialists:
 | Specialist | What it does |
 |---|---|
 | **Senior Marketing Analyst** | GA4 web analytics + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
-| **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates |
+| **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval |
 | **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord |
 
 Two design decisions shape everything else in this document:
@@ -194,6 +194,9 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for multi-project (e.g. `VFA,WAYW`). Per-request override via `project_key` / `project_keys`. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
 | `GITHUB_TOKEN` | GitHub token — PR review plus optional repo context for Jira AI research |
+| `X_ACCOUNTS` | Comma-separated X handles for weekly community posts (optional). Credentials via `X_CREDENTIALS_JSON` (recommended for Secret Manager) or `X_API_KEY` / `X_ACCESS_TOKEN_<ACCOUNT>` |
+| `X_POST_SIGNING_SECRET` | HMAC secret for Approve/Decline links. Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` |
+| `SERVER_URL` | Public Cloud Run URL (tests + Discord X-post approval links). `deploy.sh` injects it; not a secret |
 | `MONITOR_URLS` | Comma-separated list of URLs to monitor (e.g. `https://site1.com,https://site2.com`) |
 | `LINKEDIN_AD_ACCOUNT_URN` | Default LinkedIn ad account URN |
 | `REDDIT_AD_ACCOUNT_ID` | Default Reddit ad account ID |
@@ -252,6 +255,15 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/create_release_notes \
 ```
 
 `progress_updates` does the same for issues moved to Done in the last N days, posting a team progress summary to Discord instead.
+
+```bash
+# Last week's git activity → X draft → Discord Approve / Decline
+curl -X POST https://your-service-url.a.run.app/mcp/tools/generate_weekly_x_post \
+  -H "Content-Type: application/json" \
+  -d '{"days": 7}'
+```
+
+The LLM drops minor bug fixes. If there is something worth posting, Bigas stores the draft in GCS and sends a Discord link to the **marketing** channel. **Approve** publishes to the configured X accounts; **Decline** deletes the draft (you can still copy the Discord text and post by hand). GET on the link only shows a preview so Discord unfurls cannot publish.
 
 ---
 
@@ -352,6 +364,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord |
+| `POST generate_weekly_x_post` | Last N days of git activity → X draft (major changes only) → Discord Approve/Decline |
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub. Details: [docs/cto-pr-review.md](docs/cto-pr-review.md) |
 | `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
 | `POST autofix_followup` | Poll the autofix agent; on completion, re-reviews the PR and posts the result to Discord. Details: [docs/cto-autofix.md](docs/cto-autofix.md) |
@@ -370,6 +383,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Weekly analytics | `0 9 * * 1` | `.../weekly_analytics_report` |
 | Page analysis | `0 10 * * 2` | `.../analyze_underperforming_pages` |
 | LinkedIn portfolio | `0 9 * * 1` | `.../run_linkedin_portfolio_report` |
+| Weekly X post draft | `0 9 * * 1` | `.../generate_weekly_x_post` |
 | Cleanup old reports | `0 2 1 * *` | `.../cleanup_old_reports` |
 | Website monitoring | `0 8 * * *` | `.../website_monitor` |
 | CTO AI usage | `0 9 * * 1` | `.../weekly_cto_ai_report` |

@@ -145,6 +145,7 @@ Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_r
 
 - **`CreateReleaseNotesService`**: Fetches Jira issues by Fix Version and generates customer-facing release notes + comms pack (blog, social drafts).
 - **`ProgressUpdatesService`**: Jira issues moved to Done in a window → team progress “coach” message (e.g. to Discord).
+- **`XPostsService`**: last N days of git activity → LLM-filtered X draft stored in GCS (`x_drafts/`) → Discord Approve/Decline. Publishing uses the X notification provider (`bigas/providers/notifications/x.py`).
 
 ### CTO
 
