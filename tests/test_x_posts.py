@@ -36,6 +36,23 @@ def _clear_x_env(monkeypatch):
 def test_parse_account_names_and_suffix():
     assert parse_account_names("bigasmyaiteam, @other") == ["bigasmyaiteam", "other"]
     assert account_env_suffix("@bigas-my-ai") == "BIGAS_MY_AI"
+    assert account_env_suffix("vcfieldassistan") == "VCFIELDASSISTAN"
+
+
+def test_load_vcfieldassistan_legacy_suffix(monkeypatch):
+    _clear_x_env(monkeypatch)
+    monkeypatch.setenv("X_ACCOUNTS", "bigasmyaiteam,vcfieldassistan")
+    monkeypatch.setenv("X_API_KEY_BIGASMYAITEAM", "k1")
+    monkeypatch.setenv("X_API_SECRET_BIGASMYAITEAM", "s1")
+    monkeypatch.setenv("X_ACCESS_TOKEN_BIGASMYAITEAM", "t1")
+    monkeypatch.setenv("X_ACCESS_SECRET_BIGASMYAITEAM", "ts1")
+    monkeypatch.setenv("X_API_KEY_VCFIELDASSISAN", "k2")
+    monkeypatch.setenv("X_API_SECRET_VCFIELDASSISAN", "s2")
+    monkeypatch.setenv("X_ACCESS_TOKEN_VCFIELDASSISAN", "t2")
+    monkeypatch.setenv("X_ACCESS_SECRET_VCFIELDASSISAN", "ts2")
+    creds = load_account_credentials()
+    assert set(creds) == {"bigasmyaiteam", "vcfieldassistan"}
+    assert creds["vcfieldassistan"].access_token == "t2"
 
 
 def test_clamp_tweet():

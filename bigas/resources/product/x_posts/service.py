@@ -177,7 +177,9 @@ class XPostsService:
             missing = [a for a in requested if a.lower() not in {c.lower() for c in configured}]
             if missing:
                 raise XPostsError(
-                    "No X credentials for account(s): " + ", ".join(missing)
+                    "No X credentials for account(s): "
+                    + ", ".join(missing)
+                    + f" (configured: {', '.join(configured) or 'none'})"
                 )
             target_accounts = requested
         else:
