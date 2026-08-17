@@ -43,7 +43,7 @@ Bigas now supports a **provider-based architecture** so you can add new finance,
 - **Finance providers**: implement `FinanceProvider` in `bigas/providers/finance/base.py`
 - **Ads providers**: implement `AdsProvider` in `bigas/providers/ads/base.py`
 - **Analytics providers**: implement `AnalyticsProvider` in `bigas/providers/analytics/base.py`
-- **Notification channels**: implement `NotificationChannel` in `bigas/providers/notifications/base.py`
+- **Notification channels**: implement `NotificationChannel` in `bigas/providers/notifications/base.py` (Discord, X, …)
 
 Each concrete provider:
 

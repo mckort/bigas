@@ -338,6 +338,21 @@ class StorageService:
             logger.warning(f"Failed to load JSON from {blob_name}: {e}")
             return None
 
+    def delete_blob(self, blob_name: str) -> bool:
+        """Delete a blob if it exists. Returns True when a delete was attempted."""
+        if not blob_name or not blob_name.strip():
+            return False
+        try:
+            blob = self.bucket.blob(blob_name)
+            blob.delete()
+            logger.info("Deleted blob %s", blob_name)
+            return True
+        except NotFound:
+            return False
+        except Exception as e:
+            logger.warning("Failed to delete blob %s: %s", blob_name, e)
+            return False
+    
     def list_available_reports(self) -> List[Dict[str, str]]:
         """
         List all available weekly reports with their dates and metadata.

@@ -16,6 +16,11 @@ from bigas.resources.product.jira_automation.service import (
     verify_webhook_secret,
 )
 from bigas.resources.product.progress_updates.service import ProgressUpdatesService, ProgressUpdatesError
+from bigas.resources.product.x_posts.service import (
+    XPostsError,
+    XPostsService,
+    format_discord_message,
+)
 
 
 def _project_keys_from_request(data: dict):
@@ -211,6 +216,70 @@ def progress_updates():
         return jsonify({"error": sanitize_error_message(str(e))}), 500
     except Exception as e:
         logger.error("Error in progress_updates", exc_info=True)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
+@product_bp.route('/generate_weekly_x_post', methods=['POST'])
+def generate_weekly_x_post():
+    """
+    Draft a weekly X post from recent git activity, store it, and send a
+    Discord approval link. Publishing happens only after a human approves.
+
+    Request JSON (all optional):
+      {
+        "days": 7,
+        "accounts": ["bigasmyaiteam"],
+        "post_to_discord": true,
+        "dry_run": false,
+        "project_keys": ["BIG", "VFA"]
+      }
+    """
+    data = request.json or {}
+    try:
+        days = int(data.get("days", 7))
+    except (TypeError, ValueError):
+        return jsonify({"error": "days must be an integer between 1 and 365"}), 400
+    if days < 1 or days > 365:
+        return jsonify({"error": "days must be between 1 and 365"}), 400
+    post_to_discord = bool(data.get("post_to_discord", True))
+    dry_run = bool(data.get("dry_run", False))
+    accounts = data.get("accounts")
+    if accounts is not None and not isinstance(accounts, list):
+        return jsonify({"error": "accounts must be a list of X account names"}), 400
+    tweets = data.get("tweets")
+    if tweets is not None and not isinstance(tweets, list):
+        return jsonify({"error": "tweets must be a list of strings"}), 400
+    project_keys = _project_keys_from_request(data)
+
+    try:
+        service = XPostsService()
+        result = service.generate(
+            days=days,
+            accounts=accounts,
+            project_keys=project_keys,
+            public_url=request.host_url,
+            dry_run=dry_run,
+            tweets=tweets,
+        )
+        if post_to_discord:
+            webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING")
+            if webhook_url:
+                _post_to_discord_in_chunks(webhook_url, format_discord_message(result))
+                result["posted_to_discord"] = True
+            else:
+                result["posted_to_discord"] = False
+        else:
+            result["posted_to_discord"] = False
+        return jsonify(result)
+    except XPostsError as e:
+        msg = str(e)
+        status = 400 if any(
+            s in msg.lower()
+            for s in ["days must", "not configured", "no x credentials", "signing"]
+        ) else 500
+        return jsonify({"error": sanitize_error_message(msg)}), status
+    except Exception as e:
+        logger.error("Error in generate_weekly_x_post", exc_info=True)
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 
@@ -411,6 +480,36 @@ def get_manifest():
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "Optional Jira project keys override. Defaults to all keys in JIRA_PROJECT_KEY env."
+                        }
+                    }
+                }
+            },
+            {
+                "name": "generate_weekly_x_post",
+                "description": "Draft a weekly X post from recent git merges, filter out minor fixes, and send a Discord approval link. Publishing happens only after a human approves or declines.",
+                "path": "/mcp/tools/generate_weekly_x_post",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "days": {"type": "integer", "description": "Lookback window in days (default 7)", "default": 7},
+                        "accounts": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "X account names to publish to. Defaults to X_ACCOUNTS."
+                        },
+                        "post_to_discord": {"type": "boolean", "description": "Post the draft (or skip notice) to marketing Discord", "default": True},
+                        "dry_run": {"type": "boolean", "description": "Return the draft without storing it or creating an approval link", "default": False},
+                        "tweets": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional tweet thread to post as-is (skips git/LLM filtering). Each string max 280 chars."
+                        },
+                        "project_key": {"type": "string", "description": "Optional single Jira project key override"},
+                        "project_keys": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional Jira project keys whose mapped GitHub repos are included."
                         }
                     }
                 }

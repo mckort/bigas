@@ -22,4 +22,7 @@ google-cloud-storage==2.10.0
 google-cloud-secret-manager==2.16.0
 
 # Web scraping for page analysis
-beautifulsoup4==4.12.2 
+beautifulsoup4==4.12.2
+
+# X (Twitter) API v2 posting
+tweepy>=4.14.0 

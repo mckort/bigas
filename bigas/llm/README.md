@@ -32,6 +32,7 @@ Set `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey)
 | CTO PR review             | `BIGAS_CTO_PR_REVIEW_MODEL`          |
 | Progress updates          | `BIGAS_PROGRESS_UPDATES_MODEL`       |
 | Release notes             | `BIGAS_RELEASE_NOTES_MODEL`          |
+| Weekly X posts            | `BIGAS_X_POSTS_MODEL`                |
 | Marketing                 | `BIGAS_MARKETING_LLM_MODEL`          |
 | Duplicate recommendation  | `BIGAS_DUPLICATE_RECOMMENDATION_MODEL` |
 
