@@ -38,6 +38,25 @@ def test_normalize_marks_autofix():
     assert n["subject"].startswith("Fix review findings")
 
 
+def test_normalize_ignores_autofix_marker_in_squash_body():
+    raw = {
+        "sha": "aaa111222",
+        "parents": [{"sha": "1"}],
+        "commit": {
+            "message": (
+                "Give Angel Standard and VC Team a 30-day Stripe trial (#75)\n\n"
+                "Co-authored-by: Cursor\n\n"
+                "[bigas-autofix] Fix checkout session metadata"
+            ),
+            "author": {"name": "Marcus"},
+        },
+    }
+    n = normalize_commit(raw, project_key="VFA", repo="mckort/vcfieldassistant")
+    assert n is not None
+    assert n["is_autofix"] is False
+    assert n["subject"].startswith("Give Angel Standard")
+
+
 def test_format_commits_for_prompt():
     text = format_commits_for_prompt(
         {

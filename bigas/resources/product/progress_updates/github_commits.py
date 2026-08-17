@@ -59,7 +59,9 @@ def normalize_commit(raw: Dict[str, Any], *, project_key: str, repo: str) -> Opt
         "subject": subject,
         "message": message,
         "author": author,
-        "is_autofix": bool(_AUTOFIX_MARKER_RE.search(message)),
+        # Subject only: squash-merged feature PRs often keep [bigas-autofix]
+        # in the body from earlier fixup commits.
+        "is_autofix": bool(_AUTOFIX_MARKER_RE.search(subject)),
         "html_url": (raw.get("html_url") or "").strip(),
     }
 
