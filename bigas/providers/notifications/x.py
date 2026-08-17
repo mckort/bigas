@@ -63,6 +63,28 @@ def account_env_suffix(account: str) -> str:
     return cleaned.strip("_").upper()
 
 
+def _suffixes_for_account(account: str) -> List[str]:
+    """Env-name suffixes to try for an X handle.
+
+    Secrets for @vcfieldassistan were first created as VCFIELDASSISAN (missing T).
+    Keep that alias so existing Secret Manager names still load.
+    """
+    name = (account or "").strip().lstrip("@")
+    primary = account_env_suffix(name)
+    suffixes = [primary]
+    if name.lower() == "vcfieldassistan" and "VCFIELDASSISAN" not in suffixes:
+        suffixes.append("VCFIELDASSISAN")
+    return suffixes
+
+
+def _env_with_suffixes(prefix: str, suffixes: List[str]) -> str:
+    for suffix in suffixes:
+        value = _env(f"{prefix}_{suffix}")
+        if value:
+            return value
+    return ""
+
+
 def clamp_tweet(text: str, *, limit: int = TWEET_MAX_CHARS) -> str:
     value = (text or "").strip()
     if len(value) <= limit:
@@ -121,13 +143,13 @@ def _credentials_for_account(
     if from_json:
         return from_json
 
-    suffix = account_env_suffix(name)
-    api_key = _env(f"X_API_KEY_{suffix}") or _env("X_API_KEY")
-    api_secret = _env(f"X_API_SECRET_{suffix}") or _env("X_API_SECRET")
-    access_token = _env(f"X_ACCESS_TOKEN_{suffix}")
+    suffixes = _suffixes_for_account(name)
+    api_key = _env_with_suffixes("X_API_KEY", suffixes) or _env("X_API_KEY")
+    api_secret = _env_with_suffixes("X_API_SECRET", suffixes) or _env("X_API_SECRET")
+    access_token = _env_with_suffixes("X_ACCESS_TOKEN", suffixes)
     access_secret = (
-        _env(f"X_ACCESS_SECRET_{suffix}")
-        or _env(f"X_ACCESS_TOKEN_SECRET_{suffix}")
+        _env_with_suffixes("X_ACCESS_SECRET", suffixes)
+        or _env_with_suffixes("X_ACCESS_TOKEN_SECRET", suffixes)
     )
     if allow_shared_user_tokens:
         access_token = access_token or _env("X_ACCESS_TOKEN")
@@ -137,6 +159,21 @@ def _credentials_for_account(
             or _env("X_ACCESS_TOKEN_SECRET")
         )
     if not all((api_key, api_secret, access_token, access_secret)):
+        missing = [
+            label
+            for label, value in (
+                ("api_key", api_key),
+                ("api_secret", api_secret),
+                ("access_token", access_token),
+                ("access_secret", access_secret),
+            )
+            if not value
+        ]
+        logger.warning(
+            "Incomplete X credentials for account %s (missing %s)",
+            name,
+            ", ".join(missing) or "unknown",
+        )
         return None
     return XAccountCredentials(
         account=name,
@@ -167,6 +204,11 @@ def load_account_credentials(
         )
         if creds:
             loaded[name.lower()] = creds
+    logger.info(
+        "Loaded X credentials for: %s (from X_ACCOUNTS=%s)",
+        ", ".join(loaded.keys()) or "(none)",
+        ",".join(parse_account_names()) or "(empty)",
+    )
     return loaded
 
 
