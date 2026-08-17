@@ -5,7 +5,12 @@ import logging
 
 from flask import Blueprint, Response, request
 
-from bigas.resources.product.x_posts.html import error_page, preview_page, success_page
+from bigas.resources.product.x_posts.html import (
+    error_page,
+    partial_success_page,
+    preview_page,
+    success_page,
+)
 from bigas.resources.product.x_posts.service import XPostsError, XPostsService
 from bigas.resources.product.x_posts.signing import verify_draft_token
 
@@ -20,6 +25,33 @@ def _service() -> XPostsService:
 
 def _html(body: str, status: int = 200) -> Response:
     return Response(body, status=status, mimetype="text/html; charset=utf-8")
+
+
+def _format_post_result(result: dict) -> str:
+    lines: list[str] = []
+    posted = result.get("posted") or []
+    failed = result.get("failed") or []
+    if posted:
+        lines.append("Successfully posted:")
+        for item in posted:
+            lines.append(f"  @{item.get('account', '?')}:")
+            for url in item.get("urls") or []:
+                lines.append(f"    {url}")
+    if failed:
+        lines.append("")
+        lines.append("Failed:")
+        for item in failed:
+            account = item.get("account", "?")
+            error = item.get("error") or "Unknown error"
+            lines.append(f"  @{account}: {error}")
+            partial_urls = item.get("posted_urls") or []
+            if partial_urls:
+                lines.append(
+                    "  Partial thread — these tweets were published before the failure:"
+                )
+                for url in partial_urls:
+                    lines.append(f"    {url}")
+    return "\n".join(lines).strip()
 
 
 def _require_token(draft_id: str) -> str | None:
@@ -59,16 +91,38 @@ def approve_x_post(draft_id: str):
     except Exception:
         logger.error("Failed to approve X post %s", draft_id, exc_info=True)
         return _html(error_page(title="Error", message="Publishing to X failed."), 500)
-    urls = []
-    for item in result.get("posted") or []:
-        urls.extend(item.get("urls") or [])
-    extra = "\n".join(urls)
-    return _html(
-        success_page(
-            title="Posted to X",
-            message="The draft was published and removed from storage.",
-            extra=extra,
+
+    details = _format_post_result(result)
+    posted = result.get("posted") or []
+    failed = result.get("failed") or []
+    if result.get("ok"):
+        return _html(
+            success_page(
+                title="Posted to X",
+                message="The draft was published and removed from storage.",
+                extra=details,
+            )
         )
+    if posted or any(item.get("posted_urls") for item in failed):
+        return _html(
+            partial_success_page(
+                title="Partially posted to X",
+                message=(
+                    "Some posts were published before an error occurred. "
+                    "The draft was removed from storage to prevent duplicate posts. "
+                    "Review the details below before posting again manually."
+                ),
+                extra=details,
+            )
+        )
+    first_error = (failed[0].get("error") if failed else None) or "Publishing to X failed."
+    return _html(
+        error_page(
+            title="Could not post",
+            message=first_error,
+            extra=details,
+        ),
+        502,
     )
 
 

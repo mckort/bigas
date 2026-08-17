@@ -23,6 +23,14 @@ class XProviderError(RuntimeError):
     pass
 
 
+class XProviderPartialPostError(XProviderError):
+    """Raised when one or more tweets in a thread posted before a later tweet failed."""
+
+    def __init__(self, message: str, *, posted_ids: List[str]) -> None:
+        super().__init__(message)
+        self.posted_ids = list(posted_ids)
+
+
 @dataclass(frozen=True)
 class XAccountCredentials:
     account: str
@@ -217,10 +225,19 @@ class XProvider(NotificationChannel):
             kwargs: Dict[str, Any] = {"text": text}
             if reply_to:
                 kwargs["in_reply_to_tweet_id"] = reply_to
-            response = client.create_tweet(**kwargs)
-            tweet_id = _tweet_id_from_response(response)
-            if not tweet_id:
-                raise XProviderError("X API create_tweet returned no tweet id")
+            try:
+                response = client.create_tweet(**kwargs)
+                tweet_id = _tweet_id_from_response(response)
+                if not tweet_id:
+                    raise XProviderError("X API create_tweet returned no tweet id")
+            except XProviderError as e:
+                if posted_ids:
+                    raise XProviderPartialPostError(str(e), posted_ids=list(posted_ids)) from e
+                raise
+            except Exception as e:
+                if posted_ids:
+                    raise XProviderPartialPostError(str(e), posted_ids=list(posted_ids)) from e
+                raise XProviderError(str(e)) from e
             posted_ids.append(tweet_id)
             reply_to = tweet_id
         return posted_ids

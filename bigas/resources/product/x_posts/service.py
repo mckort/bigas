@@ -303,8 +303,21 @@ class XPostsService:
         # retried from the start (which would duplicate already-posted tweets).
         self._store_or_default().delete(draft_id)
         posted: List[Dict[str, Any]] = []
+        failed: List[Dict[str, Any]] = []
         for account in accounts:
-            ids = self._x.post_thread(account, tweets)
+            try:
+                ids = self._x.post_thread(account, tweets)
+            except Exception as e:
+                entry: Dict[str, Any] = {"account": account, "error": str(e)}
+                partial_ids = getattr(e, "posted_ids", None)
+                if partial_ids:
+                    entry["posted_tweet_ids"] = list(partial_ids)
+                    entry["posted_urls"] = [
+                        f"https://x.com/{account}/status/{tid}" for tid in partial_ids
+                    ]
+                failed.append(entry)
+                logger.error("Failed to post X thread for account %s", account, exc_info=True)
+                continue
             posted.append(
                 {
                     "account": account,
@@ -312,7 +325,7 @@ class XPostsService:
                     "urls": [f"https://x.com/{account}/status/{tid}" for tid in ids],
                 }
             )
-        return {"ok": True, "posted": posted}
+        return {"ok": not failed, "posted": posted, "failed": failed}
 
     def cleanup_expired_drafts(self, *, max_to_delete: int = 50) -> int:
         return int(

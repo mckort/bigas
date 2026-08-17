@@ -83,6 +83,7 @@ def _page(title: str, body: str) -> str:
     .approve {{ background: #1d9bf0; color: #fff; }}
     .decline {{ background: #273340; color: #e7e9ea; }}
     .ok {{ color: #00ba7c; }}
+    .warn {{ color: #ffad1f; }}
     .err {{ color: #f4212e; }}
   </style>
 </head>
@@ -155,9 +156,21 @@ def success_page(*, title: str, message: str, extra: str = "") -> str:
     return _page(title, body)
 
 
-def error_page(*, title: str, message: str) -> str:
+def partial_success_page(*, title: str, message: str, extra: str = "") -> str:
+    extra_html = f'<div class="card">{html.escape(extra)}</div>' if extra else ""
+    body = f"""
+    <h1 class="warn">{html.escape(title)}</h1>
+    <p>{html.escape(message)}</p>
+    {extra_html}
+    """
+    return _page(title, body)
+
+
+def error_page(*, title: str, message: str, extra: str = "") -> str:
+    extra_html = f'<div class="card">{html.escape(extra)}</div>' if extra else ""
     body = f"""
     <h1 class="err">{html.escape(title)}</h1>
     <p>{html.escape(message)}</p>
+    {extra_html}
     """
     return _page(title, body)

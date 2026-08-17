@@ -231,6 +231,7 @@ def test_approve_and_decline_flow():
         },
     )
     posted = service.approve("abc")
+    assert posted["ok"] is True
     assert posted["posted"][0]["tweet_ids"] == ["99"]
     assert store.load("abc") is None
     assert fake_x.threads == [("demo", ["Hello community"])]
@@ -391,6 +392,20 @@ class _BoomX(_FakeX):
         raise RuntimeError("402 Payment Required")
 
 
+class _PartialMultiAccountX:
+    def __init__(self):
+        self.threads = []
+
+    def configured_accounts(self):
+        return ["first", "second"]
+
+    def post_thread(self, account, tweets):
+        self.threads.append((account, tweets))
+        if account == "second":
+            raise RuntimeError("402 Payment Required")
+        return ["11", "12"]
+
+
 def test_approve_deletes_draft_before_post_so_retry_cannot_duplicate():
     store = InMemoryDraftStore()
     fake_x = _BoomX()
@@ -404,11 +419,11 @@ def test_approve_deletes_draft_before_post_so_retry_cannot_duplicate():
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
     )
-    try:
-        service.approve("dup")
-        assert False, "expected post to fail"
-    except RuntimeError:
-        pass
+    result = service.approve("dup")
+    assert result["ok"] is False
+    assert result["posted"] == []
+    assert result["failed"][0]["account"] == "demo"
+    assert "402" in result["failed"][0]["error"]
     assert store.load("dup") is None
     assert fake_x.threads == [("demo", ["Hello once"])]
     try:
@@ -417,6 +432,106 @@ def test_approve_deletes_draft_before_post_so_retry_cannot_duplicate():
     except XPostsError as e:
         assert "not found" in str(e).lower()
     assert fake_x.threads == [("demo", ["Hello once"])]
+
+
+def test_approve_partial_multi_account_success():
+    store = InMemoryDraftStore()
+    fake_x = _PartialMultiAccountX()
+    service = XPostsService(x_provider=fake_x, draft_store=store)
+    store.save(
+        "partial",
+        {
+            "id": "partial",
+            "accounts": ["first", "second"],
+            "tweets": ["Hello", "World"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    result = service.approve("partial")
+    assert result["ok"] is False
+    assert result["posted"] == [
+        {
+            "account": "first",
+            "tweet_ids": ["11", "12"],
+            "urls": [
+                "https://x.com/first/status/11",
+                "https://x.com/first/status/12",
+            ],
+        }
+    ]
+    assert result["failed"] == [
+        {"account": "second", "error": "402 Payment Required"},
+    ]
+    assert store.load("partial") is None
+    assert fake_x.threads == [
+        ("first", ["Hello", "World"]),
+        ("second", ["Hello", "World"]),
+    ]
+
+
+def test_post_thread_partial_tweet_failure():
+    calls = []
+
+    class FailOnSecondClient:
+        def create_tweet(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 2:
+                raise RuntimeError("rate limited")
+            return SimpleNamespace(data={"id": str(len(calls))})
+
+    provider = XProvider(
+        credentials={
+            "demo": XAccountCredentials(
+                account="demo",
+                api_key="k",
+                api_secret="s",
+                access_token="t",
+                access_secret="ts",
+            )
+        },
+        client_factory=lambda _creds: FailOnSecondClient(),
+    )
+    try:
+        provider.post_thread("demo", ["first", "second"])
+        assert False, "expected partial failure"
+    except Exception as e:
+        from bigas.providers.notifications.x import XProviderPartialPostError
+
+        assert isinstance(e, XProviderPartialPostError)
+        assert e.posted_ids == ["1"]
+    assert len(calls) == 2
+
+
+def test_hitl_http_partial_post(monkeypatch):
+    monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
+    store = InMemoryDraftStore()
+    fake_x = _PartialMultiAccountX()
+    service = XPostsService(x_provider=fake_x, draft_store=store)
+    store.save(
+        "partial-http",
+        {
+            "id": "partial-http",
+            "accounts": ["first", "second"],
+            "tweets": ["Ship it"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    token = sign_draft_id("partial-http", secret="secret")
+    app = Flask(__name__)
+    app.register_blueprint(x_posts_bp)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    with patch("bigas.resources.product.x_posts.endpoints._service", return_value=service):
+        resp = client.post(
+            f"/api/x-posts/partial-http/approve?token={token}",
+            data={"tweets": "Ship it"},
+        )
+    assert resp.status_code == 200
+    assert b"Partially posted to X" in resp.data
+    assert b"https://x.com/first/status/11" in resp.data
+    assert b"@second" in resp.data
+    assert b"402 Payment Required" in resp.data
+    assert store.load("partial-http") is None
 
 
 def test_cleanup_expired_drafts_keeps_fresh_ones():
