@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 _AUTOFIX_MARKER_RE = re.compile(r"\[bigas-autofix\]", re.IGNORECASE)
 _MERGE_SUBJECT_RE = re.compile(r"^merge\b", re.IGNORECASE)
+_JIRA_ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
 
 
 class GitHubCommitsError(RuntimeError):
@@ -227,4 +228,58 @@ def format_commits_for_prompt(
             lines.append(f"- {c.get('subject', '')}{tag}")
     if not any_commits:
         return "(No non-merge git commits on default branches in this period.)"
+    return "\n".join(lines)
+
+
+def jira_issue_key_in_subject(subject: str) -> Optional[str]:
+    """Return the first Jira-looking issue key in a commit subject, if any."""
+    m = _JIRA_ISSUE_KEY_RE.search(subject or "")
+    return m.group(1) if m else None
+
+
+def jira_feature_commits(
+    by_project: Dict[str, List[Dict[str, Any]]],
+    *,
+    project_keys: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """Commits whose subject contains an issue key for the given Jira projects.
+
+    Those keys come from Jira features that were developed and merged.
+    """
+    allowed = {
+        str(k).strip().upper()
+        for k in (project_keys or [])
+        if k is not None and str(k).strip()
+    }
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for _project, commits in (by_project or {}).items():
+        for raw in commits or []:
+            if not isinstance(raw, dict):
+                continue
+            subject = str(raw.get("subject") or "").strip()
+            issue = jira_issue_key_in_subject(subject)
+            if not issue:
+                continue
+            prefix = issue.split("-", 1)[0].upper()
+            if allowed and prefix not in allowed:
+                continue
+            sig = (issue, subject)
+            if sig in seen:
+                continue
+            seen.add(sig)
+            item = dict(raw)
+            item["jira_key"] = issue
+            out.append(item)
+    return out
+
+
+def format_jira_feature_commits(commits: Sequence[Dict[str, Any]]) -> str:
+    if not commits:
+        return ""
+    lines = []
+    for c in commits:
+        subject = str(c.get("subject") or "").strip()
+        if subject:
+            lines.append(f"- {subject}")
     return "\n".join(lines)
