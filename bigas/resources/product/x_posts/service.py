@@ -270,8 +270,12 @@ class XPostsService:
                 exclude_autofix=True,
             )
             git_stats = git_payload.get("stats") or {}
+            if not isinstance(git_stats, dict):
+                git_stats = {}
             git_errors = git_payload.get("errors") or []
             by_project = git_payload.get("by_project") or {}
+            if not isinstance(by_project, dict):
+                by_project = {}
             git_commits_text = format_commits_for_prompt(
                 by_project,
                 stats=git_stats,
@@ -282,13 +286,16 @@ class XPostsService:
                 project_keys=resolved_keys,
             )
             jira_features_text = format_jira_feature_commits(jira_features)
-            for key in git_stats:
-                if isinstance(git_stats.get(key), dict):
-                    git_stats[key]["jira_features"] = sum(
-                        1
-                        for c in jira_features
-                        if str(c.get("jira_key") or "").upper().startswith(f"{key}-")
-                    )
+            if isinstance(git_stats, dict):
+                for key in git_stats:
+                    if isinstance(git_stats.get(key), dict):
+                        git_stats[key]["jira_features"] = sum(
+                            1
+                            for c in jira_features
+                            if str(c.get("jira_key") or "").upper().startswith(
+                                f"{str(key).upper()}-"
+                            )
+                        )
 
             skip, reason, drafted, newsworthy = self._complete_x_draft(
                 days=days,

@@ -99,6 +99,7 @@ def test_prompt_includes_git_and_inactive_line_guidance():
 
 def test_jira_issue_key_in_subject():
     assert jira_issue_key_in_subject("VFA-32: Add Pending rejection pipeline column") == "VFA-32"
+    assert jira_issue_key_in_subject("vfa-32: add feature") == "VFA-32"
     assert jira_issue_key_in_subject("Fix type pin") is None
 
 

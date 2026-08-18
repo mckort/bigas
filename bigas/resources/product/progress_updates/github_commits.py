@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 _AUTOFIX_MARKER_RE = re.compile(r"\[bigas-autofix\]", re.IGNORECASE)
 _MERGE_SUBJECT_RE = re.compile(r"^merge\b", re.IGNORECASE)
-_JIRA_ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
+_JIRA_ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b", re.IGNORECASE)
 
 
 class GitHubCommitsError(RuntimeError):
@@ -234,7 +234,7 @@ def format_commits_for_prompt(
 def jira_issue_key_in_subject(subject: str) -> Optional[str]:
     """Return the first Jira-looking issue key in a commit subject, if any."""
     m = _JIRA_ISSUE_KEY_RE.search(subject or "")
-    return m.group(1) if m else None
+    return m.group(1).upper() if m else None
 
 
 def jira_feature_commits(
