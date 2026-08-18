@@ -280,6 +280,43 @@ class JiraClient:
         url = f"{self._config.base_url}/rest/api/3/issue/{key}"
         return self._request_with_retry_429("GET", url, params=params)
 
+    def create_issue(
+        self,
+        *,
+        summary: str,
+        description_markdown: str = "",
+        project_key: Optional[str] = None,
+        issue_type: str = "Task",
+    ) -> Dict[str, Any]:
+        """Create a Jira issue and return key + browse URL."""
+        title = (summary or "").strip()
+        if not title:
+            raise JiraError("summary is required")
+        keys = self._resolve_project_keys(project_key)
+        if not keys:
+            raise JiraError("project_key is required")
+        proj = keys[0]
+        url = f"{self._config.base_url}/rest/api/3/issue"
+        payload = {
+            "fields": {
+                "project": {"key": proj},
+                "summary": title[:255],
+                "issuetype": {"name": (issue_type or "Task").strip() or "Task"},
+                "description": markdown_to_adf(description_markdown or ""),
+            }
+        }
+        data = self._request_with_retry_429("POST", url, json=payload)
+        issue_key = (data.get("key") or "").strip()
+        issue_id = (data.get("id") or "").strip()
+        browse_url = f"{self._config.base_url}/browse/{issue_key}" if issue_key else ""
+        return {
+            "ok": True,
+            "key": issue_key,
+            "id": issue_id,
+            "url": browse_url,
+            "self": data.get("self"),
+        }
+
     def add_comment(self, issue_key: str, body_text: str) -> Dict[str, Any]:
         """Add a plain-text comment (ADF doc with one paragraph)."""
         key = (issue_key or "").strip()

@@ -186,12 +186,15 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `DISCORD_WEBHOOK_URL_MARKETING` | Discord webhook for marketing reports |
 | `DISCORD_WEBHOOK_URL_PRODUCT` | Discord webhook for release notes, progress updates, and Jira AI research notifications |
 | `DISCORD_WEBHOOK_URL_CTO` | Discord webhook for PR review / engineering notifications |
+| `DISCORD_WEBHOOK_URL_QA` | Discord webhook for automated MCP QA run summaries (pass/fail) |
 | `STORAGE_BUCKET_NAME` | GCS bucket for report storage (default: `bigas-analytics-reports`) |
 | `TARGET_KEYWORDS` | Colon-separated keywords for SEO analysis (e.g. `sustainable_swag:eco_friendly_clothing`) |
 | `JIRA_BASE_URL` | Jira instance URL (required for release notes, progress updates, and Jira AI automation) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
 | `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for multi-project (e.g. `VFA,WAYW`). Per-request override via `project_key` / `project_keys`. |
+| `JIRA_CTO_PROJECT_KEY` | Jira project for approved QA improvements (default: first `JIRA_PROJECT_KEY` or `BIG`) |
+| `JIRA_PM_PROJECT_KEY` | Jira project for QA-suggested new features (default: first `JIRA_PROJECT_KEY` or `BIG`) |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
 | `GITHUB_TOKEN` | GitHub token — PR review plus optional repo context for Jira AI research |
 | `X_ACCOUNTS` | Comma-separated X handles for weekly community posts (optional). Credentials via `X_CREDENTIALS_JSON` (recommended for Secret Manager) or `X_API_KEY` / `X_ACCESS_TOKEN_<ACCOUNT>` |
@@ -264,6 +267,33 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/generate_weekly_x_post
 ```
 
 The LLM drops minor bug fixes. If there is something worth posting, Bigas stores the draft in GCS and sends a Discord link to the **marketing** channel. **Approve** publishes to the configured X accounts; **Decline** deletes the draft (you can still copy the Discord text and post by hand). GET on the link only shows a preview so Discord unfurls cannot publish.
+
+### Automated MCP QA (BIG-5)
+
+After code changes, Bigas can exercise relevant MCP tools on a target server, evaluate output *quality* (not just errors), and route findings:
+
+```bash
+curl -X POST https://your-service-url.a.run.app/mcp/tools/run_qa \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BIGAS_API_KEY" \
+  -d '{
+    "diff": "... git diff ...",
+    "mcp_endpoint_url": "https://your-mcp-server.a.run.app",
+    "mcp_auth_token": "optional-target-access-key",
+    "pr_url": "https://github.com/org/repo/pull/123"
+  }'
+```
+
+Flow:
+
+1. LLM reads the diff + MCP manifest → picks tools and synthetic inputs.
+2. Bigas calls the target via `POST /mcp` (`tools/call`).
+3. LLM evaluates each result against an excellence rubric.
+4. **Excellent** — brief summary to `DISCORD_WEBHOOK_URL_QA` (QA channel).
+5. **Improvement** — research/design proposal stored in GCS → Discord **bigas-cto** with signed Approve/Decline link (same pattern as X posts). **Approve** creates a Jira issue in `JIRA_CTO_PROJECT_KEY`.
+6. **New feature** — Jira issue in `JIRA_PM_PROJECT_KEY` + notification to **bigas-pm** (`DISCORD_WEBHOOK_URL_PRODUCT`).
+
+Optional GitHub Action: `.github/workflows/qa_agent.yml` (runs on PR updates when `BIGAS_QA_ENABLED=true`).
 
 ---
 
@@ -371,6 +401,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST fetch_ai_usage` | Historical AI usage from usage providers (Cursor API + LLM Cloud Logging); list-price estimates. Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md) |
 | `POST weekly_cto_ai_report` | Weekly CTO AI cost summary → Discord (Cursor autofix + review LLM logs) |
 | `POST website_monitor` | CTO tool: check configured websites (`MONITOR_URLS`) for availability and SSL certificate health. Alerts via Discord (`DISCORD_WEBHOOK_URL_CTO`) on failures. |
+| `POST run_qa` | Diff-driven MCP QA: test relevant tools on a target server, evaluate output quality, route improvements via Discord/Jira. See [Automated MCP QA](#automated-mcp-qa-big-5). |
 
 ---
 
