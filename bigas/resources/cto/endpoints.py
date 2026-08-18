@@ -36,6 +36,7 @@ from bigas.resources.cto.pr_review.service import (
 from bigas.discord_webhook import post_long_to_discord, post_to_discord
 from bigas.resources.marketing.utils import sanitize_error_message
 from bigas.providers.monitoring.service import MonitoringService, run_monitoring_checks
+from bigas.resources.cto.qa_agent.service import QAAgentError, QAAgentService
 from bigas.resources.cto.usage.service import (
     fetch_ai_usage,
     fetch_cursor_run_usage,
@@ -1271,6 +1272,61 @@ def weekly_cto_ai_report():
     )
 
 
+@cto_bp.route("/run_qa", methods=["POST"])
+def run_qa():
+    """
+    Run automated MCP QA against a target endpoint based on a code diff.
+
+    Request JSON:
+      - diff (str, required): git diff or PR diff text
+      - mcp_endpoint_url (str, required): base URL of the MCP server to test
+      - mcp_auth_token (str, optional): Bearer / access key for the target MCP server
+      - pr_url (str, optional): PR URL for context and Discord notifications
+      - llm_model (str, optional): override model for planning/evaluation
+    """
+    data = request.get_json(silent=True) or {}
+    diff = data.get("diff")
+    raw_mcp_endpoint_url = data.get("mcp_endpoint_url")
+    if raw_mcp_endpoint_url is not None and not isinstance(raw_mcp_endpoint_url, str):
+        return jsonify({"error": "mcp_endpoint_url must be a string"}), 400
+    mcp_endpoint_url = (raw_mcp_endpoint_url or "").strip()
+    mcp_auth_token = (data.get("mcp_auth_token") or "").strip() or None
+    pr_url = (data.get("pr_url") or "").strip() or None
+    llm_model = (data.get("llm_model") or "").strip() or None
+
+    if diff is not None and not isinstance(diff, str):
+        return jsonify({"error": "diff must be a string"}), 400
+    if not (diff or "").strip():
+        return jsonify({"error": "diff is required"}), 400
+    if not mcp_endpoint_url:
+        return jsonify({"error": "mcp_endpoint_url is required"}), 400
+
+    public_url = (
+        (os.environ.get("BIGAS_PUBLIC_URL") or "").strip()
+        or (os.environ.get("SERVER_URL") or "").strip()
+        or None
+    )
+
+    try:
+        result = QAAgentService(llm_model=llm_model).run(
+            diff=diff,
+            mcp_endpoint_url=mcp_endpoint_url,
+            mcp_auth_token=mcp_auth_token,
+            pr_url=pr_url,
+            public_url=public_url,
+        )
+    except QAAgentError as e:
+        err = sanitize_error_message(str(e))
+        logger.warning("QA agent failed: %s", e)
+        return jsonify({"error": err}), 400
+    except Exception as e:
+        err = sanitize_error_message(str(e))
+        logger.error("QA agent unexpected error", exc_info=True)
+        return jsonify({"error": err}), 500
+
+    return jsonify({"success": True, **result})
+
+
 @cto_bp.route("/website_monitor", methods=["POST"])
 def website_monitor():
     """
@@ -1495,6 +1551,42 @@ def get_manifest():
                 "parameters": {
                     "type": "object",
                     "properties": {},
+                },
+            },
+            {
+                "name": "run_qa",
+                "description": (
+                    "Analyze a code diff, exercise relevant MCP tools on a target server, "
+                    "and evaluate output quality. Posts to Discord/Jira when improvements "
+                    "or new features are suggested."
+                ),
+                "path": "/mcp/tools/run_qa",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "diff": {
+                            "type": "string",
+                            "description": "Git or PR diff text (required)",
+                        },
+                        "mcp_endpoint_url": {
+                            "type": "string",
+                            "description": "Base URL of the MCP server to test (required)",
+                        },
+                        "mcp_auth_token": {
+                            "type": "string",
+                            "description": "Optional Bearer/access key for the target MCP server",
+                        },
+                        "pr_url": {
+                            "type": "string",
+                            "description": "Optional PR URL for notifications",
+                        },
+                        "llm_model": {
+                            "type": "string",
+                            "description": "Optional LLM model override",
+                        },
+                    },
+                    "required": ["diff", "mcp_endpoint_url"],
                 },
             },
         ],

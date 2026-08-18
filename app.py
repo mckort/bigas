@@ -102,15 +102,18 @@ def create_app():
         from bigas.resources.product.endpoints import product_bp, get_manifest as get_product_manifest
         from bigas.resources.product.x_posts.endpoints import x_posts_bp
         from bigas.resources.cto.endpoints import cto_bp, get_manifest as get_cto_manifest
+        from bigas.resources.cto.qa_agent.endpoints import qa_proposals_bp
 
         app.register_blueprint(marketing_bp)
         app.register_blueprint(product_bp)
         app.register_blueprint(x_posts_bp)
+        app.register_blueprint(qa_proposals_bp)
         app.register_blueprint(cto_bp)
 
         logger.info("Registered marketing blueprint.")
         logger.info("Registered product blueprint.")
         logger.info("Registered X-post approval blueprint.")
+        logger.info("Registered QA proposal approval blueprint.")
         logger.info("Registered CTO blueprint.")
 
     # Discover configured providers once at startup
@@ -134,7 +137,7 @@ def create_app():
             return
 
         # Allow health checks and manifest without a key
-        if request.path in public_paths or request.path.startswith("/api/x-posts"):
+        if request.path in public_paths or request.path.startswith("/api/x-posts") or request.path.startswith("/api/qa-proposals"):
             return
 
         header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")

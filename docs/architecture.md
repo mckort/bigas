@@ -150,6 +150,7 @@ Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_r
 ### CTO
 
 - PR review flow: GitHub PR diff → LLM (OpenAI or Gemini) → single comment posted/updated on the PR via GitHub API (marker-based updates to avoid spam). See `docs/cto-pr-review.md`.
+- **Automated MCP QA (BIG-5):** `POST /mcp/tools/run_qa` accepts a diff and target MCP URL. The agent lists tools via `/mcp/manifest`, plans relevant calls with an LLM, invokes them through `POST /mcp` (`tools/call`), and evaluates output quality. Excellent runs post a brief summary to `DISCORD_WEBHOOK_URL_QA`. Improvements are stored under `qa_drafts/` in GCS with signed Approve/Decline links at `/api/qa-proposals/*` (same HMAC pattern as X posts). Approve creates a Jira issue in `JIRA_CTO_PROJECT_KEY`; new-feature suggestions create issues in `JIRA_PM_PROJECT_KEY` and notify `DISCORD_WEBHOOK_URL_PRODUCT`. Optional trigger: `.github/workflows/qa_agent.yml` when `BIGAS_QA_ENABLED=true`.
 
 ### Provider registry
 
