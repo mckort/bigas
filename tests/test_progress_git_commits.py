@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from bigas.resources.product.progress_updates.github_commits import (
     format_commits_for_prompt,
+    jira_feature_commits,
+    jira_issue_key_in_subject,
     normalize_commit,
 )
 from bigas.resources.product.progress_updates.prompts import (
@@ -93,3 +95,22 @@ def test_prompt_includes_git_and_inactive_line_guidance():
     assert "Projects with activity" in prompt
     assert "BIG" in prompt
     assert "No activity:" in prompt
+
+
+def test_jira_issue_key_in_subject():
+    assert jira_issue_key_in_subject("VFA-32: Add Pending rejection pipeline column") == "VFA-32"
+    assert jira_issue_key_in_subject("vfa-32: add feature") == "VFA-32"
+    assert jira_issue_key_in_subject("Fix type pin") is None
+
+
+def test_jira_feature_commits_scoped_to_project_keys():
+    by_project = {
+        "VFA": [
+            {"subject": "VFA-32: Add Pending rejection pipeline column"},
+            {"subject": "Fix Stripe client API version pin"},
+            {"subject": "BIG-4: Add weekly X posts"},
+        ]
+    }
+    features = jira_feature_commits(by_project, project_keys=["VFA"])
+    assert [c["jira_key"] for c in features] == ["VFA-32"]
+    assert features[0]["subject"].startswith("VFA-32")

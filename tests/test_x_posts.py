@@ -256,6 +256,65 @@ def test_product_label_and_x_prompt_discourages_skip():
     assert "skip=true only if newsworthy is empty" in prompt
     assert "autofix" in prompt.lower()
 
+    jira_prompt = build_x_posts_user_prompt(
+        days=7,
+        git_commits_text="- VFA-32: Add Pending rejection",
+        git_stats={"VFA": {"total": 1}},
+        product_label="VC Field Assistant",
+        jira_features_text="- VFA-32: Add Pending rejection",
+    )
+    assert "Shipped Jira features" in jira_prompt
+    assert "skip MUST be false" in jira_prompt
+
+
+def test_generate_retries_when_jira_feature_commits_skipped(monkeypatch):
+    monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
+    monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
+    store = InMemoryDraftStore()
+    provider = XProvider(
+        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
+    )
+    responses = [
+        json.dumps({"newsworthy": [], "skip": True, "reason": "No substantial features.", "tweets": []}),
+        json.dumps(
+            {
+                "newsworthy": ["Pending rejection column on the pipeline"],
+                "skip": False,
+                "reason": "",
+                "tweets": ["VC Field Assistant now has a pending rejection column on the pipeline."],
+            }
+        ),
+    ]
+
+    def complete(**_kwargs):
+        return responses.pop(0)
+
+    llm = SimpleNamespace(complete=complete)
+    service = XPostsService(x_provider=provider, draft_store=store)
+    service._llm = llm
+    service._model = "test-model"
+    with patch(
+        "bigas.resources.product.x_posts.service.fetch_commits_for_projects",
+        return_value={
+            "by_project": {
+                "VFA": [
+                    {"subject": "Fix type pin", "is_autofix": False},
+                    {"subject": "VFA-32: Add Pending rejection pipeline column", "is_autofix": False},
+                ]
+            },
+            "stats": {"VFA": {"total": 2, "repo": "mckort/vcfieldassistant"}},
+            "errors": [],
+        },
+    ), patch(
+        "bigas.resources.product.x_posts.service.project_repo_map_from_env",
+        return_value={"VFA": "mckort/vcfieldassistant"},
+    ):
+        result = service.generate(days=7, project_keys=["VFA"], dry_run=True)
+    assert result["skip"] is False
+    assert result["jira_features"] == ["VFA-32"]
+    assert "pending rejection" in result["tweets"][0].lower()
+    assert responses == []
+
 
 def test_generate_omits_autofix_commits(monkeypatch):
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
