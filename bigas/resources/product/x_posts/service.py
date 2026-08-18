@@ -21,6 +21,8 @@ from bigas.resources.product.create_release_notes.jira_client import normalize_p
 from bigas.resources.product.progress_updates.github_commits import (
     fetch_commits_for_projects,
     format_commits_for_prompt,
+    format_jira_feature_commits,
+    jira_feature_commits,
     project_repo_map_from_env,
 )
 from bigas.resources.product.x_posts.drafts import (
@@ -167,6 +169,46 @@ class XPostsService:
             )
         return self._llm
 
+    def _complete_x_draft(
+        self,
+        *,
+        days: int,
+        git_commits_text: str,
+        git_stats: Dict[str, Any],
+        product_label: str,
+        jira_features_text: str = "",
+        temperature: float = 0.4,
+    ) -> tuple:
+        user_prompt = build_x_posts_user_prompt(
+            days=days,
+            git_commits_text=git_commits_text,
+            git_stats=git_stats,
+            product_label=product_label,
+            jira_features_text=jira_features_text,
+        )
+        try:
+            content = self._llm_client().complete(
+                messages=[
+                    {"role": "system", "content": X_POSTS_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=1600,
+                temperature=temperature,
+            )
+        except Exception as e:
+            raise XPostsError(f"LLM request failed: {e}") from e
+        parsed = _extract_json(content)
+        newsworthy = _normalize_newsworthy(parsed.get("newsworthy"))
+        skip = bool(parsed.get("skip"))
+        reason = str(parsed.get("reason") or "").strip()
+        drafted = _normalize_tweets(parsed.get("tweets"))
+        if newsworthy and drafted:
+            skip = False
+        if not drafted and not skip:
+            skip = True
+            reason = reason or "No newsworthy user-facing changes this period."
+        return skip, reason, drafted, newsworthy
+
     def _store_or_default(self) -> DraftStore:
         if self._store is None:
             self._store = default_draft_store()
@@ -211,6 +253,7 @@ class XPostsService:
         git_stats: Dict[str, Any] = {}
         git_errors: List[Any] = []
         newsworthy: List[str] = []
+        jira_features: List[Dict[str, Any]] = []
         if forced_tweets is not None:
             skip = False
             reason = "Manual tweet override"
@@ -228,40 +271,43 @@ class XPostsService:
             )
             git_stats = git_payload.get("stats") or {}
             git_errors = git_payload.get("errors") or []
+            by_project = git_payload.get("by_project") or {}
             git_commits_text = format_commits_for_prompt(
-                git_payload.get("by_project") or {},
+                by_project,
                 stats=git_stats,
             )
             product_label = product_label_for_project_keys(resolved_keys)
+            jira_features = jira_feature_commits(
+                by_project,
+                project_keys=resolved_keys,
+            )
+            jira_features_text = format_jira_feature_commits(jira_features)
+            for key in git_stats:
+                if isinstance(git_stats.get(key), dict):
+                    git_stats[key]["jira_features"] = sum(
+                        1
+                        for c in jira_features
+                        if str(c.get("jira_key") or "").upper().startswith(f"{key}-")
+                    )
 
-            user_prompt = build_x_posts_user_prompt(
+            skip, reason, drafted, newsworthy = self._complete_x_draft(
                 days=days,
                 git_commits_text=git_commits_text,
                 git_stats=git_stats,
                 product_label=product_label,
+                jira_features_text=jira_features_text,
             )
-            try:
-                content = self._llm_client().complete(
-                    messages=[
-                        {"role": "system", "content": X_POSTS_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=1600,
-                    temperature=0.4,
+            if (skip or not drafted) and jira_features_text:
+                skip, reason, drafted, newsworthy = self._complete_x_draft(
+                    days=days,
+                    git_commits_text=jira_features_text,
+                    git_stats=git_stats,
+                    product_label=product_label,
+                    jira_features_text=jira_features_text,
+                    temperature=0.2,
                 )
-            except Exception as e:
-                raise XPostsError(f"LLM request failed: {e}") from e
-
-            parsed = _extract_json(content)
-            newsworthy = _normalize_newsworthy(parsed.get("newsworthy"))
-            skip = bool(parsed.get("skip"))
-            reason = str(parsed.get("reason") or "").strip()
-            drafted = _normalize_tweets(parsed.get("tweets"))
-            if newsworthy and drafted:
+            if drafted:
                 skip = False
-            if not drafted and not skip:
-                skip = True
-                reason = reason or "No newsworthy user-facing changes this period."
             model_name = self._model
 
         result: Dict[str, Any] = {
@@ -270,6 +316,11 @@ class XPostsService:
             "reason": reason,
             "tweets": drafted,
             "newsworthy": newsworthy,
+            "jira_features": [
+                str(c.get("jira_key") or "")
+                for c in jira_features
+                if c.get("jira_key")
+            ],
             "accounts": target_accounts,
             "days": days,
             "model": model_name,
