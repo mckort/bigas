@@ -163,7 +163,8 @@ class QAAgentService:
         for entry in planned[:5]:
             if not isinstance(entry, dict):
                 continue
-            tool_name = (entry.get("name") or "").strip()
+            raw_name = entry.get("name")
+            tool_name = raw_name.strip() if isinstance(raw_name, str) else ""
             if not tool_name:
                 continue
             arguments = entry.get("arguments")
@@ -327,13 +328,24 @@ class QAAgentService:
             summary=title,
             description_markdown=body,
         )
-        issue_key = issue.get("key") or ""
-        issue_url = issue.get("url") or ""
-        msg = (
-            f"**QA agent: new feature suggested**\n"
-            f"Tool: `{tool_name}`\n"
-            f"Jira: {issue_key} {issue_url}".strip()
-        )
+        if not issue.get("ok"):
+            error = issue.get("error") or "unknown error"
+            logger.error("Failed to create PM Jira issue for %s: %s", tool_name, error)
+            msg = (
+                f"**QA agent: new feature suggested (Jira creation failed)**\n"
+                f"Tool: `{tool_name}`\n"
+                f"Error: {error}"
+            )
+            issue_key = ""
+            issue_url = ""
+        else:
+            issue_key = issue.get("key") or ""
+            issue_url = issue.get("url") or ""
+            msg = (
+                f"**QA agent: new feature suggested**\n"
+                f"Tool: `{tool_name}`\n"
+                f"Jira: {issue_key} {issue_url}".strip()
+            )
         if pr_url:
             msg += f"\nPR: {pr_url}"
         webhook = _webhook("DISCORD_WEBHOOK_URL_PRODUCT")
@@ -486,6 +498,10 @@ class QAAgentService:
             summary=str(title),
             description_markdown=body,
         )
+        if not issue.get("ok"):
+            raise QAAgentError(
+                f"Failed to create Jira issue: {issue.get('error') or 'unknown error'}"
+            )
         issue_key = issue.get("key") or ""
         issue_url = issue.get("url") or ""
         payload["status"] = "approved"

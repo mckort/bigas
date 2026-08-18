@@ -1286,7 +1286,10 @@ def run_qa():
     """
     data = request.get_json(silent=True) or {}
     diff = data.get("diff")
-    mcp_endpoint_url = (data.get("mcp_endpoint_url") or "").strip()
+    raw_mcp_endpoint_url = data.get("mcp_endpoint_url")
+    if raw_mcp_endpoint_url is not None and not isinstance(raw_mcp_endpoint_url, str):
+        return jsonify({"error": "mcp_endpoint_url must be a string"}), 400
+    mcp_endpoint_url = (raw_mcp_endpoint_url or "").strip()
     mcp_auth_token = (data.get("mcp_auth_token") or "").strip() or None
     pr_url = (data.get("pr_url") or "").strip() or None
     llm_model = (data.get("llm_model") or "").strip() or None
