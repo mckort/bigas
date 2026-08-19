@@ -36,7 +36,8 @@ from bigas.resources.marketing.utils import (
     validate_date_range,
     validate_ga4_metrics_dimensions,
     sanitize_error_message,
-    validate_request_data
+    validate_request_data,
+    request_flag,
 )
 import requests
 from bs4 import BeautifulSoup
@@ -1093,6 +1094,16 @@ def _run_cross_platform_job(app_obj: Any, job_id: str, payload: Dict[str, Any]) 
     )
 
 
+def _run_weekly_analytics_job(app_obj: Any, job_id: str, payload: Dict[str, Any]) -> None:
+    _run_async_tool_job(
+        app_obj=app_obj,
+        job_id=job_id,
+        payload=payload,
+        tool_path="/mcp/tools/weekly_analytics_report",
+        tool_label="Weekly analytics report",
+    )
+
+
 def _run_async_tool_job(
     app_obj: Any,
     job_id: str,
@@ -1255,7 +1266,7 @@ def ask_analytics_question():
         return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
     
     # Validate request data
-    data = request.json
+    data = request.json or {}
     is_valid, error_msg = validate_request_data(data, required_fields=['question'])
     if not is_valid:
         return jsonify({"error": error_msg}), 400
@@ -1315,9 +1326,10 @@ def analyze_trends():
     if date_range not in valid_date_ranges:
         return jsonify({"error": f"Invalid date_range. Must be one of: {', '.join(valid_date_ranges)}"}), 400
     
-    # Check if Discord webhook is available (marketing channel)
+    # Check if Discord webhook is available (marketing channel).
+    # Default false so MCP/Grok chat does not spam the marketing channel.
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING") or os.environ.get("DISCORD_WEBHOOK_URL")
-    post_to_discord_enabled = webhook_url is not None
+    post_to_discord_enabled = bool(webhook_url) and request_flag(data, "post_to_discord", False)
     
     try:
         # Define time frames based on date_range parameter
@@ -1419,9 +1431,10 @@ def get_manifest():
         "tools": [
             {"name": "fetch_analytics_report", "description": "Fetches a standard Google Analytics report.", "path": "/mcp/tools/fetch_analytics_report", "method": "POST"},
             {"name": "fetch_custom_report", "description": "Fetches a custom Google Analytics report with specific dimensions and metrics.", "path": "/mcp/tools/fetch_custom_report", "method": "POST"},
-            {"name": "ask_analytics_question", "description": "Asks a question about your Google Analytics data in natural language.", "path": "/mcp/tools/ask_analytics_question", "method": "POST"},
-            {"name": "analyze_trends", "description": "Analyzes trends in your Google Analytics data over time.", "path": "/mcp/tools/analyze_trends", "method": "POST"},
-            {"name": "weekly_analytics_report", "description": "Generates a comprehensive weekly analytics report, posts it to Discord, and stores it for later analysis.", "path": "/mcp/tools/weekly_analytics_report", "method": "POST"},
+            {"name": "ask_analytics_question", "description": "Ask a natural-language question about GA4 data. Requires 'question'. Does not post to Discord.", "path": "/mcp/tools/ask_analytics_question", "method": "POST", "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "Natural-language analytics question, e.g. 'Which country had the most active users last 30 days?'"}}, "required": ["question"]}},
+            {"name": "analyze_trends", "description": "Trend analysis for a metric/date range. Set post_to_discord true to also post to the marketing Discord channel (default false).", "path": "/mcp/tools/analyze_trends", "method": "POST", "parameters": {"type": "object", "properties": {"metric": {"type": "string", "description": "Single GA4 metric, e.g. activeUsers or sessions"}, "metrics": {"type": "array", "items": {"type": "string"}, "description": "GA4 metrics (used if metric is omitted)"}, "dimensions": {"type": "array", "items": {"type": "string"}, "description": "GA4 dimensions", "default": ["country"]}, "date_range": {"type": "string", "enum": ["last_7_days", "last_30_days"], "default": "last_30_days"}, "post_to_discord": {"type": "boolean", "description": "Post the trend summary to Discord", "default": False}}}},
+            {"name": "weekly_analytics_report", "description": "Full weekly GA4 report → Discord. Slow (several minutes). For MCP clients, prefer weekly_analytics_report_async.", "path": "/mcp/tools/weekly_analytics_report", "method": "POST", "parameters": {"type": "object", "properties": {"async": {"type": "boolean", "description": "If true, return job_id immediately and run in the background", "default": False}, "timeout_seconds": {"type": "integer", "default": 600, "minimum": 10, "maximum": 900}}}},
+            {"name": "weekly_analytics_report_async", "description": "Async weekly GA4 report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/weekly_analytics_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "default": 600, "minimum": 10, "maximum": 900}}}},
             {"name": "get_stored_reports", "description": "Retrieves a list of all available stored weekly reports.", "path": "/mcp/tools/get_stored_reports", "method": "GET"},
             {"name": "get_latest_report", "description": "Retrieves the most recent weekly analytics report with summary.", "path": "/mcp/tools/get_latest_report", "method": "GET"},
             {"name": "analyze_underperforming_pages", "description": "Analyzes underperforming pages from stored reports and generates AI-powered improvement suggestions.", "path": "/mcp/tools/analyze_underperforming_pages", "method": "POST"},
@@ -5503,9 +5516,67 @@ def run_cross_platform_marketing_analysis():
 
 
 
+@marketing_bp.route('/mcp/tools/weekly_analytics_report_async', methods=['POST'])
+def weekly_analytics_report_async():
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    timeout_seconds = int(data.get("timeout_seconds") or 600)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+
+    app_obj = current_app._get_current_object()
+    access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+    request_key = (request.headers.get(access_header) or "").strip()
+    if request_key:
+        data["_internal_access_key"] = request_key
+    job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+    t = threading.Thread(
+        target=_run_weekly_analytics_job,
+        args=(app_obj, job_id, data),
+        daemon=True,
+    )
+    t.start()
+    return jsonify(
+        {
+            "status": "accepted",
+            "job_id": job_id,
+            "poll_after_seconds": 10,
+            "timeout_seconds": timeout_seconds,
+        }
+    )
+
+
 @marketing_bp.route('/mcp/tools/weekly_analytics_report', methods=['POST'])
 def weekly_analytics_report():
     import os  # Import os at function level to avoid UnboundLocalError
+
+    data = request.json or {}
+    run_async = bool(data.get("async", False)) and not bool(data.get("_internal_async_worker", False))
+    timeout_seconds = int(data.get("timeout_seconds") or 600)
+    timeout_seconds = max(10, min(timeout_seconds, 900))
+    if run_async:
+        app_obj = current_app._get_current_object()
+        access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+        request_key = (request.headers.get(access_header) or "").strip()
+        if request_key:
+            data["_internal_access_key"] = request_key
+        job_id = _create_async_job(data, timeout_seconds=timeout_seconds)
+        t = threading.Thread(
+            target=_run_weekly_analytics_job,
+            args=(app_obj, job_id, data),
+            daemon=True,
+        )
+        t.start()
+        return jsonify(
+            {
+                "status": "accepted",
+                "job_id": job_id,
+                "poll_after_seconds": 10,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
     
     # Check deployment mode
     deployment_mode = os.environ.get("DEPLOYMENT_MODE", "standalone")

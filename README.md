@@ -324,12 +324,13 @@ gcloud run services describe <your-service-name> --region=your-region --format='
 
 | Endpoint | Description |
 |---|---|
-| `POST weekly_analytics_report` | Full weekly GA4 report → Discord |
+| `POST weekly_analytics_report` | Full weekly GA4 report → Discord. Slow; use `async: true` from MCP |
+| `POST weekly_analytics_report_async` | Same report, returns `job_id` immediately — poll `get_job_status` / `get_job_result` |
 | `GET get_latest_report` | Retrieve the most recent stored report |
 | `GET get_stored_reports` | List all stored reports |
-| `POST analyze_trends` | Trend analysis for a given metric and date range |
+| `POST analyze_trends` | Trend analysis. `post_to_discord` defaults to false |
 | `POST analyze_underperforming_pages` | CRO + SEO + UX recommendations for high-traffic, low-conversion pages |
-| `POST ask_analytics_question` | Ad-hoc natural language question against your GA4 data |
+| `POST ask_analytics_question` | Ad-hoc natural language question (`question` required) |
 | `POST fetch_analytics_report` | Standard GA4 report |
 | `POST fetch_custom_report` | Custom dimensions/metrics report |
 | `POST cleanup_old_reports` | Delete reports older than N days |

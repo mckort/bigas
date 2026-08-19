@@ -17,6 +17,45 @@ import re
 
 logger = logging.getLogger(__name__)
 
+
+def extract_json_object(text: str) -> Dict[str, Any]:
+    """Parse a JSON object from LLM output, including markdown fences."""
+    t = (text or "").strip()
+    if not t:
+        return {}
+    if "```" in t:
+        if "```json" in t:
+            t = t.split("```json", 1)[1].split("```", 1)[0].strip()
+        else:
+            t = t.split("```", 1)[1].split("```", 1)[0].strip()
+    try:
+        parsed = json.loads(t)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        start = t.find("{")
+        end = t.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return {}
+        try:
+            parsed = json.loads(t[start : end + 1])
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            logger.warning("Failed to parse LLM JSON object")
+            return {}
+
+
+def request_flag(data: Dict[str, Any], key: str, default: bool) -> bool:
+    """Read a JSON boolean flag; treat missing/None as default."""
+    if not isinstance(data, dict) or key not in data or data.get(key) is None:
+        return default
+    value = data.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
 def convert_metric_name(metric_name: str) -> str:
     """Convert common metric names from snake_case to camelCase for Google Analytics API."""
     metric_mappings = {
