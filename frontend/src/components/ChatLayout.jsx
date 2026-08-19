@@ -266,14 +266,24 @@ export default function ChatLayout({ user, onLogout }) {
         if (cancelled || !res.events?.length) return
         setEvents((prev) => {
           const ids = new Set(prev.map((e) => e.id))
-          const merged = [...prev]
-          for (const e of res.events) {
-            if (!ids.has(e.id)) merged.unshift(e)
-          }
+          const incoming = res.events.filter((e) => {
+            if (!e?.id || ids.has(e.id)) return false
+            ids.add(e.id)
+            return true
+          })
+          const merged = [...incoming, ...prev]
+          merged.sort((a, b) => {
+            const timeA = a?.created_at || ''
+            const timeB = b?.created_at || ''
+            return timeA < timeB ? 1 : timeA > timeB ? -1 : 0
+          })
           return merged.slice(0, 100)
         })
-        const latest = res.events[0]
-        if (latest?.created_at) lastFeedTs.current = latest.created_at
+        const newestTs = res.events.reduce(
+          (max, e) => ((e?.created_at || '') > max ? e.created_at : max),
+          lastFeedTs.current || '',
+        )
+        if (newestTs) lastFeedTs.current = newestTs
       } catch {
         /* ignore */
       }
