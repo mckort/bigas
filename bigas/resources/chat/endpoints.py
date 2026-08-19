@@ -180,4 +180,5 @@ def serve_frontend_static(path: str):
     file_path = FRONTEND_DIST / path
     if file_path.is_file():
         return send_from_directory(FRONTEND_DIST, path)
-    return jsonify({"error": "Not found"}), 404
+    # Fallback for SPA client-side routing (e.g. /thread/123)
+    return send_from_directory(FRONTEND_DIST, "index.html")
