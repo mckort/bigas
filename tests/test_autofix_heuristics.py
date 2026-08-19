@@ -215,3 +215,24 @@ def test_auto_merge_enabled_false_values(monkeypatch):
     for value in ("false", "0", "no", "off", ""):
         monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", value)
         assert auto_merge_enabled() is False, value
+
+
+def test_autofix_skips_already_merged_pr(monkeypatch):
+    from bigas.resources.cto.autofix.service import AutofixService
+
+    class FakeGH:
+        def get_pull_request(self, *args, **kwargs):
+            return {"merged": True}
+
+        def get_pr_head_commit_meta(self, *args, **kwargs):
+            raise AssertionError("should skip before fetching head commit")
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
+        lambda token: FakeGH(),
+    )
+    result = AutofixService(cursor_api_key="c", github_token="t").run(
+        repo="owner/repo", pr_number=9
+    )
+    assert result["skipped"] is True
+    assert result["reason"] == "pr_already_merged"
