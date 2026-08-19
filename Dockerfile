@@ -21,6 +21,7 @@ ENV FLASK_APP=app.py
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV PORT=8080
 
-# Run the application with Gunicorn
-# 15 min timeout so cross-platform (LinkedIn + Reddit + GA + Meta + LLM) can finish
-CMD ["gunicorn", "--timeout", "900", "--bind", "0.0.0.0:8080", "app:create_app()"]
+# Run the application with Gunicorn.
+# gthread so a single request cannot pin the only worker (MCP clients and long reports).
+# 15 min timeout so cross-platform (LinkedIn + Reddit + GA + Meta + LLM) can finish.
+CMD ["gunicorn", "--timeout", "900", "--workers", "1", "--threads", "8", "--worker-class", "gthread", "--bind", "0.0.0.0:8080", "app:create_app()"]

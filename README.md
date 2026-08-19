@@ -18,7 +18,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [Environment variables](#environment-variables)
 - [GA4 setup](#ga4-setup)
 - [Walkthrough: from Jira card to merged PR](#walkthrough-from-jira-card-to-merged-pr)
-- [MCP / SSE endpoint](#mcp--sse-endpoint)
+- [MCP endpoint](#mcp-endpoint)
 - [API reference](#api-reference)
 - [Automating reports with Cloud Scheduler](#automating-reports-with-cloud-scheduler)
 - [Modular architecture: providers](#modular-architecture-providers)
@@ -297,14 +297,17 @@ Optional GitHub Action: `.github/workflows/qa_agent.yml` (runs on PR updates whe
 
 ---
 
-## MCP / SSE endpoint
+## MCP endpoint
 
-MCP clients (Claude, Cursor, etc.) can connect using the standard MCP-over-SSE transport:
+MCP clients (Claude, Cursor, Grok Bot, etc.) connect with Streamable HTTP (JSON-RPC over `POST /mcp`):
 
-- **GET /mcp** — Opens a long-lived Server-Sent Events stream. The server sends an initial `server/ready` event and keep-alive comments so the client maintains the connection.
-- **POST /mcp** — Accepts MCP JSON-RPC requests: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
+- **POST /mcp** — JSON-RPC: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
+- **GET /mcp** — Returns `405 Method Not Allowed`. Long-lived SSE is not used; it blocked the Cloud Run worker and is not supported by Cursor Cloud / Grok Bot.
+- **GET /.well-known/mcp.json** — Server card (public). Restricted mode still requires a key on `POST /mcp`.
 
-Tools are the same as in the HTTP API; they are listed via `tools/list` and invoked via `tools/call`. The initial GET /mcp connection is unauthenticated. When using restricted access (`BIGAS_ACCESS_MODE=restricted`), you must send your access key in the configured header (e.g. `X-Bigas-Access-Key`) or as `Authorization: Bearer <key>` on subsequent POST requests to `/mcp`.
+Tools are the same as in the HTTP API. When using restricted access (`BIGAS_ACCESS_MODE=restricted`), send your access key as `X-Bigas-Access-Key` or `Authorization: Bearer <key>` on `POST /mcp`.
+
+Cursor IDE: `~/.cursor/mcp.json` with `"type": "http"` and the access header. Grok Bot / Cloud Agents: add the same URL and header at [cursor.com/agents](https://cursor.com/agents) (they do not inherit the IDE file).
 
 ---
 
@@ -473,7 +476,7 @@ For the provider base classes and a worked example (adding QuickBooks as a finan
                                          ▼
                     ┌─────────────────────────────────────────┐
                     │      Flask app (e.g. Cloud Run)          │
-                    │  /mcp — SSE + JSON-RPC; /mcp/tools/* — HTTP │
+                    │  /mcp — JSON-RPC; /mcp/tools/* — HTTP        │
                     └────────────────┬────────────────────────┘
                     ┌───────────────┼────────────────────────┐
                     ▼               ▼                        ▼
@@ -489,7 +492,7 @@ For the provider base classes and a worked example (adding QuickBooks as a finan
               GCS Storage           Discord
 ```
 
-GCS Storage, Discord, and Google Secret Manager are optional integrations (see `env.example`). For the full service breakdown, the paid-ads orchestrator, the MCP/SSE bridge internals, and the provider registry implementation, see **[docs/architecture.md](docs/architecture.md)**.
+GCS Storage, Discord, and Google Secret Manager are optional integrations (see `env.example`). For the full service breakdown, the paid-ads orchestrator, the MCP HTTP bridge internals, and the provider registry implementation, see **[docs/architecture.md](docs/architecture.md)**.
 
 ---
 

@@ -1,8 +1,7 @@
 import os
 import json
 import logging
-import time
-from flask import Flask, jsonify, request, Response, stream_with_context
+from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 
 from bigas.registry import registry
@@ -11,7 +10,7 @@ from bigas.registry import registry
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SSE_KEEPALIVE_INTERVAL = 25
+DEFAULT_MCP_SERVER_URL = "https://mcp-marketing-343105851187.europe-north1.run.app"
 
 
 def _jsonrpc_result(request_id, result):
@@ -23,6 +22,48 @@ def _jsonrpc_error(request_id, code: int, message: str, data=None):
     if data is not None:
         err["data"] = data
     return {"jsonrpc": "2.0", "id": request_id, "error": err}
+
+
+def _unauthorized(payload):
+    """401 with WWW-Authenticate so MCP clients treat this as Bearer auth, not OAuth discovery."""
+    response = jsonify(payload)
+    response.status_code = 401
+    response.headers["WWW-Authenticate"] = 'Bearer realm="bigas-mcp"'
+    return response
+
+
+def _mcp_base_url():
+    base = (os.environ.get("SERVER_URL") or "").strip().rstrip("/")
+    if base:
+        return base
+    try:
+        return (request.host_url or "").rstrip("/")
+    except RuntimeError:
+        return DEFAULT_MCP_SERVER_URL
+
+
+def _mcp_server_card(app: Flask):
+    base = _mcp_base_url()
+    header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+    restricted = app.config.get("BIGAS_ACCESS_MODE") == "restricted"
+    return {
+        "name": "Bigas Modular AI Agent",
+        "description": "Marketing and product analytics tools for GA4, ad platforms, Jira, and Discord.",
+        "schemaVersion": "1.0",
+        "transport": {
+            "type": "http",
+            "baseUrl": base,
+            "manifestUrl": f"{base}/mcp/manifest",
+            "openapiUrl": f"{base}/openapi.json",
+        },
+        "auth": {
+            "type": "api_key",
+            "location": "header",
+            "header": header_name,
+            "optional": not restricted,
+        },
+        "tags": ["marketing", "product", "analytics"],
+    }
 
 
 def _load_access_control_config(app: Flask) -> None:
@@ -122,8 +163,17 @@ def create_app():
     except Exception as e:
         logger.warning("Provider registry discovery failed (continuing without providers): %s", e)
 
-    # Paths that should always remain public, even in restricted mode
-    public_paths = {"/", "/mcp", "/mcp/manifest", "/mcp/providers", "/.well-known/mcp.json", "/openapi.json"}
+    # Paths that should always remain public, even in restricted mode.
+    # POST /mcp still checks the access key inside the handler.
+    public_paths = {"/", "/mcp", "/mcp/manifest", "/mcp/providers", "/openapi.json"}
+
+    def _is_public_path(path: str) -> bool:
+        return (
+            path in public_paths
+            or path.startswith("/api/x-posts")
+            or path.startswith("/api/qa-proposals")
+            or path.startswith("/.well-known/")
+        )
 
     @app.before_request
     def _enforce_access_key():
@@ -136,8 +186,8 @@ def create_app():
         if mode != "restricted":
             return
 
-        # Allow health checks and manifest without a key
-        if request.path in public_paths or request.path.startswith("/api/x-posts") or request.path.startswith("/api/qa-proposals"):
+        # Allow health checks, manifest, and MCP discovery without a key
+        if _is_public_path(request.path):
             return
 
         header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
@@ -146,7 +196,7 @@ def create_app():
         provided_key = (
             request.headers.get(header_name)
             or request.args.get("access_key")
-            or (request.headers.get("Authorization") or "").replace("Bearer ", "", 1).strip()
+            or (request.headers.get("Authorization", "").replace("Bearer ", "", 1).strip() or None)
         )
         if not provided_key or provided_key not in expected_keys:
             logger.warning(
@@ -154,7 +204,7 @@ def create_app():
                 request.path,
                 header_name,
             )
-            return jsonify({"detail": "Invalid or missing access key"}), 401
+            return _unauthorized({"detail": "Invalid or missing access key"})
 
     @app.route('/', methods=['GET'])
     def health_check():
@@ -206,28 +256,24 @@ def create_app():
         }
         return jsonify(manifest)
 
-    @app.route('/mcp', methods=['GET', 'POST'])
+    register_mcp_jsonrpc_routes(app, lambda: combined_manifest().get_json() or {})
+    return app
+
+
+def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
+    """
+    Streamable HTTP MCP: POST handles JSON-RPC. GET returns 405 so clients do not
+    open a long-lived SSE stream that would block gunicorn's worker.
+    """
+
+    @app.route("/mcp", methods=["GET", "POST"])
     def mcp_endpoint():
-        """
-        MCP over SSE: GET returns a long-lived event stream; POST handles JSON-RPC
-        (initialize, notifications/initialized, tools/list, tools/call).
-        """
         if request.method == "GET":
-            def event_stream():
-                # Initial event so MCP clients see a valid SSE stream
-                yield 'data: {"jsonrpc":"2.0","method":"server/ready","params":{}}\n\n'
-                while True:
-                    time.sleep(SSE_KEEPALIVE_INTERVAL)
-                    yield ": ping\n\n"
+            response = jsonify({"error": "Method Not Allowed. Use POST /mcp for JSON-RPC."})
+            response.status_code = 405
+            response.headers["Allow"] = "POST"
+            return response
 
-            return Response(
-                stream_with_context(event_stream()),
-                mimetype="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-
-        # Local auth for /mcp itself. We keep /mcp in public_paths to support clients
-        # that cannot set custom headers during discovery and bootstrap.
         mode = app.config.get("BIGAS_ACCESS_MODE", "open")
         header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
         expected_keys = app.config.get("BIGAS_ACCESS_KEYS") or set()
@@ -238,7 +284,7 @@ def create_app():
             or (request.headers.get("Authorization", "").replace("Bearer ", "", 1).strip() or None)
         )
         if mode == "restricted" and (not provided_key or provided_key not in expected_keys):
-            return jsonify({"error": "Invalid or missing access key for /mcp"}), 401
+            return _unauthorized({"error": "Invalid or missing access key for /mcp"})
 
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
@@ -262,13 +308,12 @@ def create_app():
             )
 
         if method == "notifications/initialized":
-            # No-op; MCP clients send this after initialize. Do not return Method not found.
             if request_id is not None:
                 return jsonify(_jsonrpc_result(request_id, {}))
             return "", 204
 
         if method == "tools/list":
-            manifest = combined_manifest().get_json() or {}
+            manifest = get_manifest_json() or {}
             tools = []
             for tool in manifest.get("tools", []):
                 if not isinstance(tool, dict):
@@ -289,7 +334,7 @@ def create_app():
             if not tool_name:
                 return jsonify(_jsonrpc_error(request_id, -32602, "Missing tool name in tools/call"))
 
-            manifest = combined_manifest().get_json() or {}
+            manifest = get_manifest_json() or {}
             manifest_tools = manifest.get("tools", [])
             selected = next((t for t in manifest_tools if isinstance(t, dict) and t.get("name") == tool_name), None)
             if not selected:
@@ -327,22 +372,16 @@ def create_app():
 
         return jsonify(_jsonrpc_error(request_id, -32601, f"Method not found: {method}")), 404
 
-    @app.route('/.well-known/mcp.json', methods=['GET'])
+    @app.route("/.well-known/mcp.json", methods=["GET"])
     def well_known_mcp():
-        """
-        Expose the MCP server card at the standard well-known location.
-        """
-        try:
-            base_dir = os.path.dirname(__file__)
-            card_path = os.path.join(base_dir, "mcp.json")
-            with open(card_path, "r", encoding="utf-8") as f:
-                card = json.load(f)
-            return jsonify(card)
-        except Exception as exc:
-            logger.error("Failed to load MCP server card: %s", exc)
-            return jsonify({"error": "MCP server card not available"}), 500
+        """Expose the MCP server card at the standard well-known location."""
+        return jsonify(_mcp_server_card(app))
 
-    return app
+    @app.route("/.well-known/oauth-authorization-server", methods=["GET"])
+    @app.route("/.well-known/oauth-protected-resource", methods=["GET"])
+    def oauth_not_configured():
+        """Bigas uses a static access key, not OAuth. Return 404 instead of 401."""
+        return jsonify({"error": "oauth_not_supported"}), 404
 
 if __name__ == '__main__':
     app = create_app()
