@@ -79,19 +79,48 @@ def authenticate_request() -> Tuple[Optional[Dict[str, Any]], Optional[Any]]:
         user = verify_dev_token(token)
     if not user:
         return None, (jsonify({"error": "Invalid or expired token"}), 401)
+    if not is_chat_allowed(user):
+        return None, (
+            jsonify({"error": "This account is not allowed to use Bigas chat."}),
+            403,
+        )
     return user, None
+
+
+def _parse_email_list(raw: str) -> set[str]:
+    return {email.strip().lower() for email in (raw or "").split(",") if email.strip()}
+
+
+def chat_allowed_emails() -> set[str]:
+    """Emails permitted to use chat. Empty set means no allowlist (open)."""
+    explicit = _parse_email_list(os.environ.get("CHAT_ALLOWED_EMAILS") or "")
+    if explicit:
+        return explicit
+    # Fall back to admin list so a production Firebase deploy with only
+    # CHAT_ADMIN_EMAILS set is not left open to any Google account.
+    return _parse_email_list(os.environ.get("CHAT_ADMIN_EMAILS") or "")
 
 
 def chat_admin_emails() -> set[str]:
     raw = (os.environ.get("CHAT_ADMIN_EMAILS") or "").strip()
     if not raw and chat_auth_mode() == "dev":
         return {"dev@bigas.local"}
-    return {email.strip().lower() for email in raw.split(",") if email.strip()}
+    return _parse_email_list(raw)
 
 
 def is_chat_admin(user: Dict[str, Any]) -> bool:
     email = (user.get("email") or "").strip().lower()
     return bool(email) and email in chat_admin_emails()
+
+
+def is_chat_allowed(user: Dict[str, Any]) -> bool:
+    if chat_auth_mode() != "firebase":
+        return True
+    allowed = chat_allowed_emails()
+    if not allowed:
+        return True
+    email = (user.get("email") or "").strip().lower()
+    return bool(email) and email in allowed
 
 
 def require_chat_auth(view: Callable):

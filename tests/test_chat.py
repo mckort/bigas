@@ -168,6 +168,27 @@ def test_chat_callback(client):
     assert any("Async task complete" in m["content"] for m in messages)
 
 
+def test_humanize_tool_result_unwraps_answer_json():
+    from bigas.agents.chief_of_staff import humanize_tool_result
+
+    raw = json.dumps(
+        {
+            "answer": "Over the last 7 days, your website experienced very light traffic.\n\n* Busiest day: August 14th"
+        }
+    )
+    out = humanize_tool_result(raw)
+    assert out.startswith("Over the last 7 days")
+    assert "Busiest day" in out
+    assert not out.startswith("{")
+
+
+def test_humanize_tool_result_unwraps_error_after_prefix():
+    from bigas.agents.chief_of_staff import humanize_tool_result
+
+    raw = 'Tool ask_analytics_question failed:\n{"error": "No GA4 data returned"}'
+    assert humanize_tool_result(raw) == "No GA4 data returned"
+
+
 def test_discord_mirror_activity():
     from bigas.chat.db import get_chat_store
     from bigas.chat.activity import mirror_discord_message

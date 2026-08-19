@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { loginEmail, loginGoogle, isDevMode } from '../lib/auth'
+import { loginEmail, loginGoogle, logout, isDevMode } from '../lib/auth'
+import { verifyAuth } from '../lib/api'
 
 export default function Login({ onLoggedIn }) {
   const [email, setEmail] = useState('')
@@ -8,14 +9,20 @@ export default function Login({ onLoggedIn }) {
   const [loading, setLoading] = useState(false)
   const dev = isDevMode()
 
+  async function finishLogin() {
+    await verifyAuth()
+    onLoggedIn()
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
       await loginEmail(email, password)
-      onLoggedIn()
+      await finishLogin()
     } catch (err) {
+      logout()
       setError(err.message || 'Login failed')
     } finally {
       setLoading(false)
@@ -27,8 +34,9 @@ export default function Login({ onLoggedIn }) {
     setLoading(true)
     try {
       await loginGoogle()
-      onLoggedIn()
+      await finishLogin()
     } catch (err) {
+      logout()
       setError(err.message || 'Google login failed')
     } finally {
       setLoading(false)

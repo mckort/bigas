@@ -29,7 +29,15 @@ export default function AgentSidebar({ agents, activeAgentId, onSelectAgent, onO
                   : 'hover:bg-bg border border-transparent'
               }`}
             >
-              <span className="text-2xl">{agent.icon || '🤖'}</span>
+              <span
+                className={
+                  (agent.icon || '').includes('<')
+                    ? 'font-mono text-xs font-semibold tracking-tight w-8 text-center'
+                    : 'text-2xl'
+                }
+              >
+                {agent.icon || '🤖'}
+              </span>
               <div className="min-w-0">
                 <div className="font-medium truncate">{agent.name}</div>
                 <div className="text-xs text-muted truncate">{agent.agent_id}</div>

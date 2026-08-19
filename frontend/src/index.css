@@ -34,3 +34,33 @@ body {
   font-family: ui-monospace, monospace;
   font-size: 0.9em;
 }
+
+.typing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: #8b98a5;
+  display: inline-block;
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typing-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}

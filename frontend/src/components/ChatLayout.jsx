@@ -12,6 +12,29 @@ import {
 } from '../lib/api'
 import { logout } from '../lib/auth'
 
+function humanizeChatContent(content) {
+  const text = (content || '').trim()
+  if (!text) return content || ''
+  let blob = text
+  if (!text.startsWith('{') && !text.startsWith('[')) {
+    const idx = text.indexOf('\n{')
+    if (idx === -1) return content
+    blob = text.slice(idx + 1).trim()
+  }
+  try {
+    const parsed = JSON.parse(blob)
+    if (parsed && typeof parsed === 'object') {
+      for (const key of ['answer', 'text', 'message', 'summary', 'content', 'report']) {
+        if (typeof parsed[key] === 'string' && parsed[key].trim()) return parsed[key].trim()
+      }
+      if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error.trim()
+    }
+  } catch {
+    /* keep original */
+  }
+  return content
+}
+
 function MessageBubble({ message, agentIcon }) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
@@ -20,7 +43,11 @@ function MessageBubble({ message, agentIcon }) {
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       {!isUser && (
         <div className="flex-shrink-0 w-9 h-9 rounded-full bg-surface border border-border flex items-center justify-center text-lg">
-          {isSystem ? '⏳' : agentIcon}
+          {isSystem ? '⏳' : (
+            <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : ''}>
+              {agentIcon}
+            </span>
+          )}
         </div>
       )}
       <div
@@ -33,11 +60,37 @@ function MessageBubble({ message, agentIcon }) {
         }`}
       >
         <div className="markdown-body text-sm sm:text-base break-words">
-          <ReactMarkdown>{message.content}</ReactMarkdown>
+          <ReactMarkdown>{humanizeChatContent(message.content)}</ReactMarkdown>
         </div>
       </div>
     </div>
   )
+}
+
+function TypingIndicator({ agentName, agentIcon }) {
+  return (
+    <div className="flex gap-3 items-end" aria-live="polite" aria-label={`${agentName} is typing`}>
+      <div className="flex-shrink-0 w-9 h-9 rounded-full bg-surface border border-border flex items-center justify-center text-lg">
+        <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : ''}>
+          {agentIcon}
+        </span>
+      </div>
+      <div className="bg-surface border border-border rounded-2xl px-4 py-3">
+        <div className="flex items-center gap-1.5 h-5">
+          <span className="typing-dot" />
+          <span className="typing-dot" />
+          <span className="typing-dot" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function lastMessageIsInProgress(messages) {
+  const last = messages[messages.length - 1]
+  if (!last) return false
+  if (last.role === 'system') return true
+  return last.metadata?.status === 'in_progress'
 }
 
 export default function ChatLayout({ user, onLogout }) {
@@ -47,6 +100,7 @@ export default function ChatLayout({ user, onLogout }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [waitingForReply, setWaitingForReply] = useState(false)
   const [events, setEvents] = useState([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
@@ -66,6 +120,7 @@ export default function ChatLayout({ user, onLogout }) {
     const res = await createThread(agentId)
     setThreadId(res.thread.thread_id)
     setMessages([])
+    setWaitingForReply(false)
     lastMsgTs.current = ''
   }, [])
 
@@ -77,9 +132,11 @@ export default function ChatLayout({ user, onLogout }) {
     startThread(activeAgentId)
   }, [activeAgentId, startThread])
 
+  const showTyping = waitingForReply || lastMessageIsInProgress(messages)
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, showTyping])
 
   // Poll messages
   useEffect(() => {
@@ -101,18 +158,22 @@ export default function ChatLayout({ user, onLogout }) {
         })
         const latest = res.messages[res.messages.length - 1]
         if (latest?.created_at) lastMsgTs.current = latest.created_at
+        const newest = res.messages[res.messages.length - 1]
+        if (newest?.role === 'assistant' && newest.metadata?.status !== 'in_progress') {
+          setWaitingForReply(false)
+        }
       } catch {
         /* ignore poll errors */
       }
     }
 
     poll()
-    const id = setInterval(poll, 3000)
+    const id = setInterval(poll, showTyping ? 1000 : 3000)
     return () => {
       cancelled = true
       clearInterval(id)
     }
-  }, [threadId])
+  }, [threadId, showTyping])
 
   // Poll activity feed
   useEffect(() => {
@@ -151,16 +212,30 @@ export default function ChatLayout({ user, onLogout }) {
     if (!text || !threadId || sending) return
     setInput('')
     setSending(true)
+    setWaitingForReply(true)
+    const optimistic = {
+      message_id: `local-${Date.now()}`,
+      role: 'user',
+      content: text,
+      created_at: new Date().toISOString(),
+    }
+    setMessages((prev) => [...prev, optimistic])
     try {
-      await sendMessage(threadId, text)
+      const result = await sendMessage(threadId, text)
       const res = await fetchMessages(threadId)
-      setMessages(res.messages || [])
-      if (res.messages?.length) {
-        lastMsgTs.current = res.messages[res.messages.length - 1].created_at
+      const next = res.messages || []
+      setMessages(next)
+      if (next.length) {
+        lastMsgTs.current = next[next.length - 1].created_at
       }
+      const done =
+        result.status !== 'in_progress' && !lastMessageIsInProgress(next)
+      if (done) setWaitingForReply(false)
     } catch (err) {
+      setWaitingForReply(false)
       setMessages((prev) => [
-        ...prev,
+        ...prev.filter((m) => m.message_id !== optimistic.message_id),
+        optimistic,
         {
           message_id: `err-${Date.now()}`,
           role: 'assistant',
@@ -201,7 +276,9 @@ export default function ChatLayout({ user, onLogout }) {
           <span className="text-2xl">{activeAgent.icon}</span>
           <div className="flex-1 min-w-0">
             <h1 className="font-semibold truncate">{activeAgent.name}</h1>
-            <p className="text-xs text-muted truncate">{user?.email}</p>
+            <p className="text-xs text-muted truncate">
+              {showTyping ? `${activeAgent.name} is typing…` : user?.email}
+            </p>
           </div>
           <button
             className="lg:hidden text-sm text-muted px-2"
@@ -215,7 +292,7 @@ export default function ChatLayout({ user, onLogout }) {
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {messages.length === 0 && (
+          {messages.length === 0 && !showTyping && (
             <div className="text-center text-muted py-16 px-4">
               <p className="text-4xl mb-4">{activeAgent.icon}</p>
               <p className="text-lg font-medium text-text mb-2">Chat with {activeAgent.name}</p>
@@ -227,17 +304,24 @@ export default function ChatLayout({ user, onLogout }) {
           {messages.map((m) => (
             <MessageBubble key={m.message_id} message={m} agentIcon={activeAgent.icon} />
           ))}
+          {showTyping && (
+            <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />
+          )}
           <div ref={bottomRef} />
         </div>
 
         <form onSubmit={handleSend} className="p-3 sm:p-4 border-t border-border bg-surface">
+          {showTyping && (
+            <p className="text-xs text-muted max-w-4xl mx-auto mb-2 px-1">
+              <span className="text-accent">{activeAgent.name}</span> is typing…
+            </p>
+          )}
           <div className="flex gap-2 max-w-4xl mx-auto">
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={`Message ${activeAgent.name}…`}
               className="flex-1 bg-bg border border-border rounded-full px-4 py-3 text-sm sm:text-base min-w-0"
-              disabled={sending}
             />
             <button
               type="submit"

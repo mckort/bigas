@@ -13,7 +13,8 @@ DEFAULT_AGENTS = [
         "name": "Chief of Staff",
         "icon": "👔",
         "system_prompt_goals": (
-            "You are the Chief of Staff for Bigas. You coordinate the virtual AI team, "
+            "You are the Chief of Staff for Bigas. You coordinate the virtual AI team across "
+            "all Jira projects and GitHub repos in the portfolio (VFA, WAYW, BIG, REM, GPWW, FYDA, MYL), "
             "answer general questions directly, and delegate domain-specific work to "
             "Marketing, Product, or CTO specialists when appropriate. Monitor task progress "
             "and summarize results clearly for the user."
@@ -24,29 +25,38 @@ DEFAULT_AGENTS = [
         "name": "Marketing Analyst",
         "icon": "📊",
         "system_prompt_goals": (
-            "You are the Senior Marketing Analyst for Bigas. Your goals include GA4 analytics, "
+            "You are the Senior Marketing Analyst for Bigas. Your goals include GA4 analytics "
+            "for each site that has a property in BIGAS_GA4_PROPERTY_MAP (Green Promo Wear / GPWW "
+            "is configured by default; other brands need their own property IDs), "
             "paid ads reporting across Google/Meta/LinkedIn/Reddit, trend analysis, and "
-            "cross-platform marketing insights. Use available analytics tools to answer questions."
+            "cross-platform marketing insights. Always pass project_key when the user names a brand. "
+            "Use available analytics tools to answer questions."
         ),
     },
     {
         "agent_id": "product",
         "name": "Product Manager",
-        "icon": "📋",
+        "icon": "🧠",
         "system_prompt_goals": (
-            "You are the Product Manager for Bigas. Your goals include Jira automation, "
-            "release notes, progress updates, and social content drafts. Help with product "
-            "planning, issue tracking, and team communication."
+            "You are the Product Manager for Bigas. You cover every Jira board in the portfolio "
+            "(VFA, WAYW, BIG, REM, GPWW, FYDA, MYL) and the mapped GitHub repos. "
+            "Your goals include Jira automation, release notes, progress updates, and social content drafts. "
+            "Help with product planning, issue tracking, and team communication. "
+            "When the user wants new development work, tell them to create or drag a Jira card "
+            "in the matching project so Bigas can research, plan, and open a PR."
         ),
     },
     {
         "agent_id": "cto",
         "name": "CTO",
-        "icon": "⚙️",
+        "icon": "</>",
         "system_prompt_goals": (
-            "You are the CTO for Bigas. Your goals include GitHub PR review, autofix workflows, "
-            "QA automation, AI usage reporting, and website monitoring. Focus on code quality, "
-            "engineering operations, and technical leadership."
+            "You are the CTO for Bigas. You review and improve code across all mapped GitHub repos "
+            "(vcfieldassistant, roadpal, bigas, remotebrief, greenpromowear-website, "
+            "fulfillyourdreamadventure, mylifesdeed). "
+            "Your goals include GitHub PR review, autofix workflows, AI usage reporting, and website monitoring. "
+            "For an existing PR, call review_and_comment_pr with the PR URL. "
+            "Focus on code quality, engineering operations, and technical leadership."
         ),
     },
 ]
@@ -73,6 +83,8 @@ class MemoryChatStore:
                 aid = agent["agent_id"]
                 if aid not in self._agents:
                     self._agents[aid] = {**agent, "updated_at": _utcnow_iso()}
+                else:
+                    self._agents[aid]["icon"] = agent["icon"]
 
     def upsert_user(self, uid: str, email: str) -> Dict[str, Any]:
         with self._lock:
@@ -200,8 +212,13 @@ class FirestoreChatStore:
     def seed_agents(self) -> None:
         for agent in DEFAULT_AGENTS:
             doc = self._agents.document(agent["agent_id"])
-            if not doc.get().exists:
+            snap = doc.get()
+            if not snap.exists:
                 doc.set({**agent, "updated_at": _utcnow_iso()})
+                continue
+            existing_icon = (snap.to_dict() or {}).get("icon")
+            if existing_icon != agent["icon"]:
+                doc.update({"icon": agent["icon"]})
 
     def upsert_user(self, uid: str, email: str) -> Dict[str, Any]:
         doc = self._users.document(uid)
