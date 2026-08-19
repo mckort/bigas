@@ -43,6 +43,12 @@ def post_to_discord(webhook_url: Optional[str], message: str) -> bool:
             )
             if response.status_code == 204:
                 logger.info("Successfully posted to Discord")
+                try:
+                    from bigas.chat.activity import mirror_discord_message
+
+                    mirror_discord_message(webhook_url, message)
+                except Exception:
+                    pass
                 return True
             if response.status_code == 429:
                 retry_after = 1.0
