@@ -9,7 +9,7 @@ Bigas is built as a **modular monolith** with a service-oriented architecture:
 ```text
 +--------------------------+
 |         Clients          |
-|  - MCP client (SSE+RPC)  |
+|  - MCP client (HTTP RPC) |
 |  - Manual User (curl)    |
 |  - Google Cloud Scheduler|
 +--------------------------+
@@ -25,7 +25,7 @@ Bigas is built as a **modular monolith** with a service-oriented architecture:
 |  Bigas Platform (app.py - Flask App)            |
 |                                                 |
 | +---------------------------------------------+ |
-| | /mcp — MCP over SSE (GET stream, POST RPC)  | |
+| | /mcp — Streamable HTTP MCP (POST JSON-RPC)  | |
 | | /mcp/tools/* — HTTP tool endpoints          | |
 | | API Gateway / Router                        | |
 | +---------------------------------------------+ |
@@ -116,14 +116,15 @@ At a high level:
 - **Summaries** are generated via a shared `AD_SUMMARY_PROMPTS` registry, so each platform + report type gets a consistent, opinionated analysis, including a dedicated prompt for cross-platform budget recommendations (portfolio overview, key segments, underperformers, concrete next steps).
 - **Output** is posted to Discord for marketing stakeholders.
 
-## MCP bridge and SSE transport
+## MCP bridge (Streamable HTTP)
 
-The `/mcp` endpoint in `app.py` implements MCP-over-SSE for compatibility with standard MCP clients (e.g. Claude Desktop, Cursor):
+The `/mcp` endpoint in `app.py` implements Streamable HTTP MCP for Cursor, Claude, and Grok Bot / Cloud Agents:
 
-- **GET /mcp** returns a long-lived `text/event-stream` response: an initial `server/ready` JSON-RPC notification, then keep-alive comments so proxies and clients keep the connection open.
 - **POST /mcp** accepts JSON-RPC 2.0 requests: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. The handler builds the combined tool manifest and, for `tools/call`, dispatches to the corresponding `/mcp/tools/*` route via the Flask test client. Tool responses are returned as MCP result content.
+- **GET /mcp** returns `405 Method Not Allowed`. Optional GET SSE is omitted on purpose: a long-lived stream pinned gunicorn's single worker, and Cursor Cloud Agents do not support SSE.
+- **GET /.well-known/mcp.json** is public. OAuth discovery URLs under `/.well-known/oauth-*` return 404 (Bigas uses a static access key, not OAuth).
 
-Access control (`BIGAS_ACCESS_MODE`, `BIGAS_ACCESS_KEYS`) applies to POST `/mcp`; GET `/mcp` is in the public paths set so clients can establish the SSE connection before sending credentials on the first JSON-RPC request.
+Access control (`BIGAS_ACCESS_MODE`, `BIGAS_ACCESS_KEYS`) applies to POST `/mcp`. Clients send `X-Bigas-Access-Key` or `Authorization: Bearer <key>`. A 401 includes `WWW-Authenticate: Bearer`.
 
 ### Caching (ads reports)
 

@@ -29,7 +29,6 @@ requirements-dev.txt
 docs/
 assets/
 CONTRIBUTING.md
-mcp.json
 create_release_notes
 edit
 load_env.sh
