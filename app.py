@@ -196,7 +196,7 @@ def create_app():
         provided_key = (
             request.headers.get(header_name)
             or request.args.get("access_key")
-            or (request.headers.get("Authorization") or "").replace("Bearer ", "", 1).strip()
+            or (request.headers.get("Authorization", "").replace("Bearer ", "", 1).strip() or None)
         )
         if not provided_key or provided_key not in expected_keys:
             logger.warning(
