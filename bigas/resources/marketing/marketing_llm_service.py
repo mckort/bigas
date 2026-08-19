@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, Any
 import json
 import logging
-from bigas.resources.marketing.utils import generate_basic_analysis
+from bigas.resources.marketing.utils import extract_json_object, generate_basic_analysis
 from bigas.llm.factory import get_llm_client
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,9 @@ class MarketingLLMService:
         
         IMPORTANT: GA4 has compatibility restrictions between metrics and dimensions. Use the recommended combinations above to avoid "incompatible" errors. If you encounter compatibility issues, try using fewer dimensions or different metric combinations.
         
-        Only include fields that are relevant to the question. Use standard Google Analytics 4 metric and dimension names without the 'ga:' prefix."""
+        Only include fields that are relevant to the question. Use standard Google Analytics 4 metric and dimension names without the 'ga:' prefix.
+        
+        Reply with a single JSON object only. No markdown fences, no commentary."""
         
         response = self._llm.complete(
             messages=[
@@ -123,12 +125,10 @@ class MarketingLLMService:
             max_tokens=2000,
         )
         
-        try:
-            query_params = json.loads(response)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"Raw response: {response}")
-            raise ValueError(f"LLM failed to parse query into valid JSON: {e}")
+        query_params = extract_json_object(response)
+        if query_params is None:
+            logger.error("Failed to parse LLM response as JSON. Raw response: %s", response)
+            raise ValueError("LLM failed to parse query into valid JSON")
         
         # Ensure we have date dimension for trends
         if "dimensions" not in query_params:
