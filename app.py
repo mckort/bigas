@@ -179,6 +179,10 @@ def create_app():
             or path == "/"
             or path.startswith("/api/x-posts")
             or path.startswith("/api/qa-proposals")
+            or path.startswith("/api/chat/")
+            or path.startswith("/api/agents")
+            or path.startswith("/api/feed")
+            or path.startswith("/api/auth/")
             or path.startswith("/assets/")
             or path.startswith("/.well-known/")
         )
@@ -218,17 +222,6 @@ def create_app():
     def health_check():
         """Health check endpoint for Cloud Run startup probes."""
         return jsonify({"status": "healthy", "service": "bigas-core"})
-
-    @app.route('/', methods=['GET'])
-    def root():
-        """Root: serve chat SPA when built, otherwise health JSON."""
-        from pathlib import Path
-        from flask import send_from_directory
-
-        dist = Path(__file__).resolve().parent / "frontend" / "dist"
-        if dist.is_dir() and (dist / "index.html").is_file():
-            return send_from_directory(dist, "index.html")
-        return jsonify({"status": "healthy", "service": "bigas-core", "chat": "build frontend to enable UI"})
 
     @app.route("/mcp/providers", methods=["GET"])
     def providers_status():

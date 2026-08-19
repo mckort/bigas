@@ -8,7 +8,7 @@ from pathlib import Path
 from flask import Blueprint, g, jsonify, request, send_from_directory
 
 from bigas.agents.chief_of_staff import handle_chat_message, post_agent_callback
-from bigas.chat.auth import require_chat_auth, verify_callback_secret
+from bigas.chat.auth import is_chat_admin, require_chat_auth, verify_callback_secret
 from bigas.chat.db import get_chat_store
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,8 @@ def list_agents():
 @chat_bp.route("/api/agents/<agent_id>", methods=["PUT"])
 @require_chat_auth
 def update_agent(agent_id: str):
+    if not is_chat_admin(g.chat_user):
+        return jsonify({"error": "Admin access required to update agent configuration"}), 403
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()
     goals = (body.get("system_prompt_goals") or "").strip()
@@ -144,10 +146,9 @@ def activity_feed():
     return jsonify({"events": events})
 
 
-@chat_bp.route("/", defaults={"path": ""})
-@chat_bp.route("/<path:path>")
-def serve_frontend(path: str):
-    """Serve the React SPA when built; fall back to API-only message."""
+@chat_bp.route("/")
+def serve_frontend_root():
+    """Serve the React SPA entrypoint when built; fall back to API-only message."""
     if not FRONTEND_DIST.is_dir():
         return jsonify(
             {
@@ -155,6 +156,28 @@ def serve_frontend(path: str):
                 "message": "Chat API is available at /api/*. Build frontend with `cd frontend && npm run build`.",
             }
         )
-    if path and (FRONTEND_DIST / path).is_file():
-        return send_from_directory(FRONTEND_DIST, path)
     return send_from_directory(FRONTEND_DIST, "index.html")
+
+
+@chat_bp.route("/assets/<path:path>")
+def serve_frontend_assets(path: str):
+    """Serve built frontend static assets."""
+    if not FRONTEND_DIST.is_dir():
+        return jsonify({"error": "Not found"}), 404
+    asset_path = FRONTEND_DIST / "assets" / path
+    if not asset_path.is_file():
+        return jsonify({"error": "Not found"}), 404
+    return send_from_directory(FRONTEND_DIST / "assets", path)
+
+
+@chat_bp.route("/<path:path>")
+def serve_frontend_static(path: str):
+    """Serve other built frontend files; never swallow API or MCP routes."""
+    if path.startswith(("api/", "mcp/", ".well-known/")):
+        return jsonify({"error": "Not found"}), 404
+    if not FRONTEND_DIST.is_dir():
+        return jsonify({"error": "Not found"}), 404
+    file_path = FRONTEND_DIST / path
+    if file_path.is_file():
+        return send_from_directory(FRONTEND_DIST, path)
+    return jsonify({"error": "Not found"}), 404
