@@ -23,7 +23,7 @@ jobs:
       continue: ${{ steps.gate.outputs.continue }}
     steps:
       - name: Checkout PR head
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
@@ -59,7 +59,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -234,7 +234,7 @@ jobs:
                       time.sleep(sleep_s)
                       continue
                   if code != 200:
-                      err = str((last or {}).get("error") or last)
+                      err = str(last.get("error") if isinstance(last, dict) else last)
                       if code == 404 or "already merged" in err.lower():
                           print(
                               f"autofix_followup skipped after merge "
@@ -255,7 +255,7 @@ jobs:
               code, final = call("autofix_followup", finalize_payload, timeout=300)
               print(f"finalize: HTTP {code} {json.dumps(final)[:1500]}")
               if code != 200:
-                  err = str((final or {}).get("error") or final)
+                  err = str(final.get("error") if isinstance(final, dict) else final)
                   if code == 404 or "already merged" in err.lower():
                       print(f"autofix_followup finalize skipped after merge (HTTP {code})")
                       return {"skipped": True, "reason": "pr_already_merged"}
@@ -291,7 +291,7 @@ jobs:
               )
               print(f"autofix_pr HTTP {code}: {json.dumps(data)[:800]}")
               if code != 200:
-                  err = str((data or {}).get("error") or data)
+                  err = str(data.get("error") if isinstance(data, dict) else data)
                   if (
                       code == 404
                       or "already merged" in err.lower()
