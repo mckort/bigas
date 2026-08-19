@@ -48,6 +48,7 @@ def get_llm_client(
         "jira_design": "BIGAS_JIRA_DESIGN_MODEL",
         "x_posts": "BIGAS_X_POSTS_MODEL",
         "qa_agent": "BIGAS_QA_AGENT_MODEL",
+        "chat": "BIGAS_CHAT_MODEL",
     }
     feature_env = feature_env_map.get(feature)
 

@@ -211,7 +211,11 @@ fi
 IMAGE="europe-north1-docker.pkg.dev/$GOOGLE_PROJECT_ID/$DOCKER_REPO/$IMAGE_NAME:$IMAGE_TAG"
 
 echo "🔨 Building Docker image..."
-docker build -t $IMAGE_NAME:$IMAGE_TAG .
+docker build \
+  --build-arg VITE_FIREBASE_API_KEY="${VITE_FIREBASE_API_KEY:-}" \
+  --build-arg VITE_FIREBASE_AUTH_DOMAIN="${VITE_FIREBASE_AUTH_DOMAIN:-}" \
+  --build-arg VITE_FIREBASE_PROJECT_ID="${VITE_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID:-}}" \
+  -t $IMAGE_NAME:$IMAGE_TAG .
 docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE
 
 echo "📤 Pushing image to Google Container Registry..."
@@ -267,6 +271,16 @@ trap "rm -f $ENV_VARS_FILE" EXIT
   [ -n "$SECRET_MANAGER_SECRET_NAMES" ] && echo "SECRET_MANAGER_SECRET_NAMES: \"$SECRET_MANAGER_SECRET_NAMES\""
   [ -n "$GOOGLE_PROJECT_ID" ] && echo "GOOGLE_PROJECT_ID: \"$GOOGLE_PROJECT_ID\""
   [ -n "$SERVER_URL" ] && echo "SERVER_URL: \"$SERVER_URL\""
+  echo "CHAT_ENABLED: \"${CHAT_ENABLED:-true}\""
+  [ -n "$CHAT_STORAGE_MODE" ] && echo "CHAT_STORAGE_MODE: \"$CHAT_STORAGE_MODE\""
+  [ -n "$CHAT_AUTH_MODE" ] && echo "CHAT_AUTH_MODE: \"$CHAT_AUTH_MODE\""
+  [ -n "$CHAT_DEV_TOKEN" ] && echo "CHAT_DEV_TOKEN: \"$CHAT_DEV_TOKEN\""
+  [ -n "$FIREBASE_PROJECT_ID" ] && echo "FIREBASE_PROJECT_ID: \"$FIREBASE_PROJECT_ID\""
+  [ -n "$FIREBASE_WEB_API_KEY" ] && echo "FIREBASE_WEB_API_KEY: \"$FIREBASE_WEB_API_KEY\""
+  [ -n "$VITE_FIREBASE_API_KEY" ] && echo "VITE_FIREBASE_API_KEY: \"$VITE_FIREBASE_API_KEY\""
+  [ -n "$VITE_FIREBASE_AUTH_DOMAIN" ] && echo "VITE_FIREBASE_AUTH_DOMAIN: \"$VITE_FIREBASE_AUTH_DOMAIN\""
+  [ -n "$VITE_FIREBASE_PROJECT_ID" ] && echo "VITE_FIREBASE_PROJECT_ID: \"$VITE_FIREBASE_PROJECT_ID\""
+  [ -n "$BIGAS_CHAT_MODEL" ] && echo "BIGAS_CHAT_MODEL: \"$BIGAS_CHAT_MODEL\""
 } >> "$ENV_VARS_FILE"
 
 # 900s (15 min) request timeout for sync cross-platform report; use *_async endpoints for longer runs

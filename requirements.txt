@@ -25,4 +25,8 @@ google-cloud-secret-manager==2.16.0
 beautifulsoup4==4.12.2
 
 # X (Twitter) API v2 posting
-tweepy>=4.14.0 
+tweepy>=4.14.0
+
+# Chat interface (Firebase Auth + Firestore)
+firebase-admin>=6.5.0
+google-cloud-firestore>=2.16.0 

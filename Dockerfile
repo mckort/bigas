@@ -1,27 +1,33 @@
-# Use an official Python runtime as a parent image
+# Stage 1: Build frontend
+FROM node:20-slim AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+COPY frontend/ ./
+ARG VITE_FIREBASE_API_KEY
+ARG VITE_FIREBASE_AUTH_DOMAIN
+ARG VITE_FIREBASE_PROJECT_ID
+ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY
+ENV VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN
+ENV VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID
+RUN npm run build
+
+# Stage 2: Python application
 FROM --platform=linux/amd64 python:3.10-slim
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
 COPY requirements.txt .
-
-# Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application's code into the container
 COPY . .
+COPY --from=frontend-build /frontend/dist ./frontend/dist
 
-# Make port 8080 available to the world outside this container
 EXPOSE 8080
 
-# Define environment variable
 ENV FLASK_APP=app.py
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV PORT=8080
+ENV CHAT_ENABLED=true
 
-# Run the application with Gunicorn.
-# gthread so a single request cannot pin the only worker (MCP clients and long reports).
-# 15 min timeout so cross-platform (LinkedIn + Reddit + GA + Meta + LLM) can finish.
 CMD ["gunicorn", "--timeout", "900", "--workers", "1", "--threads", "8", "--worker-class", "gthread", "--bind", "0.0.0.0:8080", "app:create_app()"]

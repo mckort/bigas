@@ -151,6 +151,12 @@ def create_app():
         app.register_blueprint(qa_proposals_bp)
         app.register_blueprint(cto_bp)
 
+        if os.environ.get("CHAT_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+            from bigas.resources.chat.endpoints import chat_bp
+
+            app.register_blueprint(chat_bp)
+            logger.info("Registered chat blueprint.")
+
         logger.info("Registered marketing blueprint.")
         logger.info("Registered product blueprint.")
         logger.info("Registered X-post approval blueprint.")
@@ -165,13 +171,19 @@ def create_app():
 
     # Paths that should always remain public, even in restricted mode.
     # POST /mcp still checks the access key inside the handler.
-    public_paths = {"/", "/mcp", "/mcp/manifest", "/mcp/providers", "/openapi.json"}
+    public_paths = {"/health", "/mcp", "/mcp/manifest", "/mcp/providers", "/openapi.json", "/api/auth/config"}
 
     def _is_public_path(path: str) -> bool:
         return (
             path in public_paths
+            or path == "/"
             or path.startswith("/api/x-posts")
             or path.startswith("/api/qa-proposals")
+            or path.startswith("/api/chat/")
+            or path.startswith("/api/agents")
+            or path.startswith("/api/feed")
+            or path.startswith("/api/auth/")
+            or path.startswith("/assets/")
             or path.startswith("/.well-known/")
         )
 
@@ -206,7 +218,7 @@ def create_app():
             )
             return _unauthorized({"detail": "Invalid or missing access key"})
 
-    @app.route('/', methods=['GET'])
+    @app.route('/health', methods=['GET'])
     def health_check():
         """Health check endpoint for Cloud Run startup probes."""
         return jsonify({"status": "healthy", "service": "bigas-core"})

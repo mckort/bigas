@@ -172,3 +172,33 @@ Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_r
 ## Secret Manager (optional)
 
 When `SECRET_MANAGER=true`, the app loads env vars listed in `SECRET_MANAGER_SECRET_NAMES` from Google Secret Manager at startup (one secret per name; payload = plain value). Bootstrap vars (e.g. `GOOGLE_PROJECT_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `SECRET_MANAGER`, `SECRET_MANAGER_SECRET_NAMES`) stay in `.env`. The Cloud Run service account needs `roles/secretmanager.secretAccessor`. You can sync from `.env` once with `python scripts/sync_env_to_secret_manager.py`.
+
+## Chat web interface (BIG-6)
+
+The chat UI is a React SPA (`frontend/`) served from `frontend/dist` at `/`. Flask exposes REST endpoints under `/api/*` in `bigas/resources/chat/endpoints.py`.
+
+```text
++-------------+     Firebase Auth (prod)     +------------------+
+|  Browser    | --------------------------> |  /api/auth/*     |
+|  React SPA  |     poll messages/feed      |  /api/chat/*     |
++-------------+ --------------------------> |  /api/feed       |
+             |                               +------------------+
+             |                                        |
+             v                                        v
+                                    +----------------------------+
+                                    | Firestore or in-memory     |
+                                    | (users, threads, messages, |
+                                    |  agent_configs, activity)  |
+                                    +----------------------------+
+                                             ^
+                                             | mirror
+                                    +----------------------------+
+                                    | discord_webhook.py         |
+                                    | (existing Discord posts)   |
+                                    +----------------------------+
+```
+
+- **Chief of Staff** (`bigas/agents/chief_of_staff.py`): uses `get_llm_client(feature="chat")` and delegates to Marketing/Product/CTO via MCP tool calls or OpenAI function calling.
+- **Async callbacks**: sub-agents (or background jobs) POST to `/api/chat/callback` with `thread_id` to append results; the UI polls `GET /api/chat/threads/<id>/messages`.
+- **Storage**: `bigas/chat/db.py` — `MemoryChatStore` when `CHAT_STORAGE_MODE=memory`; `FirestoreChatStore` when Firestore is configured.
+- **Auth**: `bigas/chat/auth.py` — Firebase JWT verification or dev token (`CHAT_AUTH_MODE=dev`). Agent config updates require an email listed in `CHAT_ADMIN_EMAILS`.

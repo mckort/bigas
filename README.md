@@ -19,6 +19,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [GA4 setup](#ga4-setup)
 - [Walkthrough: from Jira card to merged PR](#walkthrough-from-jira-card-to-merged-pr)
 - [MCP endpoint](#mcp-endpoint)
+- [Chat web interface](#chat-web-interface)
 - [API reference](#api-reference)
 - [Automating reports with Cloud Scheduler](#automating-reports-with-cloud-scheduler)
 - [Modular architecture: providers](#modular-architecture-providers)
@@ -203,8 +204,14 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `MONITOR_URLS` | Comma-separated list of URLs to monitor (e.g. `https://site1.com,https://site2.com`) |
 | `LINKEDIN_AD_ACCOUNT_URN` | Default LinkedIn ad account URN |
 | `REDDIT_AD_ACCOUNT_ID` | Default Reddit ad account ID |
+| `CHAT_ENABLED` | Enable web chat UI and API (default: `true`) |
+| `CHAT_AUTH_MODE` | `dev` (local token) or `firebase` (Firebase Auth JWT) |
+| `CHAT_STORAGE_MODE` | `memory` (local) or `firestore` (production) |
+| `CHAT_ADMIN_EMAILS` | Comma-separated emails allowed to update global agent configs (defaults to `dev@bigas.local` in dev auth mode) |
+| `FIREBASE_PROJECT_ID` | Firebase/GCP project for Auth + Firestore |
+| `BIGAS_CHAT_MODEL` | LLM model for chat / Chief of Staff (defaults to `LLM_MODEL`) |
 
-Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_JIRA_RESEARCH_MODEL`. See `env.example` and `bigas/llm/README.md`.
+Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_JIRA_RESEARCH_MODEL`, `BIGAS_CHAT_MODEL`. See `env.example` and `bigas/llm/README.md`.
 
 ---
 
@@ -308,6 +315,45 @@ MCP clients (Claude, Cursor, Grok Bot, etc.) connect with Streamable HTTP (JSON-
 Tools are the same as in the HTTP API. When using restricted access (`BIGAS_ACCESS_MODE=restricted`), send your access key as `X-Bigas-Access-Key` or `Authorization: Bearer <key>` on `POST /mcp`.
 
 Cursor IDE: `~/.cursor/mcp.json` with `"type": "http"` and the access header. Grok Bot / Cloud Agents: add the same URL and header at [cursor.com/agents](https://cursor.com/agents) (they do not inherit the IDE file).
+
+---
+
+## Chat web interface
+
+Bigas includes a **Grok-style web chat UI** at `/` (when the frontend is built). Log in, chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, and **CTO** specialists — each with their own icon.
+
+| Feature | Description |
+|---|---|
+| **Chief of Staff** | Answers general questions via your configured LLM; delegates domain tasks to specialists |
+| **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows |
+| **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
+| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline |
+| **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
+
+### Setup
+
+1. **Enable chat** — `CHAT_ENABLED=true` (default).
+2. **Local dev** — `CHAT_AUTH_MODE=dev` and `CHAT_DEV_TOKEN=bigas-dev-token`; `CHAT_STORAGE_MODE=memory`.
+3. **Production auth** — Create a Firebase project, enable Email/Password or Google sign-in, and set:
+   - `FIREBASE_PROJECT_ID`, `FIREBASE_WEB_API_KEY`
+   - `VITE_FIREBASE_*` build args (passed via `deploy.sh` Docker build)
+   - `CHAT_AUTH_MODE=firebase`, `CHAT_STORAGE_MODE=firestore`
+4. **Build the UI** — `cd frontend && npm install && npm run build` (Dockerfile does this automatically).
+
+### Chat API (authenticated)
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/auth/config` | Public Firebase/dev auth config for the SPA |
+| `POST /api/auth/verify` | Verify token; upsert user profile |
+| `GET /api/agents` | List agents and icons |
+| `PUT /api/agents/<id>` | Update agent name and goals |
+| `POST /api/chat/threads` | Create thread (`agent_id`: chief, marketing, product, cto) |
+| `GET/POST /api/chat/threads/<id>/messages` | Fetch history / send message (poll GET for async results) |
+| `POST /api/chat/callback` | Sub-agents report async completion (`X-Bigas-Chat-Callback` header) |
+| `GET /api/feed` | Activity feed (Discord mirror) |
+
+Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_id}` when a delegated task finishes asynchronously.
 
 ---
 
