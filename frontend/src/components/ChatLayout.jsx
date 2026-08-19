@@ -8,6 +8,7 @@ import {
   fetchAgents,
   fetchFeed,
   fetchMessages,
+  fetchThreads,
   sendMessage,
 } from '../lib/api'
 import { logout } from '../lib/auth'
@@ -116,12 +117,65 @@ export default function ChatLayout({ user, onLogout }) {
     setAgents(res.agents || [])
   }, [])
 
-  const startThread = useCallback(async (agentId) => {
-    const res = await createThread(agentId)
-    setThreadId(res.thread.thread_id)
+  const openAgentThread = useCallback(async (agentId, { cancelled } = {}) => {
+    setThreadId(null)
     setMessages([])
     setWaitingForReply(false)
     lastMsgTs.current = ''
+
+    let thread = null
+    let loaded = []
+    try {
+      const listed = await fetchThreads()
+      const candidates = (listed.threads || []).filter((t) => t.agent_id === agentId)
+      // Skip empty threads left over from previous visits that always created a new one.
+      // Missing message_count (older docs) is treated as maybe-resumable and probed.
+      const resumable = candidates.filter((t) => (t.message_count ?? 1) > 0)
+      for (const candidate of resumable.slice(0, 15)) {
+        const msgRes = await fetchMessages(candidate.thread_id)
+        if (cancelled?.()) return
+        const msgs = msgRes.messages || []
+        if (msgs.length) {
+          thread = candidate
+          loaded = msgs
+          break
+        }
+      }
+      if (!thread) thread = candidates[0] || null
+    } catch {
+      thread = null
+    }
+    if (cancelled?.()) return
+
+    if (!thread) {
+      try {
+        const created = await createThread(agentId)
+        if (cancelled?.()) return
+        thread = created.thread
+      } catch {
+        return
+      }
+    }
+
+    setThreadId(thread.thread_id)
+
+    if (loaded.length) {
+      setMessages(loaded)
+      lastMsgTs.current = loaded[loaded.length - 1].created_at
+      setWaitingForReply(lastMessageIsInProgress(loaded))
+      return
+    }
+
+    try {
+      const msgRes = await fetchMessages(thread.thread_id)
+      if (cancelled?.()) return
+      const next = msgRes.messages || []
+      setMessages(next)
+      if (next.length) lastMsgTs.current = next[next.length - 1].created_at
+      setWaitingForReply(lastMessageIsInProgress(next))
+    } catch {
+      if (!cancelled?.()) setMessages([])
+    }
   }, [])
 
   useEffect(() => {
@@ -129,8 +183,12 @@ export default function ChatLayout({ user, onLogout }) {
   }, [loadAgents])
 
   useEffect(() => {
-    startThread(activeAgentId)
-  }, [activeAgentId, startThread])
+    let cancelled = false
+    openAgentThread(activeAgentId, { cancelled: () => cancelled })
+    return () => {
+      cancelled = true
+    }
+  }, [activeAgentId, openAgentThread])
 
   const showTyping = waitingForReply || lastMessageIsInProgress(messages)
 

@@ -1,3 +1,35 @@
+import { useState } from 'react'
+
+const PREVIEW_LINES = 5
+
+function CollapsibleContent({ content }) {
+  const [expanded, setExpanded] = useState(false)
+  const text = content || ''
+  const lineCount = text.split('\n').length
+  const needsCollapse = lineCount > PREVIEW_LINES || text.length > 400
+
+  return (
+    <div>
+      <p
+        className={`text-sm whitespace-pre-wrap break-words ${
+          !expanded && needsCollapse ? 'line-clamp-5' : ''
+        }`}
+      >
+        {text}
+      </p>
+      {needsCollapse && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-2 text-xs text-accent hover:underline"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function ActivityFeed({ events, open, onClose }) {
   return (
     <>
@@ -22,7 +54,7 @@ export default function ActivityFeed({ events, open, onClose }) {
                 <span>·</span>
                 <time>{new Date(event.created_at).toLocaleString()}</time>
               </div>
-              <p className="text-sm whitespace-pre-wrap break-words">{event.content}</p>
+              <CollapsibleContent content={event.content} />
             </div>
           ))}
         </div>

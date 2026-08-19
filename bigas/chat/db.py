@@ -124,6 +124,7 @@ class MemoryChatStore:
             "agent_id": agent_id,
             "created_at": now,
             "updated_at": now,
+            "message_count": 0,
         }
         with self._lock:
             self._threads[thread_id] = thread
@@ -165,6 +166,7 @@ class MemoryChatStore:
             self._messages.setdefault(thread_id, []).append(message)
             if thread_id in self._threads:
                 self._threads[thread_id]["updated_at"] = message["created_at"]
+                self._threads[thread_id]["message_count"] = int(self._threads[thread_id].get("message_count") or 0) + 1
         return dict(message)
 
     def list_messages(self, thread_id: str, *, since: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -266,6 +268,7 @@ class FirestoreChatStore:
             "agent_id": agent_id,
             "created_at": now,
             "updated_at": now,
+            "message_count": 0,
         }
         self._threads.document(thread_id).set(thread)
         return thread
@@ -300,8 +303,12 @@ class FirestoreChatStore:
             "created_at": now,
             "metadata": metadata or {},
         }
+        from google.cloud import firestore
+
         self._messages.document(message_id).set(message)
-        self._threads.document(thread_id).update({"updated_at": now})
+        self._threads.document(thread_id).update(
+            {"updated_at": now, "message_count": firestore.Increment(1)}
+        )
         return message
 
     def list_messages(self, thread_id: str, *, since: Optional[str] = None) -> List[Dict[str, Any]]:

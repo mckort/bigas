@@ -129,6 +129,39 @@ def test_invalid_mcp_route_returns_json_404(client):
     assert resp.get_json()["error"] == "Not found"
 
 
+def test_list_threads_resumes_conversation(client):
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    headers = _auth_headers()
+
+    empty = client.post(
+        "/api/chat/threads",
+        headers=headers,
+        data=json.dumps({"agent_id": "chief"}),
+    ).get_json()["thread"]
+    convo = client.post(
+        "/api/chat/threads",
+        headers=headers,
+        data=json.dumps({"agent_id": "chief"}),
+    ).get_json()["thread"]
+    store.add_message(convo["thread_id"], role="user", content="Keep this chat")
+    later_empty = client.post(
+        "/api/chat/threads",
+        headers=headers,
+        data=json.dumps({"agent_id": "chief"}),
+    ).get_json()["thread"]
+
+    listed = client.get("/api/chat/threads", headers=headers)
+    assert listed.status_code == 200
+    ours = {empty["thread_id"], convo["thread_id"], later_empty["thread_id"]}
+    chief = [t for t in listed.get_json()["threads"] if t["thread_id"] in ours]
+    resumable = [t for t in chief if (t.get("message_count") or 0) > 0]
+    assert [t["thread_id"] for t in resumable] == [convo["thread_id"]]
+    assert empty["message_count"] == 0
+    assert later_empty["message_count"] == 0
+
+
 def test_activity_feed(client):
     from bigas.chat.db import get_chat_store
 
