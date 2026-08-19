@@ -38,6 +38,7 @@ from bigas.resources.marketing.utils import (
     sanitize_error_message,
     validate_request_data,
     request_flag,
+    parse_timeout_seconds,
 )
 import requests
 from bs4 import BeautifulSoup
@@ -5518,13 +5519,16 @@ def run_cross_platform_marketing_analysis():
 
 @marketing_bp.route('/mcp/tools/weekly_analytics_report_async', methods=['POST'])
 def weekly_analytics_report_async():
-    data = request.json or {}
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
     is_valid, error_msg = validate_request_data(data)
     if not is_valid:
         return jsonify({"error": error_msg}), 400
 
-    timeout_seconds = int(data.get("timeout_seconds") or 600)
-    timeout_seconds = max(10, min(timeout_seconds, 900))
+    timeout_seconds, timeout_error = parse_timeout_seconds(data, default=600)
+    if timeout_error:
+        return jsonify({"error": timeout_error}), 400
 
     app_obj = current_app._get_current_object()
     access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
@@ -5552,10 +5556,18 @@ def weekly_analytics_report_async():
 def weekly_analytics_report():
     import os  # Import os at function level to avoid UnboundLocalError
 
-    data = request.json or {}
-    run_async = bool(data.get("async", False)) and not bool(data.get("_internal_async_worker", False))
-    timeout_seconds = int(data.get("timeout_seconds") or 600)
-    timeout_seconds = max(10, min(timeout_seconds, 900))
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    is_valid, error_msg = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    timeout_seconds, timeout_error = parse_timeout_seconds(data, default=600)
+    if timeout_error:
+        return jsonify({"error": timeout_error}), 400
+
+    run_async = request_flag(data, "async", False) and not bool(data.get("_internal_async_worker", False))
     if run_async:
         app_obj = current_app._get_current_object()
         access_header = app_obj.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")

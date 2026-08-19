@@ -61,3 +61,44 @@ def test_weekly_sync_async_flag_returns_job_id(monkeypatch):
     resp = client.post("/mcp/tools/weekly_analytics_report", json={"async": True})
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "accepted"
+
+
+def test_weekly_async_rejects_non_object_json():
+    from flask import Flask
+
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    client = app.test_client()
+    resp = client.post("/mcp/tools/weekly_analytics_report_async", json=[])
+    assert resp.status_code == 400
+    assert "JSON object" in resp.get_json()["error"]
+
+
+def test_weekly_async_rejects_invalid_timeout():
+    from flask import Flask
+
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    client = app.test_client()
+    resp = client.post("/mcp/tools/weekly_analytics_report_async", json={"timeout_seconds": "abc"})
+    assert resp.status_code == 400
+    assert "timeout_seconds" in resp.get_json()["error"]
+
+
+def test_weekly_async_clamps_zero_timeout_to_minimum(monkeypatch):
+    from flask import Flask
+
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    monkeypatch.setattr("bigas.resources.marketing.endpoints.threading.Thread", _FakeThread)
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    client = app.test_client()
+    resp = client.post("/mcp/tools/weekly_analytics_report_async", json={"timeout_seconds": 0})
+    assert resp.status_code == 200
+    assert resp.get_json()["timeout_seconds"] == 10

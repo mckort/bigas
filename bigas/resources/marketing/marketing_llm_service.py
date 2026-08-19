@@ -126,7 +126,7 @@ class MarketingLLMService:
         )
         
         query_params = extract_json_object(response)
-        if not query_params:
+        if query_params is None:
             logger.error("Failed to parse LLM response as JSON. Raw response: %s", response)
             raise ValueError("LLM failed to parse query into valid JSON")
         

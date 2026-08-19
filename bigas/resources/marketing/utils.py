@@ -18,30 +18,63 @@ import re
 logger = logging.getLogger(__name__)
 
 
-def extract_json_object(text: str) -> Dict[str, Any]:
-    """Parse a JSON object from LLM output, including markdown fences."""
-    t = (text or "").strip()
-    if not t:
+def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """Parse a JSON object from LLM output, including markdown fences.
+
+    Returns a dict on success (including ``{}`` for a valid empty object),
+    or ``None`` when parsing fails.
+    """
+    original = (text or "").strip()
+    if not original:
         return {}
+    t = original
+    extracted_from_fence = False
     if "```" in t:
         if "```json" in t:
             t = t.split("```json", 1)[1].split("```", 1)[0].strip()
         else:
             t = t.split("```", 1)[1].split("```", 1)[0].strip()
+        extracted_from_fence = True
     try:
         parsed = json.loads(t)
-        return parsed if isinstance(parsed, dict) else {}
+        return parsed if isinstance(parsed, dict) else None
     except Exception:
-        start = t.find("{")
-        end = t.rfind("}")
+        pass
+
+    search_targets = [t]
+    if extracted_from_fence and t != original:
+        search_targets.append(original)
+    for candidate in search_targets:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
         if start == -1 or end == -1 or end <= start:
-            return {}
+            continue
         try:
-            parsed = json.loads(t[start : end + 1])
-            return parsed if isinstance(parsed, dict) else {}
+            parsed = json.loads(candidate[start : end + 1])
+            if isinstance(parsed, dict):
+                return parsed
         except Exception:
-            logger.warning("Failed to parse LLM JSON object")
-            return {}
+            continue
+
+    logger.warning("Failed to parse LLM JSON object")
+    return None
+
+
+def parse_timeout_seconds(
+    data: Dict[str, Any],
+    default: int = 600,
+    minimum: int = 10,
+    maximum: int = 900,
+) -> tuple[Optional[int], str]:
+    """Parse and clamp ``timeout_seconds`` from request data."""
+    raw = data.get("timeout_seconds")
+    if raw is None:
+        return max(minimum, min(default, maximum)), ""
+    try:
+        timeout_seconds = int(raw)
+    except (TypeError, ValueError):
+        return None, "timeout_seconds must be an integer"
+    return max(minimum, min(timeout_seconds, maximum)), ""
 
 
 def request_flag(data: Dict[str, Any], key: str, default: bool) -> bool:

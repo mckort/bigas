@@ -24,7 +24,21 @@ def test_extract_json_object_from_surrounding_text():
 
 def test_extract_json_object_empty():
     assert extract_json_object("") == {}
-    assert extract_json_object("no json here") == {}
+    assert extract_json_object("no json here") is None
+
+
+def test_extract_json_object_valid_empty_object():
+    assert extract_json_object("{}") == {}
+
+
+def test_extract_json_object_fallback_searches_original_text():
+    raw = """Here:
+```python
+print("not json")
+```
+Use this: {"metrics": ["sessions"], "dimensions": ["country"]}"""
+    parsed = extract_json_object(raw)
+    assert parsed == {"metrics": ["sessions"], "dimensions": ["country"]}
 
 
 def test_request_flag_defaults_and_strings():
@@ -50,6 +64,16 @@ def test_parse_query_accepts_gemini_markdown_json(monkeypatch):
     svc = MarketingLLMService("sk-test")
     out = svc.parse_query("Where does traffic come from?")
     assert out["metrics"] == ["sessions"]
+    assert out["dimensions"] == ["date"]
+
+
+def test_parse_query_accepts_empty_json_object(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.marketing.marketing_llm_service.get_llm_client",
+        lambda **k: (_FakeLLM("{}"), "gemini-test"),
+    )
+    svc = MarketingLLMService("sk-test")
+    out = svc.parse_query("How are we doing?")
     assert out["dimensions"] == ["date"]
 
 
