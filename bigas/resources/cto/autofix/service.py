@@ -125,6 +125,13 @@ class AutofixService:
         gh = GitHubPRCommentClient(token=self._github_token)
 
         try:
+            pr = gh.get_pull_request(owner, repo_name, pr_number)
+            if pr.get("merged") and not force:
+                return {
+                    "skipped": True,
+                    "reason": "pr_already_merged",
+                    "pr_url": pr_url,
+                }
             head_sha, head_message, committed_at = gh.get_pr_head_commit_meta(
                 owner, repo_name, pr_number
             )
