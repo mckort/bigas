@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import Login from './components/Login'
 import ChatLayout from './components/ChatLayout'
-import { initAuth, subscribeAuth } from './lib/auth'
+import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 
 export default function App() {
@@ -22,6 +22,7 @@ export default function App() {
   useEffect(() => {
     if (user) {
       verifyAuth().catch(() => {
+        logout()
         setUser(null)
       })
     }

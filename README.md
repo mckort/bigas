@@ -3,7 +3,7 @@
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>Marketing analytics, Jira AI workflows, release notes, and CTO code review — with a pluggable provider architecture for future finance, support, and more.</strong>
+  <strong>A Grok-style web chat with your virtual AI team — plus marketing analytics, Jira AI workflows, release notes, and CTO code review.</strong>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
@@ -35,20 +35,21 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 **Bigas** (Latin for *team*) is an open-source MCP server that gives a solo founder or small team a virtual staff across **marketing, product, and engineering** — without hiring anyone.
 
-It currently ships three specialists:
+It currently ships four specialists, reachable from the **[web chat](#chat-web-interface)** at `/` (Chief of Staff by default, or talk to any specialist directly):
 
 | Specialist | What it does |
 |---|---|
-| **Senior Marketing Analyst** | GA4 web analytics + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
+| **Chief of Staff** | Default chat agent across the whole Jira/GitHub portfolio: answers general questions, delegates to Marketing / Product / CTO, and monitors progress |
+| **Senior Marketing Analyst** | GA4 web analytics (per site via `BIGAS_GA4_PROPERTY_MAP`) + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
 | **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval |
 | **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord |
 
 Two design decisions shape everything else in this document:
 
-1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler), Discord, and Jira/GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
+1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler, Firebase Auth, Firestore), Discord, and Jira/GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
 2. **It's modular.** Marketing, Product, and CTO are independent resource packages. Ads/finance/analytics/notification integrations are *providers* discovered at startup — enable one by setting its env vars, add a new one (e.g. TikTok Ads, QuickBooks, Slack) by dropping in a file, no core changes required. See [Modular architecture: providers](#modular-architecture-providers).
 
-Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord — or you can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler.
+Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord **and** the chat activity feed — or you can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler. Open the deployed Cloud Run URL in a browser to use the chat UI.
 
 ---
 
@@ -61,7 +62,7 @@ Bigas is built to sit mostly idle and burst occasionally: a weekly analytics rep
 - **One container image, one `gcloud run deploy`.** No cluster, no VM patching, no load balancer to configure — `deploy.sh` builds the image, pushes it to Artifact Registry, and deploys it in one shot.
 - **Fits natively with the rest of the stack**: Cloud Scheduler triggers HTTP endpoints on a cron, Secret Manager can feed env vars at startup (`SECRET_MANAGER=true`), and GCS stores reports — all billed the same pay-per-use way.
 
-None of this is required — Bigas is a stateless Flask app, so it runs equally well on Fly.io, Render, a VPS, or your laptop via `python run_core.py`. Cloud Run is simply the path this project is opinionated and tested toward, because for the "one founder, spiky traffic" use case it tends to be the cheapest place to run it.
+None of this is required — the Flask app runs equally well on Fly.io, Render, a VPS, or your laptop via `python run_core.py`. Chat history needs Firestore (or in-memory for local dev); everything else can stay stateless. Cloud Run is simply the path this project is opinionated and tested toward, because for the "one founder, spiky traffic" use case it tends to be the cheapest place to run it.
 
 ---
 
@@ -85,7 +86,9 @@ gcloud services enable run.googleapis.com \
   analyticsdata.googleapis.com \
   artifactregistry.googleapis.com \
   storage.googleapis.com \
-  secretmanager.googleapis.com
+  secretmanager.googleapis.com \
+  firestore.googleapis.com \
+  identitytoolkit.googleapis.com
 
 # Artifact Registry repo that deploy.sh pushes images to (region must match deploy.sh: europe-north1)
 gcloud artifacts repositories create bigas-repo \
@@ -103,12 +106,16 @@ gcloud projects add-iam-policy-binding acme-bigas \
 gcloud projects add-iam-policy-binding acme-bigas \
   --member="serviceAccount:bigas-runner@acme-bigas.iam.gserviceaccount.com" \
   --role="roles/storage.objectAdmin"
+gcloud projects add-iam-policy-binding acme-bigas \
+  --member="serviceAccount:bigas-runner@acme-bigas.iam.gserviceaccount.com" \
+  --role="roles/datastore.user"
 ```
 
 | Role | Why the runtime service account needs it |
 |---|---|
 | `roles/analyticsdata.reader` | Read from the GA4 Data API |
 | `roles/storage.objectAdmin` | Read/write/delete reports in the GCS bucket |
+| `roles/datastore.user` | Read/write chat history in Firestore (needed when `CHAT_STORAGE_MODE=firestore`) |
 | `roles/secretmanager.secretAccessor` | **Only if** you set `SECRET_MANAGER=true` to load env vars from Secret Manager at startup |
 
 You (or your CI account) also need permission to *deploy* — typically `roles/run.admin` and `roles/iam.serviceAccountUser` on `bigas-runner`, granted to your own user or CI service account.
@@ -155,7 +162,7 @@ If `DISCORD_WEBHOOK_URL_MARKETING` is set, the report is posted to your Discord 
 ```bash
 curl -X POST https://your-service-url.a.run.app/mcp/tools/ask_analytics_question \
   -H "Content-Type: application/json" \
-  -d '{"question": "Which country had the most active users last week?"}'
+  -d '{"question": "Which country had the most active users last week?", "project_key": "GPWW"}'
 ```
 
 From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) for the Product/CTO specialists, or [Cloud Scheduler](#automating-reports-with-cloud-scheduler) to run reports on a cadence instead of by hand.
@@ -168,7 +175,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 
 | Variable | Description |
 |---|---|
-| `GA4_PROPERTY_ID` | Google Analytics 4 property ID (Admin → Property Details) |
+| `GA4_PROPERTY_ID` | Default Google Analytics 4 property ID (Admin → Property Details). Used when no project is named. |
 | `GOOGLE_PROJECT_ID` | Google Cloud project ID |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Service account email |
 
@@ -187,15 +194,13 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `DISCORD_WEBHOOK_URL_MARKETING` | Discord webhook for marketing reports |
 | `DISCORD_WEBHOOK_URL_PRODUCT` | Discord webhook for release notes, progress updates, and Jira AI research notifications |
 | `DISCORD_WEBHOOK_URL_CTO` | Discord webhook for PR review / engineering notifications |
-| `DISCORD_WEBHOOK_URL_QA` | Discord webhook for automated MCP QA run summaries (pass/fail) |
 | `STORAGE_BUCKET_NAME` | GCS bucket for report storage (default: `bigas-analytics-reports`) |
 | `TARGET_KEYWORDS` | Colon-separated keywords for SEO analysis (e.g. `sustainable_swag:eco_friendly_clothing`) |
 | `JIRA_BASE_URL` | Jira instance URL (required for release notes, progress updates, and Jira AI automation) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
-| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for multi-project (e.g. `VFA,WAYW`). Per-request override via `project_key` / `project_keys`. |
-| `JIRA_CTO_PROJECT_KEY` | Jira project for approved QA improvements (default: first `JIRA_PROJECT_KEY` or `BIG`) |
-| `JIRA_PM_PROJECT_KEY` | Jira project for QA-suggested new features (default: first `JIRA_PROJECT_KEY` or `BIG`) |
+| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. |
+| `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
 | `GITHUB_TOKEN` | GitHub token — PR review plus optional repo context for Jira AI research |
 | `X_ACCOUNTS` | Comma-separated X handles for weekly community posts (optional). Credentials via `X_CREDENTIALS_JSON` (recommended for Secret Manager) or `X_API_KEY` / `X_ACCESS_TOKEN_<ACCOUNT>` |
@@ -207,8 +212,13 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `CHAT_ENABLED` | Enable web chat UI and API (default: `true`) |
 | `CHAT_AUTH_MODE` | `dev` (local token) or `firebase` (Firebase Auth JWT) |
 | `CHAT_STORAGE_MODE` | `memory` (local) or `firestore` (production) |
+| `CHAT_ALLOWED_EMAILS` | Comma-separated emails allowed to use chat in Firebase mode. Set to `*` to allow any Firebase user while keeping `CHAT_ADMIN_EMAILS` for admin-only actions. Falls back to `CHAT_ADMIN_EMAILS` if unset. Empty both = any Firebase user. |
 | `CHAT_ADMIN_EMAILS` | Comma-separated emails allowed to update global agent configs (defaults to `dev@bigas.local` in dev auth mode) |
-| `FIREBASE_PROJECT_ID` | Firebase/GCP project for Auth + Firestore |
+| `FIREBASE_PROJECT_ID` | Firebase/GCP project for Auth + Firestore (often the same as `GOOGLE_PROJECT_ID`) |
+| `FIREBASE_WEB_API_KEY` | Firebase **web** API key (public client key; also exposed via `GET /api/auth/config`) |
+| `VITE_FIREBASE_API_KEY` | Same web API key — required at `./deploy.sh` Docker build time |
+| `VITE_FIREBASE_AUTH_DOMAIN` | e.g. `your-project.firebaseapp.com`. **Required** in production (`/api/auth/config` has no fallback without the `VITE_` prefix) |
+| `VITE_FIREBASE_PROJECT_ID` | Same as `FIREBASE_PROJECT_ID`; Docker build-arg |
 | `BIGAS_CHAT_MODEL` | LLM model for chat / Chief of Staff (defaults to `LLM_MODEL`) |
 
 Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_JIRA_RESEARCH_MODEL`, `BIGAS_CHAT_MODEL`. See `env.example` and `bigas/llm/README.md`.
@@ -219,7 +229,7 @@ Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_M
 
 1. Go to **Google Analytics → Admin → Property Access Management**
 2. Add your service account email with the **Marketer** role
-3. Copy your **Property ID** (Admin → Property Details) into `GA4_PROPERTY_ID`
+3. Copy your **Property ID** (Admin → Property Details) into `GA4_PROPERTY_ID` (default / fallback) and, for multiple sites, `BIGAS_GA4_PROPERTY_MAP=GPWW:123456789,VFA:987654321`
 
 > If you get a 403 error, wait a few minutes for permissions to propagate.
 
@@ -275,33 +285,6 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/generate_weekly_x_post
 
 The LLM drops minor bug fixes. If there is something worth posting, Bigas stores the draft in GCS and sends a Discord link to the **marketing** channel. **Approve** publishes to the configured X accounts; **Decline** deletes the draft (you can still copy the Discord text and post by hand). GET on the link only shows a preview so Discord unfurls cannot publish.
 
-### Automated MCP QA (BIG-5)
-
-After code changes, Bigas can exercise relevant MCP tools on a target server, evaluate output *quality* (not just errors), and route findings:
-
-```bash
-curl -X POST https://your-service-url.a.run.app/mcp/tools/run_qa \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $BIGAS_API_KEY" \
-  -d '{
-    "diff": "... git diff ...",
-    "mcp_endpoint_url": "https://your-mcp-server.a.run.app",
-    "mcp_auth_token": "optional-target-access-key",
-    "pr_url": "https://github.com/org/repo/pull/123"
-  }'
-```
-
-Flow:
-
-1. LLM reads the diff + MCP manifest → picks tools and synthetic inputs.
-2. Bigas calls the target via `POST /mcp` (`tools/call`).
-3. LLM evaluates each result against an excellence rubric.
-4. **Excellent** — brief summary to `DISCORD_WEBHOOK_URL_QA` (QA channel).
-5. **Improvement** — research/design proposal stored in GCS → Discord **bigas-cto** with signed Approve/Decline link (same pattern as X posts). **Approve** creates a Jira issue in `JIRA_CTO_PROJECT_KEY`.
-6. **New feature** — Jira issue in `JIRA_PM_PROJECT_KEY` + notification to **bigas-pm** (`DISCORD_WEBHOOK_URL_PRODUCT`).
-
-Optional GitHub Action: `.github/workflows/qa_agent.yml` (runs on PR updates when `BIGAS_QA_ENABLED=true`).
-
 ---
 
 ## MCP endpoint
@@ -324,7 +307,7 @@ Bigas includes a **Grok-style web chat UI** at `/` (when the frontend is built).
 
 | Feature | Description |
 |---|---|
-| **Chief of Staff** | Answers general questions via your configured LLM; delegates domain tasks to specialists |
+| **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; delegates domain tasks to specialists |
 | **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows |
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
 | **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline |
@@ -332,13 +315,51 @@ Bigas includes a **Grok-style web chat UI** at `/` (when the frontend is built).
 
 ### Setup
 
-1. **Enable chat** — `CHAT_ENABLED=true` (default).
-2. **Local dev** — `CHAT_AUTH_MODE=dev` and `CHAT_DEV_TOKEN=bigas-dev-token`; `CHAT_STORAGE_MODE=memory`.
-3. **Production auth** — Create a Firebase project, enable Email/Password or Google sign-in, and set:
-   - `FIREBASE_PROJECT_ID`, `FIREBASE_WEB_API_KEY`
-   - `VITE_FIREBASE_*` build args (passed via `deploy.sh` Docker build)
-   - `CHAT_AUTH_MODE=firebase`, `CHAT_STORAGE_MODE=firestore`
-4. **Build the UI** — `cd frontend && npm install && npm run build` (Dockerfile does this automatically).
+**Local**
+
+1. `CHAT_ENABLED=true`, `CHAT_AUTH_MODE=dev`, `CHAT_DEV_TOKEN=bigas-dev-token`, `CHAT_STORAGE_MODE=memory`.
+2. Build the UI: `cd frontend && npm install && npm run build` (the Dockerfile does this automatically on deploy).
+3. `python run_core.py` → http://localhost:8080 (any email + the dev token).
+
+**Production (Firebase Auth + Firestore)**
+
+Use the same GCP project as Cloud Run.
+
+1. [Firebase Console](https://console.firebase.google.com/) → add Firebase to the existing GCP project → add a **Web** app. Copy API key, auth domain (`<project>.firebaseapp.com`), and project ID.
+2. Authentication → Sign-in method: enable **Email/Password** and/or **Google**. Create a user (or use Google sign-in).
+3. Authentication → Settings → Authorized domains: add your Cloud Run host (e.g. `your-service-xxxxx.region.run.app`). Do not include `https://`.
+4. Firestore Database → **Create database**, mode **Native** (not Datastore). Prefer the same region as Cloud Run (e.g. `europe-north1`). Collections are created on first use; no composite indexes are required. Keep client rules locked down — the browser does not talk to Firestore; Cloud Run does via the runtime service account.
+5. Enable APIs and grant the Cloud Run service account Firestore access:
+   ```bash
+   gcloud services enable firestore.googleapis.com identitytoolkit.googleapis.com
+   gcloud projects add-iam-policy-binding "$GOOGLE_PROJECT_ID" \
+     --member="serviceAccount:$GOOGLE_SERVICE_ACCOUNT_EMAIL" \
+     --role="roles/datastore.user"
+   ```
+   On Cloud Run, Firebase Admin uses ADC — you do not need `FIREBASE_SERVICE_ACCOUNT_JSON`.
+6. Set in `.env`, then `./deploy.sh`:
+   ```bash
+   CHAT_ENABLED=true
+   CHAT_AUTH_MODE=firebase
+   CHAT_STORAGE_MODE=firestore
+   CHAT_ALLOWED_EMAILS=you@example.com
+   CHAT_ADMIN_EMAILS=you@example.com
+   FIREBASE_PROJECT_ID=acme-bigas
+   FIREBASE_WEB_API_KEY=your_web_api_key
+   VITE_FIREBASE_API_KEY=your_web_api_key
+   VITE_FIREBASE_AUTH_DOMAIN=acme-bigas.firebaseapp.com
+   VITE_FIREBASE_PROJECT_ID=acme-bigas
+   ```
+   `VITE_*` must be in `.env` at deploy time (baked into the frontend image). The Firebase web API key is a public client key; keep it in `.env` (and optionally Secret Manager as `FIREBASE_WEB_API_KEY`, matching the env var name). If Firestore is missing or the SA lacks `datastore.user`, the app falls back to in-memory storage and chat history is lost when Cloud Run scales to zero.
+
+**Recommended production security**
+
+The login page has no “create account” button, but that is not enough on its own. Any valid Firebase user can use chat, and chat agents call the same tools as Discord/cron (Jira, GitHub, GA4). `CHAT_ADMIN_EMAILS` only gates agent settings, not chat access. Authorized domains only control where the Google popup may run, not which Google accounts can sign in.
+
+1. **Email allowlist** — set `CHAT_ALLOWED_EMAILS` to the addresses that may use chat (falls back to `CHAT_ADMIN_EMAILS` if unset). Unknown accounts get 403 even with a valid Firebase token.
+2. **Disable public signup** — Firebase Console → Authentication → Settings → User actions → turn off **Enable create (sign-up)**. Otherwise anyone can create an Email/Password user via the Identity Toolkit API using the public web API key from `GET /api/auth/config`.
+3. **Google sign-in** — keep **Continue with Google** only if the allowlist is in place. If you only log in with Email/Password, disable the Google provider in Authentication → Sign-in method.
+4. **2FA on your Google account** — protects *your* mailbox/password; it does not stop other Google accounts. Rely on the allowlist for that.
 
 ### Chat API (authenticated)
 
@@ -376,7 +397,7 @@ gcloud run services describe <your-service-name> --region=your-region --format='
 | `GET get_stored_reports` | List all stored reports |
 | `POST analyze_trends` | Trend analysis. `post_to_discord` defaults to false |
 | `POST analyze_underperforming_pages` | CRO + SEO + UX recommendations for high-traffic, low-conversion pages |
-| `POST ask_analytics_question` | Ad-hoc natural language question (`question` required) |
+| `POST ask_analytics_question` | Ad-hoc natural language question (`question` required; optional `project_key` selects the GA4 property) |
 | `POST fetch_analytics_report` | Standard GA4 report |
 | `POST fetch_custom_report` | Custom dimensions/metrics report |
 | `POST cleanup_old_reports` | Delete reports older than N days |
@@ -451,7 +472,6 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST fetch_ai_usage` | Historical AI usage from usage providers (Cursor API + LLM Cloud Logging); list-price estimates. Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md) |
 | `POST weekly_cto_ai_report` | Weekly CTO AI cost summary → Discord (Cursor autofix + review LLM logs) |
 | `POST website_monitor` | CTO tool: check configured websites (`MONITOR_URLS`) for availability and SSL certificate health. Alerts via Discord (`DISCORD_WEBHOOK_URL_CTO`) on failures. |
-| `POST run_qa` | Diff-driven MCP QA: test relevant tools on a target server, evaluate output quality, route improvements via Discord/Jira. See [Automated MCP QA](#automated-mcp-qa-big-5). |
 
 ---
 
@@ -517,22 +537,23 @@ For the provider base classes and a worked example (adding QuickBooks as a finan
 ```
                     ┌─────────────────────────────────────────┐
                     │            Clients / Triggers            │
-                    │  MCP · Scheduler · Jira Automation · curl │
+                    │  Browser chat · MCP · Scheduler · Jira · curl │
                     └─────────────────────────────────────────┘
                                          │
                                          ▼
                     ┌─────────────────────────────────────────┐
                     │      Flask app (e.g. Cloud Run)          │
-                    │  /mcp — JSON-RPC; /mcp/tools/* — HTTP        │
+                    │  /  — chat SPA; /api/* — chat API        │
+                    │  /mcp — JSON-RPC; /mcp/tools/* — HTTP    │
                     └────────────────┬────────────────────────┘
                     ┌───────────────┼────────────────────────┐
                     ▼               ▼                        ▼
-             Marketing          Product                  CTO
-        (GA4 + Paid Ads)   (Jira AI + Notes)        (PR Review)
+          Chief of Staff       Marketing                  Product / CTO
+          (web chat)        (GA4 + Paid Ads)          (Jira / PR Review)
                     │
           ┌─────────┼──────────┐
           ▼         ▼          ▼
-      GA4 API   Ads APIs    OpenAI/Gemini
+      Firestore  Ads/GA4    OpenAI/Gemini
                               │
                     ┌─────────┴──────────┐
                     ▼                    ▼
@@ -550,6 +571,9 @@ GCS Storage, Discord, and Google Secret Manager are optional integrations (see `
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
+# Chat UI (skip if you only need MCP/HTTP tools)
+cd frontend && npm install && npm run build && cd ..
+
 # Configure environment
 cp env.example .env
 
@@ -557,6 +581,8 @@ cp env.example .env
 python run_core.py
 # Server available at http://localhost:8080
 ```
+
+Dev chat uses `CHAT_AUTH_MODE=dev` and in-memory storage unless you point at Firestore.
 
 **Tests:**
 ```bash

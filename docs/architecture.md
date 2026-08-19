@@ -201,4 +201,4 @@ The chat UI is a React SPA (`frontend/`) served from `frontend/dist` at `/`. Fla
 - **Chief of Staff** (`bigas/agents/chief_of_staff.py`): uses `get_llm_client(feature="chat")` and delegates to Marketing/Product/CTO via MCP tool calls or OpenAI function calling.
 - **Async callbacks**: sub-agents (or background jobs) POST to `/api/chat/callback` with `thread_id` to append results; the UI polls `GET /api/chat/threads/<id>/messages`.
 - **Storage**: `bigas/chat/db.py` — `MemoryChatStore` when `CHAT_STORAGE_MODE=memory`; `FirestoreChatStore` when Firestore is configured.
-- **Auth**: `bigas/chat/auth.py` — Firebase JWT verification or dev token (`CHAT_AUTH_MODE=dev`). Agent config updates require an email listed in `CHAT_ADMIN_EMAILS`.
+- **Auth**: `bigas/chat/auth.py` — Firebase JWT verification or dev token (`CHAT_AUTH_MODE=dev`). Chat access in Firebase mode is limited to `CHAT_ALLOWED_EMAILS` (set `*` for open chat; otherwise falls back to `CHAT_ADMIN_EMAILS` when unset). Agent config updates require an email listed in `CHAT_ADMIN_EMAILS`.

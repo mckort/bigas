@@ -12,6 +12,7 @@ from google.analytics.data_v1beta.types import (
 )
 import os
 from bigas.llm.factory import get_llm_client
+from bigas.portfolio import resolve_ga4_property, scrub_analytics_question
 from datetime import date, datetime, timedelta
 import time
 import logging
@@ -1279,12 +1280,23 @@ def ask_analytics_question():
     # Validate question length
     if len(question) > 500:
         return jsonify({"error": "Question too long (max 500 characters)"}), 400
+
+    property_id, project_key, ga4_error = resolve_ga4_property(
+        question,
+        project_key=data.get("project_key") or data.get("project_keys"),
+        property_id=data.get("property_id") or data.get("ga4_property_id"),
+    )
+    if ga4_error:
+        return jsonify({"error": ga4_error}), 400
+    if not property_id:
+        return jsonify({"error": "GA4_PROPERTY_ID is not set and no project mapping matched."}), 500
+
+    analytics_question = scrub_analytics_question(question, project_key)
     
     try:
         service = MarketingAnalyticsService(OPENAI_API_KEY)
-        current_ga4_property_id = os.environ.get("GA4_PROPERTY_ID")
-        answer = service.answer_question(current_ga4_property_id, question)
-        return jsonify({"answer": answer})
+        answer = service.answer_question(property_id, analytics_question)
+        return jsonify({"answer": answer, "project_key": project_key, "ga4_property_id": property_id})
     except Exception as e:
         logger.error(f"Error in ask_analytics_question: {traceback.format_exc()}")
         sanitized_error = sanitize_error_message(str(e))
@@ -1432,7 +1444,7 @@ def get_manifest():
         "tools": [
             {"name": "fetch_analytics_report", "description": "Fetches a standard Google Analytics report.", "path": "/mcp/tools/fetch_analytics_report", "method": "POST"},
             {"name": "fetch_custom_report", "description": "Fetches a custom Google Analytics report with specific dimensions and metrics.", "path": "/mcp/tools/fetch_custom_report", "method": "POST"},
-            {"name": "ask_analytics_question", "description": "Ask a natural-language question about GA4 data. Requires 'question'. Does not post to Discord.", "path": "/mcp/tools/ask_analytics_question", "method": "POST", "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "Natural-language analytics question, e.g. 'Which country had the most active users last 30 days?'"}}, "required": ["question"]}},
+            {"name": "ask_analytics_question", "description": "Ask a natural-language question about GA4 data. Requires 'question'. Optional 'project_key' (VFA, WAYW, BIG, REM, GPWW, FYDA, MYL) selects which site's GA4 property. Does not post to Discord.", "path": "/mcp/tools/ask_analytics_question", "method": "POST", "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "Natural-language analytics question, e.g. 'Which country had the most active users last 30 days?'"}, "project_key": {"type": "string", "description": "Jira project key to select the GA4 property (e.g. GPWW, VFA)."}}, "required": ["question"]}},
             {"name": "analyze_trends", "description": "Trend analysis for a metric/date range. Set post_to_discord true to also post to the marketing Discord channel (default false).", "path": "/mcp/tools/analyze_trends", "method": "POST", "parameters": {"type": "object", "properties": {"metric": {"type": "string", "description": "Single GA4 metric, e.g. activeUsers or sessions"}, "metrics": {"type": "array", "items": {"type": "string"}, "description": "GA4 metrics (used if metric is omitted)"}, "dimensions": {"type": "array", "items": {"type": "string"}, "description": "GA4 dimensions", "default": ["country"]}, "date_range": {"type": "string", "enum": ["last_7_days", "last_30_days"], "default": "last_30_days"}, "post_to_discord": {"type": "boolean", "description": "Post the trend summary to Discord", "default": False}}}},
             {"name": "weekly_analytics_report", "description": "Full weekly GA4 report → Discord. Slow (several minutes). For MCP clients, prefer weekly_analytics_report_async.", "path": "/mcp/tools/weekly_analytics_report", "method": "POST", "parameters": {"type": "object", "properties": {"async": {"type": "boolean", "description": "If true, return job_id immediately and run in the background", "default": False}, "timeout_seconds": {"type": "integer", "default": 600, "minimum": 10, "maximum": 900}}}},
             {"name": "weekly_analytics_report_async", "description": "Async weekly GA4 report. Returns job_id immediately; poll with get_job_status and get_job_result.", "path": "/mcp/tools/weekly_analytics_report_async", "method": "POST", "parameters": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "default": 600, "minimum": 10, "maximum": 900}}}},

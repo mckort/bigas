@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from bigas.chat.db import get_chat_store
 from bigas.llm.factory import get_llm_client
+from bigas.portfolio import (
+    normalize_project_key,
+    prompt_block,
+    resolve_project,
+    scrub_analytics_question,
+)
 from bigas.utils.mcp_client import MCPClient, MCPClientError
 
 logger = logging.getLogger(__name__)
@@ -157,17 +163,102 @@ def _parse_json_action(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+_HUMAN_TEXT_KEYS = ("answer", "text", "message", "summary", "content", "report")
+
+
+def humanize_tool_result(payload: Any) -> Optional[str]:
+    """Unwrap tool JSON envelopes like {\"answer\": \"...\"} into plain chat text."""
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        for key in _HUMAN_TEXT_KEYS:
+            val = payload.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        err = payload.get("error")
+        if isinstance(err, str) and err.strip():
+            return err.strip()
+        nested = payload.get("structured") or payload.get("raw")
+        if nested is not None and nested is not payload:
+            return humanize_tool_result(nested)
+        return None
+    if not isinstance(payload, str):
+        return None
+    text = payload.strip()
+    if not text:
+        return None
+    json_blob = text
+    if not text.startswith("{") and not text.startswith("["):
+        brace = text.find("{")
+        if brace == -1:
+            return None
+        json_blob = text[brace:].strip()
+    try:
+        parsed = json.loads(json_blob)
+    except json.JSONDecodeError:
+        return None
+    return humanize_tool_result(parsed)
+
+
 def _run_tool_call(client: MCPClient, tool_name: str, arguments: Dict[str, Any]) -> str:
     try:
         result = client.call_tool(tool_name, arguments)
+        raw_text = result.get("text") or ""
+        human = humanize_tool_result(raw_text) or humanize_tool_result(result.get("structured"))
         if result.get("is_error"):
-            return f"Tool {tool_name} failed:\n{result.get('text', 'Unknown error')}"
-        return result.get("text") or json.dumps(result.get("structured") or result.get("raw"), ensure_ascii=False)
+            return human or raw_text.strip() or f"Something went wrong while running {tool_name}."
+        if human:
+            return human
+        if raw_text.strip():
+            return raw_text.strip()
+        leftover = result.get("structured") or result.get("raw")
+        if leftover:
+            return json.dumps(leftover, ensure_ascii=False)
+        return "Done."
     except MCPClientError as e:
-        return f"Tool call error ({tool_name}): {e}"
+        return f"I couldn't complete that request ({tool_name}): {e}"
     except Exception as e:
         logger.exception("Unexpected tool call failure")
         return f"Unexpected error calling {tool_name}: {e}"
+
+
+def _catalog_prompt() -> str:
+    try:
+        return prompt_block()
+    except Exception:
+        logger.exception("Failed to build portfolio prompt")
+        return ""
+
+
+def _agent_system_prompt(agent_config: Dict[str, Any], extra: str = "") -> str:
+    parts = [
+        agent_config.get("system_prompt_goals") or "",
+        _catalog_prompt(),
+        extra,
+    ]
+    return "\n\n".join(p.strip() for p in parts if p and p.strip())
+
+
+def _enrich_tool_args(tool_name: str, arguments: Dict[str, Any], user_message: str) -> Dict[str, Any]:
+    args = dict(arguments or {})
+    haystack = " ".join(
+        [
+            user_message or "",
+            str(args.get("question") or ""),
+            str(args.get("task") or ""),
+            str(args.get("pr_url") or ""),
+        ]
+    )
+    project = (
+        normalize_project_key(args.get("project_key") or args.get("project_keys"))
+        or resolve_project(haystack)
+        or ""
+    )
+    if project:
+        args.setdefault("project_key", project)
+        if "ask_analytics" in (tool_name or "").lower():
+            args["question"] = scrub_analytics_question(args.get("question") or user_message, project)
+    return args
 
 
 def _select_tool_via_llm(
@@ -180,15 +271,16 @@ def _select_tool_via_llm(
     """Returns (response_text, tool_name, tool_args) — tool fields set if a tool should run."""
     llm, model = get_llm_client(feature="chat")
     tool_summary = _tools_summary(tools)
-    system = (
-        f"{agent_config.get('system_prompt_goals', '')}\n\n"
+    extra = (
         "You are responding in the Bigas chat interface. "
         "If the user request requires calling a backend tool, respond with ONLY a JSON object:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
+        'Include project_key in arguments when the user named a product, site, or Jira key.\n'
         'Otherwise respond with ONLY:\n'
         '{"action":"answer","text":"<your reply>"}\n\n'
         f"Available tools:\n{tool_summary}"
     )
+    system = _agent_system_prompt(agent_config, extra)
     messages = [{"role": "system", "content": system}]
     messages.extend(history[-10:])
     messages.append({"role": "user", "content": user_message})
@@ -291,10 +383,10 @@ def run_specialist_task(
         if tool_name and tool_name.startswith("__delegate__"):
             return "Specialist agents cannot delegate further."
         if tool_name:
-            result = _run_tool_call(client, tool_name, tool_args or {})
+            result = _run_tool_call(client, tool_name, _enrich_tool_args(tool_name, tool_args or {}, task))
         else:
             llm, _ = get_llm_client(feature="chat")
-            system = agent_config.get("system_prompt_goals", "")
+            system = _agent_system_prompt(agent_config)
             result = llm.complete(
                 [
                     {"role": "system", "content": system},
@@ -358,10 +450,11 @@ def handle_chat_message(
 
     if agent_id == "chief":
         llm, model = get_llm_client(feature="chat")
-        system = (
-            f"{agent_config.get('system_prompt_goals', '')}\n\n"
+        system = _agent_system_prompt(
+            agent_config,
             "You are the Chief of Staff in the Bigas chat UI. Answer general questions directly. "
-            "For marketing, product, or engineering tasks, delegate to the appropriate specialist."
+            "For marketing, product, or engineering tasks, delegate to the appropriate specialist. "
+            "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
         )
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
         messages.extend(history[-10:])
@@ -385,7 +478,9 @@ def handle_chat_message(
                     async_mode=True,
                 )
             elif tool_name:
-                response_text = _run_tool_call(client, tool_name, tool_args or {})
+                response_text = _run_tool_call(
+                    client, tool_name, _enrich_tool_args(tool_name, tool_args or {}, user_message)
+                )
 
         if response_text:
             msg = store.add_message(
@@ -406,7 +501,9 @@ def handle_chat_message(
     )
 
     if tool_name:
-        response_text = _run_tool_call(client, tool_name, tool_args or {})
+        response_text = _run_tool_call(
+            client, tool_name, _enrich_tool_args(tool_name, tool_args or {}, user_message)
+        )
 
     msg = store.add_message(
         thread_id,
