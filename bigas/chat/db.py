@@ -305,10 +305,13 @@ class FirestoreChatStore:
         }
         from google.cloud import firestore
 
-        self._messages.document(message_id).set(message)
-        self._threads.document(thread_id).update(
-            {"updated_at": now, "message_count": firestore.Increment(1)}
+        batch = self._db.batch()
+        batch.set(self._messages.document(message_id), message)
+        batch.update(
+            self._threads.document(thread_id),
+            {"updated_at": now, "message_count": firestore.Increment(1)},
         )
+        batch.commit()
         return message
 
     def list_messages(self, thread_id: str, *, since: Optional[str] = None) -> List[Dict[str, Any]]:

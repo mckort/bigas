@@ -125,16 +125,31 @@ export default function ChatLayout({ user, onLogout }) {
 
     let thread = null
     let loaded = []
+    const probedMessages = new Map()
     try {
       const listed = await fetchThreads()
       const candidates = (listed.threads || []).filter((t) => t.agent_id === agentId)
       // Skip empty threads left over from previous visits that always created a new one.
       // Missing message_count (older docs) is treated as maybe-resumable and probed.
       const resumable = candidates.filter((t) => (t.message_count ?? 1) > 0)
-      for (const candidate of resumable.slice(0, 15)) {
-        const msgRes = await fetchMessages(candidate.thread_id)
-        if (cancelled?.()) return
-        const msgs = msgRes.messages || []
+      const toProbe = resumable.slice(0, 15)
+      const probeResults = await Promise.all(
+        toProbe.map(async (candidate) => {
+          try {
+            const msgRes = await fetchMessages(candidate.thread_id)
+            return { candidate, msgs: msgRes.messages || [], ok: true }
+          } catch {
+            return { candidate, msgs: null, ok: false }
+          }
+        })
+      )
+      if (cancelled?.()) return
+      for (const { candidate, msgs, ok } of probeResults) {
+        if (ok) probedMessages.set(candidate.thread_id, msgs)
+      }
+      for (const candidate of toProbe) {
+        const msgs = probedMessages.get(candidate.thread_id)
+        if (msgs === undefined) continue
         if (msgs.length) {
           thread = candidate
           loaded = msgs
@@ -163,6 +178,14 @@ export default function ChatLayout({ user, onLogout }) {
       setMessages(loaded)
       lastMsgTs.current = loaded[loaded.length - 1].created_at
       setWaitingForReply(lastMessageIsInProgress(loaded))
+      return
+    }
+
+    if (probedMessages.has(thread.thread_id)) {
+      const cached = probedMessages.get(thread.thread_id)
+      setMessages(cached)
+      if (cached.length) lastMsgTs.current = cached[cached.length - 1].created_at
+      setWaitingForReply(lastMessageIsInProgress(cached))
       return
     }
 
