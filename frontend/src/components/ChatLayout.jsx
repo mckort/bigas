@@ -17,9 +17,9 @@ function humanizeChatContent(content) {
   if (!text) return content || ''
   let blob = text
   if (!text.startsWith('{') && !text.startsWith('[')) {
-    const idx = text.indexOf('\n{')
+    const idx = text.indexOf('{')
     if (idx === -1) return content
-    blob = text.slice(idx + 1).trim()
+    blob = text.slice(idx).trim()
   }
   try {
     const parsed = JSON.parse(blob)

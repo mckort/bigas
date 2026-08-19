@@ -40,6 +40,18 @@ def test_resolve_project_from_brand_and_repo(portfolio_env):
     assert resolve_project("hello") is None
 
 
+def test_resolve_project_prefers_longer_alias_over_short_substring(portfolio_env, monkeypatch):
+    import bigas.portfolio as portfolio
+
+    monkeypatch.setitem(portfolio.DEFAULT_PROJECT_ALIASES, "VFA", ["road"])
+    assert resolve_project("review the roadpal PR") == "WAYW"
+
+
+def test_scrub_preserves_substring_words(portfolio_env):
+    out = scrub_analytics_question("wayward traffic trends", "WAYW")
+    assert "wayward" in out.lower()
+
+
 def test_ga4_only_configured_for_gpww(portfolio_env):
     assert ga4_property_for_project("GPWW") == "473559548"
     prop, key, err = resolve_ga4_property("traffic to greenpromowear")

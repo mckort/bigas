@@ -93,7 +93,10 @@ def _parse_email_list(raw: str) -> set[str]:
 
 def chat_allowed_emails() -> set[str]:
     """Emails permitted to use chat. Empty set means no allowlist (open)."""
-    explicit = _parse_email_list(os.environ.get("CHAT_ALLOWED_EMAILS") or "")
+    raw = (os.environ.get("CHAT_ALLOWED_EMAILS") or "").strip()
+    if raw == "*":
+        return set()
+    explicit = _parse_email_list(raw)
     if explicit:
         return explicit
     # Fall back to admin list so a production Firebase deploy with only

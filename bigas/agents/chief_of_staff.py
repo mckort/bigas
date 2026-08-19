@@ -189,10 +189,10 @@ def humanize_tool_result(payload: Any) -> Optional[str]:
         return None
     json_blob = text
     if not text.startswith("{") and not text.startswith("["):
-        nl = text.find("\n{")
-        if nl == -1:
+        brace = text.find("{")
+        if brace == -1:
             return None
-        json_blob = text[nl + 1 :].strip()
+        json_blob = text[brace:].strip()
     try:
         parsed = json.loads(json_blob)
     except json.JSONDecodeError:

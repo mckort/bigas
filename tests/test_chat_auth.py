@@ -33,3 +33,11 @@ def test_allowlist_open_when_unset(monkeypatch):
     monkeypatch.delenv("CHAT_ALLOWED_EMAILS", raising=False)
     monkeypatch.delenv("CHAT_ADMIN_EMAILS", raising=False)
     assert is_chat_allowed({"email": "anyone@example.com"}) is True
+
+
+def test_allowlist_star_allows_everyone_despite_admin_list(monkeypatch):
+    monkeypatch.setenv("CHAT_AUTH_MODE", "firebase")
+    monkeypatch.setenv("CHAT_ALLOWED_EMAILS", "*")
+    monkeypatch.setenv("CHAT_ADMIN_EMAILS", "admin@example.com")
+    assert is_chat_allowed({"email": "anyone@example.com"}) is True
+    assert is_chat_allowed({"email": "admin@example.com"}) is True

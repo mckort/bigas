@@ -189,6 +189,13 @@ def test_humanize_tool_result_unwraps_error_after_prefix():
     assert humanize_tool_result(raw) == "No GA4 data returned"
 
 
+def test_humanize_tool_result_unwraps_indented_json():
+    from bigas.agents.chief_of_staff import humanize_tool_result
+
+    raw = 'Tool ask_analytics_question failed:\n  {\n    "answer": "Traffic is up."\n  }'
+    assert humanize_tool_result(raw) == "Traffic is up."
+
+
 def test_discord_mirror_activity():
     from bigas.chat.db import get_chat_store
     from bigas.chat.activity import mirror_discord_message

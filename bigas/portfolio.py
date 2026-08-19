@@ -130,12 +130,16 @@ def resolve_project(text: str) -> Optional[str]:
     for key in keys:
         if re.search(rf"\b{re.escape(key.lower())}(?:-\d+)?\b", blob):
             return key
+    alias_pairs: List[Tuple[str, str]] = []
     for key in keys:
         for alias in project_aliases(key):
             if len(alias) < 3:
                 continue
-            if alias in blob:
-                return key
+            alias_pairs.append((alias, key))
+    alias_pairs.sort(key=lambda pair: len(pair[0]), reverse=True)
+    for alias, key in alias_pairs:
+        if alias in blob:
+            return key
     return None
 
 
@@ -190,7 +194,7 @@ def scrub_analytics_question(question: str, project_key: Optional[str] = None) -
     for alias in project_aliases(key):
         if len(alias) < 3:
             continue
-        scrubbed = re.sub(re.escape(alias), " ", scrubbed, flags=re.IGNORECASE)
+        scrubbed = re.sub(rf"\b{re.escape(alias)}\b", " ", scrubbed, flags=re.IGNORECASE)
     scrubbed = re.sub(r"\s+", " ", scrubbed).strip(" ,.-")
     return scrubbed or "How is traffic going recently? Include suggestions."
 
