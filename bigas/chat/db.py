@@ -254,12 +254,9 @@ class FirestoreChatStore:
         return thread
 
     def list_threads(self, user_id: str) -> List[Dict[str, Any]]:
-        docs = (
-            self._threads.where("user_id", "==", user_id)
-            .order_by("updated_at", direction="DESCENDING")
-            .stream()
-        )
-        return [doc.to_dict() for doc in docs if doc.exists]
+        docs = self._threads.where("user_id", "==", user_id).stream()
+        threads = [doc.to_dict() for doc in docs if doc.exists]
+        return sorted(threads, key=lambda t: t.get("updated_at", ""), reverse=True)
 
     def get_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
         snap = self._threads.document(thread_id).get()
@@ -291,10 +288,14 @@ class FirestoreChatStore:
         return message
 
     def list_messages(self, thread_id: str, *, since: Optional[str] = None) -> List[Dict[str, Any]]:
-        query = self._messages.where("thread_id", "==", thread_id).order_by("created_at")
+        messages = [
+            doc.to_dict()
+            for doc in self._messages.where("thread_id", "==", thread_id).stream()
+            if doc.exists
+        ]
         if since:
-            query = query.where("created_at", ">", since)
-        return [doc.to_dict() for doc in query.stream() if doc.exists]
+            messages = [m for m in messages if m.get("created_at", "") > since]
+        return sorted(messages, key=lambda m: m.get("created_at", ""))
 
     def add_activity(self, *, type_: str, content: str, source: str = "system") -> Dict[str, Any]:
         event_id = str(uuid.uuid4())

@@ -82,6 +82,18 @@ def authenticate_request() -> Tuple[Optional[Dict[str, Any]], Optional[Any]]:
     return user, None
 
 
+def chat_admin_emails() -> set[str]:
+    raw = (os.environ.get("CHAT_ADMIN_EMAILS") or "").strip()
+    if not raw and chat_auth_mode() == "dev":
+        return {"dev@bigas.local"}
+    return {email.strip().lower() for email in raw.split(",") if email.strip()}
+
+
+def is_chat_admin(user: Dict[str, Any]) -> bool:
+    email = (user.get("email") or "").strip().lower()
+    return bool(email) and email in chat_admin_emails()
+
+
 def require_chat_auth(view: Callable):
     @wraps(view)
     def wrapper(*args, **kwargs):

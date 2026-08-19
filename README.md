@@ -207,6 +207,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `CHAT_ENABLED` | Enable web chat UI and API (default: `true`) |
 | `CHAT_AUTH_MODE` | `dev` (local token) or `firebase` (Firebase Auth JWT) |
 | `CHAT_STORAGE_MODE` | `memory` (local) or `firestore` (production) |
+| `CHAT_ADMIN_EMAILS` | Comma-separated emails allowed to update global agent configs (defaults to `dev@bigas.local` in dev auth mode) |
 | `FIREBASE_PROJECT_ID` | Firebase/GCP project for Auth + Firestore |
 | `BIGAS_CHAT_MODEL` | LLM model for chat / Chief of Staff (defaults to `LLM_MODEL`) |
 

@@ -100,6 +100,35 @@ def test_update_agent_goals(client):
     assert "GA4" in resp.get_json()["agent"]["system_prompt_goals"]
 
 
+def test_update_agent_requires_admin(client, monkeypatch):
+    monkeypatch.setenv("CHAT_ADMIN_EMAILS", "admin@example.com")
+    resp = client.put(
+        "/api/agents/marketing",
+        headers=_auth_headers(),
+        data=json.dumps(
+            {
+                "name": "Marketing Analyst",
+                "system_prompt_goals": "Should be rejected.",
+            }
+        ),
+    )
+    assert resp.status_code == 403
+
+
+def test_invalid_api_route_returns_json_404(client):
+    resp = client.get("/api/does-not-exist", headers=_auth_headers())
+    assert resp.status_code == 404
+    assert resp.is_json
+    assert resp.get_json()["error"] == "Not found"
+
+
+def test_invalid_mcp_route_returns_json_404(client):
+    resp = client.get("/mcp/tools/invalid-endpoint")
+    assert resp.status_code == 404
+    assert resp.is_json
+    assert resp.get_json()["error"] == "Not found"
+
+
 def test_activity_feed(client):
     from bigas.chat.db import get_chat_store
 
