@@ -49,6 +49,8 @@ class _FakeGitHubClient:
         self.dispatches: list[tuple] = []
 
     def get_default_branch(self, owner, repo):
+        if repo == "greenpromowear-website":
+            return "master"
         return "main"
 
     def get_latest_release_tag(self, owner, repo):
@@ -211,14 +213,43 @@ def test_trigger_deployment_vm_site_dispatches_infra_repo(monkeypatch):
     assert result["status"] == "ok"
     assert result["repo"] == "Green-Promo-Wear-Global/greenpromowear-website"
     assert result["deploy_repo"] == "mckort/gcp-single-vm-webstack"
-    assert result["workflow_inputs"] == {"site": "greenpromowear-website"}
+    assert result["ref"] == "master"
+    assert result["dispatch_ref"] == "main"
+    assert result["workflow_inputs"] == {"site": "greenpromowear-website", "ref": "master"}
     assert len(fake.dispatches) == 1
-    owner, repo, workflow, _ref, inputs = fake.dispatches[0]
+    owner, repo, workflow, dispatch_ref, inputs = fake.dispatches[0]
     assert owner == "mckort"
     assert repo == "gcp-single-vm-webstack"
     assert workflow == "deploy.yml"
-    assert inputs == {"site": "greenpromowear-website"}
+    assert dispatch_ref == "main"
+    assert inputs == {"site": "greenpromowear-website", "ref": "master"}
     assert "greenpromowear-website" in result["summary"]
+    assert "ref=master" in result["summary"]
+
+
+def test_trigger_deployment_vm_site_feature_branch_uses_infra_default(monkeypatch):
+    monkeypatch.setenv(
+        "BIGAS_JIRA_PROJECT_REPO_MAP",
+        "VFA:mckort/vcfieldassistant,GPWW:Green-Promo-Wear-Global/greenpromowear-website",
+    )
+    monkeypatch.setenv(
+        "BIGAS_DEPLOY_WORKFLOW_MAP",
+        "VFA:deploy-backend.yml,deploy-web.yml|GPWW:deploy.yml",
+    )
+    monkeypatch.setenv("BIGAS_DEPLOY_REPO_MAP", "GPWW:mckort/gcp-single-vm-webstack")
+    monkeypatch.setattr("bigas.resources.devops.service.time.sleep", lambda _: None)
+    fake = _FakeGitHubClient()
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: fake,
+    )
+    result = trigger_deployment(project_key="GPWW", ref="feature/new-page")
+    assert result["status"] == "ok"
+    assert result["ref"] == "feature/new-page"
+    assert result["dispatch_ref"] == "main"
+    owner, repo, workflow, dispatch_ref, inputs = fake.dispatches[0]
+    assert dispatch_ref == "main"
+    assert inputs == {"site": "greenpromowear-website", "ref": "feature/new-page"}
 
 
 def test_get_deployment_status(monkeypatch):

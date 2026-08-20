@@ -178,7 +178,7 @@ def _handoff_failed_deploys(
     )
 
     failures: List[Dict[str, Any]] = []
-    log_from = (log_repo or repo or "").strip() or repo
+    log_from = (log_repo or repo).strip()
     diagnosis = ["**Deploy failed — diagnosis.**"]
     for item in failed_runs:
         run_id = item.get("run_id")
@@ -456,7 +456,7 @@ def run_chat_deploy_pipeline(
         status="in_progress",
     )
     try:
-        result = trigger_deployment(project_key=key)
+        result = trigger_deployment(project_key=key, ref=risk.get("head_ref"))
     except DevOpsError as e:
         _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Could not start deploy: {e}")
@@ -497,7 +497,7 @@ def run_chat_deploy_pipeline(
                 "finished_lines": [],
                 "failed_runs": [],
                 "done_run_ids": [],
-                "ref": (triggered[0] or {}).get("ref") or "main",
+                "ref": result.get("ref") or risk.get("head_ref") or "main",
             },
         )
         return {
