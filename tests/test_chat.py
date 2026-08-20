@@ -422,3 +422,28 @@ def test_favicon_is_served_without_auth():
     png = client.get("/favicon-32x32.png")
     assert png.status_code == 200
     assert "png" in (png.content_type or "")
+    logo = client.get("/bigas-logo.png")
+    assert logo.status_code == 200
+    assert "png" in (logo.content_type or "")
+
+
+def test_logo_bypasses_restricted_access():
+    from flask import Flask, jsonify, request
+
+    from bigas.resources.chat.endpoints import BRAND_ICON_FILES, chat_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(chat_bp)
+
+    @app.before_request
+    def _enforce_access_key():
+        if request.path.lstrip("/") in BRAND_ICON_FILES:
+            return None
+        return jsonify({"error": "Unauthorized"}), 401
+
+    client = app.test_client()
+    resp = client.get("/bigas-logo.png")
+    assert resp.status_code == 200
+    assert "png" in (resp.content_type or "")
+    blocked = client.get("/api/secret")
+    assert blocked.status_code == 401
