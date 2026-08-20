@@ -52,7 +52,7 @@ Two design decisions shape everything else in this document:
 1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler, Firebase Auth, Firestore), Discord, and Jira/GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
 2. **It's modular.** Marketing, Product, CTO, and DevOps are independent resource packages. Ads/finance/analytics/notification integrations are *providers* discovered at startup — enable one by setting its env vars, add a new one (e.g. TikTok Ads, QuickBooks, Slack) by dropping in a file, no core changes required. See [Modular architecture: providers](#modular-architecture-providers).
 
-Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord **and** the chat activity feed — or you can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler. Open the deployed Cloud Run URL in a browser to use the chat UI.
+Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord. When the agent chat UI is enabled, the same output also lands in the matching specialist thread and the activity feed. You can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler. Chat is optional: Firebase Auth and Firestore are only for persistent production chat — run without them via in-memory storage locally, or set `CHAT_ENABLED=false` for Discord/MCP only. When chat is on, open the deployed Cloud Run URL in a browser to use the UI.
 
 ---
 
@@ -65,7 +65,7 @@ Bigas is built to sit mostly idle and burst occasionally: a weekly analytics rep
 - **One container image, one `gcloud run deploy`.** No cluster, no VM patching, no load balancer to configure — `deploy.sh` builds the image, pushes it to Artifact Registry, and deploys it in one shot.
 - **Fits natively with the rest of the stack**: Cloud Scheduler triggers HTTP endpoints on a cron, Secret Manager can feed env vars at startup (`SECRET_MANAGER=true`), and GCS stores reports — all billed the same pay-per-use way.
 
-None of this is required — the Flask app runs equally well on Fly.io, Render, a VPS, or your laptop via `python run_core.py`. Chat history needs Firestore (or in-memory for local dev); everything else can stay stateless. Cloud Run is simply the path this project is opinionated and tested toward, because for the "one founder, spiky traffic" use case it tends to be the cheapest place to run it.
+None of this is required — the Flask app runs equally well on Fly.io, Render, a VPS, or your laptop via `python run_core.py`. Persistent chat history needs Firestore; locally you can use in-memory storage, or disable chat with `CHAT_ENABLED=false`. Everything else can stay stateless. Cloud Run is simply the path this project is opinionated and tested toward, because for the "one founder, spiky traffic" use case it tends to be the cheapest place to run it.
 
 ---
 
@@ -285,7 +285,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/create_release_notes \
   -d '{"fix_version": "1.2.0"}'
 ```
 
-`progress_updates` does the same for issues moved to Done in the last N days, posting a team progress summary to Discord instead.
+`progress_updates` does the same for issues moved to Done in the last N days, posting a team progress summary to Discord and — when chat is enabled — the Product Manager thread.
 
 ```bash
 # Last week's git activity → X draft → Discord Approve / Decline
@@ -452,6 +452,8 @@ Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_i
 
 All endpoint names below are **relative to `/mcp/tools/`**. For example, `POST weekly_analytics_report` means `POST /mcp/tools/weekly_analytics_report`.
 
+When chat is enabled, scheduled marketing reports that post to Discord also land in the Marketing Analyst thread. `progress_updates` and weekly X drafts go to the Product Manager thread. `CHAT_ENABLED=false` skips those chat posts.
+
 Find your service URL with:
 ```bash
 gcloud run services describe <your-service-name> --region=your-region --format='value(status.url)'
@@ -461,7 +463,7 @@ gcloud run services describe <your-service-name> --region=your-region --format='
 
 | Endpoint | Description |
 |---|---|
-| `POST weekly_analytics_report` | Full weekly GA4 report → Discord. Slow; use `async: true` from MCP |
+| `POST weekly_analytics_report` | Full weekly GA4 report → Discord and the Marketing Analyst chat thread. Slow; use `async: true` from MCP |
 | `POST weekly_analytics_report_async` | Same report, returns `job_id` immediately — poll `get_job_status` / `get_job_result` |
 | `GET get_latest_report` | Retrieve the most recent stored report |
 | `GET get_stored_reports` | List all stored reports |
@@ -483,7 +485,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/analyze_underperformin
 
 | Endpoint | Description |
 |---|---|
-| `POST run_linkedin_portfolio_report` | One-command: discover creatives → fetch analytics → summarize → Discord |
+| `POST run_linkedin_portfolio_report` | One-command: discover creatives → fetch analytics → summarize → Discord and Marketing Analyst chat |
 | `POST run_linkedin_portfolio_report_async` | Async variant of the above — returns a `job_id` immediately |
 | `POST list_linkedin_creatives_for_period` | Discover creatives with activity in a date range (no hard-coded creative IDs) |
 | `POST fetch_linkedin_ad_analytics_report` | Fetch raw LinkedIn adAnalytics, cache in GCS |
@@ -506,7 +508,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 
 | Endpoint | Description |
 |---|---|
-| `POST run_reddit_portfolio_report` | One-command: fetch performance + audience → summarize → Discord |
+| `POST run_reddit_portfolio_report` | One-command: fetch performance + audience → summarize → Discord and Marketing Analyst chat |
 | `POST run_reddit_portfolio_report_async` | Async variant of the above — returns a `job_id` immediately |
 | `POST fetch_reddit_ad_analytics_report` | Fetch Reddit Ads performance report, store in GCS |
 | `POST fetch_reddit_audience_report` | Audience breakdown by interests, communities, or geography |
@@ -518,11 +520,11 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 
 | Endpoint | Description |
 |---|---|
-| `POST run_google_ads_portfolio_report` | Campaign/ad/audience performance report → Discord |
+| `POST run_google_ads_portfolio_report` | Campaign/ad/audience performance report → Discord and Marketing Analyst chat |
 | `POST run_google_ads_portfolio_report_async` | Async variant — returns a `job_id` immediately |
-| `POST run_meta_portfolio_report` | Meta (Facebook/Instagram) campaign performance → Discord |
+| `POST run_meta_portfolio_report` | Meta (Facebook/Instagram) campaign performance → Discord and Marketing Analyst chat |
 | `POST run_meta_portfolio_report_async` | Async variant — returns a `job_id` immediately |
-| `POST run_cross_platform_marketing_analysis` | LinkedIn + Reddit + Google Ads + Meta in one report → Discord |
+| `POST run_cross_platform_marketing_analysis` | LinkedIn + Reddit + Google Ads + Meta in one report → Discord and Marketing Analyst chat |
 | `POST run_cross_platform_marketing_analysis_async` | Async variant — returns a `job_id` immediately (use for long runs instead of a 900s Cloud Run timeout) |
 | `POST get_job_status` | Poll status of any async job by `job_id` |
 | `POST get_job_result` | Fetch the result of a finished async job by `job_id` |
@@ -534,8 +536,8 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
-| `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord |
-| `POST generate_weekly_x_post` | Last N days of git activity → X draft (major changes only) → Discord Approve/Decline |
+| `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord and Product Manager chat |
+| `POST generate_weekly_x_post` | Last N days of git activity → X draft (major changes only) → Discord and Product Manager chat Approve/Decline |
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub. Details: [docs/cto-pr-review.md](docs/cto-pr-review.md) |
 | `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
 | `POST autofix_followup` | Poll the autofix agent; on completion, re-reviews the PR and posts the result to Discord. Details: [docs/cto-autofix.md](docs/cto-autofix.md) |

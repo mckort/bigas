@@ -819,3 +819,62 @@ def test_generate_weekly_x_post_can_skip_chat(monkeypatch):
     assert resp.status_code == 200
     assert resp.get_json()["posted_to_chat"] is False
     assert called == []
+
+
+def test_progress_updates_posts_to_product_chat(monkeypatch):
+    from bigas.resources.product.endpoints import product_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(product_bp)
+    client = app.test_client()
+    posted = {}
+
+    class FakeService:
+        def run(self, **kwargs):
+            return {"message": "Shipped 3 cards this week", "days": 7}
+
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL_PRODUCT", raising=False)
+    monkeypatch.setattr("bigas.resources.product.endpoints.ProgressUpdatesService", FakeService)
+    monkeypatch.setattr(
+        "bigas.resources.product.endpoints.post_to_agent_thread",
+        lambda agent_id, content, **kwargs: posted.update(
+            {"agent_id": agent_id, "content": content, "metadata": kwargs.get("metadata")}
+        )
+        or {"message_id": "m1", "thread_id": "product-thread"},
+    )
+
+    resp = client.post("/mcp/tools/progress_updates", json={"days": 7})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["posted_to_chat"] is True
+    assert data["chat_thread_id"] == "product-thread"
+    assert posted["agent_id"] == "product"
+    assert "Shipped 3 cards" in posted["content"]
+
+
+def test_progress_updates_can_skip_chat(monkeypatch):
+    from bigas.resources.product.endpoints import product_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(product_bp)
+    client = app.test_client()
+    called = []
+
+    class FakeService:
+        def run(self, **kwargs):
+            return {"message": "Shipped 3 cards this week", "days": 7}
+
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL_PRODUCT", raising=False)
+    monkeypatch.setattr("bigas.resources.product.endpoints.ProgressUpdatesService", FakeService)
+    monkeypatch.setattr(
+        "bigas.resources.product.endpoints.post_to_agent_thread",
+        lambda *a, **k: called.append(True),
+    )
+
+    resp = client.post(
+        "/mcp/tools/progress_updates",
+        json={"days": 7, "post_to_chat": False},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["posted_to_chat"] is False
+    assert called == []
