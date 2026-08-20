@@ -25,6 +25,7 @@ os.environ.setdefault(
 from app import create_app
 from bigas.resources.devops.config import resolve_deploy_target
 from bigas.resources.devops.service import (
+    _classify_file,
     check_deployment_risk,
     check_website_health,
     get_deployment_status,
@@ -42,7 +43,8 @@ def client():
 
 class _FakeGitHubClient:
     def __init__(self, *args, **kwargs):
-        pass
+        self._latest_run_ids: dict[str, int] = {}
+        self._pending_new_runs: set[str] = set()
 
     def get_default_branch(self, owner, repo):
         return "main"
@@ -60,15 +62,28 @@ class _FakeGitHubClient:
         }
 
     def trigger_workflow(self, owner, repo, workflow_id, ref, inputs=None):
-        return None
+        self._pending_new_runs.add(workflow_id)
 
     def list_workflow_runs(self, owner, repo, workflow_id, *, branch=None, limit=5):
+        if workflow_id in self._pending_new_runs:
+            run_id = self._latest_run_ids.get(workflow_id, 999) + 1
+            self._latest_run_ids[workflow_id] = run_id
+            self._pending_new_runs.discard(workflow_id)
+            return [
+                {
+                    "id": run_id,
+                    "status": "queued",
+                    "conclusion": None,
+                    "html_url": f"https://github.com/{owner}/{repo}/actions/runs/{run_id}",
+                }
+            ]
+        run_id = self._latest_run_ids.get(workflow_id, 999)
         return [
             {
-                "id": 999,
-                "status": "queued",
-                "conclusion": None,
-                "html_url": f"https://github.com/{owner}/{repo}/actions/runs/999",
+                "id": run_id,
+                "status": "completed",
+                "conclusion": "success",
+                "html_url": f"https://github.com/{owner}/{repo}/actions/runs/{run_id}",
             }
         ]
 
@@ -102,6 +117,7 @@ def test_check_deployment_risk_flags_migrations(monkeypatch):
 
 
 def test_trigger_deployment(monkeypatch):
+    monkeypatch.setattr("bigas.resources.devops.service.time.sleep", lambda _: None)
     monkeypatch.setattr(
         "bigas.resources.devops.service._github_client",
         lambda token=None: _FakeGitHubClient(),
@@ -110,6 +126,7 @@ def test_trigger_deployment(monkeypatch):
     assert result["status"] == "ok"
     assert len(result["triggered"]) == 2
     assert "deploy-backend.yml" in result["summary"]
+    assert all(item["run_id"] == 1000 for item in result["triggered"])
 
 
 def test_get_deployment_status(monkeypatch):
@@ -170,3 +187,25 @@ def test_list_agents_includes_devops(client):
     assert resp.status_code == 200
     ids = {a["agent_id"] for a in resp.get_json()["agents"]}
     assert "devops" in ids
+
+
+@pytest.mark.parametrize(
+    ("path", "category"),
+    [
+        ("db/schema.sql", "database_migration"),
+        ("package-lock.json", "dependency_change"),
+        ("pnpm-lock.yaml", "dependency_change"),
+    ],
+)
+def test_classify_file_matches_risky_patterns(path, category):
+    assert _classify_file(path) == category
+
+
+def test_get_deployment_status_invalid_run_id(client):
+    resp = client.post(
+        "/mcp/tools/get_deployment_status",
+        data=json.dumps({"repo": "mckort/vcfieldassistant", "run_id": "not-a-number"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    assert "integer" in resp.get_json()["error"].lower()

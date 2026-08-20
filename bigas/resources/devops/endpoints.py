@@ -96,9 +96,13 @@ def get_deployment_status_endpoint():
     if not is_valid:
         return jsonify({"error": error_msg}), 400
     try:
+        run_id = int(data["run_id"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "run_id must be a valid integer"}), 400
+    try:
         result = get_deployment_status(
             repo=data["repo"],
-            run_id=int(data["run_id"]),
+            run_id=run_id,
             github_token=data.get("github_token"),
         )
         return jsonify(result)

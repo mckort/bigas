@@ -12,6 +12,9 @@ from bigas.resources.devops.github_actions import GitHubActionsClient, GitHubAct
 
 logger = logging.getLogger(__name__)
 
+_RUN_POLL_INTERVAL_SEC = 1.0
+_RUN_POLL_TIMEOUT_SEC = 30.0
+
 
 class DevOpsError(RuntimeError):
     pass
@@ -28,12 +31,51 @@ def _classify_file(path: str) -> Optional[str]:
     lower = (path or "").lower()
     for pattern in RISKY_PATH_PATTERNS:
         if pattern.lower() in lower:
-            if "migration" in pattern or "alembic" in pattern or "prisma" in pattern or "db/migrate" in pattern:
+            if (
+                "migration" in pattern
+                or "alembic" in pattern
+                or "prisma" in pattern
+                or "db/migrate" in pattern
+                or "schema" in pattern
+            ):
                 return "database_migration"
-            if pattern.endswith(".lock") or pattern in ("requirements.txt",):
+            if "lock" in pattern or pattern in ("requirements.txt",):
                 return "dependency_change"
             if "deploy" in pattern or "docker-compose" in pattern or ".env" in pattern:
                 return "infrastructure_config"
+    return None
+
+
+def _wait_for_new_workflow_run(
+    client: GitHubActionsClient,
+    owner: str,
+    name: str,
+    workflow_id: str,
+    branch: str,
+    previous_run_id: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    """Poll until a workflow run newer than previous_run_id appears, or timeout."""
+    deadline = time.monotonic() + _RUN_POLL_TIMEOUT_SEC
+    while time.monotonic() < deadline:
+        time.sleep(_RUN_POLL_INTERVAL_SEC)
+        try:
+            runs = client.list_workflow_runs(owner, name, workflow_id, branch=branch, limit=1)
+        except GitHubActionsError as e:
+            logger.warning(
+                "Could not list workflow runs for %s after trigger: %s",
+                workflow_id,
+                e,
+            )
+            return None
+        run = runs[0] if runs else {}
+        run_id = run.get("id")
+        if run_id and run_id != previous_run_id:
+            return run
+    logger.warning(
+        "Timed out waiting for new workflow run for %s (previous run_id=%s)",
+        workflow_id,
+        previous_run_id,
+    )
     return None
 
 
@@ -164,23 +206,31 @@ def trigger_deployment(
     triggered: List[Dict[str, Any]] = []
     errors: List[str] = []
     for wf in workflow_names:
+        previous_run_id: Optional[int] = None
+        try:
+            prior_runs = client.list_workflow_runs(owner, name, wf, branch=branch, limit=1)
+            if prior_runs:
+                previous_run_id = prior_runs[0].get("id")
+        except GitHubActionsError as e:
+            logger.warning("Could not fetch prior workflow run for %s: %s", wf, e)
+
         try:
             client.trigger_workflow(owner, name, wf, branch)
-            time.sleep(1.5)
-            runs = client.list_workflow_runs(owner, name, wf, branch=branch, limit=1)
-            run = runs[0] if runs else {}
-            triggered.append(
-                {
-                    "workflow": wf,
-                    "ref": branch,
-                    "run_id": run.get("id"),
-                    "status": run.get("status"),
-                    "conclusion": run.get("conclusion"),
-                    "html_url": run.get("html_url"),
-                }
-            )
         except GitHubActionsError as e:
             errors.append(f"{wf}: {e}")
+            continue
+
+        run = _wait_for_new_workflow_run(client, owner, name, wf, branch, previous_run_id)
+        triggered.append(
+            {
+                "workflow": wf,
+                "ref": branch,
+                "run_id": run.get("id") if run else None,
+                "status": run.get("status") if run else None,
+                "conclusion": run.get("conclusion") if run else None,
+                "html_url": run.get("html_url") if run else None,
+            }
+        )
 
     if not triggered and errors:
         raise DevOpsError("; ".join(errors))
