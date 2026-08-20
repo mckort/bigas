@@ -164,6 +164,7 @@ def _handoff_failed_deploys(
     repo: str,
     failed_runs: List[Dict[str, Any]],
     starting_ref: str = "main",
+    log_repo: Optional[str] = None,
 ) -> None:
     if not thread_id or not repo or not failed_runs:
         _complete_pipeline_progress(thread_id)
@@ -177,6 +178,7 @@ def _handoff_failed_deploys(
     )
 
     failures: List[Dict[str, Any]] = []
+    log_from = (log_repo or repo or "").strip() or repo
     diagnosis = ["**Deploy failed — diagnosis.**"]
     for item in failed_runs:
         run_id = item.get("run_id")
@@ -186,7 +188,7 @@ def _handoff_failed_deploys(
         excerpt = ""
         if run_id:
             try:
-                fetched = get_failed_run_excerpt(repo=repo, run_id=int(run_id))
+                fetched = get_failed_run_excerpt(repo=log_from, run_id=int(run_id))
                 excerpt = (fetched.get("excerpt") or "").strip()
             except Exception as e:
                 logger.warning("Failed to fetch logs for run %s: %s", run_id, e)
@@ -288,12 +290,14 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
         parts.extend(f"- {line}" for line in health_lines)
     _post(thread_id, "\n".join(parts))
     _set_deploy_poll(thread_id, None)
-    if failed_runs and repo:
+    hotfix_repo = poll.get("product_repo") or repo
+    if failed_runs and hotfix_repo:
         _handoff_failed_deploys(
             thread_id,
-            repo=repo,
+            repo=hotfix_repo,
             failed_runs=failed_runs,
             starting_ref=starting_ref,
+            log_repo=repo,
         )
     else:
         _complete_pipeline_progress(thread_id)
@@ -447,7 +451,7 @@ def run_chat_deploy_pipeline(
     _set_pending(thread_id, None)
     _post(
         thread_id,
-        "🚀 **Deploy:** starting GitHub Actions (backend + web)…",
+        "🚀 **Deploy:** starting GitHub Actions…",
         role="system",
         status="in_progress",
     )
@@ -485,7 +489,8 @@ def run_chat_deploy_pipeline(
         _set_deploy_poll(
             thread_id,
             {
-                "repo": result.get("repo") or risk.get("repo") or "",
+                "repo": result.get("deploy_repo") or result.get("repo") or risk.get("repo") or "",
+                "product_repo": result.get("repo") or risk.get("repo") or "",
                 "triggered": triggered,
                 "site_urls": result.get("site_urls") or risk.get("site_urls") or [],
                 "started_at": datetime.now(timezone.utc).isoformat(),

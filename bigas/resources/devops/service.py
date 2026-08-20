@@ -248,6 +248,7 @@ def check_deployment_risk(
         "no_prod_version": no_prod_version,
         "workflows_configured": target.workflows,
         "site_urls": target.site_urls,
+        "deploy_repo": target.dispatch_repo,
     }
 
 
@@ -266,13 +267,14 @@ def trigger_deployment(
             "BIGAS_DEPLOY_WORKFLOW_MAP (e.g. VFA:deploy-backend.yml,deploy-web.yml)."
         )
 
-    owner, name = parse_repo(target.repo)
+    owner, name = parse_repo(target.dispatch_repo)
     client = _github_client(github_token)
     branch = (ref or client.get_default_branch(owner, name)).strip()
     workflow_names = [w.strip() for w in (workflows or target.workflows) if w and w.strip()]
     if not workflow_names:
         raise DevOpsError("No deployment workflows configured for this target.")
 
+    inputs = dict(target.workflow_inputs or {})
     triggered: List[Dict[str, Any]] = []
     errors: List[str] = []
     for wf in workflow_names:
@@ -285,7 +287,7 @@ def trigger_deployment(
             logger.warning("Could not fetch prior workflow run for %s: %s", wf, e)
 
         try:
-            client.trigger_workflow(owner, name, wf, branch)
+            client.trigger_workflow(owner, name, wf, branch, inputs=inputs or None)
         except GitHubActionsError as e:
             errors.append(f"{wf}: {e}")
             continue
@@ -306,8 +308,12 @@ def trigger_deployment(
         raise DevOpsError("; ".join(errors))
 
     lines = [
-        f"Triggered {len(triggered)} workflow(s) on {target.repo} @ {branch}.",
+        f"Triggered {len(triggered)} workflow(s) on {target.dispatch_repo} @ {branch}.",
     ]
+    if target.dispatch_repo != target.repo:
+        site = (inputs or {}).get("site")
+        extra = f"site={site}" if site else "all sites"
+        lines.append(f"Product repo {target.repo} ({extra}).")
     for item in triggered:
         url = item.get("html_url") or "(pending — check Actions tab)"
         lines.append(f"- {item['workflow']}: run #{item.get('run_id') or '?'} — {url}")
@@ -322,11 +328,13 @@ def trigger_deployment(
         "status": "ok" if triggered else "error",
         "summary": "\n".join(lines),
         "repo": target.repo,
+        "deploy_repo": target.dispatch_repo,
         "project_key": target.project_key,
         "ref": branch,
         "triggered": triggered,
         "errors": errors,
         "site_urls": target.site_urls,
+        "workflow_inputs": inputs or None,
     }
 
 
