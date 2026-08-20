@@ -60,10 +60,12 @@ export async function fetchMessages(threadId, since) {
   return apiFetch(`/api/chat/threads/${threadId}/messages${qs}`)
 }
 
-export async function sendMessage(threadId, content) {
+export async function sendMessage(threadId, content, clientId) {
+  const body = { content }
+  if (clientId) body.client_id = clientId
   return apiFetch(`/api/chat/threads/${threadId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
   })
 }
 

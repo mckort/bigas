@@ -85,6 +85,44 @@ def test_create_thread_and_messages(client, monkeypatch):
     assert any(m["role"] == "user" and m["content"] == "Hi there" for m in messages)
 
 
+def test_send_message_stores_client_id(client, monkeypatch):
+    from bigas.chat.db import get_chat_store
+
+    def mock_handle(**kwargs):
+        store = get_chat_store()
+        metadata = {"client_id": kwargs["client_id"]} if kwargs.get("client_id") else None
+        store.add_message(
+            kwargs["thread_id"],
+            role="user",
+            content=kwargs["user_message"],
+            metadata=metadata,
+        )
+        msg = store.add_message(
+            kwargs["thread_id"], role="assistant", content="Hello from chief"
+        )
+        return {"status": "complete", "message": msg}
+
+    monkeypatch.setattr("bigas.resources.chat.endpoints.handle_chat_message", mock_handle)
+
+    thread_id = client.post(
+        "/api/chat/threads",
+        headers=_auth_headers(),
+        data=json.dumps({"agent_id": "chief"}),
+    ).get_json()["thread"]["thread_id"]
+
+    client_id = "test-client-msg-id"
+    msg_resp = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        headers=_auth_headers(),
+        data=json.dumps({"content": "Hi there", "client_id": client_id}),
+    )
+    assert msg_resp.status_code == 200
+
+    history = client.get(f"/api/chat/threads/{thread_id}/messages", headers=_auth_headers())
+    user_msgs = [m for m in history.get_json()["messages"] if m["role"] == "user"]
+    assert any(m.get("metadata", {}).get("client_id") == client_id for m in user_msgs)
+
+
 def test_update_agent_goals(client):
     resp = client.put(
         "/api/agents/marketing",
