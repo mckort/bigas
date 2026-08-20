@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import AgentSidebar from './AgentSidebar'
+import AgentSidebar, { UnreadDot } from './AgentSidebar'
 import ActivityFeed from './ActivityFeed'
 import AgentSettings from './AgentSettings'
 import {
@@ -301,7 +301,89 @@ function mergePolledMessages(prev, incoming) {
   )
 }
 
-function MobileAgentTabs({ agents, activeAgentId, onSelectAgent }) {
+const LAST_OPENED_KEY = 'bigas_chat_last_opened'
+const UNREAD_CHANNEL = 'bigas-chat-unread'
+const THREAD_POLL_MS = 20000
+
+function readLastOpened() {
+  try {
+    const raw = localStorage.getItem(LAST_OPENED_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeLastOpened(map) {
+  try {
+    localStorage.setItem(LAST_OPENED_KEY, JSON.stringify(map))
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function seedLastOpened(existing) {
+  return existing && typeof existing === 'object' ? existing : {}
+}
+
+function latestServerTimestamp(threads) {
+  let max = ''
+  for (const thread of threads || []) {
+    for (const field of ['last_incoming_at', 'updated_at']) {
+      const ts = thread?.[field] || ''
+      if (ts > max) max = ts
+    }
+  }
+  return max
+}
+
+function mergeLastOpened(a, b) {
+  if (!b) return a || {}
+  if (!a) return { ...b }
+  let changed = false
+  const out = { ...a }
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const left = a[key] || ''
+    const right = b[key] || ''
+    const merged = left > right ? left : right
+    if ((a[key] || '') !== merged) {
+      out[key] = merged
+      changed = true
+    }
+  }
+  return changed ? out : a
+}
+
+function latestThreadByAgent(threads) {
+  const byAgent = {}
+  for (const thread of threads || []) {
+    const agentId = thread?.agent_id
+    if (!agentId) continue
+    const prev = byAgent[agentId]
+    if (!prev || (thread.updated_at || '') > (prev.updated_at || '')) {
+      byAgent[agentId] = thread
+    }
+  }
+  return byAgent
+}
+
+function unreadAgentIdSet(threads, lastOpened, activeAgentId) {
+  const ids = new Set()
+  const byAgent = latestThreadByAgent(threads)
+  for (const [agentId, thread] of Object.entries(byAgent)) {
+    if (agentId === activeAgentId) continue
+    if (thread.last_message_role === 'user') continue
+    const incomingAt = thread.last_incoming_at || ''
+    if (!incomingAt) continue
+    const openedAt = lastOpened[agentId] || lastOpened._seeded || ''
+    if (incomingAt > openedAt) ids.add(agentId)
+  }
+  return ids
+}
+
+function MobileAgentTabs({ agents, activeAgentId, onSelectAgent, unreadAgentIds }) {
   if (!agents.length) return null
   return (
     <div className="lg:hidden border-b border-border bg-white">
@@ -319,8 +401,14 @@ function MobileAgentTabs({ agents, activeAgentId, onSelectAgent }) {
                   : 'bg-surface text-text border border-transparent'
               }`}
             >
-              <span className={(agent.icon || '').includes('<') ? 'font-mono text-[10px] font-semibold' : ''}>
-                {agent.icon || '🤖'}
+              <span className="relative inline-flex">
+                <span className={(agent.icon || '').includes('<') ? 'font-mono text-[10px] font-semibold' : ''}>
+                  {agent.icon || '🤖'}
+                </span>
+                <UnreadDot
+                  show={Boolean(unreadAgentIds?.has(agent.agent_id))}
+                  className="-top-1 -right-1"
+                />
               </span>
               <span className="whitespace-nowrap">{agent.name}</span>
             </button>
@@ -344,11 +432,41 @@ export default function ChatLayout({ user, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [threads, setThreads] = useState([])
+  const [lastOpened, setLastOpened] = useState(() => seedLastOpened(readLastOpened()))
   const bottomRef = useRef(null)
   const lastMsgTs = useRef('')
   const lastFeedTs = useRef('')
+  const unreadChannelRef = useRef(null)
+  const messagesThreadIdRef = useRef(null)
 
   const activeAgent = agents.find((a) => a.agent_id === activeAgentId) || { icon: '🤖', name: 'Agent' }
+  const unreadAgentIds = useMemo(
+    () => unreadAgentIdSet(threads, lastOpened, activeAgentId),
+    [threads, lastOpened, activeAgentId],
+  )
+
+  const bumpLastOpened = useCallback((agentId, at) => {
+    if (!agentId || !at) return
+    setLastOpened((prev) => {
+      const current = prev[agentId] || prev._seeded || ''
+      if (at <= current) return prev
+      const next = { ...prev, [agentId]: at }
+      writeLastOpened(next)
+      unreadChannelRef.current?.postMessage({ type: 'lastOpened', map: next })
+      return next
+    })
+  }, [])
+
+  const handleSelectAgent = useCallback(
+    (agentId) => {
+      messagesThreadIdRef.current = null
+      const at = latestServerTimestamp(threads)
+      if (at) bumpLastOpened(agentId, at)
+      setActiveAgentId(agentId)
+    },
+    [bumpLastOpened, threads],
+  )
 
   const loadAgents = useCallback(async () => {
     const res = await fetchAgents()
@@ -356,6 +474,7 @@ export default function ChatLayout({ user, onLogout }) {
   }, [])
 
   const openAgentThread = useCallback(async (agentId, { cancelled } = {}) => {
+    messagesThreadIdRef.current = null
     setThreadId(null)
     setMessages([])
     setWaitingForReply(false)
@@ -368,6 +487,8 @@ export default function ChatLayout({ user, onLogout }) {
     const probedMessages = new Map()
     try {
       const listed = await fetchThreads()
+      if (cancelled?.()) return
+      setThreads(listed.threads || [])
       const candidates = (listed.threads || []).filter((t) => t.agent_id === agentId)
       const resumable = candidates.filter((t) => (t.message_count ?? 1) > 0)
       const toProbe = resumable.slice(0, 15)
@@ -417,6 +538,7 @@ export default function ChatLayout({ user, onLogout }) {
     }
 
     setThreadId(thread.thread_id)
+    messagesThreadIdRef.current = thread.thread_id
 
     if (loaded.length) {
       setMessages(loaded)
@@ -459,6 +581,98 @@ export default function ChatLayout({ user, onLogout }) {
   useEffect(() => {
     loadAgents()
   }, [loadAgents])
+
+  useEffect(() => {
+    let channel
+    try {
+      channel = new BroadcastChannel(UNREAD_CHANNEL)
+      unreadChannelRef.current = channel
+      channel.onmessage = (event) => {
+        if (event.data?.type !== 'lastOpened' || !event.data.map) return
+        setLastOpened((prev) => mergeLastOpened(prev, event.data.map))
+      }
+    } catch {
+      unreadChannelRef.current = null
+    }
+
+    function onStorage(event) {
+      if (event.key !== LAST_OPENED_KEY || !event.newValue) return
+      try {
+        const parsed = JSON.parse(event.newValue)
+        if (parsed && typeof parsed === 'object') {
+          setLastOpened((prev) => mergeLastOpened(prev, parsed))
+        }
+      } catch {
+        /* ignore malformed storage */
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      channel?.close()
+      unreadChannelRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function pollThreads() {
+      try {
+        const res = await fetchThreads()
+        if (!cancelled) setThreads(res.threads || [])
+      } catch {
+        /* ignore poll errors */
+      }
+    }
+
+    pollThreads()
+    const id = setInterval(pollThreads, THREAD_POLL_MS)
+    const onVis = () => {
+      if (document.visibilityState === 'visible') pollThreads()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [])
+
+  useEffect(() => {
+    const serverTs = latestServerTimestamp(threads)
+    if (!serverTs) return
+    setLastOpened((prev) => {
+      let changed = false
+      const next = { ...prev }
+      if (!prev._seeded || prev._seeded > serverTs) {
+        next._seeded = serverTs
+        changed = true
+      }
+      for (const [key, val] of Object.entries(prev)) {
+        if (key.startsWith('_')) continue
+        if (val > serverTs) {
+          next[key] = serverTs
+          changed = true
+        }
+      }
+      if (!changed) return prev
+      writeLastOpened(next)
+      return next
+    })
+  }, [threads])
+
+  useEffect(() => {
+    const at = latestServerTimestamp(threads)
+    if (at) bumpLastOpened(activeAgentId, at)
+  }, [activeAgentId, bumpLastOpened, threads])
+
+  useEffect(() => {
+    if (!threadId || messagesThreadIdRef.current !== threadId) return
+    const last = messages[messages.length - 1]
+    if (!last?.created_at) return
+    bumpLastOpened(activeAgentId, last.created_at)
+  }, [activeAgentId, messages, threadId, bumpLastOpened])
 
   useEffect(() => {
     let cancelled = false
@@ -645,21 +859,23 @@ export default function ChatLayout({ user, onLogout }) {
       <AgentSidebar
         agents={agents}
         activeAgentId={activeAgentId}
-        onSelectAgent={setActiveAgentId}
+        onSelectAgent={handleSelectAgent}
         onOpenSettings={() => setSettingsOpen(true)}
         mobileOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        unreadAgentIds={unreadAgentIds}
       />
 
       <main className="flex-1 flex flex-col min-w-0 bg-bg">
         <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-white/90 backdrop-blur-sm sticky top-0 z-10">
           <button
             type="button"
-            className="lg:hidden text-xl min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 hover:bg-surface rounded-xl transition-colors"
+            className="relative lg:hidden text-xl min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 hover:bg-surface rounded-xl transition-colors"
             onClick={() => setSidebarOpen(true)}
-            aria-label="Open agents"
+            aria-label={unreadAgentIds.size ? 'Open agents, unread messages' : 'Open agents'}
           >
             ☰
+            <UnreadDot show={unreadAgentIds.size > 0} />
           </button>
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-bigas-blue flex items-center justify-center border border-black/10">
@@ -700,7 +916,8 @@ export default function ChatLayout({ user, onLogout }) {
         <MobileAgentTabs
           agents={agents}
           activeAgentId={activeAgentId}
-          onSelectAgent={setActiveAgentId}
+          onSelectAgent={handleSelectAgent}
+          unreadAgentIds={unreadAgentIds}
         />
 
         <div className="flex-1 overflow-y-auto scrollbar-thin">

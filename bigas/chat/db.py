@@ -211,8 +211,12 @@ class MemoryChatStore:
         with self._lock:
             self._messages.setdefault(thread_id, []).append(message)
             if thread_id in self._threads:
-                self._threads[thread_id]["updated_at"] = message["created_at"]
-                self._threads[thread_id]["message_count"] = int(self._threads[thread_id].get("message_count") or 0) + 1
+                thread = self._threads[thread_id]
+                thread["updated_at"] = message["created_at"]
+                thread["message_count"] = int(thread.get("message_count") or 0) + 1
+                thread["last_message_role"] = role
+                if role != "user":
+                    thread["last_incoming_at"] = message["created_at"]
         return dict(message)
 
     def list_messages(self, thread_id: str, *, since: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -450,10 +454,14 @@ class FirestoreChatStore:
 
         batch = self._db.batch()
         batch.set(self._messages.document(message_id), message)
-        batch.update(
-            self._threads.document(thread_id),
-            {"updated_at": now, "message_count": firestore.Increment(1)},
-        )
+        payload = {
+            "updated_at": now,
+            "message_count": firestore.Increment(1),
+            "last_message_role": role,
+        }
+        if role != "user":
+            payload["last_incoming_at"] = now
+        batch.update(self._threads.document(thread_id), payload)
         batch.commit()
         return message
 

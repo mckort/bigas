@@ -1,6 +1,22 @@
-import { useState } from 'react'
+export function UnreadDot({ show, className = '' }) {
+  if (!show) return null
+  return (
+    <span
+      className={`absolute top-0 right-0 w-2.5 h-2.5 rounded-full bg-bigas-black ring-2 ring-white ${className}`}
+      aria-label="Unread messages"
+    />
+  )
+}
 
-export default function AgentSidebar({ agents, activeAgentId, onSelectAgent, onOpenSettings, mobileOpen, onClose }) {
+export default function AgentSidebar({
+  agents,
+  activeAgentId,
+  onSelectAgent,
+  onOpenSettings,
+  mobileOpen,
+  onClose,
+  unreadAgentIds,
+}) {
   return (
     <>
       {mobileOpen && (
@@ -41,6 +57,7 @@ export default function AgentSidebar({ agents, activeAgentId, onSelectAgent, onO
           </p>
           {agents.map((agent) => {
             const isActive = activeAgentId === agent.agent_id
+            const hasUnread = Boolean(unreadAgentIds?.has(agent.agent_id))
             return (
               <button
                 key={agent.agent_id}
@@ -56,7 +73,7 @@ export default function AgentSidebar({ agents, activeAgentId, onSelectAgent, onO
                 }`}
               >
                 <span
-                  className={`flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-lg ${
+                  className={`relative flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-lg ${
                     isActive ? 'bg-white/60' : 'bg-white border border-border'
                   } ${
                     (agent.icon || '').includes('<')
@@ -65,6 +82,7 @@ export default function AgentSidebar({ agents, activeAgentId, onSelectAgent, onO
                   }`}
                 >
                   {agent.icon || '🤖'}
+                  <UnreadDot show={hasUnread} />
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="font-medium truncate text-sm">{agent.name}</div>
