@@ -461,6 +461,42 @@ def test_post_to_agent_thread_writes_product_message(monkeypatch):
     assert posted["metadata"]["agent_id"] == "product"
 
 
+def test_post_to_agent_thread_skips_when_chat_disabled(monkeypatch):
+    from bigas.chat.activity import post_to_agent_thread
+
+    monkeypatch.setenv("CHAT_ENABLED", "false")
+    assert post_to_agent_thread("product", "hello") is None
+
+
+def test_marketing_report_helper_posts_to_chat(monkeypatch):
+    from bigas.chat.activity import post_marketing_report_to_chat
+
+    posted = {}
+
+    def fake_thread(agent_id, content, **kwargs):
+        posted["agent_id"] = agent_id
+        posted["content"] = content
+        posted["source"] = (kwargs.get("metadata") or {}).get("source")
+        return {"thread_id": "marketing-thread", "message_id": "m1"}
+
+    monkeypatch.setenv("CHAT_ENABLED", "true")
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", fake_thread)
+
+    posted_msg = post_marketing_report_to_chat("## 📊 Google Ads Portfolio Report\n\nSpend is down.")
+    assert posted_msg["thread_id"] == "marketing-thread"
+    assert posted["agent_id"] == "marketing"
+    assert "Spend is down" in posted["content"]
+    assert posted["source"] == "marketing_report"
+
+    posted.clear()
+    skipped = post_marketing_report_to_chat(
+        "# 📊 Weekly Analytics Report on its way...",
+        skip_status_pings=True,
+    )
+    assert skipped is None
+    assert posted == {}
+
+
 def test_favicon_is_served_without_auth():
     from flask import Flask
 

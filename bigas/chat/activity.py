@@ -8,6 +8,10 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def chat_enabled() -> bool:
+    return os.environ.get("CHAT_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+
+
 def resolve_chat_target_user_id() -> Optional[str]:
     """Resolve the chat user that receives scheduled specialist messages."""
     explicit_uid = (os.environ.get("BIGAS_EMAIL_SYNC_USER_UID") or "").strip()
@@ -34,6 +38,27 @@ def resolve_chat_target_user_id() -> Optional[str]:
     return user.get("uid") if user else None
 
 
+_MARKETING_CHAT_SKIP = frozenset(
+    {
+        "# 📊 Weekly Analytics Report on its way...",
+    }
+)
+
+
+def post_marketing_report_to_chat(
+    message: str,
+    *,
+    skip_status_pings: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Best-effort post of a marketing Discord report into the Marketing Analyst thread."""
+    text = (message or "").strip()
+    if not text:
+        return None
+    if skip_status_pings and text in _MARKETING_CHAT_SKIP:
+        return None
+    return post_to_agent_thread("marketing", text, metadata={"source": "marketing_report"})
+
+
 def post_to_agent_thread(
     agent_id: str,
     content: str,
@@ -43,8 +68,10 @@ def post_to_agent_thread(
 ) -> Optional[Dict[str, Any]]:
     """Post a message to a specialist thread for the configured chat user.
 
-    Best-effort: returns None if no chat user exists or persistence fails.
+    Best-effort: returns None if chat is disabled, no chat user exists, or persistence fails.
     """
+    if not chat_enabled():
+        return None
     if not (content or "").strip() or not (agent_id or "").strip():
         return None
     try:

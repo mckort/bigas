@@ -6483,8 +6483,30 @@ def send_discord_message(message: str) -> bool:
     return post_to_discord(webhook_url, message)
 
 
-# Backwards-compatible re-exports (canonical implementation: bigas.discord_webhook).
-from bigas.discord_webhook import post_long_to_discord, post_to_discord  # noqa: E402
+# Backwards-compatible re-exports (canonical Discord implementation: bigas.discord_webhook).
+# When chat is enabled, the same report text is also posted to the Marketing Analyst thread.
+from bigas.discord_webhook import (  # noqa: E402
+    post_long_to_discord as _post_long_to_discord,
+    post_to_discord as _post_to_discord,
+)
+
+
+def post_to_discord(webhook_url, message, *args, **kwargs):
+    text = (message or "").strip()
+    if text:
+        from bigas.chat.activity import post_marketing_report_to_chat
+
+        post_marketing_report_to_chat(text, skip_status_pings=True)
+    return _post_to_discord(webhook_url, message, *args, **kwargs)
+
+
+def post_long_to_discord(webhook_url, text, chunk_size=1900, *args, **kwargs):
+    body = (text or "").strip()
+    if body:
+        from bigas.chat.activity import post_marketing_report_to_chat
+
+        post_marketing_report_to_chat(body)
+    return _post_long_to_discord(webhook_url, text, chunk_size, *args, **kwargs)
 
 @marketing_bp.route('/openapi.json', methods=['GET'])
 def openapi_spec():

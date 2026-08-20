@@ -184,14 +184,16 @@ def progress_updates():
     """
     Generate a team progress update from Jira issues moved to Done in the last N days.
     Request JSON (optional):
-      { "days": 7, "post_to_discord": true, "jql_extra": "...", "project_keys": ["VFA","WAYW"] }
+      { "days": 7, "post_to_discord": true, "post_to_chat": true, "jql_extra": "...", "project_keys": ["VFA","WAYW"] }
     Default jql_extra is "AND statusCategory = Done". Specify the period with `days` (default 7).
+    When chat is enabled, the same message is posted to the Product Manager thread.
     """
     data = request.json or {}
     days = int(data.get("days", 7))
     if days < 1 or days > 365:
         return jsonify({"error": "days must be between 1 and 365"}), 400
     post_to_discord = bool(data.get("post_to_discord", True))
+    post_to_chat = True if data.get("post_to_chat") is None else bool(data.get("post_to_chat"))
     # Default jql_extra for progress report: narrow to statusCategory = Done (can override via request).
     jql_extra = (data.get("jql_extra") or "AND statusCategory = Done").strip()
     project_keys = _project_keys_from_request(data)
@@ -210,6 +212,17 @@ def progress_updates():
                 result["posted_to_discord"] = False
         else:
             result["posted_to_discord"] = False
+        if post_to_chat and message:
+            chat_msg = post_to_agent_thread(
+                "product",
+                message,
+                metadata={"source": "progress_updates"},
+            )
+            result["posted_to_chat"] = bool(chat_msg)
+            if chat_msg:
+                result["chat_thread_id"] = chat_msg.get("thread_id")
+        else:
+            result["posted_to_chat"] = False
 
         return jsonify(result)
     except ProgressUpdatesError as e:
@@ -482,7 +495,7 @@ def get_manifest():
             },
             {
                 "name": "progress_updates",
-                "description": "Generate a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord post). Specify the period with days (default 7). Uses jql_extra default AND statusCategory = Done. Supports multiple Jira projects via project_keys or JIRA_PROJECT_KEY=VFA,WAYW.",
+                "description": "Generate a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord and Product Manager chat post). Specify the period with days (default 7). Uses jql_extra default AND statusCategory = Done. Supports multiple Jira projects via project_keys or JIRA_PROJECT_KEY=VFA,WAYW.",
                 "path": "/mcp/tools/progress_updates",
                 "method": "POST",
                 "parameters": {
@@ -490,6 +503,7 @@ def get_manifest():
                     "properties": {
                         "days": {"type": "integer", "description": "Number of days to look back (default 7)", "default": 7},
                         "post_to_discord": {"type": "boolean", "description": "Post the message to product Discord webhook", "default": True},
+                        "post_to_chat": {"type": "boolean", "description": "Post the message to the Product Manager thread in bigas-chat", "default": True},
                         "jql_extra": {"type": "string", "description": "JQL fragment to narrow results; default AND statusCategory = Done", "default": "AND statusCategory = Done"},
                         "project_key": {"type": "string", "description": "Optional single Jira project key override (e.g. WAYW)"},
                         "project_keys": {
