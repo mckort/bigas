@@ -159,6 +159,11 @@ def create_app():
             app.register_blueprint(chat_bp)
             logger.info("Registered chat blueprint.")
 
+        from bigas.resources.email.endpoints import email_bp
+
+        app.register_blueprint(email_bp)
+        logger.info("Registered email ingest blueprint.")
+
         logger.info("Registered marketing blueprint.")
         logger.info("Registered product blueprint.")
         logger.info("Registered X-post approval blueprint.")
@@ -183,6 +188,7 @@ def create_app():
             or path.startswith("/api/x-posts")
             or path.startswith("/api/qa-proposals")
             or path.startswith("/api/chat/")
+            or path.startswith("/api/v1/chat/")
             or path.startswith("/api/agents")
             or path.startswith("/api/feed")
             or path.startswith("/api/auth/")

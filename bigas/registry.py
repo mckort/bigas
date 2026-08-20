@@ -23,6 +23,7 @@ DOMAIN_CONFIG = {
     "analytics": ("bigas.providers.analytics.base", "AnalyticsProvider", "bigas.providers.analytics"),
     "notifications": ("bigas.providers.notifications.base", "NotificationChannel", "bigas.providers.notifications"),
     "usage": ("bigas.providers.usage.base", "UsageProvider", "bigas.providers.usage"),
+    "email": ("bigas.providers.email.base", "EmailProvider", "bigas.providers.email"),
 }
 
 

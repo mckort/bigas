@@ -77,3 +77,17 @@ export async function fetchFeed(since) {
   const qs = since ? `?since=${encodeURIComponent(since)}` : ''
   return apiFetch(`/api/feed${qs}`)
 }
+
+export async function approveProposal(proposalId, messageId, actionId) {
+  return apiFetch(`/api/v1/chat/proposals/${encodeURIComponent(proposalId)}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ message_id: messageId, action_id: actionId }),
+  })
+}
+
+export async function rejectProposal(proposalId, messageId) {
+  return apiFetch(`/api/v1/chat/proposals/${encodeURIComponent(proposalId)}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ message_id: messageId }),
+  })
+}
