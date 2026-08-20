@@ -16,6 +16,7 @@ class InboundEmail:
     subject: str
     body_text: str
     received_at: Optional[str] = None
+    reply_to: Optional[str] = None
 
 
 class EmailProvider(ABC):
