@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -157,28 +156,9 @@ def post_email_to_chief_thread(
 
 def resolve_sync_target_user_id() -> Optional[str]:
     """Resolve the chat user id that receives overnight email triage."""
-    explicit_uid = (os.environ.get("BIGAS_EMAIL_SYNC_USER_UID") or "").strip()
-    if explicit_uid:
-        return explicit_uid
+    from bigas.chat.activity import resolve_chat_target_user_id
 
-    from bigas.chat.auth import chat_auth_mode
-
-    email = (os.environ.get("BIGAS_EMAIL_SYNC_USER_EMAIL") or "").strip()
-    if not email:
-        admins = (os.environ.get("CHAT_ADMIN_EMAILS") or "").split(",")
-        for item in admins:
-            if item.strip():
-                email = item.strip()
-                break
-    if not email and chat_auth_mode() == "dev":
-        return "dev-user"
-
-    if not email:
-        return None
-
-    store = get_chat_store()
-    user = store.find_user_by_email(email)
-    return user.get("uid") if user else None
+    return resolve_chat_target_user_id()
 
 
 def execute_proposal_action(
