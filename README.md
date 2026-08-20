@@ -18,6 +18,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [Environment variables](#environment-variables)
 - [GA4 setup](#ga4-setup)
 - [Walkthrough: from Jira card to merged PR](#walkthrough-from-jira-card-to-merged-pr)
+- [Walkthrough: from PR to ready to merge](#walkthrough-from-pr-to-ready-to-merge)
 - [Walkthrough: from chat to production deploy](#walkthrough-from-chat-to-production-deploy)
 - [MCP endpoint](#mcp-endpoint)
 - [Chat web interface](#chat-web-interface)
@@ -254,7 +255,7 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 1. **`Research and describe (AI)`** — Bigas reads the Brief, researches the codebase/context, and writes an **AI Research** section onto the issue (your Brief is left untouched). The card moves itself to **Description approval (manual)** and posts to your `bigas-pm` Discord channel. You read the research, edit if needed, and drag the card forward yourself.
 2. **`Design and plan (AI)`** — Bigas reads Brief + Research + repo context and writes an **AI Plan**: the concrete implementation approach. Moves to **Design approval (manual)**, posts to `bigas-cto`. Again, a human reviews and approves by dragging the card.
 3. **`In Progress (AI)`** — Bigas launches a Cursor cloud agent against the repo mapped to this Jira project, which implements the plan and opens a pull request. The PR link is commented on the issue; you get pinged in `bigas-cto`.
-4. Once the CTO specialist's autofix loop reports the PR is **ready to merge**, Bigas finds the Jira key from the PR title/body and moves the card to **Final approval (manual)** automatically — your signal to review the PR and merge (unless `BIGAS_CTO_AUTO_MERGE=true`, in which case Bigas also squash-merges and posts to Discord).
+4. Once the CTO specialist's autofix loop reports the PR is **ready to merge**, Bigas finds the Jira key from the PR title/body and moves the card to **Final approval (manual)** automatically — your signal to review the PR and merge (unless `BIGAS_CTO_AUTO_MERGE=true`, in which case Bigas also squash-merges and posts to Discord). How that review/autofix loop works: [from PR to ready to merge](#walkthrough-from-pr-to-ready-to-merge).
 
 Every AI step lands in a column with **"(manual)"** in the name — cards do not advance without a human drag. Merging the PR stays manual unless you enable `BIGAS_CTO_AUTO_MERGE` (see [cto-autofix.md](docs/cto-autofix.md)).
 
@@ -294,6 +295,23 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/generate_weekly_x_post
 ```
 
 The LLM drops minor bug fixes. If there is something worth posting, Bigas stores the draft in GCS and sends a Discord link to the **marketing** channel. **Approve** publishes to the configured X accounts; **Decline** deletes the draft (you can still copy the Discord text and post by hand). GET on the link only shows a preview so Discord unfurls cannot publish.
+
+---
+
+## Walkthrough: from PR to ready to merge
+
+This is the **CTO** specialist: a GitHub Action in the *product* repo calls Bigas on every PR open/push. Bigas posts one review comment, optionally loops a Cursor cloud agent until the review is clean, then pings Discord (and Jira Final approval if the PR carries an issue key).
+
+Copy [.github/workflows/pr-review.yml](.github/workflows/pr-review.yml) into the repo you open PRs in (not the Bigas repo). Set Actions variable `BIGAS_URL` and secret `BIGAS_API_KEY`. Bigas needs `GITHUB_TOKEN` (and `CURSOR_API_KEY` if you want autofix). On the next PR:
+
+1. **Review** — `review_and_comment_pr` reads the PR diff, posts or updates a **single** GitHub comment (marker-based, so re-runs do not spam), and notifies `bigas-cto` on Discord.
+2. **Clean review** — if there are no Blockers/Important, Discord says **ready to merge**. If the PR title/body has a Jira key, the card moves to **Final approval (manual)**. Optional: `BIGAS_CTO_AUTO_MERGE=true` squash-merges (or enables GitHub auto-merge if checks are still pending).
+3. **Autofix (optional)** — set repo variable `BIGAS_AUTO_FIX=true`. If the review has Blockers/Important, `autofix_pr` launches a Cursor cloud agent on the same branch; Actions polls `autofix_followup` until the agent finishes, then Bigas re-reviews. Up to five `[bigas-autofix]` rounds; after that Discord/Jira ask you to handle it manually.
+4. **No duplicate cycles** — autofix commits use `[bigas-autofix]` in the subject, so the workflow **skips** those pushes. Re-review stays with the in-flight job instead of starting a second review.
+
+Nits-only / LGTM reviews do not launch autofix. Post-autofix reviews verify the previous Bigas comment instead of inventing a fresh nit list.
+
+Setup, request bodies, and model/token knobs: **[docs/cto-pr-review.md](docs/cto-pr-review.md)**. Loop, cooldown, guards, and auto-merge: **[docs/cto-autofix.md](docs/cto-autofix.md)**. Cost rollups: **[docs/cto-ai-usage.md](docs/cto-ai-usage.md)**.
 
 ---
 
