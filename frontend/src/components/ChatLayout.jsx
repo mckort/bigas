@@ -65,9 +65,10 @@ function ActionProposalCard({ message, onResolved }) {
       onResolved()
     } catch (err) {
       alert(err.message || 'Failed to approve action')
-    } finally {
       setResolving(false)
+      return
     }
+    setResolving(false)
   }
 
   async function handleReject() {
@@ -78,9 +79,10 @@ function ActionProposalCard({ message, onResolved }) {
       onResolved()
     } catch (err) {
       alert(err.message || 'Failed to reject proposal')
-    } finally {
       setResolving(false)
+      return
     }
+    setResolving(false)
   }
 
   return (
