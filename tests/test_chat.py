@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import pytest
 
@@ -237,6 +238,119 @@ def test_chat_callback(client):
     history = client.get(f"/api/chat/threads/{thread_id}/messages", headers=_auth_headers())
     messages = history.get_json()["messages"]
     assert any("Async task complete" in m["content"] for m in messages)
+
+
+def test_get_or_create_agent_thread_reuses_existing():
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    first = store.get_or_create_agent_thread("thread-reuse-user", "product")
+    second = store.get_or_create_agent_thread("thread-reuse-user", "product")
+    assert first["thread_id"] == second["thread_id"]
+    assert first["agent_id"] == "product"
+    chief = store.get_or_create_chief_thread("thread-reuse-user")
+    assert chief["agent_id"] == "chief"
+    assert chief["thread_id"] != first["thread_id"]
+
+
+def test_delegated_task_appears_in_specialist_thread(monkeypatch):
+    from bigas.agents.chief_of_staff import run_specialist_task
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    store.upsert_user("delegate-user", "delegate@bigas.local")
+    chief = store.create_thread("delegate-user", "chief")
+    product = store.get_or_create_agent_thread("delegate-user", "product")
+
+    class FakeClient:
+        def list_tools(self):
+            return []
+
+    class FakeLlm:
+        def complete(self, messages, temperature=0.4):
+            return "Invoice follow-up tracked."
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff._mcp_client", lambda: FakeClient())
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff._select_tool_via_llm",
+        lambda *args, **kwargs: ("", None, None),
+    )
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff.get_llm_client",
+        lambda feature="chat": (FakeLlm(), "gpt-test"),
+    )
+
+    result = run_specialist_task(
+        "product",
+        "Track invoice follow-up",
+        thread_id=chief["thread_id"],
+        async_mode=True,
+    )
+    assert "Delegated to product" in result
+
+    deadline = time.time() + 2
+    product_msgs = []
+    while time.time() < deadline:
+        product_msgs = store.list_messages(product["thread_id"])
+        if any("Invoice follow-up tracked" in (m.get("content") or "") for m in product_msgs):
+            break
+        time.sleep(0.05)
+
+    assert any(
+        m.get("metadata", {}).get("type") == "handoff" and "Track invoice follow-up" in m["content"]
+        for m in product_msgs
+    )
+    assert any("Delegated from" in (m.get("content") or "") for m in product_msgs)
+    assert any("Invoice follow-up tracked" in (m.get("content") or "") for m in product_msgs)
+
+    chief_msgs = store.list_messages(chief["thread_id"])
+    assert any("working" in (m.get("content") or "").lower() for m in chief_msgs)
+    assert any("Invoice follow-up tracked" in (m.get("content") or "") for m in chief_msgs)
+    assert not any(m.get("metadata", {}).get("type") == "handoff" for m in chief_msgs)
+
+
+def test_direct_specialist_chat_does_not_mirror_handoff(monkeypatch):
+    from bigas.agents.chief_of_staff import run_specialist_task
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    product = store.create_thread("direct-product-user", "product")
+
+    class FakeClient:
+        def list_tools(self):
+            return []
+
+    class FakeLlm:
+        def complete(self, messages, temperature=0.4):
+            return "Direct product reply."
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff._mcp_client", lambda: FakeClient())
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff._select_tool_via_llm",
+        lambda *args, **kwargs: ("", None, None),
+    )
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff.get_llm_client",
+        lambda feature="chat": (FakeLlm(), "gpt-test"),
+    )
+
+    run_specialist_task(
+        "product",
+        "What is on the board?",
+        thread_id=product["thread_id"],
+        async_mode=True,
+    )
+
+    deadline = time.time() + 2
+    msgs = []
+    while time.time() < deadline:
+        msgs = store.list_messages(product["thread_id"])
+        if any("Direct product reply" in (m.get("content") or "") for m in msgs):
+            break
+        time.sleep(0.05)
+
+    assert not any(m.get("metadata", {}).get("type") == "handoff" for m in msgs)
+    assert any("Direct product reply" in (m.get("content") or "") for m in msgs)
 
 
 def test_humanize_tool_result_unwraps_answer_json():

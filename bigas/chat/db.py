@@ -277,17 +277,20 @@ class MemoryChatStore:
                         break
             return message, None
 
-    def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
+    def get_or_create_agent_thread(self, user_id: str, agent_id: str) -> Dict[str, Any]:
         with self._lock:
-            chief_threads = [
+            matches = [
                 t
                 for t in self._threads.values()
-                if t.get("user_id") == user_id and t.get("agent_id") == "chief"
+                if t.get("user_id") == user_id and t.get("agent_id") == agent_id
             ]
-            if chief_threads:
-                chief_threads.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
-                return dict(chief_threads[0])
-        return self.create_thread(user_id, "chief")
+            if matches:
+                matches.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
+                return dict(matches[0])
+        return self.create_thread(user_id, agent_id)
+
+    def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
+        return self.get_or_create_agent_thread(user_id, "chief")
 
     def add_activity(self, *, type_: str, content: str, source: str = "system") -> Dict[str, Any]:
         event = {
@@ -523,13 +526,20 @@ class FirestoreChatStore:
         transaction = self._db.transaction()
         return _claim(transaction)
 
-    def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
-        docs = self._threads.where("user_id", "==", user_id).where("agent_id", "==", "chief").stream()
+    def get_or_create_agent_thread(self, user_id: str, agent_id: str) -> Dict[str, Any]:
+        docs = (
+            self._threads.where("user_id", "==", user_id)
+            .where("agent_id", "==", agent_id)
+            .stream()
+        )
         threads = [doc.to_dict() for doc in docs if doc.exists]
         if threads:
             threads.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
             return threads[0]
-        return self.create_thread(user_id, "chief")
+        return self.create_thread(user_id, agent_id)
+
+    def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
+        return self.get_or_create_agent_thread(user_id, "chief")
 
     def add_activity(self, *, type_: str, content: str, source: str = "system") -> Dict[str, Any]:
         event_id = str(uuid.uuid4())
