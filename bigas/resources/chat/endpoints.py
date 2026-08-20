@@ -10,6 +10,7 @@ from flask import Blueprint, g, jsonify, request, send_from_directory
 from bigas.agents.chief_of_staff import handle_chat_message, post_agent_callback
 from bigas.chat.auth import is_chat_admin, require_chat_auth, verify_callback_secret
 from bigas.chat.db import get_chat_store
+from bigas.resources.devops.pipeline import poll_deploy_postcheck
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,9 @@ def thread_messages(thread_id: str):
     if request.method == "GET":
         since = request.args.get("since")
         messages = store.list_messages(thread_id, since=since)
-        return jsonify({"messages": messages})
+        thread_data = store.get_thread(thread_id) or {}
+        deploy_poll_active = bool(thread_data.get("pending_deploy_poll"))
+        return jsonify({"messages": messages, "deploy_poll_active": deploy_poll_active})
 
     body = request.get_json(silent=True) or {}
     content = (body.get("content") or "").strip()
@@ -129,6 +132,24 @@ def thread_messages(thread_id: str):
         return jsonify(result)
     except Exception as e:
         logger.exception("Chat message handling failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@chat_bp.route("/api/chat/threads/<thread_id>/deploy-poll", methods=["POST"])
+@require_chat_auth
+def deploy_poll(thread_id: str):
+    """Client-driven poll step for DevOps deploy post-check (GitHub Actions + health)."""
+    store = get_chat_store()
+    user_id = g.chat_user["uid"]
+    thread = store.get_thread(thread_id)
+    if not thread or thread.get("user_id") != user_id:
+        return jsonify({"error": "Thread not found"}), 404
+    try:
+        result = poll_deploy_postcheck(thread_id)
+        messages = store.list_messages(thread_id)
+        return jsonify({**result, "messages": messages})
+    except Exception as e:
+        logger.exception("Deploy post-check poll failed")
         return jsonify({"error": str(e)}), 500
 
 

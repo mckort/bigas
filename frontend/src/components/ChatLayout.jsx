@@ -9,6 +9,7 @@ import {
   fetchFeed,
   fetchMessages,
   fetchThreads,
+  pollDeployPostcheck,
   sendMessage,
 } from '../lib/api'
 import { logout } from '../lib/auth'
@@ -94,7 +95,17 @@ function lastMessageIsInProgress(messages) {
   return last.metadata?.status === 'in_progress'
 }
 
-function createClientMessageId() {
+const DEPLOY_POLL_INTERVAL_MS = 20000
+
+function applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res) {
+  const next = res.messages || []
+  setMessages(next)
+  if (res.deploy_poll_active) {
+    setDeployPollActive(true)
+    setWaitingForReply(true)
+  }
+  return next
+}
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID()
   }
@@ -138,6 +149,7 @@ export default function ChatLayout({ user, onLogout }) {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [waitingForReply, setWaitingForReply] = useState(false)
+  const [deployPollActive, setDeployPollActive] = useState(false)
   const [events, setEvents] = useState([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
@@ -157,10 +169,12 @@ export default function ChatLayout({ user, onLogout }) {
     setThreadId(null)
     setMessages([])
     setWaitingForReply(false)
+    setDeployPollActive(false)
     lastMsgTs.current = ''
 
     let thread = null
     let loaded = []
+    let resumeDeployPoll = false
     const probedMessages = new Map()
     try {
       const listed = await fetchThreads()
@@ -173,22 +187,28 @@ export default function ChatLayout({ user, onLogout }) {
         toProbe.map(async (candidate) => {
           try {
             const msgRes = await fetchMessages(candidate.thread_id)
-            return { candidate, msgs: msgRes.messages || [], ok: true }
+            return {
+              candidate,
+              msgs: msgRes.messages || [],
+              deployPollActive: Boolean(msgRes.deploy_poll_active),
+              ok: true,
+            }
           } catch {
-            return { candidate, msgs: null, ok: false }
+            return { candidate, msgs: null, deployPollActive: false, ok: false }
           }
         })
       )
       if (cancelled?.()) return
-      for (const { candidate, msgs, ok } of probeResults) {
-        if (ok) probedMessages.set(candidate.thread_id, msgs)
+      for (const { candidate, msgs, deployPollActive, ok } of probeResults) {
+        if (ok) probedMessages.set(candidate.thread_id, { msgs, deployPollActive })
       }
       for (const candidate of toProbe) {
-        const msgs = probedMessages.get(candidate.thread_id)
-        if (msgs === undefined) continue
-        if (msgs.length) {
+        const probed = probedMessages.get(candidate.thread_id)
+        if (probed === undefined) continue
+        if (probed.msgs.length) {
           thread = candidate
-          loaded = msgs
+          loaded = probed.msgs
+          resumeDeployPoll = probed.deployPollActive
           break
         }
       }
@@ -213,25 +233,36 @@ export default function ChatLayout({ user, onLogout }) {
     if (loaded.length) {
       setMessages(loaded)
       lastMsgTs.current = loaded[loaded.length - 1].created_at
-      setWaitingForReply(lastMessageIsInProgress(loaded))
+      if (resumeDeployPoll) {
+        setDeployPollActive(true)
+        setWaitingForReply(true)
+      } else {
+        setWaitingForReply(lastMessageIsInProgress(loaded))
+      }
       return
     }
 
     if (probedMessages.has(thread.thread_id)) {
       const cached = probedMessages.get(thread.thread_id)
-      setMessages(cached)
-      if (cached.length) lastMsgTs.current = cached[cached.length - 1].created_at
-      setWaitingForReply(lastMessageIsInProgress(cached))
+      setMessages(cached.msgs)
+      if (cached.msgs.length) lastMsgTs.current = cached.msgs[cached.msgs.length - 1].created_at
+      if (cached.deployPollActive) {
+        setDeployPollActive(true)
+        setWaitingForReply(true)
+      } else {
+        setWaitingForReply(lastMessageIsInProgress(cached.msgs))
+      }
       return
     }
 
     try {
       const msgRes = await fetchMessages(thread.thread_id)
       if (cancelled?.()) return
-      const next = msgRes.messages || []
-      setMessages(next)
+      const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, msgRes)
       if (next.length) lastMsgTs.current = next[next.length - 1].created_at
-      setWaitingForReply(lastMessageIsInProgress(next))
+      if (!msgRes.deploy_poll_active) {
+        setWaitingForReply(lastMessageIsInProgress(next))
+      }
     } catch {
       if (!cancelled?.()) setMessages([])
     }
@@ -263,12 +294,16 @@ export default function ChatLayout({ user, onLogout }) {
     async function poll() {
       try {
         const res = await fetchMessages(threadId, lastMsgTs.current || undefined)
-        if (cancelled || !res.messages?.length) return
+        if (cancelled || !res.messages?.length) {
+          if (!cancelled && res.deploy_poll_active) setDeployPollActive(true)
+          return
+        }
         setMessages((prev) => mergePolledMessages(prev, res.messages))
+        if (res.deploy_poll_active) setDeployPollActive(true)
         const latest = res.messages[res.messages.length - 1]
         if (latest?.created_at) lastMsgTs.current = latest.created_at
         if (latest?.role === 'assistant' && latest.metadata?.status !== 'in_progress') {
-          setWaitingForReply(false)
+          if (!res.deploy_poll_active) setWaitingForReply(false)
         }
       } catch {
         /* ignore poll errors */
@@ -282,6 +317,37 @@ export default function ChatLayout({ user, onLogout }) {
       clearInterval(id)
     }
   }, [threadId, showTyping])
+
+  // Client-driven DevOps deploy post-check (GitHub Actions + health)
+  useEffect(() => {
+    if (!threadId || !deployPollActive) return
+    let cancelled = false
+
+    async function pollDeploy() {
+      try {
+        const result = await pollDeployPostcheck(threadId)
+        if (cancelled) return
+        if (result.messages?.length) {
+          setMessages((prev) => mergePolledMessages(prev, result.messages))
+          const latest = result.messages[result.messages.length - 1]
+          if (latest?.created_at) lastMsgTs.current = latest.created_at
+        }
+        if (result.status === 'complete' || !result.active) {
+          setDeployPollActive(false)
+          setWaitingForReply(false)
+        }
+      } catch {
+        /* ignore deploy poll errors */
+      }
+    }
+
+    pollDeploy()
+    const id = setInterval(pollDeploy, DEPLOY_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [threadId, deployPollActive])
 
   // Poll activity feed
   useEffect(() => {
@@ -343,14 +409,18 @@ export default function ChatLayout({ user, onLogout }) {
     try {
       const result = await sendMessage(threadId, text, clientId)
       const res = await fetchMessages(threadId)
-      const next = res.messages || []
-      setMessages(next)
+      const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res)
       if (next.length) {
         lastMsgTs.current = next[next.length - 1].created_at
       }
-      const done =
-        result.status !== 'in_progress' && !lastMessageIsInProgress(next)
-      if (done) setWaitingForReply(false)
+      if (result.deploy_poll_active) {
+        setDeployPollActive(true)
+        setWaitingForReply(true)
+      } else {
+        const done =
+          result.status !== 'in_progress' && !lastMessageIsInProgress(next) && !res.deploy_poll_active
+        if (done) setWaitingForReply(false)
+      }
     } catch (err) {
       setWaitingForReply(false)
       setMessages((prev) => [

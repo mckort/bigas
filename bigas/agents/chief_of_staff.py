@@ -574,7 +574,10 @@ def handle_chat_message(
             status = result.get("status") or "complete"
             all_msgs = store.list_messages(thread_id)
             if status == "in_progress":
-                return {"status": "in_progress", "messages": all_msgs}
+                payload = {"status": "in_progress", "messages": all_msgs}
+                if result.get("deploy_poll_active"):
+                    payload["deploy_poll_active"] = True
+                return payload
             last = store.list_messages(thread_id)
             assistant = next((m for m in reversed(last) if m.get("role") == "assistant"), None)
             return {"status": "complete", "message": assistant, "messages": all_msgs}

@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
-import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from bigas.portfolio import resolve_project
@@ -18,7 +17,6 @@ from bigas.resources.devops.service import (
 
 logger = logging.getLogger(__name__)
 
-_POLL_INTERVAL_SEC = 20.0
 _POLL_TIMEOUT_SEC = 45 * 60
 
 _DEPLOY_START_RE = re.compile(
@@ -137,53 +135,39 @@ def _format_risk_for_chat(risk: Dict[str, Any]) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
-def _poll_runs_and_health(
-    thread_id: str,
-    *,
-    repo: str,
-    triggered: List[Dict[str, Any]],
-    site_urls: List[str],
-) -> None:
-    remaining: Dict[int, Dict[str, Any]] = {}
-    for item in triggered:
-        run_id = item.get("run_id")
-        if run_id:
-            remaining[int(run_id)] = item
+def _deploy_poll(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not thread_id:
+        return None
+    thread = _store().get_thread(thread_id) or {}
+    poll = thread.get("pending_deploy_poll")
+    return poll if isinstance(poll, dict) else None
 
-    if not remaining:
-        _post(
-            thread_id,
-            "Jag fick ingen GitHub Actions run-id tillbaka. Kolla Actions-fliken manuellt.",
-        )
+
+def _set_deploy_poll(thread_id: Optional[str], payload: Optional[Dict[str, Any]]) -> None:
+    if not thread_id or not hasattr(_store(), "patch_thread"):
         return
+    _store().patch_thread(thread_id, pending_deploy_poll=payload)
 
-    deadline = time.monotonic() + _POLL_TIMEOUT_SEC
-    finished: List[str] = []
-    while remaining and time.monotonic() < deadline:
-        time.sleep(_POLL_INTERVAL_SEC)
-        done_ids = []
-        for run_id, item in remaining.items():
-            try:
-                status = get_deployment_status(repo=repo, run_id=run_id)
-            except Exception as e:
-                logger.warning("Deploy status poll failed for run %s: %s", run_id, e)
-                continue
-            if (status.get("workflow_status") or "").lower() != "completed":
-                continue
-            conclusion = (status.get("conclusion") or "unknown").lower()
-            url = status.get("html_url") or item.get("html_url") or ""
-            icon = "✅" if conclusion == "success" else "❌"
-            finished.append(
-                f"{icon} {item.get('workflow') or 'workflow'} run #{run_id} "
-                f"{conclusion}" + (f" — {url}" if url else "")
-            )
-            done_ids.append(run_id)
-        for run_id in done_ids:
-            remaining.pop(run_id, None)
+
+def _parse_started_at(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
+    repo = poll.get("repo") or ""
+    triggered = poll.get("triggered") or []
+    site_urls = poll.get("site_urls") or []
+    finished = list(poll.get("finished_lines") or [])
+    done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
+    remaining = [
+        item
+        for item in triggered
+        if item.get("run_id") and int(item["run_id"]) not in done_ids
+    ]
 
     if remaining:
         leftover = ", ".join(
-            f"{item.get('workflow')} #{run_id}" for run_id, item in remaining.items()
+            f"{item.get('workflow')} #{item.get('run_id')}" for item in remaining
         )
         finished.append(
             f"⏳ Timeout: fortfarande igång: {leftover}. Fråga om status senare."
@@ -205,6 +189,78 @@ def _poll_runs_and_health(
         parts.extend(f"- {line}" for line in health_lines)
     _complete_pipeline_progress(thread_id)
     _post(thread_id, "\n".join(parts))
+    _set_deploy_poll(thread_id, None)
+
+
+def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
+    """Single client-driven poll step for post-deploy workflow status and health."""
+    poll = _deploy_poll(thread_id)
+    if not poll:
+        return {"status": "complete", "active": False}
+
+    repo = poll.get("repo") or ""
+    triggered = poll.get("triggered") or []
+    if not triggered:
+        _post(
+            thread_id,
+            "Jag fick ingen GitHub Actions run-id tillbaka. Kolla Actions-fliken manuellt.",
+        )
+        _complete_pipeline_progress(thread_id)
+        _set_deploy_poll(thread_id, None)
+        return {"status": "complete", "active": False}
+
+    started_at = poll.get("started_at") or datetime.now(timezone.utc).isoformat()
+    deadline = _parse_started_at(started_at) + timedelta(seconds=_POLL_TIMEOUT_SEC)
+    finished = list(poll.get("finished_lines") or [])
+    done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
+
+    for item in triggered:
+        run_id = item.get("run_id")
+        if not run_id or int(run_id) in done_ids:
+            continue
+        try:
+            status = get_deployment_status(repo=repo, run_id=int(run_id))
+        except Exception as e:
+            logger.warning("Deploy status poll failed for run %s: %s", run_id, e)
+            continue
+        if (status.get("workflow_status") or "").lower() != "completed":
+            continue
+        conclusion = (status.get("conclusion") or "unknown").lower()
+        url = status.get("html_url") or item.get("html_url") or ""
+        icon = "✅" if conclusion == "success" else "❌"
+        finished.append(
+            f"{icon} {item.get('workflow') or 'workflow'} run #{run_id} "
+            f"{conclusion}" + (f" — {url}" if url else "")
+        )
+        done_ids.add(int(run_id))
+
+    remaining = [
+        item
+        for item in triggered
+        if item.get("run_id") and int(item["run_id"]) not in done_ids
+    ]
+    timed_out = datetime.now(timezone.utc) >= deadline
+    if remaining and not timed_out:
+        _set_deploy_poll(
+            thread_id,
+            {
+                **poll,
+                "started_at": started_at,
+                "finished_lines": finished,
+                "done_run_ids": sorted(done_ids),
+            },
+        )
+        return {"status": "in_progress", "active": True}
+
+    _finalize_deploy_postcheck(
+        thread_id,
+        {
+            **poll,
+            "finished_lines": finished,
+            "done_run_ids": sorted(done_ids),
+        },
+    )
+    return {"status": "complete", "active": False}
 
 
 def run_chat_deploy_pipeline(
@@ -213,7 +269,7 @@ def run_chat_deploy_pipeline(
     user_message: str,
     project_key: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run pre-check → (optional confirm) → trigger → background post-check."""
+    """Run pre-check → (optional confirm) → trigger → client-polled post-check."""
     pending = _pending(thread_id)
     if pending and is_cancel(user_message):
         _set_pending(thread_id, None)
@@ -226,8 +282,14 @@ def run_chat_deploy_pipeline(
         project_key
         or (pending or {}).get("project_key")
         or resolve_project(user_message)
-        or "VFA"
     )
+    if not key:
+        _complete_pipeline_progress(thread_id)
+        _post(
+            thread_id,
+            "Vilken sajt ska deployas? Nämn projektnyckel (t.ex. VFA, GPWW) eller produktnamn.",
+        )
+        return {"status": "complete", "summary": "Project not specified."}
 
     _post(
         thread_id,
@@ -300,19 +362,22 @@ def run_chat_deploy_pipeline(
         role="system",
         status="in_progress",
     )
-    # Background poll: daemon thread survives only while this Cloud Run instance lives.
-    # If the worker restarts or scales to zero, post-check may never run — ask for status again.
     if thread_id:
-        threading.Thread(
-            target=_poll_runs_and_health,
-            kwargs={
-                "thread_id": thread_id,
+        _set_deploy_poll(
+            thread_id,
+            {
                 "repo": result.get("repo") or risk.get("repo") or "",
                 "triggered": triggered,
                 "site_urls": result.get("site_urls") or risk.get("site_urls") or [],
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "finished_lines": [],
+                "done_run_ids": [],
             },
-            daemon=True,
-        ).start()
-        return {"status": "in_progress", "summary": result.get("summary") or ""}
+        )
+        return {
+            "status": "in_progress",
+            "summary": result.get("summary") or "",
+            "deploy_poll_active": True,
+        }
 
     return {"status": "complete", "summary": result.get("summary") or ""}

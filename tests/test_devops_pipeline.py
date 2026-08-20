@@ -18,20 +18,10 @@ from bigas.resources.devops.pipeline import (
     clear_stale_pending_deploy,
     is_confirm,
     is_deploy_start,
+    poll_deploy_postcheck,
     run_chat_deploy_pipeline,
     should_run_deploy_pipeline,
 )
-
-
-class _ImmediateThread:
-    def __init__(self, target=None, kwargs=None, daemon=None, args=None):
-        self._target = target
-        self._kwargs = kwargs or {}
-        self._args = args or ()
-
-    def start(self):
-        if self._target:
-            self._target(*self._args, **self._kwargs)
 
 
 def test_deploy_start_intent():
@@ -49,8 +39,6 @@ def test_pipeline_posts_precheck_then_triggers(monkeypatch):
     thread = store.create_thread("user-1", "devops")
     triggered = {"called": False}
 
-    monkeypatch.setattr("bigas.resources.devops.pipeline.threading.Thread", _ImmediateThread)
-    monkeypatch.setattr("bigas.resources.devops.pipeline.time.sleep", lambda *_: None)
     monkeypatch.setattr(
         "bigas.resources.devops.pipeline.check_deployment_risk",
         lambda **kwargs: {
@@ -110,6 +98,14 @@ def test_pipeline_posts_precheck_then_triggers(monkeypatch):
     )
     assert triggered["called"] is True
     assert result["status"] == "in_progress"
+    assert result.get("deploy_poll_active") is True
+    poll = store.get_thread(thread["thread_id"]).get("pending_deploy_poll")
+    assert poll and poll.get("triggered")
+
+    poll_result = poll_deploy_postcheck(thread["thread_id"])
+    assert poll_result["status"] == "complete"
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy_poll") is None
+
     contents = [m["content"] for m in store.list_messages(thread["thread_id"])]
     blob = "\n".join(contents)
     assert "Pre-check" in blob
@@ -163,8 +159,6 @@ def test_pipeline_asks_confirmation_on_high_risk(monkeypatch):
             "site_urls": [],
         },
     )
-    monkeypatch.setattr("bigas.resources.devops.pipeline.threading.Thread", _ImmediateThread)
-    monkeypatch.setattr("bigas.resources.devops.pipeline.time.sleep", lambda *_: None)
     monkeypatch.setattr(
         "bigas.resources.devops.pipeline.get_deployment_status",
         lambda **kwargs: {"workflow_status": "completed", "conclusion": "success", "html_url": "https://x"},
@@ -178,6 +172,20 @@ def test_pipeline_asks_confirmation_on_high_risk(monkeypatch):
     confirmed = run_chat_deploy_pipeline(thread_id=thread["thread_id"], user_message="ja")
     assert confirmed["status"] == "in_progress"
     assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    poll_deploy_postcheck(thread["thread_id"])
+
+
+def test_pipeline_requires_project_key(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+
+    result = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="deploy please",
+    )
+    assert result["status"] == "complete"
+    contents = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "VFA" in contents or "projektnyckel" in contents.lower()
 
 
 def test_clear_stale_pending_on_unrelated_message(monkeypatch):
@@ -197,8 +205,6 @@ def test_pipeline_marks_in_progress_messages_complete(monkeypatch):
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
 
-    monkeypatch.setattr("bigas.resources.devops.pipeline.threading.Thread", _ImmediateThread)
-    monkeypatch.setattr("bigas.resources.devops.pipeline.time.sleep", lambda *_: None)
     monkeypatch.setattr(
         "bigas.resources.devops.pipeline.check_deployment_risk",
         lambda **kwargs: {
@@ -231,6 +237,7 @@ def test_pipeline_marks_in_progress_messages_complete(monkeypatch):
     )
 
     run_chat_deploy_pipeline(thread_id=thread["thread_id"], user_message="deploya VFA")
+    poll_deploy_postcheck(thread["thread_id"])
     messages = store.list_messages(thread["thread_id"])
     progress = [
         m
