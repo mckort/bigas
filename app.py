@@ -153,8 +153,9 @@ def create_app():
         app.register_blueprint(cto_bp)
         app.register_blueprint(devops_bp)
 
+        get_chat_manifest = None
         if os.environ.get("CHAT_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
-            from bigas.resources.chat.endpoints import chat_bp
+            from bigas.resources.chat.endpoints import chat_bp, get_manifest as get_chat_manifest
 
             app.register_blueprint(chat_bp)
             logger.info("Registered chat blueprint.")
@@ -249,6 +250,7 @@ def create_app():
         product_manifest = {}
         cto_manifest = {}
         devops_manifest = {}
+        chat_manifest = {}
 
         try:
             marketing_manifest = get_marketing_manifest() or {}
@@ -270,12 +272,19 @@ def create_app():
         except Exception:
             logger.exception("Failed to build DevOps manifest")
 
+        if get_chat_manifest is not None:
+            try:
+                chat_manifest = get_chat_manifest() or {}
+            except Exception:
+                logger.exception("Failed to build chat manifest")
+
         # Combine the tools from all manifests
         all_tools = (
             marketing_manifest.get('tools', [])
             + product_manifest.get('tools', [])
             + cto_manifest.get('tools', [])
             + devops_manifest.get('tools', [])
+            + chat_manifest.get('tools', [])
         )
 
         # Create the combined manifest

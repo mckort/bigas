@@ -4,8 +4,11 @@ from __future__ import annotations
 import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+
+DEFAULT_ACTIVITY_KEEP_DAYS = 7
+DEFAULT_ACTIVITY_MAX_DELETE = 500
 
 DEFAULT_AGENTS = [
     {
@@ -84,6 +87,10 @@ DEFAULT_AGENTS = [
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _activity_cutoff_iso(keep_days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=keep_days)).isoformat()
 
 
 class MemoryChatStore:
@@ -321,6 +328,22 @@ class MemoryChatStore:
         if since:
             events = [e for e in events if e.get("created_at", "") > since]
         return list(reversed(events[-limit:]))
+
+    def delete_old_activity(
+        self,
+        *,
+        keep_days: int = DEFAULT_ACTIVITY_KEEP_DAYS,
+        max_to_delete: int = DEFAULT_ACTIVITY_MAX_DELETE,
+    ) -> int:
+        cutoff = _activity_cutoff_iso(keep_days)
+        with self._lock:
+            stale = [e for e in self._activity if e.get("created_at", "") < cutoff]
+            stale.sort(key=lambda e: e.get("created_at", ""))
+            to_delete_ids = {e.get("id") for e in stale[:max_to_delete]}
+            if not to_delete_ids:
+                return 0
+            self._activity = [e for e in self._activity if e.get("id") not in to_delete_ids]
+            return len(to_delete_ids)
 
 
 class FirestoreChatStore:
@@ -613,6 +636,27 @@ class FirestoreChatStore:
         if since:
             events = [e for e in events if e.get("created_at", "") > since]
         return events
+
+    def delete_old_activity(
+        self,
+        *,
+        keep_days: int = DEFAULT_ACTIVITY_KEEP_DAYS,
+        max_to_delete: int = DEFAULT_ACTIVITY_MAX_DELETE,
+    ) -> int:
+        cutoff = _activity_cutoff_iso(keep_days)
+        docs = list(
+            self._activity.where("created_at", "<", cutoff)
+            .order_by("created_at")
+            .limit(max_to_delete)
+            .stream()
+        )
+        if not docs:
+            return 0
+        batch = self._db.batch()
+        for doc in docs:
+            batch.delete(doc.reference)
+        batch.commit()
+        return len(docs)
 
 
 _store: Optional[Any] = None

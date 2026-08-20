@@ -7,9 +7,14 @@ from pathlib import Path
 
 from flask import Blueprint, g, jsonify, request, send_from_directory
 
+from bigas.access import require_bigas_access_key
 from bigas.agents.chief_of_staff import handle_chat_message, post_agent_callback
 from bigas.chat.auth import is_chat_admin, require_chat_auth, verify_callback_secret
-from bigas.chat.db import get_chat_store
+from bigas.chat.db import (
+    DEFAULT_ACTIVITY_KEEP_DAYS,
+    DEFAULT_ACTIVITY_MAX_DELETE,
+    get_chat_store,
+)
 from bigas.resources.devops.pipeline import poll_deploy_postcheck
 
 logger = logging.getLogger(__name__)
@@ -177,6 +182,90 @@ def activity_feed():
     limit = min(int(request.args.get("limit", 50)), 100)
     events = store.list_activity(since=since, limit=limit)
     return jsonify({"events": events})
+
+
+def _int_param(data: dict, name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = data.get(name, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
+@chat_bp.route("/mcp/tools/cleanup_old_activity", methods=["POST"])
+@require_bigas_access_key
+def cleanup_old_activity():
+    """Delete chat activity-feed events older than keep_days (default 7)."""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    keep_days = _int_param(data, "keep_days", DEFAULT_ACTIVITY_KEEP_DAYS, minimum=1, maximum=365)
+    max_to_delete = _int_param(
+        data, "max_to_delete", DEFAULT_ACTIVITY_MAX_DELETE, minimum=1, maximum=500
+    )
+    try:
+        store = get_chat_store()
+        total_deleted = 0
+        while True:
+            deleted = store.delete_old_activity(
+                keep_days=keep_days, max_to_delete=max_to_delete
+            )
+            total_deleted += deleted
+            if deleted < max_to_delete:
+                break
+        return jsonify(
+            {
+                "status": "success",
+                "deleted": total_deleted,
+                "keep_days": keep_days,
+                "max_to_delete": max_to_delete,
+                "message": (
+                    f"Deleted {total_deleted} activity events older than {keep_days} days"
+                ),
+            }
+        )
+    except Exception:
+        logger.exception("Failed to clean up old chat activity")
+        return jsonify({"error": "Failed to clean up old chat activity"}), 500
+
+
+def get_manifest():
+    """Return chat housekeeping tools for the combined MCP manifest."""
+    return {
+        "name": "Chat Tools",
+        "description": "Housekeeping for the Bigas chat activity feed.",
+        "tools": [
+            {
+                "name": "cleanup_old_activity",
+                "description": (
+                    "Delete chat activity-feed events older than keep_days (default 7). "
+                    "Intended for a weekly Cloud Scheduler job."
+                ),
+                "path": "/mcp/tools/cleanup_old_activity",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "keep_days": {
+                            "type": "integer",
+                            "description": "Keep events from the last N days.",
+                            "default": DEFAULT_ACTIVITY_KEEP_DAYS,
+                            "minimum": 1,
+                            "maximum": 365,
+                        },
+                        "max_to_delete": {
+                            "type": "integer",
+                            "description": "Max events to delete per batch (Firestore batch limit 500); loops until none remain.",
+                            "default": DEFAULT_ACTIVITY_MAX_DELETE,
+                            "minimum": 1,
+                            "maximum": 500,
+                        },
+                    },
+                },
+            }
+        ],
+    }
 
 
 @chat_bp.route("/")

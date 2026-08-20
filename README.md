@@ -379,7 +379,7 @@ Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend 
 | **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; delegates domain tasks to specialists |
 | **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows |
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
-| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline |
+| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
 | **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
 | **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
 
@@ -444,6 +444,7 @@ The login page has no “create account” button, but that is not enough on its
 | `GET/POST /api/chat/threads/<id>/messages` | Fetch history / send message (poll GET for async results) |
 | `POST /api/chat/callback` | Sub-agents report async completion (`X-Bigas-Chat-Callback` header) |
 | `GET /api/feed` | Activity feed (Discord mirror) |
+| `POST /mcp/tools/cleanup_old_activity` | Delete activity events older than 7 days (Cloud Scheduler) |
 
 Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_id}` when a delegated task finishes asynchronously.
 
@@ -559,6 +560,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | LinkedIn portfolio | `0 9 * * 1` | `.../run_linkedin_portfolio_report` |
 | Weekly X post draft | `0 9 * * 1` | `.../generate_weekly_x_post` |
 | Cleanup old reports | `0 2 1 * *` | `.../cleanup_old_reports` |
+| Cleanup chat activity | `0 2 * * 1` | `.../cleanup_old_activity` |
 | Website monitoring | `0 8 * * *` | `.../website_monitor` |
 | CTO AI usage | `0 9 * * 1` | `.../weekly_cto_ai_report` |
 | Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
@@ -606,6 +608,21 @@ gcloud scheduler jobs create http bigas-website-monitor \
 ```
 
 `0 8 * * *` = 08:00 every day. This is a CTO-resource tool (`bigas/resources/cto`); when a site is unreachable (HTTP error, timeout) or its SSL certificate expires in less than 14 days, an alert is posted to the configured Discord webhook (`DISCORD_WEBHOOK_URL_CTO`, falling back to `_PRODUCT` or `_MARKETING`).
+
+### Chat activity cleanup with Cloud Scheduler
+
+The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification. `cleanup_old_activity` deletes events older than 7 days in batches of up to 500 until none remain. Recommended schedule: Monday 02:00 CET, before the work week starts.
+
+```bash
+gcloud scheduler jobs create http bigas-cleanup-chat-activity \
+  --location=europe-west1 \
+  --schedule="0 2 * * 1" \
+  --time-zone="Europe/Stockholm" \
+  --uri="https://YOUR-SERVICE-URL.a.run.app/mcp/tools/cleanup_old_activity" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
+  --message-body="{}"
+```
 
 ---
 
