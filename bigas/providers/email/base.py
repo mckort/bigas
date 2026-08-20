@@ -36,7 +36,10 @@ class EmailProvider(ABC):
 
     @abstractmethod
     def fetch_unread(self) -> List[InboundEmail]:
-        """Fetch unread messages and mark them as read (or move to processed)."""
+        """Fetch unread messages without marking them as read."""
+
+    def mark_processed(self, uid: str) -> None:
+        """Mark a fetched message as read/processed after successful handling."""
 
     def health_check(self) -> dict:
         return {"status": "ok", "provider": self.name}

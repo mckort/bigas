@@ -92,7 +92,7 @@ def truncate_body(text: str, max_chars: Optional[int] = None) -> str:
     text = (text or "").strip()
     if len(text) <= limit:
         return text
-    return text[: limit - 40].rstrip() + "\n\n[… truncated for length …]"
+    return text[: max(0, limit - 40)].rstrip() + "\n\n[… truncated for length …]"
 
 
 class ImapEmailProvider(EmailProvider):
@@ -168,12 +168,25 @@ class ImapEmailProvider(EmailProvider):
                     )
                 )
 
-                if self._processed_folder:
-                    self._move_to_processed(client, uid_bytes)
-                else:
-                    client.store(uid_bytes, "+FLAGS", "\\Seen")
-
             return messages
+        finally:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
+    def mark_processed(self, uid: str) -> None:
+        uid_bytes = uid.encode("ascii", errors="replace")
+        client = self._connect()
+        try:
+            status, _ = client.select(self._mailbox, readonly=False)
+            if status != "OK":
+                raise RuntimeError(f"IMAP select failed for mailbox {self._mailbox!r}")
+
+            if self._processed_folder:
+                self._move_to_processed(client, uid_bytes)
+            else:
+                client.store(uid_bytes, "+FLAGS", "\\Seen")
         finally:
             try:
                 client.logout()
@@ -186,6 +199,9 @@ class ImapEmailProvider(EmailProvider):
             client.create(folder)
         except imaplib.IMAP4.error:
             pass
-        client.copy(uid_bytes, folder)
+        status, _ = client.copy(uid_bytes, folder)
+        if status != "OK":
+            logger.error("IMAP copy to %r failed for uid %s", folder, uid_bytes.decode("ascii", errors="replace"))
+            return
         client.store(uid_bytes, "+FLAGS", "\\Seen \\Deleted")
         client.expunge()

@@ -74,8 +74,17 @@ def sync_email():
                 continue
             if analysis.get("is_spam"):
                 skipped_spam += 1
+                try:
+                    provider.mark_processed(msg.uid)
+                except Exception:
+                    logger.exception("Failed to mark spam email %s as processed", msg.message_id)
                 continue
             chat_message = post_email_to_chief_thread(thread["thread_id"], msg, analysis)
+            try:
+                provider.mark_processed(msg.uid)
+            except Exception:
+                logger.exception("Failed to mark email %s as processed after sync", msg.message_id)
+                errors.append(f"{msg.message_id}: marked in chat but IMAP mark failed")
             processed.append(
                 {
                     "message_id": msg.message_id,
@@ -118,24 +127,30 @@ def approve_proposal(proposal_id: str):
         return jsonify({"error": "message_id and action_id are required"}), 400
 
     store = get_chat_store()
-    message = store.get_message(message_id)
-    if not message:
+    message, claim_error = store.claim_proposal_for_approval(
+        message_id,
+        proposal_id=proposal_id,
+        user_id=g.chat_user["uid"],
+    )
+    if claim_error == "not_found":
         return jsonify({"error": "Message not found"}), 404
-
-    meta = message.get("metadata") or {}
-    if meta.get("type") != "action_proposal":
+    if claim_error == "invalid":
         return jsonify({"error": "Message is not an action proposal"}), 400
-    if meta.get("proposal_id") != proposal_id:
+    if claim_error == "mismatch":
         return jsonify({"error": "Proposal ID mismatch"}), 400
-    if meta.get("status") != "pending":
+    if claim_error == "not_pending":
+        meta = (store.get_message(message_id) or {}).get("metadata") or {}
         return jsonify({"error": f"Proposal already {meta.get('status')}"}), 409
+    if claim_error == "forbidden":
+        return jsonify({"error": "Thread not found"}), 404
 
     thread = store.get_thread(message.get("thread_id") or "")
-    if not thread or thread.get("user_id") != g.chat_user["uid"]:
+    if not thread:
         return jsonify({"error": "Thread not found"}), 404
 
     action = _find_action(message, action_id)
     if not action:
+        store.update_message_metadata(message_id, {"status": "pending"})
         return jsonify({"error": "Action not found in proposal"}), 404
 
     user_context = message.get("content") or ""
@@ -147,6 +162,7 @@ def approve_proposal(proposal_id: str):
         )
     except Exception as e:
         logger.exception("Proposal execution failed")
+        store.update_message_metadata(message_id, {"status": "pending"})
         return jsonify({"error": str(e)}), 500
 
     store.update_message_metadata(
