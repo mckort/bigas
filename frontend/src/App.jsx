@@ -30,8 +30,9 @@ export default function App() {
 
   if (!ready) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-muted">
-        Loading…
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-surface text-muted">
+        <img src="/bigas-logo.png" alt="" className="h-12 w-12 rounded-xl object-cover animate-pulse" aria-hidden="true" />
+        <span className="text-sm">Loading…</span>
       </div>
     )
   }

@@ -3,7 +3,7 @@
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>A Grok-style web chat with your virtual AI team — plus marketing analytics, Jira AI workflows, release notes, CTO code review, and DevOps deployments.</strong>
+  <strong>A brand-aligned web chat with your virtual AI team — plus marketing analytics, Jira AI workflows, release notes, CTO code review, and DevOps deployments.</strong>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
@@ -353,7 +353,7 @@ Cursor IDE: `~/.cursor/mcp.json` with `"type": "http"` and the access header. Gr
 
 ## Chat web interface
 
-Bigas includes a **Grok-style web chat UI** at `/` (when the frontend is built). Log in, chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, and **DevOps** specialists — each with their own icon.
+Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend is built). The interface uses the Bigas logo palette (white, `#73cdfb` blue, and black). Log in, chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, and **DevOps** specialists — each with their own icon.
 
 | Feature | Description |
 |---|---|

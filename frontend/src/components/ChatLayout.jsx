@@ -84,23 +84,23 @@ function ActionProposalCard({ message, onResolved }) {
   }
 
   return (
-    <div className="mt-3 pt-3 border-t border-border/60 space-y-3">
+    <div className="mt-3 pt-3 border-t border-black/10 space-y-3">
       {draftActions.map((action) => (
         <div key={action.id}>
-          <p className="text-xs text-muted mb-2">Suggested reply — edit before sending</p>
+          <p className="text-xs text-muted mb-2 font-medium">Suggested reply — edit before sending</p>
           <textarea
             value={drafts[action.id] ?? ''}
             onChange={(e) => setDrafts((prev) => ({ ...prev, [action.id]: e.target.value }))}
             disabled={resolving}
             rows={8}
-            className="w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text resize-y min-h-[8rem] disabled:opacity-50"
+            className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-text resize-y min-h-[8rem] disabled:opacity-50"
           />
           <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap gap-2">
             <button
               type="button"
               disabled={resolving || !(drafts[action.id] || '').trim()}
               onClick={() => handleApprove(action.id, { text: drafts[action.id] })}
-              className="bg-accent text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center"
+              className="bg-bigas-black text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] hover:opacity-90 transition-opacity"
             >
               Send
             </button>
@@ -109,7 +109,7 @@ function ActionProposalCard({ message, onResolved }) {
                 type="button"
                 disabled={resolving}
                 onClick={handleReject}
-                className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center"
+                className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] bg-white transition-colors"
               >
                 Reject
               </button>
@@ -119,7 +119,7 @@ function ActionProposalCard({ message, onResolved }) {
       ))}
       {otherActions.length > 0 && (
         <>
-          <p className="text-xs text-muted">Suggested actions</p>
+          <p className="text-xs text-muted font-medium">Suggested actions</p>
           <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
             {otherActions.map((action) => (
               <button
@@ -127,7 +127,7 @@ function ActionProposalCard({ message, onResolved }) {
                 type="button"
                 disabled={resolving}
                 onClick={() => handleApprove(action.id)}
-                className="bg-accent text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center"
+                className="bg-bigas-black text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] hover:opacity-90 transition-opacity"
               >
                 {action.label}
               </button>
@@ -136,7 +136,7 @@ function ActionProposalCard({ message, onResolved }) {
               type="button"
               disabled={resolving}
               onClick={handleReject}
-              className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center"
+              className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] bg-white transition-colors"
             >
               Reject all
             </button>
@@ -148,7 +148,7 @@ function ActionProposalCard({ message, onResolved }) {
           type="button"
           disabled={resolving}
           onClick={handleReject}
-          className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center"
+          className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] bg-white transition-colors"
         >
           Reject all
         </button>
@@ -183,9 +183,11 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       {!isUser && (
-        <div className="flex-shrink-0 w-9 h-9 rounded-full bg-surface border border-border flex items-center justify-center text-lg">
-          {isSystem ? '⏳' : (
-            <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : ''}>
+        <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-white border border-border flex items-center justify-center shadow-soft">
+          {isSystem ? (
+            <span className="text-sm">⏳</span>
+          ) : (
+            <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : 'text-lg'}>
               {agentIcon}
             </span>
           )}
@@ -194,10 +196,10 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
       <div
         className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-3 ${
           isUser
-            ? 'bg-accent text-white'
+            ? 'bg-bigas-blue text-bigas-black shadow-soft'
             : isSystem
-              ? 'bg-bg border border-border text-muted italic'
-              : 'bg-surface border border-border'
+              ? 'bg-surface border border-border text-muted italic'
+              : 'bg-white border border-border text-text shadow-soft'
         }`}
       >
         <div className="markdown-body text-sm sm:text-base break-words">
@@ -207,10 +209,7 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
             <ReactMarkdown>{humanizeChatContent(message.content)}</ReactMarkdown>
           )}
         </div>
-        <ActionProposalCard
-          message={message}
-          onResolved={onProposalResolved}
-        />
+        <ActionProposalCard message={message} onResolved={onProposalResolved} />
         {showResolved && (
           <p className="mt-2 text-xs text-muted capitalize">{meta.status}</p>
         )}
@@ -222,12 +221,12 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
 function TypingIndicator({ agentName, agentIcon }) {
   return (
     <div className="flex gap-3 items-end" aria-live="polite" aria-label={`${agentName} is typing`}>
-      <div className="flex-shrink-0 w-9 h-9 rounded-full bg-surface border border-border flex items-center justify-center text-lg">
-        <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : ''}>
+      <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-white border border-border flex items-center justify-center shadow-soft">
+        <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : 'text-lg'}>
           {agentIcon}
         </span>
       </div>
-      <div className="bg-surface border border-border rounded-2xl px-4 py-3">
+      <div className="bg-white border border-border rounded-2xl px-4 py-3 shadow-soft">
         <div className="flex items-center gap-1.5 h-5">
           <span className="typing-dot" />
           <span className="typing-dot" />
@@ -293,6 +292,36 @@ function mergePolledMessages(prev, incoming) {
   )
 }
 
+function MobileAgentTabs({ agents, activeAgentId, onSelectAgent }) {
+  if (!agents.length) return null
+  return (
+    <div className="lg:hidden border-b border-border bg-white">
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2">
+        {agents.map((agent) => {
+          const isActive = activeAgentId === agent.agent_id
+          return (
+            <button
+              key={agent.agent_id}
+              type="button"
+              onClick={() => onSelectAgent(agent.agent_id)}
+              className={`flex-shrink-0 flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium min-h-[44px] transition-colors ${
+                isActive
+                  ? 'bg-bigas-blue text-bigas-black border border-black/10'
+                  : 'bg-surface text-text border border-transparent'
+              }`}
+            >
+              <span className={(agent.icon || '').includes('<') ? 'font-mono text-[10px] font-semibold' : ''}>
+                {agent.icon || '🤖'}
+              </span>
+              <span className="whitespace-nowrap">{agent.name}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function ChatLayout({ user, onLogout }) {
   const [agents, setAgents] = useState([])
   const [activeAgentId, setActiveAgentId] = useState('chief')
@@ -331,8 +360,6 @@ export default function ChatLayout({ user, onLogout }) {
     try {
       const listed = await fetchThreads()
       const candidates = (listed.threads || []).filter((t) => t.agent_id === agentId)
-      // Skip empty threads left over from previous visits that always created a new one.
-      // Missing message_count (older docs) is treated as maybe-resumable and probed.
       const resumable = candidates.filter((t) => (t.message_count ?? 1) > 0)
       const toProbe = resumable.slice(0, 15)
       const probeResults = await Promise.all(
@@ -438,7 +465,6 @@ export default function ChatLayout({ user, onLogout }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, showTyping])
 
-  // Poll messages
   useEffect(() => {
     if (!threadId) return
     let cancelled = false
@@ -470,7 +496,6 @@ export default function ChatLayout({ user, onLogout }) {
     }
   }, [threadId, showTyping])
 
-  // Client-driven DevOps deploy post-check (GitHub Actions + health)
   useEffect(() => {
     if (!threadId || !deployPollActive) return
     let cancelled = false
@@ -501,7 +526,6 @@ export default function ChatLayout({ user, onLogout }) {
     }
   }, [threadId, deployPollActive])
 
-  // Poll activity feed
   useEffect(() => {
     let cancelled = false
 
@@ -608,7 +632,7 @@ export default function ChatLayout({ user, onLogout }) {
   }
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row overflow-hidden">
+    <div className="h-screen flex flex-col lg:flex-row overflow-hidden bg-bg">
       <AgentSidebar
         agents={agents}
         activeAgentId={activeAgentId}
@@ -618,79 +642,116 @@ export default function ChatLayout({ user, onLogout }) {
         onClose={() => setSidebarOpen(false)}
       />
 
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-surface/80 backdrop-blur">
+      <main className="flex-1 flex flex-col min-w-0 bg-bg">
+        <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-white/90 backdrop-blur-sm sticky top-0 z-10">
           <button
-            className="lg:hidden text-xl"
+            type="button"
+            className="lg:hidden text-xl min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 hover:bg-surface rounded-xl transition-colors"
             onClick={() => setSidebarOpen(true)}
             aria-label="Open agents"
           >
             ☰
           </button>
-          <span className="text-2xl">{activeAgent.icon}</span>
-          <div className="flex-1 min-w-0">
-            <h1 className="font-semibold truncate">{activeAgent.name}</h1>
-            <p className="text-xs text-muted truncate">
-              {showTyping ? `${activeAgent.name} is typing…` : user?.email}
-            </p>
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-bigas-blue flex items-center justify-center border border-black/10">
+              <span className={(activeAgent.icon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : 'text-xl'}>
+                {activeAgent.icon}
+              </span>
+            </div>
+            <div className="min-w-0">
+              <h1 className="font-semibold truncate text-base">{activeAgent.name}</h1>
+              <p className="text-xs text-muted truncate">
+                {showTyping ? (
+                  <span>
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-bigas-blue mr-1.5 align-middle" />
+                    Typing…
+                  </span>
+                ) : (
+                  user?.email
+                )}
+              </p>
+            </div>
           </div>
           <button
-            className="lg:hidden text-sm text-muted px-2"
+            type="button"
+            className="lg:hidden text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors"
             onClick={() => setActivityOpen(true)}
           >
             Activity
           </button>
-          <button onClick={handleLogout} className="text-sm text-muted hover:text-text px-2">
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors"
+          >
             Log out
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {messages.length === 0 && !showTyping && (
-            <div className="text-center text-muted py-16 px-4">
-              <p className="text-4xl mb-4">{activeAgent.icon}</p>
-              <p className="text-lg font-medium text-text mb-2">Chat with {activeAgent.name}</p>
-              <p className="text-sm max-w-md mx-auto">
-                Ask questions, request reports, or delegate tasks across your AI team.
-              </p>
-            </div>
-          )}
-          {messages.map((m) => (
-            <MessageBubble
-              key={m.message_id}
-              message={m}
-              agentIcon={activeAgent.icon}
-              onProposalResolved={refreshMessages}
-            />
-          ))}
-          {showTyping && (
-            <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />
-          )}
-          <div ref={bottomRef} />
+        <MobileAgentTabs
+          agents={agents}
+          activeAgentId={activeAgentId}
+          onSelectAgent={setActiveAgentId}
+        />
+
+        <div className="flex-1 overflow-y-auto scrollbar-thin">
+          <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-5">
+            {messages.length === 0 && !showTyping && (
+              <div className="text-center py-12 sm:py-20 px-4">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-bigas-blue border border-black/10 mb-5 text-3xl shadow-soft">
+                  {activeAgent.icon}
+                </div>
+                <p className="text-xl font-semibold text-text mb-2">Chat with {activeAgent.name}</p>
+                <p className="text-sm text-muted max-w-md mx-auto leading-relaxed">
+                  Ask questions, request reports, or delegate tasks across your AI team.
+                </p>
+              </div>
+            )}
+            {messages.map((m) => (
+              <MessageBubble
+                key={m.message_id}
+                message={m}
+                agentIcon={activeAgent.icon}
+                onProposalResolved={refreshMessages}
+              />
+            ))}
+            {showTyping && (
+              <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />
+            )}
+            <div ref={bottomRef} />
+          </div>
         </div>
 
-        <form onSubmit={handleSend} className="p-3 sm:p-4 border-t border-border bg-surface">
-          {showTyping && (
-            <p className="text-xs text-muted max-w-4xl mx-auto mb-2 px-1">
-              <span className="text-accent">{activeAgent.name}</span> is typing…
+        <div className="border-t border-border bg-white/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
+          <form onSubmit={handleSend} className="max-w-3xl mx-auto">
+            <div className="flex gap-2 items-end bg-white border border-border rounded-2xl shadow-input px-3 py-2 sm:px-4 sm:py-2.5 focus-within:ring-2 focus-within:ring-bigas-blue/40 transition-shadow">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={`Message ${activeAgent.name}…`}
+                className="flex-1 bg-transparent border-0 px-1 py-2 text-sm sm:text-base min-w-0 focus:outline-none placeholder:text-muted"
+                aria-label={`Message ${activeAgent.name}`}
+              />
+              <button
+                type="submit"
+                disabled={sending || !input.trim()}
+                className="bg-bigas-black text-white font-semibold rounded-xl w-11 h-11 sm:w-12 sm:h-12 disabled:opacity-30 flex-shrink-0 flex items-center justify-center hover:opacity-90 transition-opacity"
+                aria-label="Send message"
+              >
+                {sending ? (
+                  <span className="text-lg">…</span>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <p className="text-[11px] text-muted text-center mt-2 hidden sm:block">
+              Bigas specialists use the same tools as Discord and scheduled workflows.
             </p>
-          )}
-          <div className="flex gap-2 max-w-4xl mx-auto">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={`Message ${activeAgent.name}…`}
-              className="flex-1 bg-bg border border-border rounded-full px-4 py-3 text-sm sm:text-base min-w-0"
-            />
-            <button
-              type="submit"
-              disabled={sending || !input.trim()}
-              className="bg-accent text-white font-semibold rounded-full px-5 py-3 disabled:opacity-40 flex-shrink-0"
-            >
-              {sending ? '…' : '↑'}
-            </button>
-          </div>
-        </form>
+          </form>
+        </div>
       </main>
 
       <ActivityFeed events={events} open={activityOpen} onClose={() => setActivityOpen(false)} />
