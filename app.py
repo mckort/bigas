@@ -389,7 +389,13 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
             response_json = None
             if tool_resp.is_json:
                 response_json = tool_resp.get_json()
-                response_text = json.dumps(response_json, ensure_ascii=False)
+                summary = None
+                if isinstance(response_json, dict):
+                    summary = response_json.get("summary")
+                if isinstance(summary, str) and summary.strip():
+                    response_text = summary.strip()
+                else:
+                    response_text = json.dumps(response_json, ensure_ascii=False)
 
             result = {
                 "content": [{"type": "text", "text": response_text}],

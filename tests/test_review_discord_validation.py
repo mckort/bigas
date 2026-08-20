@@ -22,6 +22,7 @@ def test_missing_repo_returns_400_without_discord(mock_discord):
     res = client.post("/mcp/tools/review_and_comment_pr", json={})
     assert res.status_code == 400
     assert "repo is required" in (res.get_json() or {}).get("error", "")
+    assert (res.get_json() or {}).get("summary")
     mock_discord.assert_not_called()
 
 
@@ -86,4 +87,5 @@ def test_cursor_agent_url_satisfies_agent_id(mock_discord, mock_service):
     assert res.status_code == 200
     body = res.get_json() or {}
     assert body.get("agent_id") == "bc-c71a88db-7821-4e44-9717-9f845ad7406b"
+    assert "still running" in (body.get("summary") or "").lower()
     mock_discord.assert_not_called()

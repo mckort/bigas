@@ -9,6 +9,13 @@ import os
 import requests
 from flask import Blueprint, jsonify, request
 
+from bigas.resources.cto.chat_summaries import (
+    SUMMARY_REPLY_INSTRUCTION,
+    summarize_autofix_result,
+    summarize_followup_result,
+    summarize_review_result,
+    with_summary,
+)
 from bigas.resources.cto.autofix.heuristics import (
     auto_merge_enabled,
     autofix_max_iterations,
@@ -70,6 +77,13 @@ def _resolve_pr_from_payload(data: dict) -> tuple[str, int | None]:
         pr_number=data.get("pr_number"),
         text=_payload_text(data),
     )
+
+
+def _json_summary(payload: dict, summarizer, status: int | None = None):
+    body = jsonify(with_summary(payload, summarizer))
+    if status is None:
+        return body
+    return body, status
 
 
 def _resolve_agent_id_from_payload(data: dict, current: str = "") -> str:
@@ -534,7 +548,7 @@ def review_and_comment_pr():
     def _fail(reason: str, status: int, error: str | None = None):
         # Input / pre-start failures stay in the HTTP response only.
         # Discord is reserved for outcomes after "CTO PR review started".
-        return jsonify({"error": error or reason}), status
+        return _json_summary({"error": error or reason}, summarize_review_result, status)
 
     if not is_owner_repo(repo):
         return _fail("repo is required.", 400, "repo is required (e.g. 'owner/repo')")
@@ -560,7 +574,7 @@ def review_and_comment_pr():
         pr_number=pr_number,
         github_token=github_token,
     ):
-        return jsonify(
+        return _json_summary(
             {
                 "success": True,
                 "skipped": True,
@@ -568,7 +582,9 @@ def review_and_comment_pr():
                 "ready_to_merge": True,
                 "review_posted": False,
                 "phase": phase,
-            }
+                "pr_url": pr_url,
+            },
+            summarize_review_result,
         )
 
     try:
@@ -627,7 +643,7 @@ def review_and_comment_pr():
     except PRReviewError as e:
         logger.warning("PR review failed: %s", e)
         _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
-        return jsonify({"error": sanitize_error_message(str(e))}), 500
+        return _json_summary({"error": sanitize_error_message(str(e))}, summarize_review_result, 500)
 
     if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
         logger.warning(
@@ -655,12 +671,12 @@ def review_and_comment_pr():
         err_msg = sanitize_error_message(str(e))
         _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {err_msg}")
         if "401" in str(e) or "invalid" in str(e).lower() or "expired" in str(e).lower():
-            return jsonify({"error": err_msg}), 401
+            return _json_summary({"error": err_msg}, summarize_review_result, 401)
         if "403" in str(e):
-            return jsonify({"error": err_msg}), 403
+            return _json_summary({"error": err_msg}, summarize_review_result, 403)
         if "404" in str(e) or "not found" in str(e).lower():
-            return jsonify({"error": err_msg}), 404
-        return jsonify({"error": err_msg}), 502
+            return _json_summary({"error": err_msg}, summarize_review_result, 404)
+        return _json_summary({"error": err_msg}, summarize_review_result, 502)
 
     ready = review_is_ready_to_merge(review_body)
     done_label = (
@@ -701,7 +717,7 @@ def review_and_comment_pr():
     else:
         jira_final = {"skipped": True, "reason": "not_ready"}
 
-    return jsonify({
+    return _json_summary({
         "success": True,
         "comment_url": comment_url,
         "review_posted": bool(comment_url),
@@ -711,7 +727,8 @@ def review_and_comment_pr():
         "phase": phase,
         "jira_final_approval": jira_final,
         "auto_merge": auto_merge,
-    })
+        "pr_url": pr_url,
+    }, summarize_review_result)
 
 
 @cto_bp.route("/autofix_pr", methods=["POST"])
@@ -743,9 +760,17 @@ def autofix_pr():
     cursor_api_key = (data.get("cursor_api_key") or "").strip() or None
 
     if not is_owner_repo(repo):
-        return jsonify({"error": "repo is required in the form 'owner/repo'"}), 400
+        return _json_summary(
+            {"error": "repo is required in the form 'owner/repo'"},
+            summarize_autofix_result,
+            400,
+        )
     if pr_number is None:
-        return jsonify({"error": "pr_number is required"}), 400
+        return _json_summary(
+            {"error": "pr_number is required"},
+            summarize_autofix_result,
+            400,
+        )
 
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
 
@@ -774,7 +799,7 @@ def autofix_pr():
             status = 400
         else:
             status = 502
-        return jsonify({"error": err}), status
+        return _json_summary({"error": err, "pr_url": pr_url}, summarize_autofix_result, status)
 
     if result.get("skipped"):
         reason = result.get("reason") or "skipped"
@@ -867,7 +892,7 @@ def autofix_pr():
                         "Failed to delete autofix cooldown PR comment on skip",
                         exc_info=True,
                     )
-        return jsonify({"success": True, **result})
+        return _json_summary({"success": True, **result}, summarize_autofix_result)
 
     agent_url = result.get("agent_url") or ""
     agent_id = result.get("agent_id") or ""
@@ -895,7 +920,7 @@ def autofix_pr():
         f"**CTO autofix launched** ({round_n}/{max_n})\n"
         f"PR: {pr_url}\nAgent: {agent_url or agent_id}"
     )
-    return jsonify({"success": True, **result})
+    return _json_summary({"success": True, **result}, summarize_autofix_result)
 
 
 @cto_bp.route("/autofix_followup", methods=["POST"])
@@ -927,11 +952,23 @@ def autofix_followup():
     cursor_api_key = (data.get("cursor_api_key") or "").strip() or None
 
     if not is_owner_repo(repo):
-        return jsonify({"error": "repo is required in the form 'owner/repo'"}), 400
+        return _json_summary(
+            {"error": "repo is required in the form 'owner/repo'"},
+            summarize_followup_result,
+            400,
+        )
     if pr_number is None:
-        return jsonify({"error": "pr_number is required"}), 400
+        return _json_summary(
+            {"error": "pr_number is required"},
+            summarize_followup_result,
+            400,
+        )
     if not agent_id:
-        return jsonify({"error": "agent_id is required"}), 400
+        return _json_summary(
+            {"error": "agent_id is required"},
+            summarize_followup_result,
+            400,
+        )
 
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
     owner, repo_name = repo.split("/", 1)
@@ -944,13 +981,14 @@ def autofix_followup():
         status = service.poll_status(agent_id=agent_id, run_id=run_id)
     except AutofixError as e:
         err = sanitize_error_message(str(e))
-        return jsonify({"error": err}), 502
+        return _json_summary({"error": err}, summarize_followup_result, 502)
 
     base = {
         "success": True,
-        "done": bool(status.get("done")),
-        "ok": bool(status.get("ok")),
-        "status": status.get("status"),
+        "done": status.get("done", False),
+        "ok": status.get("ok", False),
+        "asked_confirmation": status.get("asked_confirmation", False),
+        "status": status.get("status", "UNKNOWN"),
         "agent_id": status.get("agent_id"),
         "run_id": status.get("run_id"),
         "agent_url": status.get("agent_url"),
@@ -959,7 +997,7 @@ def autofix_followup():
     }
 
     if not status.get("done") or not finalize:
-        return jsonify(base)
+        return _json_summary(base, summarize_followup_result)
 
     gh_token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
     if gh_token and _pr_already_merged(
@@ -979,7 +1017,7 @@ def autofix_followup():
                 "rereviewed": False,
             }
         )
-        return jsonify(base)
+        return _json_summary(base, summarize_followup_result)
 
     agent_url = status.get("agent_url") or ""
     run_status = status.get("status") or "UNKNOWN"
@@ -994,7 +1032,7 @@ def autofix_followup():
             f"Status: {run_status}\nAgent: {agent_url}{usage_suffix}"
         )
         base.update({"finalized": True, "ready_to_merge": False, "fixes_pushed": False})
-        return jsonify(base)
+        return _json_summary(base, summarize_followup_result)
 
     fixes_pushed = False
     head_sha = ""
@@ -1046,7 +1084,7 @@ def autofix_followup():
                 "rereviewed": False,
             }
         )
-        return jsonify(base)
+        return _json_summary(base, summarize_followup_result)
 
     _post_to_discord_cto(
         f"**CTO autofix completed**\nPR: {pr_url}\n"
@@ -1060,7 +1098,11 @@ def autofix_followup():
         _post_to_discord_cto(
             f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
         )
-        return jsonify({"error": err, **base, "finalized": True, "rereviewed": False}), 502
+        return _json_summary(
+            {"error": err, **base, "finalized": True, "rereviewed": False},
+            summarize_followup_result,
+            502,
+        )
 
     gh_token = github_token or os.environ.get("GITHUB_TOKEN") or ""
     _post_to_discord_cto(f"**CTO PR re-review after autofix started**\nPR: {pr_url}")
@@ -1087,7 +1129,11 @@ def autofix_followup():
         _post_to_discord_cto(
             f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
         )
-        return jsonify({"error": err, **base, "finalized": True, "rereviewed": False}), 500
+        return _json_summary(
+            {"error": err, **base, "finalized": True, "rereviewed": False},
+            summarize_followup_result,
+            500,
+        )
 
     if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
         review_body = (
@@ -1111,7 +1157,11 @@ def autofix_followup():
         _post_to_discord_cto(
             f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
         )
-        return jsonify({"error": err, **base, "finalized": True, "rereviewed": False}), 502
+        return _json_summary(
+            {"error": err, **base, "finalized": True, "rereviewed": False},
+            summarize_followup_result,
+            502,
+        )
 
     ready = review_is_ready_to_merge(review_body)
     cost_line = _discord_llm_cost_line(review_result)
@@ -1186,7 +1236,7 @@ def autofix_followup():
         "jira_final_approval": jira_final,
         "auto_merge": auto_merge,
     })
-    return jsonify(base)
+    return _json_summary(base, summarize_followup_result)
 
 
 @cto_bp.route("/fetch_ai_usage", methods=["POST"])
@@ -1383,7 +1433,8 @@ def get_manifest():
                 "name": "review_and_comment_pr",
                 "description": (
                     "Review a pull request diff with AI and post or update a single PR comment on GitHub. "
-                    "Pass pr_url (a github.com/.../pull/N link) or repo + pr_number. Diff is optional."
+                    "Pass pr_url (a github.com/.../pull/N link) or repo + pr_number. Diff is optional. "
+                    + SUMMARY_REPLY_INSTRUCTION
                 ),
                 "path": "/mcp/tools/review_and_comment_pr",
                 "method": "POST",
@@ -1426,7 +1477,8 @@ def get_manifest():
                 "name": "autofix_pr",
                 "description": (
                     "Launch a Cursor cloud agent to fix actionable findings from the "
-                    "Bigas PR review comment on an open pull request."
+                    "Bigas PR review comment on an open pull request. "
+                    + SUMMARY_REPLY_INSTRUCTION
                 ),
                 "path": "/mcp/tools/autofix_pr",
                 "method": "POST",
@@ -1474,7 +1526,8 @@ def get_manifest():
                 "description": (
                     "Poll Cursor autofix status; when finished, post Discord updates "
                     "and re-review the PR (ready-to-merge when clean). "
-                    "Pass pr_url or repo + pr_number, and agent_id or a cursor.com/agents URL."
+                    "Pass pr_url or repo + pr_number, and agent_id or a cursor.com/agents URL. "
+                    + SUMMARY_REPLY_INSTRUCTION
                 ),
                 "path": "/mcp/tools/autofix_followup",
                 "method": "POST",

@@ -102,3 +102,56 @@ def test_oauth_discovery_is_404_not_401(monkeypatch):
         resp = client.get(path)
         assert resp.status_code == 404, path
         assert resp.get_json()["error"] == "oauth_not_supported"
+
+
+def test_tools_call_uses_summary_as_text(monkeypatch):
+    from flask import jsonify
+
+    monkeypatch.setenv("SERVER_URL", "https://mcp.example.test")
+    app = Flask(__name__)
+    app.config["BIGAS_ACCESS_MODE"] = "restricted"
+    app.config["BIGAS_ACCESS_KEYS"] = {"test-key"}
+    app.config["BIGAS_ACCESS_HEADER"] = "X-Bigas-Access-Key"
+
+    @app.route("/mcp/tools/autofix_pr", methods=["POST"])
+    def autofix_pr():
+        return jsonify(
+            {
+                "success": True,
+                "launched": True,
+                "agent_url": "https://cursor.com/agents/bc-123",
+                "summary": "Autofix is running (round 2/5). Follow the agent: https://cursor.com/agents/bc-123",
+            }
+        )
+
+    def manifest():
+        return {
+            "tools": [
+                {
+                    "name": "autofix_pr",
+                    "description": "launch",
+                    "path": "/mcp/tools/autofix_pr",
+                    "method": "POST",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ]
+        }
+
+    register_mcp_jsonrpc_routes(app, manifest)
+    resp = app.test_client().post(
+        "/mcp",
+        headers={"Authorization": "Bearer test-key"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "autofix_pr", "arguments": {"repo": "a/b", "pr_number": 1}},
+        },
+    )
+    assert resp.status_code == 200
+    result = resp.get_json()["result"]
+    text = result["content"][0]["text"]
+    assert text.startswith("Autofix is running")
+    assert text.startswith("{") is False
+    assert result["structuredContent"]["launched"] is True
+    assert result["structuredContent"]["summary"].startswith("Autofix is running")
