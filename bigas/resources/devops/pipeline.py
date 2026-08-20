@@ -12,6 +12,7 @@ from bigas.resources.devops.service import (
     check_deployment_risk,
     check_website_health,
     get_deployment_status,
+    get_failed_run_excerpt,
     trigger_deployment,
 )
 
@@ -122,7 +123,7 @@ def should_run_deploy_pipeline(user_message: str, thread_id: Optional[str] = Non
 
 
 def _format_risk_for_chat(risk: Dict[str, Any]) -> str:
-    lines = ["**Pre-check klar.**", risk.get("summary") or ""]
+    lines = ["**Pre-check complete.**", risk.get("summary") or ""]
     findings = risk.get("findings") or {}
     risky = []
     for key in ("database_migration", "dependency_change", "infrastructure_config", "other_risky"):
@@ -130,7 +131,7 @@ def _format_risk_for_chat(risk: Dict[str, Any]) -> str:
         if items:
             risky.append(f"- {key}: " + ", ".join(items[:8]))
     if risky:
-        lines.append("Ändrade riskfiler:")
+        lines.append("Changed risk files:")
         lines.extend(risky)
     return "\n".join(line for line in lines if line).strip()
 
@@ -153,11 +154,108 @@ def _parse_started_at(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _code_failure(conclusion: str) -> bool:
+    return (conclusion or "").lower() not in ("success", "cancelled", "skipped", "")
+
+
+def _handoff_failed_deploys(
+    thread_id: Optional[str],
+    *,
+    repo: str,
+    failed_runs: List[Dict[str, Any]],
+    starting_ref: str = "main",
+) -> None:
+    if not thread_id or not repo or not failed_runs:
+        return
+
+    _post(
+        thread_id,
+        "🔎 **CTO handoff:** fetching failed job logs and launching a fix agent…",
+        role="system",
+        status="in_progress",
+    )
+
+    failures: List[Dict[str, Any]] = []
+    diagnosis = ["**Deploy failed — diagnosis.**"]
+    for item in failed_runs:
+        run_id = item.get("run_id")
+        workflow = item.get("workflow") or "workflow"
+        conclusion = item.get("conclusion") or "failure"
+        html_url = item.get("html_url") or ""
+        excerpt = ""
+        if run_id:
+            try:
+                fetched = get_failed_run_excerpt(repo=repo, run_id=int(run_id))
+                excerpt = (fetched.get("excerpt") or "").strip()
+            except Exception as e:
+                logger.warning("Failed to fetch logs for run %s: %s", run_id, e)
+                excerpt = f"(could not fetch logs: {e})"
+        line = f"- ❌ {workflow} #{run_id} {conclusion}"
+        if html_url:
+            line += f" — {html_url}"
+        diagnosis.append(line)
+        if excerpt:
+            diagnosis.append("```")
+            diagnosis.append(excerpt[:2500])
+            diagnosis.append("```")
+        failures.append(
+            {
+                "workflow": workflow,
+                "run_id": run_id,
+                "conclusion": conclusion,
+                "html_url": html_url,
+                "excerpt": excerpt,
+            }
+        )
+
+    _post(thread_id, "\n".join(diagnosis))
+
+    try:
+        from bigas.resources.cto.deploy_hotfix import (
+            DeployHotfixError,
+            launch_failed_deploy_fix,
+        )
+
+        launched = launch_failed_deploy_fix(
+            repo=repo,
+            failures=failures,
+            starting_ref=starting_ref,
+        )
+    except DeployHotfixError as e:
+        logger.warning("CTO deploy hotfix launch failed: %s", e)
+        _complete_pipeline_progress(thread_id)
+        _post(
+            thread_id,
+            f"Could not launch the CTO fix agent ({e}). "
+            "The diagnosis above is still usable for a manual fix.",
+        )
+        return
+    except Exception as e:
+        logger.exception("CTO deploy hotfix launch failed")
+        _complete_pipeline_progress(thread_id)
+        _post(
+            thread_id,
+            f"Could not launch the CTO fix agent ({e}). "
+            "The diagnosis above is still usable for a manual fix.",
+        )
+        return
+
+    agent_url = (launched.get("agent_url") or launched.get("agent_id") or "").strip()
+    _complete_pipeline_progress(thread_id)
+    _post(
+        thread_id,
+        "**CTO agent launched** to fix the failed deploy and open a PR"
+        + (f": {agent_url}" if agent_url else "."),
+    )
+
+
 def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
     repo = poll.get("repo") or ""
     triggered = poll.get("triggered") or []
     site_urls = poll.get("site_urls") or []
     finished = list(poll.get("finished_lines") or [])
+    failed_runs = list(poll.get("failed_runs") or [])
+    starting_ref = (poll.get("ref") or "main").strip() or "main"
     done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
     remaining = [
         item
@@ -170,7 +268,7 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
             f"{item.get('workflow')} #{item.get('run_id')}" for item in remaining
         )
         finished.append(
-            f"⏳ Timeout: fortfarande igång: {leftover}. Fråga om status senare."
+            f"⏳ Timeout: still running: {leftover}. Ask for status later."
         )
 
     health_lines: List[str] = []
@@ -185,11 +283,19 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
     if finished:
         parts.extend(finished)
     if health_lines:
-        parts.append("Sajthälsa:")
+        parts.append("Site health:")
         parts.extend(f"- {line}" for line in health_lines)
-    _complete_pipeline_progress(thread_id)
     _post(thread_id, "\n".join(parts))
     _set_deploy_poll(thread_id, None)
+    if failed_runs and repo:
+        _handoff_failed_deploys(
+            thread_id,
+            repo=repo,
+            failed_runs=failed_runs,
+            starting_ref=starting_ref,
+        )
+    else:
+        _complete_pipeline_progress(thread_id)
 
 
 def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
@@ -203,7 +309,7 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
     if not triggered:
         _post(
             thread_id,
-            "Jag fick ingen GitHub Actions run-id tillbaka. Kolla Actions-fliken manuellt.",
+            "I didn't get a GitHub Actions run ID back. Check the Actions tab manually.",
         )
         _complete_pipeline_progress(thread_id)
         _set_deploy_poll(thread_id, None)
@@ -212,6 +318,7 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
     started_at = poll.get("started_at") or datetime.now(timezone.utc).isoformat()
     deadline = _parse_started_at(started_at) + timedelta(seconds=_POLL_TIMEOUT_SEC)
     finished = list(poll.get("finished_lines") or [])
+    failed_runs = list(poll.get("failed_runs") or [])
     done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
 
     for item in triggered:
@@ -233,6 +340,15 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
             f"{conclusion}" + (f" — {url}" if url else "")
         )
         done_ids.add(int(run_id))
+        if _code_failure(conclusion):
+            failed_runs.append(
+                {
+                    "workflow": item.get("workflow") or "workflow",
+                    "run_id": int(run_id),
+                    "conclusion": conclusion,
+                    "html_url": url,
+                }
+            )
 
     remaining = [
         item
@@ -247,6 +363,7 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
                 **poll,
                 "started_at": started_at,
                 "finished_lines": finished,
+                "failed_runs": failed_runs,
                 "done_run_ids": sorted(done_ids),
             },
         )
@@ -257,6 +374,7 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
         {
             **poll,
             "finished_lines": finished,
+            "failed_runs": failed_runs,
             "done_run_ids": sorted(done_ids),
         },
     )
@@ -274,7 +392,7 @@ def run_chat_deploy_pipeline(
     if pending and is_cancel(user_message):
         _set_pending(thread_id, None)
         _complete_pipeline_progress(thread_id)
-        _post(thread_id, "Avbröt deployen. Ingen workflow har startats.")
+        _post(thread_id, "Cancelled the deploy. No workflow was started.")
         return {"status": "complete", "summary": "Deploy cancelled."}
 
     confirmed = bool(pending and is_confirm(user_message))
@@ -287,13 +405,13 @@ def run_chat_deploy_pipeline(
         _complete_pipeline_progress(thread_id)
         _post(
             thread_id,
-            "Vilken sajt ska deployas? Nämn projektnyckel (t.ex. VFA, GPWW) eller produktnamn.",
+            "Which site should be deployed? Name a project key (e.g. VFA, GPWW) or product name.",
         )
         return {"status": "complete", "summary": "Project not specified."}
 
     _post(
         thread_id,
-        "🔎 **Pre-check:** jämför koden som ska ut mot det som körs i prod…",
+        "🔎 **Pre-check:** comparing the code about to ship against what's running in prod…",
         role="system",
         status="in_progress",
     )
@@ -301,12 +419,12 @@ def run_chat_deploy_pipeline(
         risk = check_deployment_risk(project_key=key)
     except DevOpsError as e:
         _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Pre-check misslyckades: {e}")
+        _post(thread_id, f"Pre-check failed: {e}")
         return {"status": "complete", "summary": str(e)}
     except Exception as e:
         logger.exception("Pre-check failed")
         _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Pre-check misslyckades: {e}")
+        _post(thread_id, f"Pre-check failed: {e}")
         return {"status": "complete", "summary": str(e)}
 
     _post(thread_id, _format_risk_for_chat(risk))
@@ -321,14 +439,14 @@ def run_chat_deploy_pipeline(
         )
         _post(
             thread_id,
-            f"Risknivån är **{risk_level}**. Svara **ja** för att deploya ändå, eller **nej** för att avbryta.",
+            f"Risk level is **{risk_level}**. Reply **yes** to deploy anyway, or **no** to cancel.",
         )
         return {"status": "complete", "summary": risk.get("summary") or ""}
 
     _set_pending(thread_id, None)
     _post(
         thread_id,
-        "🚀 **Deploy:** startar GitHub Actions (backend + web)…",
+        "🚀 **Deploy:** starting GitHub Actions (backend + web)…",
         role="system",
         status="in_progress",
     )
@@ -336,29 +454,29 @@ def run_chat_deploy_pipeline(
         result = trigger_deployment(project_key=key)
     except DevOpsError as e:
         _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Kunde inte starta deploy: {e}")
+        _post(thread_id, f"Could not start deploy: {e}")
         return {"status": "complete", "summary": str(e)}
     except Exception as e:
         logger.exception("trigger_deployment failed")
         _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Kunde inte starta deploy: {e}")
+        _post(thread_id, f"Could not start deploy: {e}")
         return {"status": "complete", "summary": str(e)}
 
-    _post(thread_id, result.get("summary") or "Deploy triggad.")
+    _post(thread_id, result.get("summary") or "Deploy triggered.")
     triggered = result.get("triggered") or []
     if not triggered:
         errors = result.get("errors") or []
         _complete_pipeline_progress(thread_id)
         _post(
             thread_id,
-            "Ingen workflow startade."
+            "No workflow started."
             + ((" " + "; ".join(errors)) if errors else ""),
         )
         return {"status": "complete", "summary": result.get("summary") or ""}
 
     _post(
         thread_id,
-        "⏳ **Post-check:** väntar på GitHub Actions. Jag skriver här när det är klart (kan ta flera minuter).",
+        "⏳ **Post-check:** waiting for GitHub Actions. I'll post here when it's done (this can take several minutes).",
         role="system",
         status="in_progress",
     )
@@ -371,7 +489,9 @@ def run_chat_deploy_pipeline(
                 "site_urls": result.get("site_urls") or risk.get("site_urls") or [],
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "finished_lines": [],
+                "failed_runs": [],
                 "done_run_ids": [],
+                "ref": (triggered[0] or {}).get("ref") or "main",
             },
         )
         return {

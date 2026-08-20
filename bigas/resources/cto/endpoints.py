@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, request
 from bigas.resources.cto.chat_summaries import (
     SUMMARY_REPLY_INSTRUCTION,
     summarize_autofix_result,
+    summarize_deploy_hotfix_result,
     summarize_followup_result,
     summarize_review_result,
     with_summary,
@@ -1239,6 +1240,106 @@ def autofix_followup():
     return _json_summary(base, summarize_followup_result)
 
 
+@cto_bp.route("/fix_failed_deployment", methods=["POST"])
+def fix_failed_deployment():
+    """
+    Launch a Cursor cloud agent to fix a failed GitHub Actions deploy and open a PR.
+
+    Request JSON:
+      - repo (str, required): owner/repo
+      - run_id (int, optional): GitHub Actions run ID; used to fetch logs if excerpt omitted
+      - workflow (str, optional): workflow filename e.g. deploy-web.yml
+      - html_url (str, optional): Actions run URL
+      - excerpt (str, optional): failed log excerpt; fetched from GitHub when omitted
+      - ref (str, optional): git ref to branch from (default main)
+      - conclusion (str, optional): workflow conclusion (default failure)
+    """
+    from bigas.resources.cto.deploy_hotfix import (
+        DeployHotfixError,
+        launch_failed_deploy_fix,
+    )
+    from bigas.resources.devops.service import DevOpsError, get_failed_run_excerpt
+
+    data = request.get_json(silent=True) or {}
+    repo = (data.get("repo") or "").strip()
+    if not is_owner_repo(repo):
+        return _json_summary(
+            {"error": "repo is required in the form 'owner/repo'"},
+            summarize_deploy_hotfix_result,
+            400,
+        )
+
+    run_id = data.get("run_id")
+    try:
+        run_id_int = int(run_id) if run_id is not None and run_id != "" else None
+    except (TypeError, ValueError):
+        return _json_summary(
+            {"error": "run_id must be a valid integer"},
+            summarize_deploy_hotfix_result,
+            400,
+        )
+
+    excerpt = data.get("excerpt")
+    if isinstance(excerpt, str):
+        excerpt = excerpt.strip()
+    else:
+        excerpt = ""
+
+    html_url = (data.get("html_url") or "").strip()
+    if run_id_int and not html_url:
+        html_url = f"https://github.com/{repo}/actions/runs/{run_id_int}"
+
+    if not excerpt and run_id_int:
+        try:
+            fetched = get_failed_run_excerpt(repo=repo, run_id=run_id_int)
+            excerpt = (fetched.get("excerpt") or "").strip()
+        except DevOpsError as e:
+            return _json_summary(
+                {"error": sanitize_error_message(str(e)), "repo": repo},
+                summarize_deploy_hotfix_result,
+                400,
+            )
+        except Exception as e:
+            logger.exception("Failed to fetch deploy logs")
+            return _json_summary(
+                {"error": sanitize_error_message(str(e)), "repo": repo},
+                summarize_deploy_hotfix_result,
+                502,
+            )
+
+    if not excerpt:
+        return _json_summary(
+            {"error": "excerpt or run_id is required so the CTO agent can see the failure"},
+            summarize_deploy_hotfix_result,
+            400,
+        )
+
+    failure = {
+        "workflow": (data.get("workflow") or "workflow").strip() or "workflow",
+        "run_id": run_id_int,
+        "conclusion": (data.get("conclusion") or "failure").strip() or "failure",
+        "html_url": html_url,
+        "excerpt": excerpt,
+    }
+    try:
+        result = launch_failed_deploy_fix(
+            repo=repo,
+            failures=[failure],
+            starting_ref=(data.get("ref") or "main"),
+            cursor_api_key=(data.get("cursor_api_key") or "").strip() or None,
+        )
+    except DeployHotfixError as e:
+        err = sanitize_error_message(str(e))
+        logger.warning("Deploy hotfix launch failed: %s", e)
+        return _json_summary(
+            {"error": err, "repo": repo},
+            summarize_deploy_hotfix_result,
+            502,
+        )
+
+    return _json_summary({"success": True, **result}, summarize_deploy_hotfix_result)
+
+
 @cto_bp.route("/fetch_ai_usage", methods=["POST"])
 def fetch_ai_usage_endpoint():
     """
@@ -1519,6 +1620,46 @@ def get_manifest():
                         },
                     },
                     "required": [],
+                },
+            },
+            {
+                "name": "fix_failed_deployment",
+                "description": (
+                    "Launch a Cursor cloud agent to fix a failed GitHub Actions deploy "
+                    "and open a PR. Pass repo plus run_id (logs are fetched) or excerpt. "
+                    + SUMMARY_REPLY_INSTRUCTION
+                ),
+                "path": "/mcp/tools/fix_failed_deployment",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository as owner/repo (required)",
+                        },
+                        "run_id": {
+                            "type": "integer",
+                            "description": "Failed GitHub Actions run ID. Used to fetch logs if excerpt is omitted.",
+                        },
+                        "workflow": {
+                            "type": "string",
+                            "description": "Workflow filename e.g. deploy-web.yml",
+                        },
+                        "html_url": {
+                            "type": "string",
+                            "description": "GitHub Actions run URL",
+                        },
+                        "excerpt": {
+                            "type": "string",
+                            "description": "Failed log excerpt. Optional if run_id is provided.",
+                        },
+                        "ref": {
+                            "type": "string",
+                            "description": "Git ref to branch from (default: main)",
+                        },
+                    },
+                    "required": ["repo"],
                 },
             },
             {

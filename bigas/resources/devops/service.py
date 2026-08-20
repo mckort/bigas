@@ -8,7 +8,11 @@ from typing import Any, Dict, List, Optional
 
 from bigas.providers.monitoring.service import _check_http_status
 from bigas.resources.devops.config import RISKY_PATH_PATTERNS, DeployTarget, parse_repo, resolve_deploy_target
-from bigas.resources.devops.github_actions import GitHubActionsClient, GitHubActionsError
+from bigas.resources.devops.github_actions import (
+    GitHubActionsClient,
+    GitHubActionsError,
+    excerpt_gha_logs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -357,6 +361,66 @@ def get_deployment_status(
         "html_url": html_url,
         "created_at": run.get("created_at"),
         "updated_at": run.get("updated_at"),
+    }
+
+
+def get_failed_run_excerpt(
+    *,
+    repo: str,
+    run_id: int,
+    github_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch a short log excerpt from failed jobs on a workflow run."""
+    owner, name = parse_repo(repo)
+    client = _github_client(github_token)
+    try:
+        jobs = client.list_workflow_jobs(owner, name, int(run_id))
+    except GitHubActionsError as e:
+        raise DevOpsError(str(e)) from e
+
+    failed = [
+        job
+        for job in jobs
+        if isinstance(job, dict)
+        and (job.get("conclusion") or "").lower() == "failure"
+    ]
+    if not failed:
+        failed = [
+            job
+            for job in jobs
+            if isinstance(job, dict)
+            and (job.get("conclusion") or "").lower()
+            not in ("success", "skipped", "cancelled", "")
+        ]
+
+    parts: List[str] = []
+    job_names: List[str] = []
+    for job in failed[:3]:
+        job_name = (job.get("name") or "job").strip()
+        job_names.append(job_name)
+        job_id = job.get("id")
+        if not job_id:
+            continue
+        try:
+            raw = client.get_job_logs(owner, name, int(job_id))
+        except GitHubActionsError as e:
+            parts.append(f"### {job_name}\n(could not fetch logs: {e})")
+            continue
+        excerpt = excerpt_gha_logs(raw)
+        if excerpt:
+            parts.append(f"### {job_name}\n{excerpt}")
+
+    combined = "\n\n".join(parts).strip()
+    if not combined:
+        combined = f"No failed-job logs found for run #{run_id}."
+    names = ", ".join(job_names) or "unknown job"
+    return {
+        "status": "ok",
+        "summary": f"Failed job logs for run #{run_id} ({names}).",
+        "repo": repo,
+        "run_id": int(run_id),
+        "failed_job_names": job_names,
+        "excerpt": combined[:8000],
     }
 
 

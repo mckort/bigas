@@ -146,7 +146,7 @@ def test_pipeline_asks_confirmation_on_high_risk(monkeypatch):
     pending = store.get_thread(thread["thread_id"]).get("pending_deploy")
     assert pending and pending["risk_level"] == "high"
     contents = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
-    assert "ja" in contents.lower()
+    assert "yes" in contents.lower()
 
     monkeypatch.setattr(
         "bigas.resources.devops.pipeline.trigger_deployment",
@@ -185,7 +185,7 @@ def test_pipeline_requires_project_key(monkeypatch):
     )
     assert result["status"] == "complete"
     contents = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
-    assert "VFA" in contents or "projektnyckel" in contents.lower()
+    assert "VFA" in contents or "project key" in contents.lower()
 
 
 def test_clear_stale_pending_on_unrelated_message(monkeypatch):
@@ -253,3 +253,164 @@ def test_pipeline_marks_in_progress_messages_complete(monkeypatch):
         and (m.get("metadata") or {}).get("status") == "complete"
     ]
     assert len(completed) >= 2
+
+
+def test_pipeline_handoffs_failed_web_deploy_to_cto(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    launched = {"called": False, "failures": None}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_deployment_risk",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Compared prod → main.",
+            "risk_level": "low",
+            "findings": {},
+            "repo": "mckort/vcfieldassistant",
+            "site_urls": ["https://vcfieldassistant.com"],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Triggered 2 workflow(s).",
+            "repo": "mckort/vcfieldassistant",
+            "triggered": [
+                {
+                    "workflow": "deploy-backend.yml",
+                    "run_id": 11,
+                    "ref": "main",
+                    "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/11",
+                },
+                {
+                    "workflow": "deploy-web.yml",
+                    "run_id": 12,
+                    "ref": "main",
+                    "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/12",
+                },
+            ],
+            "errors": [],
+            "site_urls": ["https://vcfieldassistant.com"],
+        },
+    )
+
+    def _status(**kwargs):
+        run_id = kwargs["run_id"]
+        if run_id == 11:
+            return {
+                "workflow_status": "completed",
+                "conclusion": "success",
+                "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/11",
+            }
+        return {
+            "workflow_status": "completed",
+            "conclusion": "failure",
+            "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/12",
+        }
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        _status,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} returned HTTP 200 in 40ms."},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_failed_run_excerpt",
+        lambda **kwargs: {
+            "excerpt": "Tsconfig not found expo/tsconfig.base",
+            "summary": "failed",
+        },
+    )
+
+    def _launch(**kwargs):
+        launched["called"] = True
+        launched["failures"] = kwargs.get("failures")
+        launched["repo"] = kwargs.get("repo")
+        return {
+            "launched": True,
+            "agent_url": "https://cursor.com/agents/bc-test",
+            "agent_id": "bc-test",
+            "summary": "launched",
+        }
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.deploy_hotfix.launch_failed_deploy_fix",
+        _launch,
+    )
+
+    run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="deploya vcfieldassistant",
+    )
+    poll_deploy_postcheck(thread["thread_id"])
+
+    assert launched["called"] is True
+    assert launched["repo"] == "mckort/vcfieldassistant"
+    assert launched["failures"] and launched["failures"][0]["run_id"] == 12
+    assert "expo/tsconfig.base" in launched["failures"][0]["excerpt"]
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "Deploy failed — diagnosis" in blob
+    assert "CTO agent launched" in blob
+    assert "https://cursor.com/agents/bc-test" in blob
+
+
+def test_pipeline_does_not_handoff_cancelled_runs(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    launched = {"called": False}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_deployment_risk",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Compared prod → main.",
+            "risk_level": "low",
+            "findings": {},
+            "repo": "mckort/vcfieldassistant",
+            "site_urls": [],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Triggered.",
+            "repo": "mckort/vcfieldassistant",
+            "triggered": [
+                {
+                    "workflow": "deploy-web.yml",
+                    "run_id": 99,
+                    "ref": "main",
+                    "html_url": "https://x",
+                }
+            ],
+            "errors": [],
+            "site_urls": [],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "cancelled",
+            "html_url": "https://x",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": "ok"},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.deploy_hotfix.launch_failed_deploy_fix",
+        lambda **kwargs: launched.update(called=True) or {},
+    )
+
+    run_chat_deploy_pipeline(thread_id=thread["thread_id"], user_message="deploya VFA")
+    poll_deploy_postcheck(thread["thread_id"])
+    assert launched["called"] is False
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "CTO agent launched" not in blob

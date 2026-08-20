@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -11,6 +12,22 @@ logger = logging.getLogger(__name__)
 
 class GitHubActionsError(RuntimeError):
     pass
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_GHA_PREFIX_RE = re.compile(
+    r"^(?:[^\t\n]+\t[^\t\n]+\t)?\d{4}-\d{2}-\d{2}T[\d:.]+Z\s?"
+)
+_ERROR_HINTS = (
+    "##[error]",
+    "error during build",
+    "build failed",
+    "tsconfig not found",
+    "process completed with exit code",
+    "error:",
+    "fatal:",
+    "✗",
+)
 
 
 def _github_error_detail(resp: requests.Response, *, limit: int = 300) -> str:
@@ -182,3 +199,66 @@ class GitHubActionsClient:
             raise GitHubActionsError(f"Workflow run not found: {run_id}")
         resp.raise_for_status()
         return resp.json() or {}
+
+    def list_workflow_jobs(self, owner: str, repo: str, run_id: int) -> List[Dict[str, Any]]:
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{int(run_id)}/jobs"
+        resp = requests.get(
+            url,
+            headers=self._headers,
+            params={"per_page": 100},
+            timeout=30,
+        )
+        if resp.status_code == 404:
+            raise GitHubActionsError(f"Workflow run not found: {run_id}")
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        data = resp.json() or {}
+        jobs = data.get("jobs") or []
+        return jobs if isinstance(jobs, list) else []
+
+    def get_job_logs(self, owner: str, repo: str, job_id: int) -> str:
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/jobs/{int(job_id)}/logs"
+        resp = requests.get(url, headers=self._headers, timeout=60, allow_redirects=True)
+        if resp.status_code == 404:
+            return ""
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        return resp.text or ""
+
+
+def clean_gha_log_line(line: str) -> str:
+    text = _ANSI_RE.sub("", line or "")
+    text = _GHA_PREFIX_RE.sub("", text)
+    return text.rstrip()
+
+
+def excerpt_gha_logs(raw: str, *, max_chars: int = 4000, tail_lines: int = 80) -> str:
+    """Return a short, chat-safe excerpt around the likely failure in GHA logs."""
+    lines = [clean_gha_log_line(line) for line in (raw or "").splitlines()]
+    lines = [line for line in lines if line.strip()]
+    if not lines:
+        return ""
+
+    error_idx: Optional[int] = None
+    for i in range(len(lines) - 1, -1, -1):
+        low = lines[i].lower()
+        if any(hint in low for hint in _ERROR_HINTS):
+            error_idx = i
+            break
+
+    if error_idx is None:
+        chosen = lines[-tail_lines:]
+    else:
+        start = max(0, error_idx - (tail_lines - 8))
+        chosen = lines[start : error_idx + 8]
+
+    text = "\n".join(chosen).strip()
+    if len(text) > max_chars:
+        text = text[: max_chars - 16].rstrip() + "\n…(truncated)"
+    return text
