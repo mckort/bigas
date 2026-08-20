@@ -47,6 +47,12 @@ class TestTruncateBody:
         assert len(result) <= 50
         assert "truncated" in result
 
+    def test_truncates_with_small_limit(self):
+        text = "x" * 100
+        result = truncate_body(text, max_chars=10)
+        assert "truncated" in result
+        assert "x" not in result
+
 
 class TestEmailSyncEndpoint:
     def test_sync_requires_imap_and_posts_to_chief_thread(self, client, monkeypatch):
@@ -65,13 +71,18 @@ class TestEmailSyncEndpoint:
 
         class FakeProvider:
             name = "imap"
+            marked_uids = []
 
             def fetch_unread(self):
                 return [sample]
 
+            def mark_processed(self, uid):
+                self.marked_uids.append(uid)
+
+        fake = FakeProvider()
         monkeypatch.setattr(
             "bigas.resources.email.endpoints._email_provider",
-            lambda: FakeProvider(),
+            lambda: fake,
         )
         monkeypatch.setattr(
             "bigas.resources.email.endpoints.analyze_email",
@@ -109,6 +120,7 @@ class TestEmailSyncEndpoint:
         assert meta["type"] == "action_proposal"
         assert meta["status"] == "pending"
         assert len(meta["actions"]) == 1
+        assert fake.marked_uids == ["1"]
 
     def test_sync_skips_spam(self, client, monkeypatch):
         from bigas.chat.db import get_chat_store
@@ -125,10 +137,16 @@ class TestEmailSyncEndpoint:
         )
 
         class FakeProvider:
+            marked_uids = []
+
             def fetch_unread(self):
                 return [sample]
 
-        monkeypatch.setattr("bigas.resources.email.endpoints._email_provider", lambda: FakeProvider())
+            def mark_processed(self, uid):
+                self.marked_uids.append(uid)
+
+        fake = FakeProvider()
+        monkeypatch.setattr("bigas.resources.email.endpoints._email_provider", lambda: fake)
         monkeypatch.setattr(
             "bigas.resources.email.endpoints.analyze_email",
             lambda msg: {"is_spam": True, "summary": "", "proposals": []},
@@ -139,6 +157,7 @@ class TestEmailSyncEndpoint:
         data = resp.get_json()
         assert data["synced"] == 0
         assert data["skipped_spam"] == 1
+        assert fake.marked_uids == ["2"]
 
     def test_sync_not_configured(self, client, monkeypatch):
         monkeypatch.setattr("bigas.resources.email.endpoints._email_provider", lambda: None)
@@ -194,6 +213,25 @@ class TestProposalApproveReject:
 
         msgs = store.list_messages(thread["thread_id"])
         assert any("Draft reply" in m.get("content", "") for m in msgs)
+
+    def test_approve_rejects_duplicate(self, client):
+        thread, message = self._seed_proposal(client)
+        meta = message["metadata"]
+        payload = json.dumps({"message_id": message["message_id"], "action_id": "draft1"})
+
+        first = client.post(
+            f"/api/v1/chat/proposals/{meta['proposal_id']}/approve",
+            headers=_auth_headers(),
+            data=payload,
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            f"/api/v1/chat/proposals/{meta['proposal_id']}/approve",
+            headers=_auth_headers(),
+            data=payload,
+        )
+        assert second.status_code == 409
 
     def test_reject_proposal(self, client):
         thread, message = self._seed_proposal(client)

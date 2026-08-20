@@ -38,7 +38,8 @@ function humanizeChatContent(content) {
   return content
 }
 
-function ActionProposalCard({ message, onResolved, resolving, setResolving }) {
+function ActionProposalCard({ message, onResolved }) {
+  const [resolving, setResolving] = useState(false)
   const meta = message.metadata || {}
   if (meta.type !== 'action_proposal' || meta.status !== 'pending') return null
 
@@ -99,7 +100,7 @@ function ActionProposalCard({ message, onResolved, resolving, setResolving }) {
   )
 }
 
-function MessageBubble({ message, agentIcon, onProposalResolved, proposalResolving, setProposalResolving }) {
+function MessageBubble({ message, agentIcon, onProposalResolved }) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
   const meta = message.metadata || {}
@@ -132,8 +133,6 @@ function MessageBubble({ message, agentIcon, onProposalResolved, proposalResolvi
         <ActionProposalCard
           message={message}
           onResolved={onProposalResolved}
-          resolving={proposalResolving}
-          setResolving={setProposalResolving}
         />
         {showResolved && (
           <p className="mt-2 text-xs text-muted capitalize">{meta.status}</p>
@@ -217,7 +216,6 @@ export default function ChatLayout({ user, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [proposalResolving, setProposalResolving] = useState(false)
   const bottomRef = useRef(null)
   const lastMsgTs = useRef('')
   const lastFeedTs = useRef('')
@@ -515,8 +513,6 @@ export default function ChatLayout({ user, onLogout }) {
               message={m}
               agentIcon={activeAgent.icon}
               onProposalResolved={refreshMessages}
-              proposalResolving={proposalResolving}
-              setProposalResolving={setProposalResolving}
             />
           ))}
           {showTyping && (

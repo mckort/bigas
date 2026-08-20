@@ -220,6 +220,37 @@ class MemoryChatStore:
                     return dict(user)
         return None
 
+    def claim_proposal_for_approval(
+        self,
+        message_id: str,
+        *,
+        proposal_id: str,
+        user_id: str,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        with self._lock:
+            message = self.get_message(message_id)
+            if not message:
+                return None, "not_found"
+            meta = message.get("metadata") or {}
+            if meta.get("type") != "action_proposal":
+                return None, "invalid"
+            if meta.get("proposal_id") != proposal_id:
+                return None, "mismatch"
+            if meta.get("status") != "pending":
+                return None, "not_pending"
+            thread = self.get_thread(message.get("thread_id") or "")
+            if not thread or thread.get("user_id") != user_id:
+                return None, "forbidden"
+            for msgs in self._messages.values():
+                for m in msgs:
+                    if m.get("message_id") == message_id:
+                        m_meta = dict(m.get("metadata") or {})
+                        m_meta["status"] = "processing"
+                        m["metadata"] = m_meta
+                        message = dict(m)
+                        break
+            return message, None
+
     def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
         with self._lock:
             chief_threads = [
@@ -397,16 +428,53 @@ class FirestoreChatStore:
         return data
 
     def find_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        target = (email or "").strip().lower()
+        target = (email or "").strip()
         if not target:
             return None
-        for doc in self._users.stream():
-            if not doc.exists:
-                continue
-            data = doc.to_dict() or {}
-            if (data.get("email") or "").strip().lower() == target:
-                return data
+        docs = self._users.where("email", "==", target).limit(1).stream()
+        for doc in docs:
+            if doc.exists:
+                return doc.to_dict()
         return None
+
+    def claim_proposal_for_approval(
+        self,
+        message_id: str,
+        *,
+        proposal_id: str,
+        user_id: str,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        from google.cloud import firestore
+
+        doc_ref = self._messages.document(message_id)
+
+        @firestore.transactional
+        def _claim(transaction):
+            snap = doc_ref.get(transaction=transaction)
+            if not snap.exists:
+                return None, "not_found"
+            data = snap.to_dict() or {}
+            meta = dict(data.get("metadata") or {})
+            if meta.get("type") != "action_proposal":
+                return None, "invalid"
+            if meta.get("proposal_id") != proposal_id:
+                return None, "mismatch"
+            if meta.get("status") != "pending":
+                return None, "not_pending"
+            thread_id = data.get("thread_id") or ""
+            thread_snap = self._threads.document(thread_id).get(transaction=transaction)
+            if not thread_snap.exists:
+                return None, "forbidden"
+            thread = thread_snap.to_dict() or {}
+            if thread.get("user_id") != user_id:
+                return None, "forbidden"
+            meta["status"] = "processing"
+            transaction.update(doc_ref, {"metadata": meta})
+            data["metadata"] = meta
+            return data, None
+
+        transaction = self._db.transaction()
+        return _claim(transaction)
 
     def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
         docs = self._threads.where("user_id", "==", user_id).where("agent_id", "==", "chief").stream()
