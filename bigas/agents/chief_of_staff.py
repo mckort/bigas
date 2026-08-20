@@ -58,6 +58,12 @@ AGENT_TOOL_PREFIXES = {
         "website_monitor",
         "run_qa",
     ),
+    "devops": (
+        "check_deployment",
+        "trigger_deployment",
+        "get_deployment_status",
+        "check_website_health",
+    ),
 }
 
 DELEGATE_TOOL_DEFS = [
@@ -103,12 +109,27 @@ DELEGATE_TOOL_DEFS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_to_devops",
+            "description": "Delegate a DevOps task (deployment risk check, trigger GitHub Actions deploy, health check).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Clear task description for the DevOps agent."},
+                },
+                "required": ["task"],
+            },
+        },
+    },
 ]
 
 DELEGATE_MAP = {
     "delegate_to_marketing": "marketing",
     "delegate_to_product": "product",
     "delegate_to_cto": "cto",
+    "delegate_to_devops": "devops",
 }
 
 
@@ -453,7 +474,7 @@ def handle_chat_message(
         system = _agent_system_prompt(
             agent_config,
             "You are the Chief of Staff in the Bigas chat UI. Answer general questions directly. "
-            "For marketing, product, or engineering tasks, delegate to the appropriate specialist. "
+            "For marketing, product, engineering, or deployment tasks, delegate to the appropriate specialist. "
             "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
         )
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]

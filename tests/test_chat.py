@@ -47,7 +47,7 @@ def test_list_agents(client):
     assert resp.status_code == 200
     agents = resp.get_json()["agents"]
     ids = {a["agent_id"] for a in agents}
-    assert {"chief", "marketing", "product", "cto"}.issubset(ids)
+    assert {"chief", "marketing", "product", "cto", "devops"}.issubset(ids)
 
 
 def test_create_thread_and_messages(client, monkeypatch):

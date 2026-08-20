@@ -3,7 +3,7 @@
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>A Grok-style web chat with your virtual AI team — plus marketing analytics, Jira AI workflows, release notes, and CTO code review.</strong>
+  <strong>A Grok-style web chat with your virtual AI team — plus marketing analytics, Jira AI workflows, release notes, CTO code review, and DevOps deployments.</strong>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
@@ -35,19 +35,20 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 **Bigas** (Latin for *team*) is an open-source MCP server that gives a solo founder or small team a virtual staff across **marketing, product, and engineering** — without hiring anyone.
 
-It currently ships four specialists, reachable from the **[web chat](#chat-web-interface)** at `/` (Chief of Staff by default, or talk to any specialist directly):
+It currently ships five specialists, reachable from the **[web chat](#chat-web-interface)** at `/` (Chief of Staff by default, or talk to any specialist directly):
 
 | Specialist | What it does |
 |---|---|
-| **Chief of Staff** | Default chat agent across the whole Jira/GitHub portfolio: answers general questions, delegates to Marketing / Product / CTO, and monitors progress |
+| **Chief of Staff** | Default chat agent across the whole Jira/GitHub portfolio: answers general questions, delegates to Marketing / Product / CTO / DevOps, and monitors progress |
 | **Senior Marketing Analyst** | GA4 web analytics (per site via `BIGAS_GA4_PROPERTY_MAP`) + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
 | **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval |
 | **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord |
+| **DevOps** | Pre-flight deployment risk checks (migrations, config), trigger GitHub Actions deploy workflows (e.g. separate backend + web for vcfieldassistant), post-deploy HTTP health checks |
 
 Two design decisions shape everything else in this document:
 
 1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler, Firebase Auth, Firestore), Discord, and Jira/GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
-2. **It's modular.** Marketing, Product, and CTO are independent resource packages. Ads/finance/analytics/notification integrations are *providers* discovered at startup — enable one by setting its env vars, add a new one (e.g. TikTok Ads, QuickBooks, Slack) by dropping in a file, no core changes required. See [Modular architecture: providers](#modular-architecture-providers).
+2. **It's modular.** Marketing, Product, CTO, and DevOps are independent resource packages. Ads/finance/analytics/notification integrations are *providers* discovered at startup — enable one by setting its env vars, add a new one (e.g. TikTok Ads, QuickBooks, Slack) by dropping in a file, no core changes required. See [Modular architecture: providers](#modular-architecture-providers).
 
 Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord **and** the chat activity feed — or you can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler. Open the deployed Cloud Run URL in a browser to use the chat UI.
 
@@ -202,7 +203,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
-| `GITHUB_TOKEN` | GitHub token — PR review plus optional repo context for Jira AI research |
+| `GITHUB_TOKEN` | GitHub token — PR review, Jira AI repo context, and DevOps workflow dispatch (needs Actions write) |
 | `X_ACCOUNTS` | Comma-separated X handles for weekly community posts (optional). Credentials via `X_CREDENTIALS_JSON` (recommended for Secret Manager) or `X_API_KEY` / `X_ACCESS_TOKEN_<ACCOUNT>` |
 | `X_POST_SIGNING_SECRET` | HMAC secret for Approve/Decline links. Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` |
 | `SERVER_URL` | Public Cloud Run URL (tests + Discord X-post approval links). `deploy.sh` injects it; not a secret |
@@ -303,7 +304,7 @@ Cursor IDE: `~/.cursor/mcp.json` with `"type": "http"` and the access header. Gr
 
 ## Chat web interface
 
-Bigas includes a **Grok-style web chat UI** at `/` (when the frontend is built). Log in, chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, and **CTO** specialists — each with their own icon.
+Bigas includes a **Grok-style web chat UI** at `/` (when the frontend is built). Log in, chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, and **DevOps** specialists — each with their own icon.
 
 | Feature | Description |
 |---|---|
@@ -369,7 +370,7 @@ The login page has no “create account” button, but that is not enough on its
 | `POST /api/auth/verify` | Verify token; upsert user profile |
 | `GET /api/agents` | List agents and icons |
 | `PUT /api/agents/<id>` | Update agent name and goals |
-| `POST /api/chat/threads` | Create thread (`agent_id`: chief, marketing, product, cto) |
+| `POST /api/chat/threads` | Create thread (`agent_id`: chief, marketing, product, cto, devops) |
 | `GET/POST /api/chat/threads/<id>/messages` | Fetch history / send message (poll GET for async results) |
 | `POST /api/chat/callback` | Sub-agents report async completion (`X-Bigas-Chat-Callback` header) |
 | `GET /api/feed` | Activity feed (Discord mirror) |
