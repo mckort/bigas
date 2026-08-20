@@ -104,19 +104,21 @@ function ActionProposalCard({ message, onResolved }) {
             >
               Send
             </button>
-            {otherActions.length === 0 && (
-              <button
-                type="button"
-                disabled={resolving}
-                onClick={handleReject}
-                className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] bg-white transition-colors"
-              >
-                Reject
-              </button>
-            )}
           </div>
         </div>
       ))}
+      {draftActions.length > 0 && otherActions.length === 0 && (
+        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={resolving}
+            onClick={handleReject}
+            className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] bg-white transition-colors"
+          >
+            Reject
+          </button>
+        </div>
+      )}
       {otherActions.length > 0 && (
         <>
           <p className="text-xs text-muted font-medium">Suggested actions</p>

@@ -63,6 +63,12 @@ def send_outbound_reply(
     msg.set_content(body)
 
     logger.info("Sending email reply from %s to %s via %s:%s", sender, recipient, server, port)
-    with smtplib.SMTP_SSL(server, port, timeout=30) as smtp:
-        smtp.login(username, password)
-        smtp.send_message(msg)
+    if port == 587:
+        with smtplib.SMTP(server, port, timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(username, password)
+            smtp.send_message(msg)
+    else:
+        with smtplib.SMTP_SSL(server, port, timeout=30) as smtp:
+            smtp.login(username, password)
+            smtp.send_message(msg)
