@@ -69,6 +69,10 @@ export async function sendMessage(threadId, content, clientId) {
   })
 }
 
+export async function pollDeployPostcheck(threadId) {
+  return apiFetch(`/api/chat/threads/${threadId}/deploy-poll`, { method: 'POST' })
+}
+
 export async function fetchFeed(since) {
   const qs = since ? `?since=${encodeURIComponent(since)}` : ''
   return apiFetch(`/api/feed${qs}`)

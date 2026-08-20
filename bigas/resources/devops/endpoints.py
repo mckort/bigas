@@ -162,7 +162,7 @@ def get_manifest():
                         },
                         "base_ref": {
                             "type": "string",
-                            "description": "Base ref/tag to compare from (default: latest release tag or default branch)",
+                            "description": "Base ref/tag to compare from (default: latest deploy-backend/web tags)",
                         },
                         "head_ref": {
                             "type": "string",

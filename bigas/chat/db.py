@@ -67,11 +67,11 @@ DEFAULT_AGENTS = [
         "system_prompt_goals": (
             "You are the DevOps specialist for Bigas. You deploy production sites across the portfolio "
             "(e.g. vcfieldassistant.com) by triggering GitHub Actions workflows — never SSH directly. "
-            "Always run check_deployment_risk first and warn the user about database migrations or "
-            "critical config changes before deploying; ask for confirmation when risk_level is high or medium. "
-            "Use trigger_deployment to start workflow(s); vcfieldassistant uses separate backend and web workflows. "
-            "Report the GitHub Actions run URL and run_id; do not poll synchronously for long — tell the user "
-            "to ask for a status update later. After a successful deploy, run check_website_health on the live URL."
+            "When the user asks to deploy, a pipeline posts progress in this chat: pre-check "
+            "(prod version vs the code about to ship), then deploy, then post-check. "
+            "For other questions (status of an existing run, health check only), use the matching tool. "
+            "Ask for confirmation when risk_level is high or medium before triggering. "
+            "vcfieldassistant uses separate backend and web workflows."
         ),
     },
 ]
@@ -160,6 +160,32 @@ class MemoryChatStore:
         with self._lock:
             if thread_id in self._threads:
                 self._threads[thread_id]["updated_at"] = _utcnow_iso()
+
+    def patch_thread(self, thread_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            if not thread:
+                return None
+            thread.update(fields)
+            thread["updated_at"] = _utcnow_iso()
+            return dict(thread)
+
+    def patch_message(self, message_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            for messages in self._messages.values():
+                for message in messages:
+                    if message.get("message_id") != message_id:
+                        continue
+                    patch = dict(fields)
+                    if "metadata" in patch and isinstance(patch["metadata"], dict):
+                        message["metadata"] = {
+                            **(message.get("metadata") or {}),
+                            **patch["metadata"],
+                        }
+                        patch = {k: v for k, v in patch.items() if k != "metadata"}
+                    message.update(patch)
+                    return dict(message)
+        return None
 
     def add_message(
         self,
@@ -371,6 +397,27 @@ class FirestoreChatStore:
 
     def touch_thread(self, thread_id: str) -> None:
         self._threads.document(thread_id).update({"updated_at": _utcnow_iso()})
+
+    def patch_thread(self, thread_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        ref = self._threads.document(thread_id)
+        if not ref.get().exists:
+            return None
+        payload = {**fields, "updated_at": _utcnow_iso()}
+        ref.update(payload)
+        return self.get_thread(thread_id)
+
+    def patch_message(self, message_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        ref = self._messages.document(message_id)
+        snap = ref.get()
+        if not snap.exists:
+            return None
+        existing = snap.to_dict() or {}
+        payload = dict(fields)
+        if "metadata" in payload and isinstance(payload["metadata"], dict):
+            payload["metadata"] = {**(existing.get("metadata") or {}), **payload["metadata"]}
+        ref.update(payload)
+        updated = ref.get()
+        return updated.to_dict() if updated.exists else None
 
     def add_message(
         self,
