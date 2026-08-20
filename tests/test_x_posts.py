@@ -749,3 +749,73 @@ def test_gcs_cleanup_expired_uses_blob_age():
     assert store.cleanup_expired(ttl_hours=48) == 1
     assert old.deleted is True
     assert fresh.deleted is False
+
+
+def test_generate_weekly_x_post_posts_to_product_chat(monkeypatch):
+    from bigas.resources.product.endpoints import product_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(product_bp)
+    client = app.test_client()
+    posted = {}
+
+    def fake_generate(**_kwargs):
+        return {
+            "ok": True,
+            "skip": False,
+            "tweets": ["Shipped weekly X drafts"],
+            "accounts": ["bigasmyaiteam"],
+            "review_url": "https://bigas.example/api/x-posts/d1?token=abc",
+            "expires_hours": 48,
+        }
+
+    def fake_post(agent_id, content, **kwargs):
+        posted["agent_id"] = agent_id
+        posted["content"] = content
+        posted["metadata"] = kwargs.get("metadata")
+        return {"message_id": "m1", "thread_id": "product-thread"}
+
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL_MARKETING", raising=False)
+    monkeypatch.setattr(
+        "bigas.resources.product.endpoints.XPostsService.generate",
+        lambda self, **kwargs: fake_generate(**kwargs),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.endpoints.post_to_agent_thread",
+        fake_post,
+    )
+
+    resp = client.post("/mcp/tools/generate_weekly_x_post", json={"days": 7})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["posted_to_chat"] is True
+    assert data["chat_thread_id"] == "product-thread"
+    assert posted["agent_id"] == "product"
+    assert "Approve" in posted["content"]
+
+
+def test_generate_weekly_x_post_can_skip_chat(monkeypatch):
+    from bigas.resources.product.endpoints import product_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(product_bp)
+    client = app.test_client()
+    called = []
+
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL_MARKETING", raising=False)
+    monkeypatch.setattr(
+        "bigas.resources.product.endpoints.XPostsService.generate",
+        lambda self, **kwargs: {"ok": True, "skip": True, "reason": "quiet week", "tweets": []},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.endpoints.post_to_agent_thread",
+        lambda *a, **k: called.append(True),
+    )
+
+    resp = client.post(
+        "/mcp/tools/generate_weekly_x_post",
+        json={"days": 7, "post_to_chat": False},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["posted_to_chat"] is False
+    assert called == []

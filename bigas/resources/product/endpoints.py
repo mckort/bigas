@@ -16,6 +16,7 @@ from bigas.resources.product.jira_automation.service import (
     verify_webhook_secret,
 )
 from bigas.resources.product.progress_updates.service import ProgressUpdatesService, ProgressUpdatesError
+from bigas.chat.activity import post_to_agent_thread
 from bigas.resources.product.x_posts.service import (
     XPostsError,
     XPostsService,
@@ -222,14 +223,16 @@ def progress_updates():
 @product_bp.route('/generate_weekly_x_post', methods=['POST'])
 def generate_weekly_x_post():
     """
-    Draft a weekly X post from recent git activity, store it, and send a
-    Discord approval link. Publishing happens only after a human approves.
+    Draft a weekly X post from recent git activity, store it, and send an
+    approval link to marketing Discord and the Product Manager chat thread.
+    Publishing happens only after a human approves.
 
     Request JSON (all optional):
       {
         "days": 7,
         "accounts": ["bigasmyaiteam"],
         "post_to_discord": true,
+        "post_to_chat": true,
         "dry_run": false,
         "project_keys": ["BIG", "VFA"]
       }
@@ -242,6 +245,7 @@ def generate_weekly_x_post():
     if days < 1 or days > 365:
         return jsonify({"error": "days must be between 1 and 365"}), 400
     post_to_discord = bool(data.get("post_to_discord", True))
+    post_to_chat = True if data.get("post_to_chat") is None else bool(data.get("post_to_chat"))
     dry_run = bool(data.get("dry_run", False))
     accounts = data.get("accounts")
     if accounts is not None and not isinstance(accounts, list):
@@ -261,15 +265,27 @@ def generate_weekly_x_post():
             dry_run=dry_run,
             tweets=tweets,
         )
+        message = format_discord_message(result)
         if post_to_discord:
             webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_MARKETING")
             if webhook_url:
-                _post_to_discord_in_chunks(webhook_url, format_discord_message(result))
+                _post_to_discord_in_chunks(webhook_url, message)
                 result["posted_to_discord"] = True
             else:
                 result["posted_to_discord"] = False
         else:
             result["posted_to_discord"] = False
+        if post_to_chat:
+            chat_msg = post_to_agent_thread(
+                "product",
+                message,
+                metadata={"source": "generate_weekly_x_post"},
+            )
+            result["posted_to_chat"] = bool(chat_msg)
+            if chat_msg:
+                result["chat_thread_id"] = chat_msg.get("thread_id")
+        else:
+            result["posted_to_chat"] = False
         return jsonify(result)
     except XPostsError as e:
         msg = str(e)
@@ -486,7 +502,7 @@ def get_manifest():
             },
             {
                 "name": "generate_weekly_x_post",
-                "description": "Draft a weekly X post from recent git merges, filter out minor fixes, and send a Discord approval link. Publishing happens only after a human approves or declines.",
+                "description": "Draft a weekly X post from recent git merges, filter out minor fixes, and send an approval link to marketing Discord and the Product Manager chat. Publishing happens only after a human approves or declines.",
                 "path": "/mcp/tools/generate_weekly_x_post",
                 "method": "POST",
                 "parameters": {
@@ -499,6 +515,7 @@ def get_manifest():
                             "description": "X account names to publish to. Defaults to X_ACCOUNTS."
                         },
                         "post_to_discord": {"type": "boolean", "description": "Post the draft (or skip notice) to marketing Discord", "default": True},
+                        "post_to_chat": {"type": "boolean", "description": "Post the draft (or skip notice) to the Product Manager thread in bigas-chat", "default": True},
                         "dry_run": {"type": "boolean", "description": "Return the draft without storing it or creating an approval link", "default": False},
                         "tweets": {
                             "type": "array",

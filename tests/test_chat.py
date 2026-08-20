@@ -406,6 +406,29 @@ def test_discord_mirror_activity():
     assert after == before + 1
 
 
+def test_post_to_agent_thread_writes_product_message(monkeypatch):
+    from bigas.chat.activity import post_to_agent_thread
+    from bigas.chat.db import get_chat_store
+
+    monkeypatch.setenv("CHAT_AUTH_MODE", "dev")
+    monkeypatch.delenv("BIGAS_EMAIL_SYNC_USER_UID", raising=False)
+    monkeypatch.delenv("BIGAS_EMAIL_SYNC_USER_EMAIL", raising=False)
+    monkeypatch.delenv("CHAT_ADMIN_EMAILS", raising=False)
+
+    store = get_chat_store()
+    posted = post_to_agent_thread(
+        "product",
+        "**New X post draft ready for approval**",
+        metadata={"source": "generate_weekly_x_post"},
+    )
+    assert posted is not None
+    thread = store.get_or_create_agent_thread("dev-user", "product")
+    assert posted["thread_id"] == thread["thread_id"]
+    messages = store.list_messages(thread["thread_id"])
+    assert any("X post draft" in (m.get("content") or "") for m in messages)
+    assert posted["metadata"]["agent_id"] == "product"
+
+
 def test_favicon_is_served_without_auth():
     from flask import Flask
 
