@@ -201,6 +201,38 @@ def test_list_threads_resumes_conversation(client):
     assert later_empty["message_count"] == 0
 
 
+def test_thread_tracks_last_incoming_for_unread(client):
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    headers = _auth_headers()
+    thread = client.post(
+        "/api/chat/threads",
+        headers=headers,
+        data=json.dumps({"agent_id": "marketing"}),
+    ).get_json()["thread"]
+    thread_id = thread["thread_id"]
+
+    store.add_message(thread_id, role="user", content="hello")
+    listed = client.get("/api/chat/threads", headers=headers).get_json()["threads"]
+    ours = next(t for t in listed if t["thread_id"] == thread_id)
+    assert ours["last_message_role"] == "user"
+    assert not ours.get("last_incoming_at")
+
+    store.add_message(thread_id, role="assistant", content="hi back")
+    listed = client.get("/api/chat/threads", headers=headers).get_json()["threads"]
+    ours = next(t for t in listed if t["thread_id"] == thread_id)
+    assert ours["last_message_role"] == "assistant"
+    incoming = ours.get("last_incoming_at")
+    assert incoming
+
+    store.add_message(thread_id, role="user", content="thanks")
+    listed = client.get("/api/chat/threads", headers=headers).get_json()["threads"]
+    ours = next(t for t in listed if t["thread_id"] == thread_id)
+    assert ours["last_message_role"] == "user"
+    assert ours.get("last_incoming_at") == incoming
+
+
 def test_activity_feed(client):
     from bigas.chat.db import get_chat_store
 

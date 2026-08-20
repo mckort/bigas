@@ -379,6 +379,7 @@ Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend 
 | **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows |
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
 | **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline |
+| **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
 | **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
 
 ### Setup
@@ -438,6 +439,7 @@ The login page has no “create account” button, but that is not enough on its
 | `GET /api/agents` | List agents and icons |
 | `PUT /api/agents/<id>` | Update agent name and goals |
 | `POST /api/chat/threads` | Create thread (`agent_id`: chief, marketing, product, cto, devops) |
+| `GET /api/chat/threads` | List the user's threads (`last_incoming_at` / `last_message_role` used for unread dots) |
 | `GET/POST /api/chat/threads/<id>/messages` | Fetch history / send message (poll GET for async results) |
 | `POST /api/chat/callback` | Sub-agents report async completion (`X-Bigas-Chat-Callback` header) |
 | `GET /api/feed` | Activity feed (Discord mirror) |
