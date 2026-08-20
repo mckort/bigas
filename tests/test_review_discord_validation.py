@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from flask import Flask
 
-from bigas.resources.cto.endpoints import cto_bp
+from bigas.resources.cto.endpoints import _discord_review_posted_message, cto_bp
 
 
 def _app():
@@ -89,3 +89,31 @@ def test_cursor_agent_url_satisfies_agent_id(mock_discord, mock_service):
     assert body.get("agent_id") == "bc-c71a88db-7821-4e44-9717-9f845ad7406b"
     assert "still running" in (body.get("summary") or "").lower()
     mock_discord.assert_not_called()
+
+
+def test_discord_review_posted_message_puts_pr_on_first_chunk():
+    msg = _discord_review_posted_message(
+        done_label="**CTO PR review done**",
+        pr_url="https://github.com/Green-Promo-Wear-Global/greenpromowear-website/pull/14",
+        comment_url="https://github.com/Green-Promo-Wear-Global/greenpromowear-website/pull/14#issuecomment-1",
+        review_body="### Blockers:\nNone.",
+        cost_suffix="\nEstimated LLM cost: ~$0.1800 (gemini-pro-latest, 1 attempt)",
+    )
+    header, _, body = msg.partition("\n\n---\n\n")
+    assert header.startswith("**CTO PR review done**")
+    assert "PR: https://github.com/Green-Promo-Wear-Global/greenpromowear-website/pull/14" in header
+    assert "Comment: https://github.com/Green-Promo-Wear-Global/greenpromowear-website/pull/14#issuecomment-1" in header
+    assert "Estimated LLM cost:" in header
+    assert body == "### Blockers:\nNone."
+
+
+def test_discord_review_posted_message_without_comment_url():
+    msg = _discord_review_posted_message(
+        done_label="**CTO PR re-review after autofix done**",
+        pr_url="https://github.com/acme/repo/pull/2",
+        comment_url="",
+        review_body="### Important:\nMissing CSS",
+    )
+    assert msg.startswith("**CTO PR re-review after autofix done**\nPR: https://github.com/acme/repo/pull/2\n")
+    assert "Comment: (no URL returned from GitHub.)" in msg
+    assert "### Important:\nMissing CSS" in msg

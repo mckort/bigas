@@ -107,6 +107,29 @@ def _discord_llm_cost_line(review_result: PRReviewResult) -> str:
     )
 
 
+def _discord_review_posted_message(
+    *,
+    done_label: str,
+    pr_url: str,
+    comment_url: str,
+    review_body: str,
+    cost_suffix: str = "",
+) -> str:
+    """Single Discord payload so the first chunk always identifies the PR."""
+    comment_line = (
+        f"Comment: {comment_url}"
+        if (comment_url or "").strip()
+        else "Comment: (no URL returned from GitHub.)"
+    )
+    return (
+        f"{done_label}\n"
+        f"PR: {pr_url}\n"
+        f"{comment_line}{cost_suffix}\n\n"
+        f"---\n\n"
+        f"{(review_body or '').strip()}"
+    )
+
+
 def _discord_cursor_usage_suffix(
     *,
     agent_id: str,
@@ -688,13 +711,19 @@ def review_and_comment_pr():
     cost_line = _discord_llm_cost_line(review_result)
     cost_suffix = f"\n{cost_line}" if cost_line else ""
     if comment_url:
-        _post_to_discord_cto(
-            f"{done_label}\nComment posted: {comment_url}{cost_suffix}\n\n---\n\n**Review:**"
+        _post_to_discord_cto_chunks(
+            _discord_review_posted_message(
+                done_label=done_label,
+                pr_url=pr_url,
+                comment_url=comment_url,
+                review_body=review_body,
+                cost_suffix=cost_suffix,
+            )
         )
-        _post_to_discord_cto_chunks(review_body)
     else:
         _post_to_discord_cto(
-            f"{done_label}\nNo comment posted. (No URL returned from GitHub.){cost_suffix}"
+            f"{done_label}\nNo comment posted. (No URL returned from GitHub.)"
+            f"{cost_suffix}\nPR: {pr_url}"
         )
 
     auto_merge: dict = {"skipped": True, "reason": "not_ready"}
@@ -1167,11 +1196,15 @@ def autofix_followup():
     ready = review_is_ready_to_merge(review_body)
     cost_line = _discord_llm_cost_line(review_result)
     cost_suffix = f"\n{cost_line}" if cost_line else ""
-    _post_to_discord_cto(
-        f"**CTO PR re-review after autofix done**\n"
-        f"Comment posted: {comment_url}{cost_suffix}\n\n---\n\n**Review:**"
+    _post_to_discord_cto_chunks(
+        _discord_review_posted_message(
+            done_label="**CTO PR re-review after autofix done**",
+            pr_url=pr_url,
+            comment_url=comment_url,
+            review_body=review_body,
+            cost_suffix=cost_suffix,
+        )
     )
-    _post_to_discord_cto_chunks(review_body)
 
     autofix_count = 0
     max_iters = autofix_max_iterations()
