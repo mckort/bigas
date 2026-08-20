@@ -480,7 +480,12 @@ def _add_message_to_threads(
         if not tid or tid in seen:
             continue
         seen.add(tid)
-        store.add_message(tid, role=role, content=content, metadata=metadata)
+        store.add_message(
+            tid,
+            role=role,
+            content=content,
+            metadata=dict(metadata) if metadata else None,
+        )
 
 
 def _post_specialist_handoff(
@@ -577,7 +582,7 @@ def run_specialist_task(
             store.add_message(
                 source_tid,
                 role="system",
-                content=f"⏳ {agent_id.title()} agent is working on your request…",
+                content=f"⏳ {_agent_display_name(store, agent_id)} is working on your request…",
                 metadata={"status": "in_progress", "agent_id": agent_id},
             )
         if specialist_tid:

@@ -287,7 +287,7 @@ class MemoryChatStore:
             if matches:
                 matches.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
                 return dict(matches[0])
-        return self.create_thread(user_id, agent_id)
+            return self.create_thread(user_id, agent_id)
 
     def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
         return self.get_or_create_agent_thread(user_id, "chief")
@@ -326,6 +326,7 @@ class FirestoreChatStore:
         self._threads = self._db.collection("threads")
         self._messages = self._db.collection("messages")
         self._activity = self._db.collection("activity_feed")
+        self._agent_thread_index = self._db.collection("agent_thread_index")
 
     def seed_agents(self) -> None:
         for agent in DEFAULT_AGENTS:
@@ -527,16 +528,56 @@ class FirestoreChatStore:
         return _claim(transaction)
 
     def get_or_create_agent_thread(self, user_id: str, agent_id: str) -> Dict[str, Any]:
-        docs = (
-            self._threads.where("user_id", "==", user_id)
-            .where("agent_id", "==", agent_id)
-            .stream()
-        )
-        threads = [doc.to_dict() for doc in docs if doc.exists]
-        if threads:
-            threads.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
-            return threads[0]
-        return self.create_thread(user_id, agent_id)
+        from google.cloud import firestore
+
+        index_ref = self._agent_thread_index.document(f"{user_id}__{agent_id}")
+
+        @firestore.transactional
+        def _get_or_create(transaction):
+            index_snap = index_ref.get(transaction=transaction)
+            if index_snap.exists:
+                thread_id = (index_snap.to_dict() or {}).get("thread_id")
+                if thread_id:
+                    thread_snap = self._threads.document(thread_id).get(transaction=transaction)
+                    if thread_snap.exists:
+                        return thread_snap.to_dict()
+
+            query = (
+                self._threads.where("user_id", "==", user_id).where("agent_id", "==", agent_id)
+            )
+            threads = [doc.to_dict() for doc in query.stream(transaction=transaction) if doc.exists]
+            if threads:
+                threads.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
+                best = threads[0]
+                transaction.set(
+                    index_ref,
+                    {
+                        "thread_id": best["thread_id"],
+                        "user_id": user_id,
+                        "agent_id": agent_id,
+                    },
+                )
+                return best
+
+            thread_id = str(uuid.uuid4())
+            now = _utcnow_iso()
+            thread = {
+                "thread_id": thread_id,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "created_at": now,
+                "updated_at": now,
+                "message_count": 0,
+            }
+            transaction.set(self._threads.document(thread_id), thread)
+            transaction.set(
+                index_ref,
+                {"thread_id": thread_id, "user_id": user_id, "agent_id": agent_id},
+            )
+            return thread
+
+        transaction = self._db.transaction()
+        return _get_or_create(transaction)
 
     def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
         return self.get_or_create_agent_thread(user_id, "chief")
