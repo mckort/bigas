@@ -60,6 +60,7 @@ AGENT_TOOL_PREFIXES = {
     "cto": (
         "review_and_comment",
         "autofix",
+        "fix_failed",
         "fetch_ai_usage",
         "weekly_cto",
         "website_monitor",
@@ -70,6 +71,7 @@ AGENT_TOOL_PREFIXES = {
         "trigger_deployment",
         "get_deployment_status",
         "check_website_health",
+        "fix_failed",
     ),
 }
 
@@ -106,7 +108,7 @@ DELEGATE_TOOL_DEFS = [
         "type": "function",
         "function": {
             "name": "delegate_to_cto",
-            "description": "Delegate an engineering/CTO task (PR review, QA, monitoring, AI usage).",
+            "description": "Delegate an engineering/CTO task (PR review, QA, failed-deploy hotfix, monitoring, AI usage).",
             "parameters": {
                 "type": "object",
                 "properties": {

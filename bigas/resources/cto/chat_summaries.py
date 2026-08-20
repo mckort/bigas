@@ -219,3 +219,21 @@ def summarize_followup_result(payload: dict) -> str:
         "Autofix pushed fixes, but the re-review still has findings. "
         f"Another round may run.{pr_bit}"
     ).strip()
+
+
+def summarize_deploy_hotfix_result(payload: dict) -> str:
+    error = payload.get("error")
+    if isinstance(error, str) and error.strip():
+        return (
+            f"Could not launch the CTO fix agent: {error.strip().rstrip('.')}."
+        )
+
+    agent_url = _first_link(payload.get("agent_url"), payload.get("agent_id"))
+    if payload.get("launched") and agent_url:
+        return (
+            "CTO agent launched to fix the failed deploy and open a PR. "
+            f"Follow the agent: {agent_url}"
+        )
+    if payload.get("launched"):
+        return "CTO agent launched to fix the failed deploy and open a PR."
+    return "Could not launch the CTO fix agent."

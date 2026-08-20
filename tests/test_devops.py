@@ -119,6 +119,18 @@ class _FakeGitHubClient:
             "html_url": f"https://github.com/{owner}/{repo}/actions/runs/{run_id}",
         }
 
+    def list_workflow_jobs(self, owner, repo, run_id):
+        return [
+            {
+                "id": 42,
+                "name": "deploy",
+                "conclusion": "failure",
+            }
+        ]
+
+    def get_job_logs(self, owner, repo, job_id):
+        return "error during build:\n    Tsconfig not found expo/tsconfig.base\n"
+
 
 def test_resolve_deploy_target_from_site():
     target = resolve_deploy_target(site_or_text="deploy vcfieldassistant.com")
@@ -164,6 +176,18 @@ def test_get_deployment_status(monkeypatch):
     assert result["conclusion"] == "success"
 
 
+def test_get_failed_run_excerpt(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: _FakeGitHubClient(),
+    )
+    from bigas.resources.devops.service import get_failed_run_excerpt
+
+    result = get_failed_run_excerpt(repo="mckort/vcfieldassistant", run_id=12)
+    assert "expo/tsconfig.base" in result["excerpt"]
+    assert result["failed_job_names"] == ["deploy"]
+
+
 def test_check_website_health(monkeypatch):
     monkeypatch.setattr(
         "bigas.resources.devops.service._check_http_status",
@@ -202,6 +226,7 @@ def test_manifest_includes_devops_tools(client):
     assert "trigger_deployment" in names
     assert "get_deployment_status" in names
     assert "check_website_health" in names
+    assert "fix_failed_deployment" in names
 
 
 def test_list_agents_includes_devops(client):
