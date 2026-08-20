@@ -248,6 +248,7 @@ def check_deployment_risk(
         "no_prod_version": no_prod_version,
         "workflows_configured": target.workflows,
         "site_urls": target.site_urls,
+        "deploy_repo": target.dispatch_repo,
     }
 
 
@@ -266,35 +267,54 @@ def trigger_deployment(
             "BIGAS_DEPLOY_WORKFLOW_MAP (e.g. VFA:deploy-backend.yml,deploy-web.yml)."
         )
 
-    owner, name = parse_repo(target.repo)
+    product_owner, product_name = parse_repo(target.repo)
+    dispatch_owner, dispatch_name = parse_repo(target.dispatch_repo)
     client = _github_client(github_token)
-    branch = (ref or client.get_default_branch(owner, name)).strip()
+    product_ref = (ref or client.get_default_branch(product_owner, product_name)).strip()
+    cross_repo = target.dispatch_repo.lower() != target.repo.lower()
+    if cross_repo:
+        dispatch_branch = client.get_default_branch(dispatch_owner, dispatch_name).strip()
+    else:
+        dispatch_branch = product_ref
     workflow_names = [w.strip() for w in (workflows or target.workflows) if w and w.strip()]
     if not workflow_names:
         raise DevOpsError("No deployment workflows configured for this target.")
 
+    inputs = dict(target.workflow_inputs or {})
+    if cross_repo:
+        inputs["ref"] = product_ref
     triggered: List[Dict[str, Any]] = []
     errors: List[str] = []
     for wf in workflow_names:
         previous_run_id: Optional[int] = None
         try:
-            prior_runs = client.list_workflow_runs(owner, name, wf, branch=branch, limit=1)
+            prior_runs = client.list_workflow_runs(
+                dispatch_owner, dispatch_name, wf, branch=dispatch_branch, limit=1
+            )
             if prior_runs:
                 previous_run_id = prior_runs[0].get("id")
         except GitHubActionsError as e:
             logger.warning("Could not fetch prior workflow run for %s: %s", wf, e)
 
         try:
-            client.trigger_workflow(owner, name, wf, branch)
+            client.trigger_workflow(
+                dispatch_owner,
+                dispatch_name,
+                wf,
+                dispatch_branch,
+                inputs=inputs or None,
+            )
         except GitHubActionsError as e:
             errors.append(f"{wf}: {e}")
             continue
 
-        run = _wait_for_new_workflow_run(client, owner, name, wf, branch, previous_run_id)
+        run = _wait_for_new_workflow_run(
+            client, dispatch_owner, dispatch_name, wf, dispatch_branch, previous_run_id
+        )
         triggered.append(
             {
                 "workflow": wf,
-                "ref": branch,
+                "ref": dispatch_branch,
                 "run_id": run.get("id") if run else None,
                 "status": run.get("status") if run else None,
                 "conclusion": run.get("conclusion") if run else None,
@@ -306,8 +326,12 @@ def trigger_deployment(
         raise DevOpsError("; ".join(errors))
 
     lines = [
-        f"Triggered {len(triggered)} workflow(s) on {target.repo} @ {branch}.",
+        f"Triggered {len(triggered)} workflow(s) on {target.dispatch_repo} @ {dispatch_branch}.",
     ]
+    if cross_repo:
+        site = (inputs or {}).get("site")
+        extra = f"site={site}, ref={product_ref}" if site else f"ref={product_ref}"
+        lines.append(f"Product repo {target.repo} ({extra}).")
     for item in triggered:
         url = item.get("html_url") or "(pending — check Actions tab)"
         lines.append(f"- {item['workflow']}: run #{item.get('run_id') or '?'} — {url}")
@@ -322,11 +346,14 @@ def trigger_deployment(
         "status": "ok" if triggered else "error",
         "summary": "\n".join(lines),
         "repo": target.repo,
+        "deploy_repo": target.dispatch_repo,
         "project_key": target.project_key,
-        "ref": branch,
+        "ref": product_ref,
+        "dispatch_ref": dispatch_branch,
         "triggered": triggered,
         "errors": errors,
         "site_urls": target.site_urls,
+        "workflow_inputs": inputs or None,
     }
 
 

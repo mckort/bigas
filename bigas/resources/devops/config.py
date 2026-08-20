@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from bigas.portfolio import DEFAULT_SITE_TO_PROJECT, repo_map, resolve_project
+from bigas.portfolio import DEFAULT_SITE_TO_PROJECT, parse_csv_map, repo_map, resolve_project
 
 
 RISKY_PATH_PATTERNS: tuple[str, ...] = (
@@ -38,6 +38,12 @@ class DeployTarget:
     repo: str
     workflows: List[str]
     site_urls: List[str]
+    deploy_repo: str = ""
+    workflow_inputs: Optional[Dict[str, str]] = None
+
+    @property
+    def dispatch_repo(self) -> str:
+        return (self.deploy_repo or self.repo).strip()
 
 
 def _workflow_map() -> Dict[str, List[str]]:
@@ -55,6 +61,11 @@ def _workflow_map() -> Dict[str, List[str]]:
         if key and names:
             out[key] = names
     return out
+
+
+def _deploy_repo_map() -> Dict[str, str]:
+    parsed = parse_csv_map(os.environ.get("BIGAS_DEPLOY_REPO_MAP") or "")
+    return {k.upper(): v.strip() for k, v in parsed.items() if (v or "").strip()}
 
 
 def _site_urls_for_project(project_key: str) -> List[str]:
@@ -109,11 +120,20 @@ def resolve_deploy_target(
     if not workflows:
         return None
 
+    deploy_repo = _deploy_repo_map().get(key) or resolved_repo
+    workflow_inputs: Optional[Dict[str, str]] = None
+    if deploy_repo.lower() != resolved_repo.lower():
+        site = resolved_repo.rsplit("/", 1)[-1].strip()
+        if site:
+            workflow_inputs = {"site": site}
+
     return DeployTarget(
         project_key=key,
         repo=resolved_repo,
         workflows=workflows,
         site_urls=_site_urls_for_project(key),
+        deploy_repo=deploy_repo,
+        workflow_inputs=workflow_inputs,
     )
 
 
