@@ -391,6 +391,47 @@
         }
       }
     },
+    "/mcp/tools/cleanup_old_activity": {
+      "post": {
+        "summary": "Clean up old chat activity-feed events.",
+        "description": "Deletes chat activity events older than keep_days (default 7). Intended for a weekly Cloud Scheduler job.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "keep_days": {
+                    "type": "integer",
+                    "default": 7
+                  },
+                  "max_to_delete": {
+                    "type": "integer",
+                    "default": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cleanup result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error."
+          }
+        }
+      }
+    },
     "/mcp/tools/linkedin_ads_health_check": {
       "get": {
         "summary": "Smoke test LinkedIn Ads API access.",
