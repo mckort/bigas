@@ -9,10 +9,12 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from bigas.chat.db import get_chat_store
+from bigas.github_refs import is_owner_repo, parse_cursor_agent_id, resolve_repo_and_pr
 from bigas.llm.factory import get_llm_client
 from bigas.portfolio import (
     normalize_project_key,
     prompt_block,
+    repo_map,
     resolve_project,
     scrub_analytics_question,
 )
@@ -155,7 +157,21 @@ def _tools_summary(tools: List[Dict[str, Any]], limit: int = 20) -> str:
     for tool in tools[:limit]:
         name = tool.get("name", "")
         desc = (tool.get("description") or "")[:120]
-        lines.append(f"- {name}: {desc}")
+        params = tool.get("parameters") or {}
+        required = params.get("required") or []
+        props = params.get("properties") or {}
+        hints = []
+        if required:
+            hints.append("required: " + ", ".join(required))
+        extras = [
+            key
+            for key in ("pr_url", "agent_id", "project_key")
+            if key in props and key not in required
+        ]
+        if extras:
+            hints.append("also: " + ", ".join(extras))
+        suffix = f" ({'; '.join(hints)})" if hints else ""
+        lines.append(f"- {name}: {desc}{suffix}")
     if len(tools) > limit:
         lines.append(f"... and {len(tools) - limit} more tools")
     return "\n".join(lines)
@@ -268,13 +284,34 @@ def _enrich_tool_args(tool_name: str, arguments: Dict[str, Any], user_message: s
             str(args.get("question") or ""),
             str(args.get("task") or ""),
             str(args.get("pr_url") or ""),
+            str(args.get("repo") or ""),
+            str(args.get("agent_id") or ""),
+            str(args.get("agent_url") or ""),
         ]
+    )
+    repo, pr_number = resolve_repo_and_pr(
+        repo=args.get("repo"),
+        pr_number=args.get("pr_number"),
+        text=haystack,
     )
     project = (
         normalize_project_key(args.get("project_key") or args.get("project_keys"))
         or resolve_project(haystack)
         or ""
     )
+    if not is_owner_repo(repo) and project:
+        mapped = (repo_map().get(project) or "").strip()
+        if is_owner_repo(mapped):
+            repo = mapped
+    if is_owner_repo(repo):
+        args["repo"] = repo
+    if pr_number is not None:
+        args["pr_number"] = pr_number
+        if is_owner_repo(repo):
+            args.setdefault("pr_url", f"https://github.com/{repo}/pull/{pr_number}")
+    agent_id = parse_cursor_agent_id(haystack)
+    if agent_id and not str(args.get("agent_id") or "").strip():
+        args["agent_id"] = agent_id
     if project:
         args.setdefault("project_key", project)
         if "ask_analytics" in (tool_name or "").lower():
@@ -296,8 +333,11 @@ def _select_tool_via_llm(
         "You are responding in the Bigas chat interface. "
         "If the user request requires calling a backend tool, respond with ONLY a JSON object:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
-        'Include project_key in arguments when the user named a product, site, or Jira key.\n'
-        'Otherwise respond with ONLY:\n'
+        "Include project_key when the user named a product, site, or Jira key. "
+        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
+        "(a github.com/.../pull/N link is enough). "
+        "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL.\n"
+        "Otherwise respond with ONLY:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
         f"Available tools:\n{tool_summary}"
     )

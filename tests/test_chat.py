@@ -238,3 +238,21 @@ def test_discord_mirror_activity():
     mirror_discord_message("https://discord.example/cto", "Uptime alert: site down", channel_hint="cto")
     after = len(store.list_activity())
     assert after == before + 1
+
+
+def test_favicon_is_served_without_auth():
+    from flask import Flask
+
+    from bigas.resources.chat.endpoints import chat_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(chat_bp)
+    client = app.test_client()
+    resp = client.get("/favicon.png")
+    assert resp.status_code == 200
+    assert "png" in (resp.content_type or "")
+    ico = client.get("/favicon.ico")
+    assert ico.status_code == 200
+    png = client.get("/favicon-32x32.png")
+    assert png.status_code == 200
+    assert "png" in (png.content_type or "")
