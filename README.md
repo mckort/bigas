@@ -18,6 +18,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [Environment variables](#environment-variables)
 - [GA4 setup](#ga4-setup)
 - [Walkthrough: from Jira card to merged PR](#walkthrough-from-jira-card-to-merged-pr)
+- [Walkthrough: from chat to production deploy](#walkthrough-from-chat-to-production-deploy)
 - [MCP endpoint](#mcp-endpoint)
 - [Chat web interface](#chat-web-interface)
 - [API reference](#api-reference)
@@ -204,6 +205,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
 | `GITHUB_TOKEN` | GitHub token — PR review, Jira AI repo context, and DevOps workflow dispatch (needs Actions write) |
+| `BIGAS_DEPLOY_WORKFLOW_MAP` | Optional `PROJECT:file.yml,file.yml` map (`|` between projects), e.g. `VFA:deploy-backend.yml,deploy-web.yml`. Repos come from `BIGAS_JIRA_PROJECT_REPO_MAP`. Unset = VFA default |
 | `X_ACCOUNTS` | Comma-separated X handles for weekly community posts (optional). Credentials via `X_CREDENTIALS_JSON` (recommended for Secret Manager) or `X_API_KEY` / `X_ACCESS_TOKEN_<ACCOUNT>` |
 | `X_POST_SIGNING_SECRET` | HMAC secret for Approve/Decline links. Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` |
 | `SERVER_URL` | Public Cloud Run URL (tests + Discord X-post approval links). `deploy.sh` injects it; not a secret |
@@ -285,6 +287,46 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/generate_weekly_x_post
 ```
 
 The LLM drops minor bug fixes. If there is something worth posting, Bigas stores the draft in GCS and sends a Discord link to the **marketing** channel. **Approve** publishes to the configured X accounts; **Decline** deletes the draft (you can still copy the Discord text and post by hand). GET on the link only shows a preview so Discord unfurls cannot publish.
+
+---
+
+## Walkthrough: from chat to production deploy
+
+This is the flow that makes the **DevOps** specialist work: you ask in chat, Bigas never SSH:es into a server, and GitHub Actions runs the **same deploy scripts** you already use locally.
+
+Think of three layers:
+
+1. **Chat is the remote control.** You talk to **DevOps** (or **Chief of Staff**, who delegates). Bigas does not run `gcloud` or `firebase` itself. It (a) diffs git for risky files (migrations, lockfiles, deploy config), (b) tells GitHub “run these workflows on `main`”, (c) HTTP-checks the live URL when you ask for status later.
+2. **GitHub Actions is the workshop.** Target repos need workflow files with `on: workflow_dispatch` (manual/API start, not only on push). For VC Field Assistant that is `deploy-backend.yml` and `deploy-web.yml`, which wrap `deploy-vcfieldassistant-backend.sh` and `deploy-vcfieldassistant-web.sh`. A GitHub-hosted runner checks out the repo, logs into GCP, writes env files from GitHub secrets, and executes those scripts — Docker build + Cloud Run for the API/worker, Vite + Firebase Hosting for the web app.
+3. **Three identities, three jobs.** Your **`GITHUB_TOKEN`** in Bigas only needs Actions write so it can *press the button*. A dedicated GCP deploy service account (GitHub OIDC / Workload Identity — no JSON key in secrets) is allowed to push images and `gcloud run deploy`. The **runtime** service account is still what the app uses in production; the deploy account may impersonate it only while deploying.
+
+**Map:** `BIGAS_JIRA_PROJECT_REPO_MAP` says which GitHub repo a Jira project is. `BIGAS_DEPLOY_WORKFLOW_MAP` says which workflow filenames to dispatch (VFA defaults to the two files above if unset). Workflows must exist on the **default branch** or dispatch returns 404.
+
+**One-time setup on the product repo** (example: vcfieldassistant): add the workflow YAML, then run that repo’s `./scripts/setup-github-actions-deploy.sh` so it creates the deploy service account, binds GitHub OIDC, and uploads `.env` / `web/.env.production` as Actions secrets. Re-run the script when those files change.
+
+In chat after that: ask DevOps to check deploy risk for VFA, confirm if the risk level is medium/high, then deploy. Bigas returns the Actions run URL; don’t wait in the same turn for a long build — ask for status (and a site health check) when it should be done.
+
+MCP equivalents:
+
+```bash
+curl -X POST https://your-service-url.a.run.app/mcp/tools/check_deployment_risk \
+  -H "Content-Type: application/json" \
+  -d '{"project_key": "VFA"}'
+
+curl -X POST https://your-service-url.a.run.app/mcp/tools/trigger_deployment \
+  -H "Content-Type: application/json" \
+  -d '{"project_key": "VFA"}'
+
+curl -X POST https://your-service-url.a.run.app/mcp/tools/get_deployment_status \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "mckort/vcfieldassistant", "run_id": 123456789}'
+
+curl -X POST https://your-service-url.a.run.app/mcp/tools/check_website_health \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://vcfieldassistant.com"}'
+```
+
+Tool internals: **[docs/architecture.md](docs/architecture.md)** (DevOps). Product-repo wiring: that repo’s README (GitHub Actions deploy).
 
 ---
 
@@ -527,7 +569,7 @@ curl https://your-service-url.a.run.app/mcp/providers
 
 This is what makes the opinionated defaults optional in practice: don't set LinkedIn's env vars, and the LinkedIn provider simply doesn't load — no code path to disable, nothing to comment out. Adding a new provider (e.g. TikTok Ads, QuickBooks, a Slack notification channel) means adding one file under `bigas/providers/...`, not modifying existing services.
 
-Each resource (`bigas/resources/{marketing,product,cto}/endpoints.py`) exposes its tools as normal Flask routes under `/mcp/tools/*` and lists them in a `get_manifest()` function; `app.py` combines all three into `GET /mcp/manifest`, and the same list is what `POST /mcp` serves for `tools/list`/`tools/call` — one manifest, both transports. `bigas/tools.py` additionally defines a `@register_tool` decorator for new provider tools to self-register into that manifest instead of hand-editing it, so adding a tool for a new provider doesn't mean touching `endpoints.py`.
+Each resource (`bigas/resources/{marketing,product,cto,devops}/endpoints.py`) exposes its tools as normal Flask routes under `/mcp/tools/*` and lists them in a `get_manifest()` function; `app.py` combines all three into `GET /mcp/manifest`, and the same list is what `POST /mcp` serves for `tools/list`/`tools/call` — one manifest, both transports. `bigas/tools.py` additionally defines a `@register_tool` decorator for new provider tools to self-register into that manifest instead of hand-editing it, so adding a tool for a new provider doesn't mean touching `endpoints.py`.
 
 For the provider base classes and a worked example (adding QuickBooks as a finance provider), see **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[DESIGN_SPEC.md](DESIGN_SPEC.md)**.
 
@@ -549,8 +591,8 @@ For the provider base classes and a worked example (adding QuickBooks as a finan
                     └────────────────┬────────────────────────┘
                     ┌───────────────┼────────────────────────┐
                     ▼               ▼                        ▼
-          Chief of Staff       Marketing                  Product / CTO
-          (web chat)        (GA4 + Paid Ads)          (Jira / PR Review)
+          Chief of Staff       Marketing            Product / CTO / DevOps
+          (web chat)        (GA4 + Paid Ads)     (Jira / PR Review / Actions)
                     │
           ┌─────────┼──────────┐
           ▼         ▼          ▼

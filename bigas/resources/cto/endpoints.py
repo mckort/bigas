@@ -34,6 +34,7 @@ from bigas.resources.cto.pr_review.service import (
     PRReviewService,
 )
 from bigas.discord_webhook import post_long_to_discord, post_to_discord
+from bigas.github_refs import is_owner_repo, parse_cursor_agent_id, resolve_repo_and_pr
 from bigas.resources.marketing.utils import sanitize_error_message
 from bigas.providers.monitoring.service import MonitoringService, run_monitoring_checks
 from bigas.resources.cto.qa_agent.service import QAAgentError, QAAgentService
@@ -52,6 +53,29 @@ cto_bp = Blueprint(
 logger = logging.getLogger(__name__)
 
 # Max characters for a GitHub comment to avoid API errors.
+
+
+def _payload_text(data: dict) -> str:
+    parts = []
+    for key in ("pr_url", "repo", "url", "html_url", "agent_id", "agent_url"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            parts.append(val.strip())
+    return " ".join(parts)
+
+
+def _resolve_pr_from_payload(data: dict) -> tuple[str, int | None]:
+    return resolve_repo_and_pr(
+        repo=data.get("repo"),
+        pr_number=data.get("pr_number"),
+        text=_payload_text(data),
+    )
+
+
+def _resolve_agent_id_from_payload(data: dict, current: str = "") -> str:
+    agent_id = (current or data.get("agent_id") or "").strip()
+    parsed = parse_cursor_agent_id(" ".join(part for part in (agent_id, _payload_text(data)) if part))
+    return parsed or agent_id
 
 
 def _discord_llm_cost_line(review_result: PRReviewResult) -> str:
@@ -485,8 +509,9 @@ def review_and_comment_pr():
     Review a pull request diff with AI (Codex) and post or update a single PR comment.
 
     Request JSON:
-      - repo (str, required): "owner/repo"
-      - pr_number (int, required): pull request number
+      - repo (str, required unless pr_url): "owner/repo"
+      - pr_number (int, required unless pr_url): pull request number
+      - pr_url (str, optional): GitHub pull request URL; alternative to repo + pr_number
       - diff (str, optional): PR diff text; if omitted or empty, Bigas fetches it from GitHub
       - instructions (str, optional): extra instructions for the reviewer
       - github_token (str, optional): override GitHub PAT (else uses GITHUB_TOKEN env)
@@ -500,8 +525,7 @@ def review_and_comment_pr():
     if phase not in {"initial", "post_autofix"}:
         phase = "initial"
 
-    repo = (data.get("repo") or "").strip()
-    pr_number = data.get("pr_number")
+    repo, pr_number = _resolve_pr_from_payload(data)
     diff = data.get("diff")
     instructions = (data.get("instructions") or "").strip() or None
     github_token = (data.get("github_token") or "").strip() or os.environ.get("GITHUB_TOKEN") or ""
@@ -512,18 +536,10 @@ def review_and_comment_pr():
         # Discord is reserved for outcomes after "CTO PR review started".
         return jsonify({"error": error or reason}), status
 
-    if not repo:
+    if not is_owner_repo(repo):
         return _fail("repo is required.", 400, "repo is required (e.g. 'owner/repo')")
-    if "/" not in repo or repo.count("/") != 1:
-        return _fail("repo must be owner/repo.", 400, "repo must be in the form 'owner/repo'")
     if pr_number is None:
         return _fail("pr_number is required.", 400)
-    try:
-        pr_number = int(pr_number)
-    except (TypeError, ValueError):
-        return _fail("pr_number must be an integer.", 400)
-    if pr_number < 1:
-        return _fail("pr_number must be positive.", 400, "pr_number must be a positive integer")
     if diff is not None and not isinstance(diff, str):
         return _fail("diff must be a string.", 400)
     if not github_token:
@@ -704,8 +720,9 @@ def autofix_pr():
     Launch a Cursor cloud agent to fix actionable findings from the Bigas PR review.
 
     Request JSON:
-      - repo (str, required): "owner/repo"
-      - pr_number (int, required)
+      - repo (str, required unless pr_url): "owner/repo"
+      - pr_number (int, required unless pr_url)
+      - pr_url (str, optional): GitHub pull request URL; alternative to repo + pr_number
       - force (bool, optional): bypass clean-review / autofix-loop guards
       - review_body (str, optional): override; else fetch Bigas-marked PR comment
       - github_token (str, optional): override GITHUB_TOKEN
@@ -714,8 +731,7 @@ def autofix_pr():
           cooldown/retry polls (cooldown itself never posts Discord)
     """
     data = request.get_json(silent=True) or {}
-    repo = (data.get("repo") or "").strip()
-    pr_number = data.get("pr_number")
+    repo, pr_number = _resolve_pr_from_payload(data)
     force = bool(data.get("force") or False)
     is_retry = bool(data.get("is_retry") or False)
     review_body = data.get("review_body")
@@ -726,16 +742,10 @@ def autofix_pr():
     github_token = (data.get("github_token") or "").strip() or None
     cursor_api_key = (data.get("cursor_api_key") or "").strip() or None
 
-    if not repo or "/" not in repo or repo.count("/") != 1:
+    if not is_owner_repo(repo):
         return jsonify({"error": "repo is required in the form 'owner/repo'"}), 400
     if pr_number is None:
         return jsonify({"error": "pr_number is required"}), 400
-    try:
-        pr_number = int(pr_number)
-    except (TypeError, ValueError):
-        return jsonify({"error": "pr_number must be an integer"}), 400
-    if pr_number < 1:
-        return jsonify({"error": "pr_number must be a positive integer"}), 400
 
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
 
@@ -894,7 +904,8 @@ def autofix_followup():
     Poll Cursor autofix status; optionally finalize (Discord + re-review) once done.
 
     Request JSON:
-      - repo, pr_number, agent_id (required)
+      - repo, pr_number (required unless pr_url), agent_id (required unless a cursor.com/agents URL is given)
+      - pr_url (optional): GitHub pull request URL; alternative to repo + pr_number
       - run_id (optional)
       - baseline_head_sha (optional): PR head SHA at autofix launch; required to detect
         whether *this* agent pushed a new `[bigas-autofix]` commit
@@ -902,9 +913,8 @@ def autofix_followup():
       - finalize (bool, default false): if true and agent terminal, Discord + re-review
     """
     data = request.get_json(silent=True) or {}
-    repo = (data.get("repo") or "").strip()
-    pr_number = data.get("pr_number")
-    agent_id = (data.get("agent_id") or "").strip()
+    repo, pr_number = _resolve_pr_from_payload(data)
+    agent_id = _resolve_agent_id_from_payload(data)
     run_id = (data.get("run_id") or "").strip() or None
     baseline_head_sha = (data.get("baseline_head_sha") or data.get("head_sha") or "").strip() or None
     autofix_round = data.get("autofix_round")
@@ -916,16 +926,10 @@ def autofix_followup():
     github_token = (data.get("github_token") or "").strip() or None
     cursor_api_key = (data.get("cursor_api_key") or "").strip() or None
 
-    if not repo or "/" not in repo or repo.count("/") != 1:
+    if not is_owner_repo(repo):
         return jsonify({"error": "repo is required in the form 'owner/repo'"}), 400
     if pr_number is None:
         return jsonify({"error": "pr_number is required"}), 400
-    try:
-        pr_number = int(pr_number)
-    except (TypeError, ValueError):
-        return jsonify({"error": "pr_number must be an integer"}), 400
-    if pr_number < 1:
-        return jsonify({"error": "pr_number must be a positive integer"}), 400
     if not agent_id:
         return jsonify({"error": "agent_id is required"}), 400
 
@@ -1377,7 +1381,10 @@ def get_manifest():
         "tools": [
             {
                 "name": "review_and_comment_pr",
-                "description": "Review a pull request diff with AI (Codex) and post or update a single PR comment on GitHub.",
+                "description": (
+                    "Review a pull request diff with AI and post or update a single PR comment on GitHub. "
+                    "Pass pr_url (a github.com/.../pull/N link) or repo + pr_number. Diff is optional."
+                ),
                 "path": "/mcp/tools/review_and_comment_pr",
                 "method": "POST",
                 "parameters": {
@@ -1385,15 +1392,19 @@ def get_manifest():
                     "properties": {
                         "repo": {
                             "type": "string",
-                            "description": "Repository in the form 'owner/repo' (required)",
+                            "description": "Repository as owner/repo. Optional if pr_url is a GitHub pull request URL.",
                         },
                         "pr_number": {
                             "type": "integer",
-                            "description": "Pull request number (required)",
+                            "description": "Pull request number. Optional if pr_url includes it.",
+                        },
+                        "pr_url": {
+                            "type": "string",
+                            "description": "GitHub pull request URL (https://github.com/owner/repo/pull/123). Alternative to repo + pr_number.",
                         },
                         "diff": {
                             "type": "string",
-                            "description": "PR diff text (required)",
+                            "description": "Optional PR diff text. If omitted, Bigas fetches it from GitHub.",
                         },
                         "instructions": {
                             "type": "string",
@@ -1408,7 +1419,7 @@ def get_manifest():
                             "description": "Optional model override (default: gemini-3.1-pro-preview)",
                         },
                     },
-                    "required": ["repo", "pr_number", "diff"],
+                    "required": [],
                 },
             },
             {
@@ -1424,11 +1435,15 @@ def get_manifest():
                     "properties": {
                         "repo": {
                             "type": "string",
-                            "description": "Repository in the form 'owner/repo' (required)",
+                            "description": "Repository as owner/repo. Optional if pr_url is a GitHub pull request URL.",
                         },
                         "pr_number": {
                             "type": "integer",
-                            "description": "Pull request number (required)",
+                            "description": "Pull request number. Optional if pr_url includes it.",
+                        },
+                        "pr_url": {
+                            "type": "string",
+                            "description": "GitHub pull request URL. Alternative to repo + pr_number.",
                         },
                         "force": {
                             "type": "boolean",
@@ -1451,14 +1466,15 @@ def get_manifest():
                             "description": "Suppress Discord notifications on retry polls (for cooldown loops)",
                         },
                     },
-                    "required": ["repo", "pr_number"],
+                    "required": [],
                 },
             },
             {
                 "name": "autofix_followup",
                 "description": (
                     "Poll Cursor autofix status; when finished, post Discord updates "
-                    "and re-review the PR (ready-to-merge when clean)."
+                    "and re-review the PR (ready-to-merge when clean). "
+                    "Pass pr_url or repo + pr_number, and agent_id or a cursor.com/agents URL."
                 ),
                 "path": "/mcp/tools/autofix_followup",
                 "method": "POST",
@@ -1467,22 +1483,26 @@ def get_manifest():
                     "properties": {
                         "repo": {
                             "type": "string",
-                            "description": "Repository in the form 'owner/repo' (required)",
+                            "description": "Repository as owner/repo. Optional if pr_url is a GitHub pull request URL.",
                         },
                         "pr_number": {
                             "type": "integer",
-                            "description": "Pull request number (required)",
+                            "description": "Pull request number. Optional if pr_url includes it.",
+                        },
+                        "pr_url": {
+                            "type": "string",
+                            "description": "GitHub pull request URL. Alternative to repo + pr_number.",
                         },
                         "agent_id": {
                             "type": "string",
-                            "description": "Cursor cloud agent id (bc-...)",
+                            "description": "Cursor cloud agent id (bc-...) or a cursor.com/agents/bc-... URL",
                         },
                         "run_id": {
                             "type": "string",
                             "description": "Optional Cursor run id",
                         },
                     },
-                    "required": ["repo", "pr_number", "agent_id"],
+                    "required": [],
                 },
             },
             {

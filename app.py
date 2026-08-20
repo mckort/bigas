@@ -188,6 +188,14 @@ def create_app():
             or path.startswith("/api/auth/")
             or path.startswith("/assets/")
             or path.startswith("/.well-known/")
+            or path in {
+                "/favicon.ico",
+                "/favicon.png",
+                "/favicon-16x16.png",
+                "/favicon-32x32.png",
+                "/favicon-48x48.png",
+                "/apple-touch-icon.png",
+            }
         )
 
     @app.before_request

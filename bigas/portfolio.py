@@ -224,7 +224,8 @@ def prompt_block() -> str:
             "If GA4 is not configured for that project, say so — do not query another property.",
             "For new development work, ask the user to create/drag a Jira issue in that project "
             "(Research → Design → In Progress AI) so Bigas can open a PR on the mapped repo.",
-            "For an existing pull request, use review_and_comment_pr with the GitHub PR URL.",
+            "For an existing pull request, use review_and_comment_pr with pr_url or repo + pr_number "
+            "(a GitHub PR URL is enough).",
         ]
     )
     return "\n".join(lines)

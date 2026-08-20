@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from bigas.agents.chief_of_staff import _enrich_tool_args
+from bigas.github_refs import parse_cursor_agent_id, parse_github_pr, resolve_repo_and_pr
 from bigas.portfolio import (
     ga4_property_for_project,
     normalize_project_key,
@@ -102,3 +103,58 @@ def test_prompt_block_lists_all_projects(portfolio_env):
         assert key in block
     assert "mckort/roadpal" in block
     assert "not configured" in block
+    assert "pr_url" in block
+
+
+def test_parse_github_pr_and_cursor_agent():
+    assert parse_github_pr(
+        "review https://github.com/mckort/vcfieldassistant/pull/121 please"
+    ) == ("mckort/vcfieldassistant", 121)
+    assert parse_github_pr("https://www.github.com/acme/app/pull/3/files") == ("acme/app", 3)
+    assert parse_github_pr("no link here") is None
+    assert (
+        parse_cursor_agent_id(
+            "Agent: https://cursor.com/agents/bc-c71a88db-7821-4e44-9717-9f845ad7406b"
+        )
+        == "bc-c71a88db-7821-4e44-9717-9f845ad7406b"
+    )
+    assert parse_cursor_agent_id("bc-c71a88db-7821-4e44-9717-9f845ad7406b") == (
+        "bc-c71a88db-7821-4e44-9717-9f845ad7406b"
+    )
+
+
+def test_resolve_repo_and_pr_from_url_or_fields():
+    repo, number = resolve_repo_and_pr(
+        text="https://github.com/mckort/vcfieldassistant/pull/121"
+    )
+    assert repo == "mckort/vcfieldassistant"
+    assert number == 121
+    repo, number = resolve_repo_and_pr(repo="acme/app", pr_number="9")
+    assert repo == "acme/app"
+    assert number == 9
+    repo, number = resolve_repo_and_pr(
+        repo="https://github.com/mckort/vcfieldassistant/pull/121"
+    )
+    assert repo == "mckort/vcfieldassistant"
+    assert number == 121
+
+
+def test_enrich_pr_args_from_github_and_cursor_urls(portfolio_env):
+    message = (
+        "gör en review av: CTO autofix launched (2/5) "
+        "PR: https://github.com/mckort/vcfieldassistant/pull/121 "
+        "Agent: https://cursor.com/agents/bc-c71a88db-7821-4e44-9717-9f845ad7406b"
+    )
+    args = _enrich_tool_args("review_and_comment_pr", {}, message)
+    assert args["repo"] == "mckort/vcfieldassistant"
+    assert args["pr_number"] == 121
+    assert args["pr_url"].endswith("/pull/121")
+    assert args["agent_id"] == "bc-c71a88db-7821-4e44-9717-9f845ad7406b"
+    assert args["project_key"] == "VFA"
+
+
+def test_enrich_pr_args_fills_repo_from_project_map(portfolio_env):
+    args = _enrich_tool_args("autofix_pr", {"pr_number": 4}, "review the roadpal PR")
+    assert args["project_key"] == "WAYW"
+    assert args["repo"] == "mckort/roadpal"
+    assert args["pr_number"] == 4

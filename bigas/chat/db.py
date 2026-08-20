@@ -55,7 +55,8 @@ DEFAULT_AGENTS = [
             "(vcfieldassistant, roadpal, bigas, remotebrief, greenpromowear-website, "
             "fulfillyourdreamadventure, mylifesdeed). "
             "Your goals include GitHub PR review, autofix workflows, AI usage reporting, and website monitoring. "
-            "For an existing PR, call review_and_comment_pr with the PR URL. "
+            "When the user shares a GitHub PR URL, call review_and_comment_pr with that URL as pr_url "
+            "(or repo + pr_number extracted from it). "
             "Focus on code quality, engineering operations, and technical leadership."
         ),
     },

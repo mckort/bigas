@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 chat_bp = Blueprint("chat", __name__)
 
 FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+FRONTEND_PUBLIC = Path(__file__).resolve().parents[3] / "frontend" / "public"
+BRAND_ICON_FILES = {
+    "favicon.ico",
+    "favicon.png",
+    "favicon-16x16.png",
+    "favicon-32x32.png",
+    "favicon-48x48.png",
+    "apple-touch-icon.png",
+}
 
 
 def chat_enabled() -> bool:
@@ -157,6 +166,28 @@ def serve_frontend_root():
             }
         )
     return send_from_directory(FRONTEND_DIST, "index.html")
+
+
+def _send_brand_icon(filename: str):
+    for folder in (FRONTEND_DIST, FRONTEND_PUBLIC):
+        path = folder / filename
+        if path.is_file():
+            return send_from_directory(folder, filename)
+    return jsonify({"error": "Not found"}), 404
+
+
+@chat_bp.route("/favicon.ico")
+@chat_bp.route("/favicon.png")
+@chat_bp.route("/favicon-16x16.png")
+@chat_bp.route("/favicon-32x32.png")
+@chat_bp.route("/favicon-48x48.png")
+@chat_bp.route("/apple-touch-icon.png")
+def serve_brand_icon():
+    """Serve tab/app icons from the Vite build, falling back to frontend/public."""
+    name = (request.path or "").lstrip("/")
+    if name not in BRAND_ICON_FILES:
+        return jsonify({"error": "Not found"}), 404
+    return _send_brand_icon(name)
 
 
 @chat_bp.route("/assets/<path:path>")
