@@ -94,6 +94,23 @@ function lastMessageIsInProgress(messages) {
   return last.metadata?.status === 'in_progress'
 }
 
+function mergePolledMessages(prev, incoming) {
+  const serverUserText = new Set(
+    incoming.filter((m) => m.role === 'user').map((m) => m.content),
+  )
+  const base = prev.filter(
+    (m) =>
+      !(String(m.message_id).startsWith('local-') && serverUserText.has(m.content)),
+  )
+  const ids = new Set(base.map((m) => m.message_id))
+  const merged = [...base]
+  for (const m of incoming) {
+    if (!ids.has(m.message_id)) merged.push(m)
+  }
+  merged.sort((a, b) => a.created_at.localeCompare(b.created_at))
+  return merged
+}
+
 export default function ChatLayout({ user, onLogout }) {
   const [agents, setAgents] = useState([])
   const [activeAgentId, setActiveAgentId] = useState('chief')
@@ -228,15 +245,7 @@ export default function ChatLayout({ user, onLogout }) {
       try {
         const res = await fetchMessages(threadId, lastMsgTs.current || undefined)
         if (cancelled || !res.messages?.length) return
-        setMessages((prev) => {
-          const ids = new Set(prev.map((m) => m.message_id))
-          const merged = [...prev]
-          for (const m of res.messages) {
-            if (!ids.has(m.message_id)) merged.push(m)
-          }
-          merged.sort((a, b) => a.created_at.localeCompare(b.created_at))
-          return merged
-        })
+        setMessages((prev) => mergePolledMessages(prev, res.messages))
         const latest = res.messages[res.messages.length - 1]
         if (latest?.created_at) lastMsgTs.current = latest.created_at
         const newest = res.messages[res.messages.length - 1]
