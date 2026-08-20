@@ -153,6 +153,13 @@ Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_r
 - PR review flow: GitHub PR diff → LLM (OpenAI or Gemini) → single comment posted/updated on the PR via GitHub API (marker-based updates to avoid spam). See `docs/cto-pr-review.md`.
 - **Automated MCP QA (BIG-5):** `POST /mcp/tools/run_qa` accepts a diff and target MCP URL. The agent lists tools via `/mcp/manifest`, plans relevant calls with an LLM, invokes them through `POST /mcp` (`tools/call`), and evaluates output quality. Excellent runs post a brief summary to `DISCORD_WEBHOOK_URL_QA`. Improvements are stored under `qa_drafts/` in GCS with signed Approve/Decline links at `/api/qa-proposals/*` (same HMAC pattern as X posts). Approve creates a Jira issue in `JIRA_CTO_PROJECT_KEY`; new-feature suggestions create issues in `JIRA_PM_PROJECT_KEY` and notify `DISCORD_WEBHOOK_URL_PRODUCT`. Optional trigger: `.github/workflows/qa_agent.yml` when `BIGAS_QA_ENABLED=true`.
 
+### DevOps (BIG-7)
+
+- **Pre-flight risk check:** `POST /mcp/tools/check_deployment_risk` compares git refs (latest release tag → default branch by default) and flags database migrations, dependency lockfiles, and deploy/infrastructure config changes.
+- **Deploy trigger:** `POST /mcp/tools/trigger_deployment` dispatches GitHub Actions workflows configured in `BIGAS_DEPLOY_WORKFLOW_MAP` (e.g. separate `deploy-backend.yml` and `deploy-web.yml` for VFA/vcfieldassistant). Requires `GITHUB_TOKEN` with Actions write access and `workflow_dispatch` on target workflows.
+- **Status & health:** `POST /mcp/tools/get_deployment_status` polls a workflow run by ID; `POST /mcp/tools/check_website_health` performs an HTTP GET against the live site URL.
+- **Chat agent:** DevOps specialist in `bigas/chat/db.py` with tools routed via `bigas/agents/chief_of_staff.py`.
+
 ### Provider registry
 
 - Concrete providers live under `bigas/providers/**` and implement the relevant base classes (see `bigas/providers/*/base.py`).
@@ -198,7 +205,7 @@ The chat UI is a React SPA (`frontend/`) served from `frontend/dist` at `/`. Fla
                                     +----------------------------+
 ```
 
-- **Chief of Staff** (`bigas/agents/chief_of_staff.py`): uses `get_llm_client(feature="chat")` and delegates to Marketing/Product/CTO via MCP tool calls or OpenAI function calling.
+- **Chief of Staff** (`bigas/agents/chief_of_staff.py`): uses `get_llm_client(feature="chat")` and delegates to Marketing/Product/CTO/DevOps via MCP tool calls or OpenAI function calling.
 - **Async callbacks**: sub-agents (or background jobs) POST to `/api/chat/callback` with `thread_id` to append results; the UI polls `GET /api/chat/threads/<id>/messages`.
 - **Storage**: `bigas/chat/db.py` — `MemoryChatStore` when `CHAT_STORAGE_MODE=memory`; `FirestoreChatStore` when Firestore is configured.
 - **Auth**: `bigas/chat/auth.py` — Firebase JWT verification or dev token (`CHAT_AUTH_MODE=dev`). Chat access in Firebase mode is limited to `CHAT_ALLOWED_EMAILS` (set `*` for open chat; otherwise falls back to `CHAT_ADMIN_EMAILS` when unset). Agent config updates require an email listed in `CHAT_ADMIN_EMAILS`.

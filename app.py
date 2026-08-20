@@ -144,12 +144,14 @@ def create_app():
         from bigas.resources.product.x_posts.endpoints import x_posts_bp
         from bigas.resources.cto.endpoints import cto_bp, get_manifest as get_cto_manifest
         from bigas.resources.cto.qa_agent.endpoints import qa_proposals_bp
+        from bigas.resources.devops.endpoints import devops_bp, get_manifest as get_devops_manifest
 
         app.register_blueprint(marketing_bp)
         app.register_blueprint(product_bp)
         app.register_blueprint(x_posts_bp)
         app.register_blueprint(qa_proposals_bp)
         app.register_blueprint(cto_bp)
+        app.register_blueprint(devops_bp)
 
         if os.environ.get("CHAT_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
             from bigas.resources.chat.endpoints import chat_bp
@@ -162,6 +164,7 @@ def create_app():
         logger.info("Registered X-post approval blueprint.")
         logger.info("Registered QA proposal approval blueprint.")
         logger.info("Registered CTO blueprint.")
+        logger.info("Registered DevOps blueprint.")
 
     # Discover configured providers once at startup
     try:
@@ -236,6 +239,7 @@ def create_app():
         marketing_manifest = {}
         product_manifest = {}
         cto_manifest = {}
+        devops_manifest = {}
 
         try:
             marketing_manifest = get_marketing_manifest() or {}
@@ -252,18 +256,24 @@ def create_app():
         except Exception:
             logger.exception("Failed to build CTO manifest")
 
+        try:
+            devops_manifest = get_devops_manifest() or {}
+        except Exception:
+            logger.exception("Failed to build DevOps manifest")
+
         # Combine the tools from all manifests
         all_tools = (
             marketing_manifest.get('tools', [])
             + product_manifest.get('tools', [])
             + cto_manifest.get('tools', [])
+            + devops_manifest.get('tools', [])
         )
 
         # Create the combined manifest
         manifest = {
             "name": "Bigas Modular AI Agent",
             "version": "1.1",
-            "description": "A multi-resource AI agent for marketing, product, and CTO (code review) analytics.",
+            "description": "A multi-resource AI agent for marketing, product, CTO, and DevOps operations.",
             "tools": all_tools
         }
         return jsonify(manifest)
