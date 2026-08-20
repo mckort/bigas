@@ -985,9 +985,10 @@ def autofix_followup():
 
     base = {
         "success": True,
-        "done": bool(status.get("done")),
-        "ok": bool(status.get("ok")),
-        "status": status.get("status"),
+        "done": status.get("done", False),
+        "ok": status.get("ok", False),
+        "asked_confirmation": status.get("asked_confirmation", False),
+        "status": status.get("status", "UNKNOWN"),
         "agent_id": status.get("agent_id"),
         "run_id": status.get("run_id"),
         "agent_url": status.get("agent_url"),
