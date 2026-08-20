@@ -13,7 +13,7 @@ function linkify(text) {
         href={part}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-accent hover:underline break-all"
+        className="text-bigas-black underline underline-offset-2 hover:opacity-70 break-all"
       >
         {part}
       </a>
@@ -32,7 +32,7 @@ function CollapsibleContent({ content }) {
   return (
     <div>
       <p
-        className={`text-sm whitespace-pre-wrap break-words ${
+        className={`text-sm whitespace-pre-wrap break-words text-text ${
           !expanded && needsCollapse ? 'line-clamp-5' : ''
         }`}
       >
@@ -42,7 +42,7 @@ function CollapsibleContent({ content }) {
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-2 text-xs text-accent hover:underline"
+          className="mt-2 text-xs text-muted hover:text-text underline underline-offset-2"
         >
           {expanded ? 'Show less' : 'Show more'}
         </button>
@@ -54,26 +54,44 @@ function CollapsibleContent({ content }) {
 export default function ActivityFeed({ events, open, onClose }) {
   return (
     <>
-      {open && <div className="fixed inset-0 bg-black/60 z-40 lg:hidden" onClick={onClose} />}
+      {open && (
+        <div className="fixed inset-0 bg-black/30 z-40 lg:hidden" onClick={onClose} aria-hidden="true" />
+      )}
       <aside
-        className={`fixed lg:static inset-y-0 right-0 z-50 w-full sm:w-80 bg-surface border-l border-border flex flex-col transform transition-transform lg:translate-x-0 ${
-          open ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
+        className={`fixed lg:static inset-y-0 right-0 z-50 w-full sm:w-80 bg-surface border-l border-border flex flex-col transform transition-transform duration-200 lg:translate-x-0 ${
+          open ? 'translate-x-0 shadow-card' : 'translate-x-full lg:translate-x-0'
         } ${!open ? 'hidden lg:flex' : 'flex'}`}
       >
         <div className="p-4 border-b border-border flex items-center justify-between">
-          <h2 className="font-semibold">Activity</h2>
-          <button className="lg:hidden text-muted" onClick={onClose}>✕</button>
+          <div>
+            <h2 className="font-semibold text-sm">Activity</h2>
+            <p className="text-xs text-muted mt-0.5">Background tasks & alerts</p>
+          </div>
+          <button
+            type="button"
+            className="lg:hidden text-muted hover:text-text p-2 min-w-[44px] min-h-[44px] flex items-center justify-center"
+            onClick={onClose}
+            aria-label="Close activity"
+          >
+            ✕
+          </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-2">
           {events.length === 0 && (
-            <p className="text-muted text-sm text-center py-8">No activity yet</p>
+            <p className="text-muted text-sm text-center py-12 px-4">
+              No activity yet — reports, PR reviews, and deploy updates will appear here.
+            </p>
           )}
           {events.map((event) => (
-            <div key={event.id} className="bg-bg border border-border rounded-xl p-3">
-              <div className="flex items-center gap-2 text-xs text-muted mb-2">
-                <span className="uppercase">{event.source || event.type}</span>
+            <div
+              key={event.id}
+              className="bg-white border border-border rounded-xl p-3 shadow-soft"
+            >
+              <div className="flex items-center gap-2 text-[11px] text-muted mb-2 uppercase tracking-wide">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-bigas-blue flex-shrink-0" />
+                <span>{event.source || event.type}</span>
                 <span>·</span>
-                <time>{new Date(event.created_at).toLocaleString()}</time>
+                <time className="normal-case tracking-normal">{new Date(event.created_at).toLocaleString()}</time>
               </div>
               <CollapsibleContent content={event.content} />
             </div>
