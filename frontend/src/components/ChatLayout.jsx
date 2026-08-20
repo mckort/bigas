@@ -325,21 +325,35 @@ function writeLastOpened(map) {
 }
 
 function seedLastOpened(existing) {
-  if (existing._seeded) return existing
-  const seeded = { ...existing, _seeded: new Date().toISOString() }
-  writeLastOpened(seeded)
-  return seeded
+  return existing && typeof existing === 'object' ? existing : {}
+}
+
+function latestServerTimestamp(threads) {
+  let max = ''
+  for (const thread of threads || []) {
+    for (const field of ['last_incoming_at', 'updated_at']) {
+      const ts = thread?.[field] || ''
+      if (ts > max) max = ts
+    }
+  }
+  return max
 }
 
 function mergeLastOpened(a, b) {
-  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})])
-  const out = {}
-  for (const key of keys) {
-    const left = (a && a[key]) || ''
-    const right = (b && b[key]) || ''
-    out[key] = left > right ? left : right
+  if (!b) return a || {}
+  if (!a) return { ...b }
+  let changed = false
+  const out = { ...a }
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const left = a[key] || ''
+    const right = b[key] || ''
+    const merged = left > right ? left : right
+    if ((a[key] || '') !== merged) {
+      out[key] = merged
+      changed = true
+    }
   }
-  return out
+  return changed ? out : a
 }
 
 function latestThreadByAgent(threads) {
@@ -391,7 +405,10 @@ function MobileAgentTabs({ agents, activeAgentId, onSelectAgent, unreadAgentIds 
                 <span className={(agent.icon || '').includes('<') ? 'font-mono text-[10px] font-semibold' : ''}>
                   {agent.icon || '🤖'}
                 </span>
-                <UnreadDot show={Boolean(unreadAgentIds?.has(agent.agent_id))} />
+                <UnreadDot
+                  show={Boolean(unreadAgentIds?.has(agent.agent_id))}
+                  className="-top-1 -right-1"
+                />
               </span>
               <span className="whitespace-nowrap">{agent.name}</span>
             </button>
@@ -421,6 +438,7 @@ export default function ChatLayout({ user, onLogout }) {
   const lastMsgTs = useRef('')
   const lastFeedTs = useRef('')
   const unreadChannelRef = useRef(null)
+  const messagesThreadIdRef = useRef(null)
 
   const activeAgent = agents.find((a) => a.agent_id === activeAgentId) || { icon: '🤖', name: 'Agent' }
   const unreadAgentIds = useMemo(
@@ -442,10 +460,12 @@ export default function ChatLayout({ user, onLogout }) {
 
   const handleSelectAgent = useCallback(
     (agentId) => {
-      bumpLastOpened(agentId, new Date().toISOString())
+      messagesThreadIdRef.current = null
+      const at = latestServerTimestamp(threads)
+      if (at) bumpLastOpened(agentId, at)
       setActiveAgentId(agentId)
     },
-    [bumpLastOpened],
+    [bumpLastOpened, threads],
   )
 
   const loadAgents = useCallback(async () => {
@@ -454,6 +474,7 @@ export default function ChatLayout({ user, onLogout }) {
   }, [])
 
   const openAgentThread = useCallback(async (agentId, { cancelled } = {}) => {
+    messagesThreadIdRef.current = null
     setThreadId(null)
     setMessages([])
     setWaitingForReply(false)
@@ -517,6 +538,7 @@ export default function ChatLayout({ user, onLogout }) {
     }
 
     setThreadId(thread.thread_id)
+    messagesThreadIdRef.current = thread.thread_id
 
     if (loaded.length) {
       setMessages(loaded)
@@ -618,14 +640,39 @@ export default function ChatLayout({ user, onLogout }) {
   }, [])
 
   useEffect(() => {
-    bumpLastOpened(activeAgentId, new Date().toISOString())
-  }, [activeAgentId, bumpLastOpened])
+    const serverTs = latestServerTimestamp(threads)
+    if (!serverTs) return
+    setLastOpened((prev) => {
+      let changed = false
+      const next = { ...prev }
+      if (!prev._seeded || prev._seeded > serverTs) {
+        next._seeded = serverTs
+        changed = true
+      }
+      for (const [key, val] of Object.entries(prev)) {
+        if (key.startsWith('_')) continue
+        if (val > serverTs) {
+          next[key] = serverTs
+          changed = true
+        }
+      }
+      if (!changed) return prev
+      writeLastOpened(next)
+      return next
+    })
+  }, [threads])
 
   useEffect(() => {
+    const at = latestServerTimestamp(threads)
+    if (at) bumpLastOpened(activeAgentId, at)
+  }, [activeAgentId, bumpLastOpened, threads])
+
+  useEffect(() => {
+    if (!threadId || messagesThreadIdRef.current !== threadId) return
     const last = messages[messages.length - 1]
     if (!last?.created_at) return
     bumpLastOpened(activeAgentId, last.created_at)
-  }, [activeAgentId, messages, bumpLastOpened])
+  }, [activeAgentId, messages, threadId, bumpLastOpened])
 
   useEffect(() => {
     let cancelled = false
