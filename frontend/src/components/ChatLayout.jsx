@@ -4,11 +4,13 @@ import AgentSidebar from './AgentSidebar'
 import ActivityFeed from './ActivityFeed'
 import AgentSettings from './AgentSettings'
 import {
+  approveProposal,
   createThread,
   fetchAgents,
   fetchFeed,
   fetchMessages,
   fetchThreads,
+  rejectProposal,
   sendMessage,
 } from '../lib/api'
 import { logout } from '../lib/auth'
@@ -36,9 +38,73 @@ function humanizeChatContent(content) {
   return content
 }
 
-function MessageBubble({ message, agentIcon }) {
+function ActionProposalCard({ message, onResolved, resolving, setResolving }) {
+  const meta = message.metadata || {}
+  if (meta.type !== 'action_proposal' || meta.status !== 'pending') return null
+
+  const actions = meta.actions || []
+  const proposalId = meta.proposal_id
+
+  async function handleApprove(actionId) {
+    if (resolving || !proposalId) return
+    setResolving(true)
+    try {
+      await approveProposal(proposalId, message.message_id, actionId)
+      onResolved()
+    } catch (err) {
+      alert(err.message || 'Failed to approve action')
+    } finally {
+      setResolving(false)
+    }
+  }
+
+  async function handleReject() {
+    if (resolving || !proposalId) return
+    setResolving(true)
+    try {
+      await rejectProposal(proposalId, message.message_id)
+      onResolved()
+    } catch (err) {
+      alert(err.message || 'Failed to reject proposal')
+    } finally {
+      setResolving(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border/60">
+      <p className="text-xs text-muted mb-2">Suggested actions</p>
+      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+        {actions.map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            disabled={resolving}
+            onClick={() => handleApprove(action.id)}
+            className="bg-accent text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center"
+          >
+            {action.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={resolving}
+          onClick={handleReject}
+          className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center"
+        >
+          Reject all
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function MessageBubble({ message, agentIcon, onProposalResolved, proposalResolving, setProposalResolving }) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
+  const meta = message.metadata || {}
+  const showResolved =
+    meta.type === 'action_proposal' && meta.status && meta.status !== 'pending'
 
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -63,6 +129,15 @@ function MessageBubble({ message, agentIcon }) {
         <div className="markdown-body text-sm sm:text-base break-words">
           <ReactMarkdown>{humanizeChatContent(message.content)}</ReactMarkdown>
         </div>
+        <ActionProposalCard
+          message={message}
+          onResolved={onProposalResolved}
+          resolving={proposalResolving}
+          setResolving={setProposalResolving}
+        />
+        {showResolved && (
+          <p className="mt-2 text-xs text-muted capitalize">{meta.status}</p>
+        )}
       </div>
     </div>
   )
@@ -142,6 +217,7 @@ export default function ChatLayout({ user, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [proposalResolving, setProposalResolving] = useState(false)
   const bottomRef = useRef(null)
   const lastMsgTs = useRef('')
   const lastFeedTs = useRef('')
@@ -324,6 +400,18 @@ export default function ChatLayout({ user, onLogout }) {
     }
   }, [])
 
+  async function refreshMessages() {
+    if (!threadId) return
+    try {
+      const res = await fetchMessages(threadId)
+      const next = res.messages || []
+      setMessages(next)
+      if (next.length) lastMsgTs.current = next[next.length - 1].created_at
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function handleSend(e) {
     e.preventDefault()
     const text = input.trim()
@@ -422,7 +510,14 @@ export default function ChatLayout({ user, onLogout }) {
             </div>
           )}
           {messages.map((m) => (
-            <MessageBubble key={m.message_id} message={m} agentIcon={activeAgent.icon} />
+            <MessageBubble
+              key={m.message_id}
+              message={m}
+              agentIcon={activeAgent.icon}
+              onProposalResolved={refreshMessages}
+              proposalResolving={proposalResolving}
+              setProposalResolving={setProposalResolving}
+            />
           ))}
           {showTyping && (
             <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />

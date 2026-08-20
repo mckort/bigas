@@ -209,3 +209,31 @@ The chat UI is a React SPA (`frontend/`) served from `frontend/dist` at `/`. Fla
 - **Async callbacks**: sub-agents (or background jobs) POST to `/api/chat/callback` with `thread_id` to append results; the UI polls `GET /api/chat/threads/<id>/messages`.
 - **Storage**: `bigas/chat/db.py` — `MemoryChatStore` when `CHAT_STORAGE_MODE=memory`; `FirestoreChatStore` when Firestore is configured.
 - **Auth**: `bigas/chat/auth.py` — Firebase JWT verification or dev token (`CHAT_AUTH_MODE=dev`). Chat access in Firebase mode is limited to `CHAT_ALLOWED_EMAILS` (set `*` for open chat; otherwise falls back to `CHAT_ADMIN_EMAILS` when unset). Agent config updates require an email listed in `CHAT_ADMIN_EMAILS`.
+
+## Email ingest (BIG-9)
+
+Chief of Staff inbox triage via IMAP polling (Migadu-compatible):
+
+```text
+Cloud Scheduler (nightly) --> POST /api/v1/providers/email/sync
+                                      |
+                                      v
+                            bigas/providers/email/imap.py
+                            (fetch UNSEEN, mark read / move)
+                                      |
+                                      v
+                            bigas/agents/email_processor.py
+                            (LLM summary + action proposals)
+                                      |
+                                      v
+                            Chief of Staff chat thread (Firestore)
+                                      |
+                                      v
+                            React chat UI — Approve / Reject buttons
+                            POST /api/v1/chat/proposals/<id>/approve|reject
+```
+
+- **Provider**: `ImapEmailProvider` under `bigas/providers/email/`; registered in `bigas/registry.py` when `BIGAS_EMAIL_IMAP_*` env vars are set.
+- **Sync endpoint**: `bigas/resources/email/endpoints.py` — secured by `BIGAS_ACCESS_KEYS` when access mode is restricted (same pattern as `/mcp/tools/*`).
+- **Proposals**: assistant messages carry `metadata.type=action_proposal` with `actions[]` (`delegate`, `tool`, or `draft_reply`). Approved actions execute via `execute_proposal_action()`; rejections update metadata only.
+- **Target thread**: `BIGAS_EMAIL_SYNC_USER_EMAIL` / `CHAT_ADMIN_EMAILS` → user's most recent Chief thread (`get_or_create_chief_thread`).

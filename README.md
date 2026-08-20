@@ -223,6 +223,12 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `VITE_FIREBASE_AUTH_DOMAIN` | e.g. `your-project.firebaseapp.com`. **Required** in production (`/api/auth/config` has no fallback without the `VITE_` prefix) |
 | `VITE_FIREBASE_PROJECT_ID` | Same as `FIREBASE_PROJECT_ID`; Docker build-arg |
 | `BIGAS_CHAT_MODEL` | LLM model for chat / Chief of Staff (defaults to `LLM_MODEL`) |
+| `BIGAS_EMAIL_IMAP_SERVER` | IMAP host for Chief of Staff inbox (e.g. `imap.migadu.com` for Migadu) |
+| `BIGAS_EMAIL_USERNAME` | IMAP login (e.g. `cos@bigas.me`) |
+| `BIGAS_EMAIL_PASSWORD` | IMAP password |
+| `BIGAS_EMAIL_IMAP_PORT` | IMAP port (default `993`) |
+| `BIGAS_EMAIL_SYNC_USER_EMAIL` | Chat user email that receives overnight email triage (defaults to first `CHAT_ADMIN_EMAILS`) |
+| `BIGAS_EMAIL_MAX_BODY_CHARS` | Max plain-text email body passed to the COS LLM (default `8000`) |
 
 Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_JIRA_RESEARCH_MODEL`, `BIGAS_CHAT_MODEL`. See `env.example` and `bigas/llm/README.md`.
 
@@ -531,8 +537,30 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Cleanup old reports | `0 2 1 * *` | `.../cleanup_old_reports` |
 | Website monitoring | `0 8 * * *` | `.../website_monitor` |
 | CTO AI usage | `0 9 * * 1` | `.../weekly_cto_ai_report` |
+| Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
 
 All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
+
+### Email ingest with Cloud Scheduler
+
+The Chief of Staff can triage a dedicated inbox (e.g. `cos@bigas.me` on Migadu) via IMAP polling. Unread mail is summarized in the **Chief of Staff** chat thread with suggested actions you can approve or reject in the UI — nothing is sent or changed without your click.
+
+Configure IMAP credentials (`BIGAS_EMAIL_IMAP_SERVER`, `BIGAS_EMAIL_USERNAME`, `BIGAS_EMAIL_PASSWORD`) and set `BIGAS_EMAIL_SYNC_USER_EMAIL` to the chat account that should receive triage (or rely on the first `CHAT_ADMIN_EMAILS` entry). That user must have signed into chat at least once so Firestore has their profile.
+
+Recommended schedule: once per night before you start work (5:00 CET):
+
+```bash
+gcloud scheduler jobs create http bigas-email-sync \
+  --location=europe-west1 \
+  --schedule="0 5 * * *" \
+  --time-zone="Europe/Stockholm" \
+  --uri="https://YOUR-SERVICE-URL.a.run.app/api/v1/providers/email/sync" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
+  --message-body="{}"
+```
+
+With `BIGAS_ACCESS_MODE=restricted`, Cloud Scheduler must send `X-Bigas-Access-Key` (or `Authorization: Bearer`). Long email bodies are truncated automatically (`BIGAS_EMAIL_MAX_BODY_CHARS`, default 8000).
 
 ### Website monitoring with Cloud Scheduler
 

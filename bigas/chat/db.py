@@ -191,6 +191,47 @@ class MemoryChatStore:
             messages = [m for m in messages if m.get("created_at", "") > since]
         return messages
 
+    def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            for msgs in self._messages.values():
+                for m in msgs:
+                    if m.get("message_id") == message_id:
+                        return dict(m)
+        return None
+
+    def update_message_metadata(self, message_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            for msgs in self._messages.values():
+                for m in msgs:
+                    if m.get("message_id") == message_id:
+                        meta = dict(m.get("metadata") or {})
+                        meta.update(updates)
+                        m["metadata"] = meta
+                        return dict(m)
+        return None
+
+    def find_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        target = (email or "").strip().lower()
+        if not target:
+            return None
+        with self._lock:
+            for user in self._users.values():
+                if (user.get("email") or "").strip().lower() == target:
+                    return dict(user)
+        return None
+
+    def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
+        with self._lock:
+            chief_threads = [
+                t
+                for t in self._threads.values()
+                if t.get("user_id") == user_id and t.get("agent_id") == "chief"
+            ]
+            if chief_threads:
+                chief_threads.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
+                return dict(chief_threads[0])
+        return self.create_thread(user_id, "chief")
+
     def add_activity(self, *, type_: str, content: str, source: str = "system") -> Dict[str, Any]:
         event = {
             "id": str(uuid.uuid4()),
@@ -338,6 +379,42 @@ class FirestoreChatStore:
         if since:
             messages = [m for m in messages if m.get("created_at", "") > since]
         return sorted(messages, key=lambda m: m.get("created_at", ""))
+
+    def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
+        snap = self._messages.document(message_id).get()
+        return snap.to_dict() if snap.exists else None
+
+    def update_message_metadata(self, message_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        doc = self._messages.document(message_id)
+        snap = doc.get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        meta = dict(data.get("metadata") or {})
+        meta.update(updates)
+        doc.update({"metadata": meta})
+        data["metadata"] = meta
+        return data
+
+    def find_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        target = (email or "").strip().lower()
+        if not target:
+            return None
+        for doc in self._users.stream():
+            if not doc.exists:
+                continue
+            data = doc.to_dict() or {}
+            if (data.get("email") or "").strip().lower() == target:
+                return data
+        return None
+
+    def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
+        docs = self._threads.where("user_id", "==", user_id).where("agent_id", "==", "chief").stream()
+        threads = [doc.to_dict() for doc in docs if doc.exists]
+        if threads:
+            threads.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
+            return threads[0]
+        return self.create_thread(user_id, "chief")
 
     def add_activity(self, *, type_: str, content: str, source: str = "system") -> Dict[str, Any]:
         event_id = str(uuid.uuid4())
