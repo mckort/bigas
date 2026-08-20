@@ -1,12 +1,13 @@
 import { useState } from 'react'
 
 const PREVIEW_LINES = 5
-const URL_RE = /(https?:\/\/[^\s<>"'`)\]},]+)/g
+const URL_RE = /(https?:\/\/[^\s<>"'`\]},]+(?:\([^\s<>"'`\]},)]*\)[^\s<>"'`\]},]*)*)/g
 
 function linkify(text) {
+  if (!text || typeof text !== 'string') return text
   const parts = text.split(URL_RE)
   return parts.map((part, i) =>
-    /^https?:\/\//.test(part) ? (
+    i % 2 === 1 ? (
       <a
         key={i}
         href={part}
