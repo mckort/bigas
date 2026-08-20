@@ -267,6 +267,20 @@ def test_humanize_tool_result_unwraps_indented_json():
     assert humanize_tool_result(raw) == "Traffic is up."
 
 
+def test_humanize_tool_result_unwraps_summary():
+    from bigas.agents.chief_of_staff import humanize_tool_result
+
+    raw = json.dumps(
+        {
+            "success": True,
+            "launched": True,
+            "agent_url": "https://cursor.com/agents/bc-123",
+            "summary": "Autofix is running (round 2/5). Follow the agent: https://cursor.com/agents/bc-123",
+        }
+    )
+    assert humanize_tool_result(raw).startswith("Autofix is running")
+
+
 def test_discord_mirror_activity():
     from bigas.chat.db import get_chat_store
     from bigas.chat.activity import mirror_discord_message
