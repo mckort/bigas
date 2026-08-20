@@ -78,10 +78,10 @@ export async function fetchFeed(since) {
   return apiFetch(`/api/feed${qs}`)
 }
 
-export async function approveProposal(proposalId, messageId, actionId) {
+export async function approveProposal(proposalId, messageId, actionId, extra = {}) {
   return apiFetch(`/api/v1/chat/proposals/${encodeURIComponent(proposalId)}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ message_id: messageId, action_id: actionId }),
+    body: JSON.stringify({ message_id: messageId, action_id: actionId, ...extra }),
   })
 }
 

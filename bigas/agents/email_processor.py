@@ -1,7 +1,6 @@
 """Chief of Staff email triage — summarize inbox messages and propose actions."""
 from __future__ import annotations
 
-import json
 import logging
 import os
 import uuid
@@ -12,6 +11,7 @@ from bigas.chat.db import get_chat_store
 from bigas.llm.factory import get_llm_client
 from bigas.portfolio import prompt_block
 from bigas.providers.email.base import InboundEmail
+from bigas.providers.email.outbound import extract_email_address, send_outbound_reply
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +26,15 @@ def _email_system_prompt() -> str:
         logger.exception("Failed to load portfolio block for email triage")
     return (
         "You are the Chief of Staff for Bigas. You triage incoming emails for the human operator.\n"
-        "Do NOT take autonomous actions — only summarize and propose actions the human can approve.\n"
+        "Do NOT take autonomous actions — only propose actions the human can approve.\n"
+        "The human will see the original email body verbatim; do not rewrite it.\n"
         "Silently discard obvious spam or marketing noise (set is_spam=true and leave proposals empty).\n"
-        "For legitimate emails, write a concise markdown summary highlighting what matters and why.\n"
         "Propose 1–3 concrete next steps when applicable (e.g. delegate to a specialist, call a tool, "
-        "or draft a reply text). Never propose sending email directly — use draft_reply for reply drafts.\n\n"
+        "or draft a reply). Never send email yourself — use draft_reply so the human can edit and send.\n\n"
         f"{portfolio}\n\n"
         "Respond with ONLY a JSON object:\n"
         "{\n"
         '  "is_spam": false,\n'
-        '  "summary": "**From:** ...\\n\\n**Subject:** ...\\n\\nKey points...",\n'
         '  "proposals": [\n'
         '    {"id": "unique_id", "label": "Short button label", "kind": "delegate|tool|draft_reply", '
         '"params": {...}}\n'
@@ -43,7 +42,7 @@ def _email_system_prompt() -> str:
         "}\n"
         "For delegate: params must include agent_id (marketing|product|cto|devops) and task.\n"
         "For tool: params must include tool_name and arguments object.\n"
-        "For draft_reply: params must include text (the draft reply body).\n"
+        "For draft_reply: params must include text (the suggested reply body). Label it Send.\n"
     )
 
 
@@ -66,8 +65,8 @@ def _normalize_proposals(raw: Any) -> List[Dict[str, Any]]:
 
 def analyze_email(email_msg: InboundEmail) -> Optional[Dict[str, Any]]:
     """
-    Analyze one email with the COS LLM.
-    Returns dict with summary, proposals, is_spam — or None if LLM unavailable.
+    Analyze one email with the COS LLM (spam filter + action proposals).
+    Returns dict with proposals, is_spam — or None if LLM unavailable.
     """
     llm, _ = get_llm_client(feature="chat")
     user_content = (
@@ -88,26 +87,26 @@ def analyze_email(email_msg: InboundEmail) -> Optional[Dict[str, Any]]:
 
     parsed = _parse_json_action(raw)
     if not parsed:
-        # Fallback: treat raw text as summary with no proposals
-        summary = raw.strip() or f"**Email:** {email_msg.subject}\n\nFrom {email_msg.sender}"
-        return {"is_spam": False, "summary": summary, "proposals": []}
+        return {"is_spam": False, "proposals": []}
 
     if parsed.get("is_spam"):
-        return {"is_spam": True, "summary": "", "proposals": []}
-
-    summary = str(parsed.get("summary") or "").strip()
-    if not summary:
-        summary = (
-            f"**From:** {email_msg.sender}\n\n"
-            f"**Subject:** {email_msg.subject}\n\n"
-            f"{email_msg.body_text[:500]}"
-        )
+        return {"is_spam": True, "proposals": []}
 
     return {
         "is_spam": False,
-        "summary": summary,
         "proposals": _normalize_proposals(parsed.get("proposals")),
     }
+
+
+def format_email_for_chat(email_msg: InboundEmail) -> str:
+    """Literal From/Subject/body for the chat bubble (no LLM rewrite)."""
+    body = (email_msg.body_text or "").strip() or "(empty body)"
+    return (
+        f"📬 **Email triage** — {email_msg.subject}\n\n"
+        f"**From:** {email_msg.sender}\n\n"
+        f"**Subject:** {email_msg.subject}\n\n"
+        f"{body}"
+    )
 
 
 def post_email_to_chief_thread(
@@ -115,19 +114,21 @@ def post_email_to_chief_thread(
     email_msg: InboundEmail,
     analysis: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Post COS summary and optional action proposals to the chief chat thread."""
+    """Post the original email and optional action proposals to the chief chat thread."""
     store = get_chat_store()
     proposals = analysis.get("proposals") or []
     proposal_id = str(uuid.uuid4())
-    header = f"📬 **Email triage** — {email_msg.subject}\n\n"
-    content = header + (analysis.get("summary") or "")
+    content = format_email_for_chat(email_msg)
+    reply_to = (email_msg.reply_to or "").strip() or extract_email_address(email_msg.sender)
 
     metadata: Dict[str, Any] = {
         "agent_id": "chief",
         "source": "email",
         "source_id": email_msg.message_id,
         "email_from": email_msg.sender,
+        "email_reply_to": reply_to,
         "email_subject": email_msg.subject,
+        "email_body": email_msg.body_text or "",
     }
 
     if proposals:
@@ -185,23 +186,31 @@ def execute_proposal_action(
     *,
     thread_id: str,
     user_context: str = "",
+    edited_text: Optional[str] = None,
+    email_meta: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Execute an approved proposal action; returns human-readable result."""
     kind = (action.get("kind") or "").strip().lower()
     params = action.get("params") if isinstance(action.get("params"), dict) else {}
 
     if kind == "draft_reply":
-        text = str(params.get("text") or "").strip()
+        text = (edited_text if edited_text is not None else params.get("text") or "")
+        text = str(text).strip()
         if not text:
-            return "No draft reply text was provided."
-        store = get_chat_store()
-        store.add_message(
-            thread_id,
-            role="assistant",
-            content=f"**Draft reply** (not sent — review and send manually):\n\n{text}",
-            metadata={"agent_id": "chief", "source": "email_proposal"},
+            raise RuntimeError("Reply body is empty.")
+        meta = email_meta or {}
+        to_addr = extract_email_address(
+            str(meta.get("email_reply_to") or meta.get("email_from") or "")
         )
-        return "Draft reply added to the chat."
+        if not to_addr:
+            raise RuntimeError("Cannot send reply: no recipient address on this email.")
+        send_outbound_reply(
+            to_addr=to_addr,
+            subject=str(meta.get("email_subject") or ""),
+            body=text,
+            in_reply_to=str(meta.get("source_id") or ""),
+        )
+        return f"Sent reply to {to_addr}:\n\n{text}"
 
     if kind == "delegate":
         agent_id = str(params.get("agent_id") or "").strip().lower()

@@ -224,17 +224,19 @@ Cloud Scheduler (nightly) --> POST /api/v1/providers/email/sync
                                       |
                                       v
                             bigas/agents/email_processor.py
-                            (LLM summary + action proposals)
+                            (spam filter + action proposals;
+                             chat shows original body)
                                       |
                                       v
                             Chief of Staff chat thread (Firestore)
                                       |
                                       v
-                            React chat UI — Approve / Reject buttons
+                            React chat UI — literal mail, editable draft, Send
                             POST /api/v1/chat/proposals/<id>/approve|reject
+                            (draft_reply sends via SMTP)
 ```
 
 - **Provider**: `ImapEmailProvider` under `bigas/providers/email/`; registered in `bigas/registry.py` when `BIGAS_EMAIL_IMAP_*` env vars are set.
 - **Sync endpoint**: `bigas/resources/email/endpoints.py` — secured by `BIGAS_ACCESS_KEYS` when access mode is restricted (same pattern as `/mcp/tools/*`).
-- **Proposals**: assistant messages carry `metadata.type=action_proposal` with `actions[]` (`delegate`, `tool`, or `draft_reply`). Approved actions execute via `execute_proposal_action()`; rejections update metadata only.
+- **Proposals**: assistant messages carry `metadata.type=action_proposal` with `actions[]` (`delegate`, `tool`, or `draft_reply`). `draft_reply` is sent via SMTP after the human edits and clicks Send; other approvals execute via `execute_proposal_action()`. Rejections update metadata only.
 - **Target thread**: `BIGAS_EMAIL_SYNC_USER_EMAIL` / `CHAT_ADMIN_EMAILS` → user's most recent Chief thread (`get_or_create_chief_thread`).

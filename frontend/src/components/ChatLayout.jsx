@@ -42,16 +42,26 @@ function humanizeChatContent(content) {
 function ActionProposalCard({ message, onResolved }) {
   const [resolving, setResolving] = useState(false)
   const meta = message.metadata || {}
+  const actions = meta.actions || []
+  const draftActions = actions.filter((action) => action.kind === 'draft_reply')
+  const otherActions = actions.filter((action) => action.kind !== 'draft_reply')
+  const [drafts, setDrafts] = useState(() => {
+    const initial = {}
+    for (const action of draftActions) {
+      initial[action.id] = (action.params && action.params.text) || ''
+    }
+    return initial
+  })
+
   if (meta.type !== 'action_proposal' || meta.status !== 'pending') return null
 
-  const actions = meta.actions || []
   const proposalId = meta.proposal_id
 
-  async function handleApprove(actionId) {
+  async function handleApprove(actionId, extra = {}) {
     if (resolving || !proposalId) return
     setResolving(true)
     try {
-      await approveProposal(proposalId, message.message_id, actionId)
+      await approveProposal(proposalId, message.message_id, actionId, extra)
       onResolved()
     } catch (err) {
       alert(err.message || 'Failed to approve action')
@@ -74,20 +84,66 @@ function ActionProposalCard({ message, onResolved }) {
   }
 
   return (
-    <div className="mt-3 pt-3 border-t border-border/60">
-      <p className="text-xs text-muted mb-2">Suggested actions</p>
-      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
-        {actions.map((action) => (
-          <button
-            key={action.id}
-            type="button"
+    <div className="mt-3 pt-3 border-t border-border/60 space-y-3">
+      {draftActions.map((action) => (
+        <div key={action.id}>
+          <p className="text-xs text-muted mb-2">Suggested reply — edit before sending</p>
+          <textarea
+            value={drafts[action.id] ?? ''}
+            onChange={(e) => setDrafts((prev) => ({ ...prev, [action.id]: e.target.value }))}
             disabled={resolving}
-            onClick={() => handleApprove(action.id)}
-            className="bg-accent text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center"
-          >
-            {action.label}
-          </button>
-        ))}
+            rows={8}
+            className="w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text resize-y min-h-[8rem] disabled:opacity-50"
+          />
+          <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={resolving || !(drafts[action.id] || '').trim()}
+              onClick={() => handleApprove(action.id, { text: drafts[action.id] })}
+              className="bg-accent text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center"
+            >
+              Send
+            </button>
+            {otherActions.length === 0 && (
+              <button
+                type="button"
+                disabled={resolving}
+                onClick={handleReject}
+                className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center"
+              >
+                Reject
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      {otherActions.length > 0 && (
+        <>
+          <p className="text-xs text-muted">Suggested actions</p>
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+            {otherActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                disabled={resolving}
+                onClick={() => handleApprove(action.id)}
+                className="bg-accent text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center"
+              >
+                {action.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={resolving}
+              onClick={handleReject}
+              className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center"
+            >
+              Reject all
+            </button>
+          </div>
+        </>
+      )}
+      {draftActions.length === 0 && otherActions.length === 0 && (
         <button
           type="button"
           disabled={resolving}
@@ -96,7 +152,23 @@ function ActionProposalCard({ message, onResolved }) {
         >
           Reject all
         </button>
-      </div>
+      )}
+    </div>
+  )
+}
+
+function EmailTriageBody({ message }) {
+  const meta = message.metadata || {}
+  const body = (meta.email_body || '').trim()
+  if (!body) {
+    return <ReactMarkdown>{humanizeChatContent(message.content)}</ReactMarkdown>
+  }
+  return (
+    <div className="text-sm sm:text-base break-words">
+      <p className="font-medium">📬 Email triage — {meta.email_subject || 'Email'}</p>
+      <p className="mt-2 text-muted">From: {meta.email_from}</p>
+      <p className="text-muted">Subject: {meta.email_subject}</p>
+      <pre className="mt-3 whitespace-pre-wrap font-sans text-sm sm:text-base">{body}</pre>
     </div>
   )
 }
@@ -129,7 +201,11 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
         }`}
       >
         <div className="markdown-body text-sm sm:text-base break-words">
-          <ReactMarkdown>{humanizeChatContent(message.content)}</ReactMarkdown>
+          {meta.source === 'email' ? (
+            <EmailTriageBody message={message} />
+          ) : (
+            <ReactMarkdown>{humanizeChatContent(message.content)}</ReactMarkdown>
+          )}
         </div>
         <ActionProposalCard
           message={message}

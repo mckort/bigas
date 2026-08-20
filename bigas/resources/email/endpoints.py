@@ -154,11 +154,16 @@ def approve_proposal(proposal_id: str):
         return jsonify({"error": "Action not found in proposal"}), 404
 
     user_context = message.get("content") or ""
+    edited_text = body.get("text")
+    if edited_text is not None:
+        edited_text = str(edited_text)
     try:
         result = execute_proposal_action(
             action,
             thread_id=thread["thread_id"],
             user_context=user_context,
+            edited_text=edited_text,
+            email_meta=message.get("metadata") or {},
         )
     except Exception as e:
         logger.exception("Proposal execution failed")
@@ -169,10 +174,11 @@ def approve_proposal(proposal_id: str):
         message_id,
         {"status": "approved", "approved_action_id": action_id},
     )
+    verb = "Sent" if (action.get("kind") or "").strip().lower() == "draft_reply" else "Approved"
     follow_up = store.add_message(
         thread["thread_id"],
         role="assistant",
-        content=f"✅ **Approved:** {action.get('label')}\n\n{result}",
+        content=f"✅ **{verb}:** {action.get('label')}\n\n{result}",
         metadata={"agent_id": "chief", "proposal_id": proposal_id, "approved_action_id": action_id},
     )
     return jsonify({"status": "approved", "result": result, "message": follow_up})

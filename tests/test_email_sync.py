@@ -115,10 +115,13 @@ class TestEmailSyncEndpoint:
         assert len(messages) == 1
         msg = messages[0]
         assert msg["role"] == "assistant"
-        assert "Invoice" in msg["content"]
+        assert "Please pay invoice #123." in msg["content"]
+        assert "Invoice needs attention" not in msg["content"]
         meta = msg["metadata"]
         assert meta["type"] == "action_proposal"
         assert meta["status"] == "pending"
+        assert meta["email_body"] == "Please pay invoice #123."
+        assert meta["email_reply_to"] == "vendor@example.com"
         assert len(meta["actions"]) == 1
         assert fake.marked_uids == ["1"]
 
@@ -181,10 +184,16 @@ class TestProposalApproveReject:
                 "proposal_id": "prop-123",
                 "status": "pending",
                 "agent_id": "chief",
+                "source": "email",
+                "source_id": "<test@example.com>",
+                "email_from": "Vendor <vendor@example.com>",
+                "email_reply_to": "vendor@example.com",
+                "email_subject": "Invoice overdue",
+                "email_body": "Please pay invoice #123.",
                 "actions": [
                     {
                         "id": "draft1",
-                        "label": "Save draft reply",
+                        "label": "Send",
                         "kind": "draft_reply",
                         "params": {"text": "Thanks, we will review."},
                     }
@@ -193,28 +202,45 @@ class TestProposalApproveReject:
         )
         return thread, message
 
-    def test_approve_draft_reply(self, client):
+    def test_approve_draft_reply_sends_edited_text(self, client, monkeypatch):
+        sent = {}
+
+        def fake_send(**kwargs):
+            sent.update(kwargs)
+
+        monkeypatch.setattr("bigas.agents.email_processor.send_outbound_reply", fake_send)
         thread, message = self._seed_proposal(client)
         meta = message["metadata"]
 
         resp = client.post(
             f"/api/v1/chat/proposals/{meta['proposal_id']}/approve",
             headers=_auth_headers(),
-            data=json.dumps({"message_id": message["message_id"], "action_id": "draft1"}),
+            data=json.dumps(
+                {
+                    "message_id": message["message_id"],
+                    "action_id": "draft1",
+                    "text": "Edited reply body.",
+                }
+            ),
         )
         assert resp.status_code == 200
-        assert resp.get_json()["status"] == "approved"
+        data = resp.get_json()
+        assert data["status"] == "approved"
+        assert sent["to_addr"] == "vendor@example.com"
+        assert sent["body"] == "Edited reply body."
+        assert sent["in_reply_to"] == "<test@example.com>"
+        assert "Edited reply body." in data["result"]
 
         from bigas.chat.db import get_chat_store
 
         store = get_chat_store()
         updated = store.get_message(message["message_id"])
         assert updated["metadata"]["status"] == "approved"
-
         msgs = store.list_messages(thread["thread_id"])
-        assert any("Draft reply" in m.get("content", "") for m in msgs)
+        assert any("Sent" in m.get("content", "") for m in msgs)
 
-    def test_approve_rejects_duplicate(self, client):
+    def test_approve_rejects_duplicate(self, client, monkeypatch):
+        monkeypatch.setattr("bigas.agents.email_processor.send_outbound_reply", lambda **kwargs: None)
         thread, message = self._seed_proposal(client)
         meta = message["metadata"]
         payload = json.dumps({"message_id": message["message_id"], "action_id": "draft1"})
@@ -265,3 +291,60 @@ class TestImapProviderConfigured:
         from bigas.providers.email.imap import ImapEmailProvider
 
         assert ImapEmailProvider.is_configured() is True
+
+
+class TestSendDraftReply:
+    def test_execute_sends_edited_text(self, monkeypatch):
+        from bigas.agents.email_processor import execute_proposal_action
+
+        sent = {}
+
+        def fake_send(**kwargs):
+            sent.update(kwargs)
+
+        monkeypatch.setattr("bigas.agents.email_processor.send_outbound_reply", fake_send)
+        result = execute_proposal_action(
+            {
+                "kind": "draft_reply",
+                "params": {"text": "Original draft"},
+            },
+            thread_id="t1",
+            edited_text="Edited reply body.",
+            email_meta={
+                "email_reply_to": "vendor@example.com",
+                "email_subject": "Invoice overdue",
+                "source_id": "<test@example.com>",
+            },
+        )
+        assert sent["to_addr"] == "vendor@example.com"
+        assert sent["body"] == "Edited reply body."
+        assert sent["in_reply_to"] == "<test@example.com>"
+        assert "Edited reply body." in result
+
+    def test_execute_requires_recipient(self, monkeypatch):
+        from bigas.agents.email_processor import execute_proposal_action
+
+        monkeypatch.setattr("bigas.agents.email_processor.send_outbound_reply", lambda **kwargs: None)
+        with pytest.raises(RuntimeError, match="no recipient"):
+            execute_proposal_action(
+                {"kind": "draft_reply", "params": {"text": "Hi"}},
+                thread_id="t1",
+                email_meta={"email_from": "not-an-address"},
+            )
+
+
+class TestExtractEmailAddress:
+    def test_angle_brackets(self):
+        from bigas.providers.email.outbound import extract_email_address
+
+        assert extract_email_address("Marcus Friman <mckort@gmail.com>") == "mckort@gmail.com"
+
+    def test_bare_address_after_name(self):
+        from bigas.providers.email.outbound import extract_email_address
+
+        assert extract_email_address("Marcus Friman mckort@gmail.com") == "mckort@gmail.com"
+
+    def test_empty(self):
+        from bigas.providers.email.outbound import extract_email_address
+
+        assert extract_email_address("") == ""

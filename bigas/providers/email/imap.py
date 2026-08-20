@@ -13,6 +13,7 @@ from typing import List, Optional
 from bs4 import BeautifulSoup
 
 from bigas.providers.email.base import EmailProvider, InboundEmail
+from bigas.providers.email.outbound import extract_email_address
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,8 @@ class ImapEmailProvider(EmailProvider):
                 msg = email.message_from_bytes(raw)
                 message_id = (msg.get("Message-ID") or f"uid-{uid}").strip()
                 sender = _decode_header_value(msg.get("From") or "")
+                reply_raw = _decode_header_value(msg.get("Reply-To") or "") or sender
+                reply_to = extract_email_address(reply_raw) or extract_email_address(sender)
                 subject = _decode_header_value(msg.get("Subject") or "(no subject)")
                 body = truncate_body(_extract_body(msg))
                 received_at: Optional[str] = None
@@ -165,6 +168,7 @@ class ImapEmailProvider(EmailProvider):
                         subject=subject,
                         body_text=body,
                         received_at=received_at,
+                        reply_to=reply_to or None,
                     )
                 )
 

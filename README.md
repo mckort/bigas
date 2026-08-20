@@ -223,10 +223,11 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `VITE_FIREBASE_AUTH_DOMAIN` | e.g. `your-project.firebaseapp.com`. **Required** in production (`/api/auth/config` has no fallback without the `VITE_` prefix) |
 | `VITE_FIREBASE_PROJECT_ID` | Same as `FIREBASE_PROJECT_ID`; Docker build-arg |
 | `BIGAS_CHAT_MODEL` | LLM model for chat / Chief of Staff (defaults to `LLM_MODEL`) |
-| `BIGAS_EMAIL_IMAP_SERVER` | IMAP host for Chief of Staff inbox (e.g. `imap.migadu.com` for Migadu) |
-| `BIGAS_EMAIL_USERNAME` | IMAP login (e.g. `cos@bigas.me`) |
-| `BIGAS_EMAIL_PASSWORD` | IMAP password |
-| `BIGAS_EMAIL_IMAP_PORT` | IMAP port (default `993`) |
+| `BIGAS_EMAIL_IMAP_SERVER` | IMAP host for Chief of Staff inbox (e.g. `imap.migadu.com` for Migadu). In production, load via Secret Manager. |
+| `BIGAS_EMAIL_USERNAME` | IMAP login (e.g. `cos@bigas.me`). In production, load via Secret Manager. |
+| `BIGAS_EMAIL_PASSWORD` | IMAP password. Store in Secret Manager; do not put it in Cloud Run env. |
+| `BIGAS_EMAIL_SMTP_SERVER` | SMTP host for sending COS replies (default `smtp.migadu.com`) |
+| `BIGAS_EMAIL_SMTP_PORT` | SMTP port (default `465`) |
 | `BIGAS_EMAIL_SYNC_USER_EMAIL` | Chat user email that receives overnight email triage (defaults to first `CHAT_ADMIN_EMAILS`) |
 | `BIGAS_EMAIL_MAX_BODY_CHARS` | Max plain-text email body passed to the COS LLM (default `8000`) |
 
@@ -543,9 +544,9 @@ All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales
 
 ### Email ingest with Cloud Scheduler
 
-The Chief of Staff can triage a dedicated inbox (e.g. `cos@bigas.me` on Migadu) via IMAP polling. Unread mail is summarized in the **Chief of Staff** chat thread with suggested actions you can approve or reject in the UI — nothing is sent or changed without your click.
+The Chief of Staff can triage a dedicated inbox (e.g. `cos@bigas.me` on Migadu) via IMAP polling. Unread mail is shown **verbatim** in the **Chief of Staff** chat thread. Suggested replies can be edited and sent from the UI (SMTP, same mailbox credentials) — nothing is sent without your click.
 
-Configure IMAP credentials (`BIGAS_EMAIL_IMAP_SERVER`, `BIGAS_EMAIL_USERNAME`, `BIGAS_EMAIL_PASSWORD`) and set `BIGAS_EMAIL_SYNC_USER_EMAIL` to the chat account that should receive triage (or rely on the first `CHAT_ADMIN_EMAILS` entry). That user must have signed into chat at least once so Firestore has their profile.
+Configure IMAP credentials (`BIGAS_EMAIL_IMAP_SERVER`, `BIGAS_EMAIL_USERNAME`, `BIGAS_EMAIL_PASSWORD`) in Secret Manager and add those names to `SECRET_MANAGER_SECRET_NAMES`. Set `BIGAS_EMAIL_SYNC_USER_EMAIL` to the chat account that should receive triage (or rely on the first `CHAT_ADMIN_EMAILS` entry). That user must have signed into chat at least once so Firestore has their profile.
 
 Recommended schedule: once per night before you start work (5:00 CET):
 
