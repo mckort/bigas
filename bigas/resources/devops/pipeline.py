@@ -166,6 +166,7 @@ def _handoff_failed_deploys(
     starting_ref: str = "main",
 ) -> None:
     if not thread_id or not repo or not failed_runs:
+        _complete_pipeline_progress(thread_id)
         return
 
     _post(
