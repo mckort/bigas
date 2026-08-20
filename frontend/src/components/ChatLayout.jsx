@@ -181,6 +181,7 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
   const meta = message.metadata || {}
+  const isHandoff = meta.type === 'handoff'
   const showResolved =
     meta.type === 'action_proposal' && meta.status && meta.status !== 'pending'
 
@@ -188,7 +189,9 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       {!isUser && (
         <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-white border border-border flex items-center justify-center shadow-soft">
-          {isSystem ? (
+          {isHandoff ? (
+            <span className="text-sm">📥</span>
+          ) : isSystem ? (
             <span className="text-sm">⏳</span>
           ) : (
             <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : 'text-lg'}>
@@ -201,9 +204,11 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
         className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-3 ${
           isUser
             ? 'bg-bigas-blue text-bigas-black shadow-soft'
-            : isSystem
-              ? 'bg-surface border border-border text-muted italic'
-              : 'bg-white border border-border text-text shadow-soft'
+            : isHandoff
+              ? 'bg-surface border border-border text-text'
+              : isSystem
+                ? 'bg-surface border border-border text-muted italic'
+                : 'bg-white border border-border text-text shadow-soft'
         }`}
       >
         <div className="markdown-body text-sm sm:text-base break-words">

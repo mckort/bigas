@@ -431,6 +431,86 @@ def _run_openai_tool_loop(
     return "I wasn't able to complete that request."
 
 
+def _agent_display_name(store, agent_id: Optional[str]) -> str:
+    aid = (agent_id or "").strip() or "agent"
+    agent = store.get_agent(aid) or {}
+    name = str(agent.get("name") or "").strip()
+    if name:
+        return name
+    return aid.replace("_", " ").title()
+
+
+def _resolve_delegation_threads(
+    store,
+    *,
+    source_thread_id: Optional[str],
+    specialist_id: str,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return (source_thread_id, specialist_thread_id, source_agent_id).
+
+    specialist_thread_id is only set when the handoff should be mirrored into
+    the receiving agent's own chat (i.e. source is a different agent).
+    """
+    if not source_thread_id:
+        return None, None, None
+    source = store.get_thread(source_thread_id)
+    if not source:
+        return source_thread_id, None, None
+    source_agent_id = source.get("agent_id") or "chief"
+    user_id = source.get("user_id")
+    if not user_id or source_agent_id == specialist_id:
+        return source_thread_id, None, source_agent_id
+    specialist = store.get_or_create_agent_thread(user_id, specialist_id)
+    specialist_thread_id = specialist.get("thread_id")
+    if not specialist_thread_id or specialist_thread_id == source_thread_id:
+        return source_thread_id, None, source_agent_id
+    return source_thread_id, specialist_thread_id, source_agent_id
+
+
+def _add_message_to_threads(
+    store,
+    thread_ids: List[Optional[str]],
+    *,
+    role: str,
+    content: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    seen = set()
+    for tid in thread_ids:
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        store.add_message(
+            tid,
+            role=role,
+            content=content,
+            metadata=dict(metadata) if metadata else None,
+        )
+
+
+def _post_specialist_handoff(
+    store,
+    *,
+    specialist_thread_id: str,
+    specialist_id: str,
+    source_thread_id: Optional[str],
+    source_agent_id: Optional[str],
+    task: str,
+) -> None:
+    from_name = _agent_display_name(store, source_agent_id or "chief")
+    store.add_message(
+        specialist_thread_id,
+        role="system",
+        content=f"📥 Delegated from {from_name}:\n\n{task}",
+        metadata={
+            "type": "handoff",
+            "from_agent_id": source_agent_id or "chief",
+            "source_thread_id": source_thread_id,
+            "agent_id": specialist_id,
+        },
+    )
+
+
 def run_specialist_task(
     agent_id: str,
     task: str,
@@ -441,13 +521,25 @@ def run_specialist_task(
     """Run a task on a specialist agent, optionally writing results to a thread."""
     store = get_chat_store()
     agent_config = store.get_agent(agent_id) or {"agent_id": agent_id, "system_prompt_goals": ""}
+    source_tid, specialist_tid, source_agent_id = _resolve_delegation_threads(
+        store, source_thread_id=thread_id, specialist_id=agent_id
+    )
+    result_threads = [tid for tid in (source_tid, specialist_tid) if tid]
 
     def _work() -> str:
         if agent_id == "devops":
             clear_stale_pending_deploy(task, thread_id)
             if should_run_deploy_pipeline(task, thread_id):
                 result = run_chat_deploy_pipeline(thread_id=thread_id, user_message=task)
-                return result.get("summary") or "Done."
+                summary = result.get("summary") or "Done."
+                if specialist_tid:
+                    store.add_message(
+                        specialist_tid,
+                        role="assistant",
+                        content=summary,
+                        metadata={"agent_id": agent_id, "delegated": True},
+                    )
+                return summary
         client = _mcp_client()
         tools = _filter_tools_for_agent(client.list_tools(), agent_id)
         _, tool_name, tool_args = _select_tool_via_llm(agent_id, agent_config, task, tools, [])
@@ -465,30 +557,50 @@ def run_specialist_task(
                 ],
                 temperature=0.4,
             )
-        if thread_id:
-            store.add_message(
-                thread_id,
+        if result_threads:
+            _add_message_to_threads(
+                store,
+                result_threads,
                 role="assistant",
                 content=result,
                 metadata={"agent_id": agent_id, "delegated": True},
             )
         return result
 
-    if async_mode and thread_id:
-        store.add_message(
-            thread_id,
-            role="system",
-            content=f"⏳ {agent_id.title()} agent is working on your request…",
-            metadata={"status": "in_progress", "agent_id": agent_id},
+    if specialist_tid:
+        _post_specialist_handoff(
+            store,
+            specialist_thread_id=specialist_tid,
+            specialist_id=agent_id,
+            source_thread_id=source_tid,
+            source_agent_id=source_agent_id,
+            task=task,
         )
+
+    if async_mode and thread_id:
+        if source_tid:
+            store.add_message(
+                source_tid,
+                role="system",
+                content=f"⏳ {_agent_display_name(store, agent_id)} is working on your request…",
+                metadata={"status": "in_progress", "agent_id": agent_id},
+            )
+        if specialist_tid:
+            store.add_message(
+                specialist_tid,
+                role="system",
+                content="⏳ Working on this request…",
+                metadata={"status": "in_progress", "agent_id": agent_id},
+            )
 
         def _bg():
             try:
                 _work()
             except Exception as e:
                 logger.exception("Async specialist task failed")
-                store.add_message(
-                    thread_id,
+                _add_message_to_threads(
+                    store,
+                    result_threads,
                     role="assistant",
                     content=f"Task failed: {e}",
                     metadata={"agent_id": agent_id, "error": True},
