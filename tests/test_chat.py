@@ -333,6 +333,79 @@ def test_cleanup_old_activity_endpoint():
     assert "fresh endpoint event" in contents
 
 
+def test_cleanup_old_activity_requires_access_key_in_restricted_mode():
+    from flask import Flask
+
+    from bigas.resources.chat.endpoints import chat_bp
+
+    app = Flask(__name__)
+    app.config["BIGAS_ACCESS_MODE"] = "restricted"
+    app.config["BIGAS_ACCESS_KEYS"] = {"scheduler-key"}
+    app.config["BIGAS_ACCESS_HEADER"] = "X-Bigas-Access-Key"
+    app.register_blueprint(chat_bp)
+    client = app.test_client()
+
+    denied = client.post("/mcp/tools/cleanup_old_activity", json={})
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        "/mcp/tools/cleanup_old_activity",
+        json={},
+        headers={"X-Bigas-Access-Key": "scheduler-key"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_cleanup_old_activity_deletes_all_eligible_batches(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from flask import Flask
+
+    from bigas.chat.db import MemoryChatStore
+    from bigas.resources.chat.endpoints import chat_bp
+
+    store = MemoryChatStore()
+    now = datetime.now(timezone.utc)
+    store._activity = [
+        {
+            "id": f"old-{i}",
+            "type": "test",
+            "content": f"stale {i}",
+            "source": "system",
+            "created_at": (now - timedelta(days=10)).isoformat(),
+        }
+        for i in range(3)
+    ]
+
+    monkeypatch.setattr(
+        "bigas.resources.chat.endpoints.get_chat_store",
+        lambda: store,
+    )
+
+    app = Flask(__name__)
+    app.register_blueprint(chat_bp)
+    resp = app.test_client().post(
+        "/mcp/tools/cleanup_old_activity",
+        json={"max_to_delete": 2},
+    )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["deleted"] == 3
+    assert store.list_activity(limit=100) == []
+
+
+def test_cleanup_old_activity_ignores_non_object_json():
+    from flask import Flask
+
+    from bigas.resources.chat.endpoints import chat_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(chat_bp)
+    resp = app.test_client().post("/mcp/tools/cleanup_old_activity", json=[])
+    assert resp.status_code == 200
+    assert resp.get_json()["keep_days"] == 7
+
+
 def test_manifest_includes_cleanup_old_activity():
     from bigas.resources.chat.endpoints import get_manifest
 

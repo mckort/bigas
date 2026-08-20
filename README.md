@@ -611,7 +611,7 @@ gcloud scheduler jobs create http bigas-website-monitor \
 
 ### Chat activity cleanup with Cloud Scheduler
 
-The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification. `cleanup_old_activity` deletes events older than 7 days (up to 500 per run). Recommended schedule: Monday 02:00 CET, before the work week starts.
+The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification. `cleanup_old_activity` deletes events older than 7 days in batches of up to 500 until none remain. Recommended schedule: Monday 02:00 CET, before the work week starts.
 
 ```bash
 gcloud scheduler jobs create http bigas-cleanup-chat-activity \
