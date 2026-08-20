@@ -170,6 +170,23 @@ class MemoryChatStore:
             thread["updated_at"] = _utcnow_iso()
             return dict(thread)
 
+    def patch_message(self, message_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            for messages in self._messages.values():
+                for message in messages:
+                    if message.get("message_id") != message_id:
+                        continue
+                    patch = dict(fields)
+                    if "metadata" in patch and isinstance(patch["metadata"], dict):
+                        message["metadata"] = {
+                            **(message.get("metadata") or {}),
+                            **patch["metadata"],
+                        }
+                        patch = {k: v for k, v in patch.items() if k != "metadata"}
+                    message.update(patch)
+                    return dict(message)
+        return None
+
     def add_message(
         self,
         thread_id: str,
@@ -310,9 +327,25 @@ class FirestoreChatStore:
         self._threads.document(thread_id).update({"updated_at": _utcnow_iso()})
 
     def patch_thread(self, thread_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        ref = self._threads.document(thread_id)
+        if not ref.get().exists:
+            return None
         payload = {**fields, "updated_at": _utcnow_iso()}
-        self._threads.document(thread_id).update(payload)
+        ref.update(payload)
         return self.get_thread(thread_id)
+
+    def patch_message(self, message_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        ref = self._messages.document(message_id)
+        snap = ref.get()
+        if not snap.exists:
+            return None
+        existing = snap.to_dict() or {}
+        payload = dict(fields)
+        if "metadata" in payload and isinstance(payload["metadata"], dict):
+            payload["metadata"] = {**(existing.get("metadata") or {}), **payload["metadata"]}
+        ref.update(payload)
+        updated = ref.get()
+        return updated.to_dict() if updated.exists else None
 
     def add_message(
         self,

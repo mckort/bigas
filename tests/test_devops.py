@@ -259,3 +259,36 @@ def test_check_deployment_risk_without_prod_version_does_not_compare_main_to_mai
     assert "main → main" not in result["summary"]
     assert "no production deploy version" in result["summary"].lower()
     assert fake.compared == []
+
+
+def test_latest_release_with_prefix_paginates(monkeypatch):
+    from bigas.resources.devops.github_actions import GitHubActionsClient
+
+    pages = [
+        [{"tag_name": f"other-{i}", "draft": False} for i in range(100)],
+        [{"tag_name": "deploy-web-20260819-120100-def5678", "draft": False}],
+    ]
+    calls = {"n": 0}
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            idx = calls["n"]
+            calls["n"] += 1
+            return pages[idx]
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        assert params.get("page") in (1, 2)
+        return _Resp()
+
+    monkeypatch.setattr("bigas.resources.devops.github_actions.requests.get", _fake_get)
+    client = GitHubActionsClient("test-token")
+    rel = client.latest_release_with_prefix("mckort", "vcfieldassistant", "deploy-web-")
+    assert rel is not None
+    assert rel["tag_name"].startswith("deploy-web-")
+    assert calls["n"] == 2

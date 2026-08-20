@@ -79,6 +79,19 @@ def _post(
     _store().add_message(thread_id, role=role, content=content.strip(), metadata=meta)
 
 
+def _complete_pipeline_progress(thread_id: Optional[str]) -> None:
+    """Mark pipeline progress messages complete so the UI can stop spinners."""
+    if not thread_id:
+        return
+    store = _store()
+    if not hasattr(store, "patch_message"):
+        return
+    for message in store.list_messages(thread_id):
+        meta = message.get("metadata") or {}
+        if meta.get("pipeline") and meta.get("status") == "in_progress":
+            store.patch_message(message["message_id"], metadata={"status": "complete"})
+
+
 def _pending(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
     if not thread_id:
         return None
@@ -91,6 +104,14 @@ def _set_pending(thread_id: Optional[str], payload: Optional[Dict[str, Any]]) ->
     if not thread_id or not hasattr(_store(), "patch_thread"):
         return
     _store().patch_thread(thread_id, pending_deploy=payload)
+
+
+def clear_stale_pending_deploy(user_message: str, thread_id: Optional[str] = None) -> None:
+    """Drop deploy confirmation state when the user sends an unrelated message."""
+    if should_run_deploy_pipeline(user_message, thread_id):
+        return
+    if _pending(thread_id):
+        _set_pending(thread_id, None)
 
 
 def should_run_deploy_pipeline(user_message: str, thread_id: Optional[str] = None) -> bool:
@@ -182,6 +203,7 @@ def _poll_runs_and_health(
     if health_lines:
         parts.append("Sajthälsa:")
         parts.extend(f"- {line}" for line in health_lines)
+    _complete_pipeline_progress(thread_id)
     _post(thread_id, "\n".join(parts))
 
 
@@ -195,6 +217,7 @@ def run_chat_deploy_pipeline(
     pending = _pending(thread_id)
     if pending and is_cancel(user_message):
         _set_pending(thread_id, None)
+        _complete_pipeline_progress(thread_id)
         _post(thread_id, "Avbröt deployen. Ingen workflow har startats.")
         return {"status": "complete", "summary": "Deploy cancelled."}
 
@@ -215,10 +238,12 @@ def run_chat_deploy_pipeline(
     try:
         risk = check_deployment_risk(project_key=key)
     except DevOpsError as e:
+        _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Pre-check misslyckades: {e}")
         return {"status": "complete", "summary": str(e)}
     except Exception as e:
         logger.exception("Pre-check failed")
+        _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Pre-check misslyckades: {e}")
         return {"status": "complete", "summary": str(e)}
 
@@ -227,6 +252,7 @@ def run_chat_deploy_pipeline(
     risk_level = (risk.get("risk_level") or "low").lower()
     needs_confirm = risk_level in ("high", "medium")
     if needs_confirm and not confirmed:
+        _complete_pipeline_progress(thread_id)
         _set_pending(
             thread_id,
             {"project_key": key, "risk_level": risk_level, "repo": risk.get("repo")},
@@ -247,10 +273,12 @@ def run_chat_deploy_pipeline(
     try:
         result = trigger_deployment(project_key=key)
     except DevOpsError as e:
+        _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Kunde inte starta deploy: {e}")
         return {"status": "complete", "summary": str(e)}
     except Exception as e:
         logger.exception("trigger_deployment failed")
+        _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Kunde inte starta deploy: {e}")
         return {"status": "complete", "summary": str(e)}
 
@@ -258,6 +286,7 @@ def run_chat_deploy_pipeline(
     triggered = result.get("triggered") or []
     if not triggered:
         errors = result.get("errors") or []
+        _complete_pipeline_progress(thread_id)
         _post(
             thread_id,
             "Ingen workflow startade."
@@ -271,6 +300,8 @@ def run_chat_deploy_pipeline(
         role="system",
         status="in_progress",
     )
+    # Background poll: daemon thread survives only while this Cloud Run instance lives.
+    # If the worker restarts or scales to zero, post-check may never run — ask for status again.
     if thread_id:
         threading.Thread(
             target=_poll_runs_and_health,

@@ -15,6 +15,7 @@ os.environ.setdefault("BIGAS_DEPLOY_WORKFLOW_MAP", "VFA:deploy-backend.yml,deplo
 
 from bigas.chat.db import get_chat_store
 from bigas.resources.devops.pipeline import (
+    clear_stale_pending_deploy,
     is_confirm,
     is_deploy_start,
     run_chat_deploy_pipeline,
@@ -177,3 +178,71 @@ def test_pipeline_asks_confirmation_on_high_risk(monkeypatch):
     confirmed = run_chat_deploy_pipeline(thread_id=thread["thread_id"], user_message="ja")
     assert confirmed["status"] == "in_progress"
     assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+
+
+def test_clear_stale_pending_on_unrelated_message(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    store.patch_thread(
+        thread["thread_id"],
+        pending_deploy={"project_key": "VFA", "risk_level": "high", "repo": "mckort/vcfieldassistant"},
+    )
+
+    assert should_run_deploy_pipeline("what is the status?", thread["thread_id"]) is False
+    clear_stale_pending_deploy("what is the status?", thread["thread_id"])
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+
+
+def test_pipeline_marks_in_progress_messages_complete(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+
+    monkeypatch.setattr("bigas.resources.devops.pipeline.threading.Thread", _ImmediateThread)
+    monkeypatch.setattr("bigas.resources.devops.pipeline.time.sleep", lambda *_: None)
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_deployment_risk",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Compared prod → main.",
+            "risk_level": "low",
+            "findings": {},
+            "repo": "mckort/vcfieldassistant",
+            "site_urls": [],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Triggered.",
+            "repo": "mckort/vcfieldassistant",
+            "triggered": [{"workflow": "deploy-backend.yml", "run_id": 1, "html_url": "https://x"}],
+            "errors": [],
+            "site_urls": [],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: {"workflow_status": "completed", "conclusion": "success", "html_url": "https://x"},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": "ok"},
+    )
+
+    run_chat_deploy_pipeline(thread_id=thread["thread_id"], user_message="deploya VFA")
+    messages = store.list_messages(thread["thread_id"])
+    progress = [
+        m
+        for m in messages
+        if (m.get("metadata") or {}).get("pipeline")
+        and (m.get("metadata") or {}).get("status") == "in_progress"
+    ]
+    assert progress == []
+    completed = [
+        m
+        for m in messages
+        if (m.get("metadata") or {}).get("pipeline")
+        and (m.get("metadata") or {}).get("status") == "complete"
+    ]
+    assert len(completed) >= 2
