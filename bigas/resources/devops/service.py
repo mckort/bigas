@@ -79,6 +79,11 @@ def _wait_for_new_workflow_run(
     return None
 
 
+def _collect_compare_files(compare: Dict[str, Any]) -> List[Dict[str, Any]]:
+    files = compare.get("files") or []
+    return files if isinstance(files, list) else []
+
+
 def check_deployment_risk(
     *,
     repo: Optional[str] = None,
@@ -106,14 +111,52 @@ def check_deployment_risk(
     client = _github_client(github_token)
     default_branch = client.get_default_branch(owner, name)
     head = (head_ref or default_branch).strip()
-    base = (base_ref or "").strip()
-    if not base:
-        base = client.get_latest_release_tag(owner, name) or default_branch
+    explicit_base = (base_ref or "").strip()
 
-    compare = client.compare_refs(owner, name, base, head)
-    files = compare.get("files") or []
-    if not isinstance(files, list):
-        files = []
+    backend_rel = client.latest_release_with_prefix(owner, name, "deploy-backend-")
+    web_rel = client.latest_release_with_prefix(owner, name, "deploy-web-")
+    prod_backend_tag = (backend_rel or {}).get("tag_name") if backend_rel else None
+    prod_web_tag = (web_rel or {}).get("tag_name") if web_rel else None
+
+    bases: List[tuple[str, str]] = []
+    if explicit_base:
+        bases.append(("explicit", explicit_base))
+    else:
+        if prod_backend_tag:
+            bases.append(("backend", str(prod_backend_tag)))
+        if prod_web_tag:
+            bases.append(("web", str(prod_web_tag)))
+        if not bases:
+            fallback = client.get_latest_release_tag(owner, name)
+            if fallback and fallback != head:
+                bases.append(("release", fallback))
+
+    files_by_name: Dict[str, Dict[str, Any]] = {}
+    compared: List[str] = []
+    compare_errors: List[str] = []
+    for _label, tag in bases:
+        if tag == head:
+            continue
+        try:
+            compare = client.compare_refs(owner, name, tag, head)
+        except GitHubActionsError as e:
+            compare_errors.append(f"{tag} → {head}: {e}")
+            continue
+        compared.append(f"{tag} → {head}")
+        for item in _collect_compare_files(compare):
+            if not isinstance(item, dict):
+                continue
+            filename = (item.get("filename") or "").strip()
+            if filename:
+                files_by_name[filename] = item
+
+    files = list(files_by_name.values())
+    if compared:
+        base_display = " + ".join(compared)
+    elif bases and all(tag == head for _label, tag in bases):
+        base_display = f"{head} → {head}"
+    else:
+        base_display = f"(no production version) → {head}"
 
     findings: Dict[str, List[str]] = {
         "database_migration": [],
@@ -148,34 +191,57 @@ def check_deployment_risk(
     if findings["other_risky"]:
         warnings.append(f"{len(findings['other_risky'])} other potentially risky file(s)")
 
+    if compare_errors:
+        warnings.extend(compare_errors)
+
     risk_level = "low"
     if migration_count or findings["infrastructure_config"]:
         risk_level = "high"
     elif findings["dependency_change"] or findings["other_risky"]:
         risk_level = "medium"
 
-    summary_parts = [
-        f"Compared {base} → {head} on {target.repo}.",
-        f"{len(files)} file(s) changed.",
-    ]
+    no_prod_version = not bases
+    version_bits = []
+    if prod_backend_tag:
+        version_bits.append(f"prod backend {prod_backend_tag}")
+    if prod_web_tag:
+        version_bits.append(f"prod web {prod_web_tag}")
+
+    summary_parts: List[str] = []
+    if version_bits:
+        summary_parts.append("Currently deployed: " + "; ".join(version_bits) + ".")
+    if no_prod_version:
+        summary_parts.append(
+            f"No production deploy version recorded yet for {target.repo}. "
+            f"Cannot compare live prod against {head}."
+        )
+        summary_parts.append("This would be the first versioned deploy.")
+    else:
+        summary_parts.append(f"Compared {base_display} on {target.repo}.")
+        summary_parts.append(f"{len(files)} file(s) changed.")
     if warnings:
         summary_parts.append("Warnings: " + "; ".join(warnings) + ".")
-    else:
+    elif not no_prod_version:
         summary_parts.append("No migration or critical config changes detected.")
     if risk_level != "low":
         summary_parts.append("Confirm with the user before deploying.")
+
+    base_ref_out = explicit_base or prod_backend_tag or prod_web_tag or (bases[0][1] if bases else None)
 
     return {
         "status": "ok",
         "summary": " ".join(summary_parts),
         "repo": target.repo,
         "project_key": target.project_key or None,
-        "base_ref": base,
+        "base_ref": base_ref_out,
         "head_ref": head,
+        "prod_backend_tag": prod_backend_tag,
+        "prod_web_tag": prod_web_tag,
         "total_files_changed": len(files),
         "risk_level": risk_level,
         "warnings": warnings,
         "findings": findings,
+        "no_prod_version": no_prod_version,
         "workflows_configured": target.workflows,
         "site_urls": target.site_urls,
     }

@@ -45,14 +45,37 @@ class _FakeGitHubClient:
     def __init__(self, *args, **kwargs):
         self._latest_run_ids: dict[str, int] = {}
         self._pending_new_runs: set[str] = set()
+        self.compared: list[tuple[str, str]] = []
 
     def get_default_branch(self, owner, repo):
         return "main"
 
     def get_latest_release_tag(self, owner, repo):
-        return "v1.0.0"
+        return None
+
+    def list_releases(self, owner, repo, *, limit=50):
+        return [
+            {
+                "tag_name": "deploy-backend-20260819-120000-abc1234",
+                "created_at": "2026-08-19T12:00:00Z",
+                "draft": False,
+            },
+            {
+                "tag_name": "deploy-web-20260819-120100-def5678",
+                "created_at": "2026-08-19T12:01:00Z",
+                "draft": False,
+            },
+        ]
+
+    def latest_release_with_prefix(self, owner, repo, prefix):
+        for rel in self.list_releases(owner, repo):
+            tag = rel.get("tag_name") or ""
+            if tag.startswith(prefix):
+                return rel
+        return None
 
     def compare_refs(self, owner, repo, base, head):
+        self.compared.append((base, head))
         return {
             "files": [
                 {"filename": "db/migrations/001_add_users.sql"},
@@ -114,6 +137,8 @@ def test_check_deployment_risk_flags_migrations(monkeypatch):
     assert result["risk_level"] in ("high", "medium")
     assert result["findings"]["database_migration"]
     assert "migration" in result["summary"].lower()
+    assert "deploy-backend-" in result["summary"]
+    assert "main → main" not in result["summary"]
 
 
 def test_trigger_deployment(monkeypatch):
@@ -209,3 +234,28 @@ def test_get_deployment_status_invalid_run_id(client):
     )
     assert resp.status_code == 400
     assert "integer" in resp.get_json()["error"].lower()
+
+
+class _NoProdGitHubClient(_FakeGitHubClient):
+    def list_releases(self, owner, repo, *, limit=50):
+        return []
+
+    def latest_release_with_prefix(self, owner, repo, prefix):
+        return None
+
+    def get_latest_release_tag(self, owner, repo):
+        return None
+
+
+def test_check_deployment_risk_without_prod_version_does_not_compare_main_to_main(monkeypatch):
+    fake = _NoProdGitHubClient()
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: fake,
+    )
+    result = check_deployment_risk(project_key="VFA")
+    assert result["no_prod_version"] is True
+    assert result["total_files_changed"] == 0
+    assert "main → main" not in result["summary"]
+    assert "no production deploy version" in result["summary"].lower()
+    assert fake.compared == []

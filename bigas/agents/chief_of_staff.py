@@ -18,6 +18,7 @@ from bigas.portfolio import (
     resolve_project,
     scrub_analytics_question,
 )
+from bigas.resources.devops.pipeline import run_chat_deploy_pipeline, should_run_deploy_pipeline
 from bigas.utils.mcp_client import MCPClient, MCPClientError
 
 logger = logging.getLogger(__name__)
@@ -438,6 +439,9 @@ def run_specialist_task(
     agent_config = store.get_agent(agent_id) or {"agent_id": agent_id, "system_prompt_goals": ""}
 
     def _work() -> str:
+        if agent_id == "devops" and should_run_deploy_pipeline(task, thread_id):
+            result = run_chat_deploy_pipeline(thread_id=thread_id, user_message=task)
+            return result.get("summary") or "Done."
         client = _mcp_client()
         tools = _filter_tools_for_agent(client.list_tools(), agent_id)
         _, tool_name, tool_args = _select_tool_via_llm(agent_id, agent_config, task, tools, [])
@@ -557,6 +561,15 @@ def handle_chat_message(
         return {"status": "in_progress"}
 
     # Direct specialist chat
+    if agent_id == "devops" and should_run_deploy_pipeline(user_message, thread_id):
+        result = run_chat_deploy_pipeline(thread_id=thread_id, user_message=user_message)
+        status = result.get("status") or "complete"
+        if status == "in_progress":
+            return {"status": "in_progress"}
+        last = store.list_messages(thread_id)
+        assistant = next((m for m in reversed(last) if m.get("role") == "assistant"), None)
+        return {"status": "complete", "message": assistant}
+
     client = _mcp_client()
     tools = _filter_tools_for_agent(client.list_tools(), agent_id)
     response_text, tool_name, tool_args = _select_tool_via_llm(

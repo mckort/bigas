@@ -59,6 +59,37 @@ class GitHubActionsClient:
         tag = (data.get("tag_name") or "").strip()
         return tag or None
 
+    def list_releases(self, owner: str, repo: str, *, limit: int = 50) -> List[Dict[str, Any]]:
+        url = f"https://api.github.com/repos/{owner}/{repo}/releases"
+        resp = requests.get(
+            url,
+            headers=self._headers,
+            params={"per_page": min(max(limit, 1), 100)},
+            timeout=30,
+        )
+        if resp.status_code == 404:
+            return []
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        data = resp.json() or []
+        return data if isinstance(data, list) else []
+
+    def latest_release_with_prefix(self, owner: str, repo: str, prefix: str) -> Optional[Dict[str, Any]]:
+        """Newest non-draft GitHub release whose tag starts with prefix (list is newest-first)."""
+        needle = (prefix or "").strip()
+        if not needle:
+            return None
+        for rel in self.list_releases(owner, repo, limit=50):
+            if not isinstance(rel, dict) or rel.get("draft"):
+                continue
+            tag = (rel.get("tag_name") or "").strip()
+            if tag.startswith(needle):
+                return rel
+        return None
+
     def compare_refs(self, owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
         url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
         resp = requests.get(url, headers=self._headers, timeout=60)
