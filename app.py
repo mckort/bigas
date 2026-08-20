@@ -179,6 +179,8 @@ def create_app():
 
     # Paths that should always remain public, even in restricted mode.
     # POST /mcp still checks the access key inside the handler.
+    from bigas.resources.chat.endpoints import BRAND_ICON_FILES
+
     public_paths = {"/health", "/mcp", "/mcp/manifest", "/mcp/providers", "/openapi.json", "/api/auth/config"}
 
     def _is_public_path(path: str) -> bool:
@@ -194,14 +196,7 @@ def create_app():
             or path.startswith("/api/auth/")
             or path.startswith("/assets/")
             or path.startswith("/.well-known/")
-            or path in {
-                "/favicon.ico",
-                "/favicon.png",
-                "/favicon-16x16.png",
-                "/favicon-32x32.png",
-                "/favicon-48x48.png",
-                "/apple-touch-icon.png",
-            }
+            or path.lstrip("/") in BRAND_ICON_FILES
         )
 
     @app.before_request

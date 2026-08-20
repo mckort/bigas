@@ -25,6 +25,7 @@ BRAND_ICON_FILES = {
     "favicon-32x32.png",
     "favicon-48x48.png",
     "apple-touch-icon.png",
+    "bigas-logo.png",
 }
 
 
@@ -205,8 +206,9 @@ def _send_brand_icon(filename: str):
 @chat_bp.route("/favicon-32x32.png")
 @chat_bp.route("/favicon-48x48.png")
 @chat_bp.route("/apple-touch-icon.png")
+@chat_bp.route("/bigas-logo.png")
 def serve_brand_icon():
-    """Serve tab/app icons from the Vite build, falling back to frontend/public."""
+    """Serve tab/app icons and the chat logo from the Vite build, falling back to frontend/public."""
     name = (request.path or "").lstrip("/")
     if name not in BRAND_ICON_FILES:
         return jsonify({"error": "Not found"}), 404
