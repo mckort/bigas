@@ -1,6 +1,26 @@
 import { useState } from 'react'
 
 const PREVIEW_LINES = 5
+const URL_RE = /(https?:\/\/[^\s<>"'`)\]},]+)/g
+
+function linkify(text) {
+  const parts = text.split(URL_RE)
+  return parts.map((part, i) =>
+    /^https?:\/\//.test(part) ? (
+      <a
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-accent hover:underline break-all"
+      >
+        {part}
+      </a>
+    ) : (
+      part
+    )
+  )
+}
 
 function CollapsibleContent({ content }) {
   const [expanded, setExpanded] = useState(false)
@@ -15,7 +35,7 @@ function CollapsibleContent({ content }) {
           !expanded && needsCollapse ? 'line-clamp-5' : ''
         }`}
       >
-        {text}
+        {linkify(text)}
       </p>
       {needsCollapse && (
         <button
