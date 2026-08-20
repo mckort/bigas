@@ -94,6 +94,42 @@ function lastMessageIsInProgress(messages) {
   return last.metadata?.status === 'in_progress'
 }
 
+function createClientMessageId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function messageSortKey(createdAt) {
+  if (createdAt == null) return ''
+  return typeof createdAt === 'string' ? createdAt : String(createdAt)
+}
+
+function mergePolledMessages(prev, incoming) {
+  const serverClientIds = new Set(
+    incoming
+      .filter((m) => m.role === 'user' && m.metadata?.client_id)
+      .map((m) => m.metadata.client_id),
+  )
+  const base = prev.filter(
+    (m) =>
+      !(
+        m.role === 'user' &&
+        String(m.message_id).startsWith('local-') &&
+        m.metadata?.client_id &&
+        serverClientIds.has(m.metadata.client_id)
+      ),
+  )
+  const byId = new Map(base.map((m) => [m.message_id, m]))
+  for (const m of incoming) {
+    byId.set(m.message_id, m)
+  }
+  return [...byId.values()].sort((a, b) =>
+    messageSortKey(a.created_at).localeCompare(messageSortKey(b.created_at)),
+  )
+}
+
 export default function ChatLayout({ user, onLogout }) {
   const [agents, setAgents] = useState([])
   const [activeAgentId, setActiveAgentId] = useState('chief')
@@ -228,19 +264,10 @@ export default function ChatLayout({ user, onLogout }) {
       try {
         const res = await fetchMessages(threadId, lastMsgTs.current || undefined)
         if (cancelled || !res.messages?.length) return
-        setMessages((prev) => {
-          const ids = new Set(prev.map((m) => m.message_id))
-          const merged = [...prev]
-          for (const m of res.messages) {
-            if (!ids.has(m.message_id)) merged.push(m)
-          }
-          merged.sort((a, b) => a.created_at.localeCompare(b.created_at))
-          return merged
-        })
+        setMessages((prev) => mergePolledMessages(prev, res.messages))
         const latest = res.messages[res.messages.length - 1]
         if (latest?.created_at) lastMsgTs.current = latest.created_at
-        const newest = res.messages[res.messages.length - 1]
-        if (newest?.role === 'assistant' && newest.metadata?.status !== 'in_progress') {
+        if (latest?.role === 'assistant' && latest.metadata?.status !== 'in_progress') {
           setWaitingForReply(false)
         }
       } catch {
@@ -304,15 +331,17 @@ export default function ChatLayout({ user, onLogout }) {
     setInput('')
     setSending(true)
     setWaitingForReply(true)
+    const clientId = createClientMessageId()
     const optimistic = {
-      message_id: `local-${Date.now()}`,
+      message_id: `local-${clientId}`,
       role: 'user',
       content: text,
       created_at: new Date().toISOString(),
+      metadata: { client_id: clientId },
     }
     setMessages((prev) => [...prev, optimistic])
     try {
-      const result = await sendMessage(threadId, text)
+      const result = await sendMessage(threadId, text, clientId)
       const res = await fetchMessages(threadId)
       const next = res.messages || []
       setMessages(next)

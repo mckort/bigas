@@ -109,6 +109,7 @@ def thread_messages(thread_id: str):
     content = (body.get("content") or "").strip()
     if not content:
         return jsonify({"error": "content is required"}), 400
+    client_id = (body.get("client_id") or "").strip() or None
 
     history_msgs = store.list_messages(thread_id)
     history = [
@@ -123,6 +124,7 @@ def thread_messages(thread_id: str):
             user_id=user_id,
             user_message=content,
             history=history,
+            client_id=client_id,
         )
         return jsonify(result)
     except Exception as e:

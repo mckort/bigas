@@ -496,6 +496,7 @@ def handle_chat_message(
     user_id: str,
     user_message: str,
     history: Optional[List[Dict[str, str]]] = None,
+    client_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Process a user message and return response metadata."""
     store = get_chat_store()
@@ -507,7 +508,8 @@ def handle_chat_message(
     agent_config = store.get_agent(agent_id) or {}
     history = history or []
 
-    store.add_message(thread_id, role="user", content=user_message)
+    user_metadata = {"client_id": client_id} if client_id else None
+    store.add_message(thread_id, role="user", content=user_message, metadata=user_metadata)
 
     if agent_id == "chief":
         llm, model = get_llm_client(feature="chat")
