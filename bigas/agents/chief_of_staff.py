@@ -20,6 +20,7 @@ from bigas.portfolio import (
 )
 from bigas.resources.devops.pipeline import (
     clear_stale_pending_deploy,
+    is_deploy_start,
     run_chat_deploy_pipeline,
     should_run_deploy_pipeline,
 )
@@ -142,6 +143,160 @@ DELEGATE_MAP = {
     "delegate_to_cto": "cto",
     "delegate_to_devops": "devops",
 }
+
+SPECIALIST_IDS = ("marketing", "product", "cto", "devops")
+
+SPECIALIST_CAPABILITIES = (
+    "Specialists (always delegate domain work to them — they have the tools and will reply here):\n"
+    "- marketing: GA4, ads (Google/Meta/LinkedIn/Reddit), trends, weekly/portfolio reports.\n"
+    "- product: Jira, release notes, progress updates, social drafts.\n"
+    "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, AI usage, monitoring.\n"
+    "- devops: production deploy via GitHub Actions (including manual trigger_deployment), "
+    "deploy status, site health, CI logs, hotfix PRs. vcfieldassistant/VFA is a DevOps deploy.\n"
+)
+
+# Read-only / quick lookups COS may run without a specialist handoff.
+CHIEF_DIRECT_TOOL_NAMES = {
+    "get_deployment_status",
+    "check_website_health",
+    "ask_analytics_question",
+    "get_latest_report",
+    "get_stored_reports",
+    "fetch_ai_usage",
+    "website_monitor",
+    "get_job_status",
+    "get_job_result",
+}
+
+# If COS tries to invoke these itself, rewrite to a real specialist handoff.
+MUST_DELEGATE_TOOLS = {
+    "trigger_deployment": "devops",
+    "check_deployment_risk": "devops",
+    "create_github_pr": "devops",
+    "github_workflow_run": "devops",
+    "fetch_github_action_logs": "devops",
+    "autofix_pr": "cto",
+    "autofix_followup": "cto",
+    "fix_failed_deployment": "cto",
+    "review_and_comment_pr": "cto",
+    "run_qa": "cto",
+    "create_release_notes": "product",
+    "progress_updates": "product",
+    "generate_weekly_x_post": "product",
+    "create_jira_issue": "product",
+    "jira_status_automation": "product",
+}
+
+def _resolve_delegate_target(raw: Optional[str]) -> Optional[str]:
+    compact = re.sub(r"[\s\-]+", "_", (raw or "").strip().lower())
+    if not compact:
+        return None
+    if compact in DELEGATE_MAP:
+        return DELEGATE_MAP[compact]
+    if compact.startswith("delegate_to_"):
+        compact = compact[len("delegate_to_") :]
+    if compact in SPECIALIST_IDS:
+        return compact
+    return None
+
+
+def _chief_direct_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    wanted = {name.lower() for name in CHIEF_DIRECT_TOOL_NAMES}
+    return [tool for tool in tools if (tool.get("name") or "").lower() in wanted]
+
+
+def _mcp_tool_to_openai_def(tool: Dict[str, Any]) -> Dict[str, Any]:
+    params = tool.get("parameters") or {"type": "object", "properties": {}}
+    if not isinstance(params, dict):
+        params = {"type": "object", "properties": {}}
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.get("name") or "tool",
+            "description": (tool.get("description") or "")[:300],
+            "parameters": params,
+        },
+    }
+
+
+def _chief_routing_extra(tool_summary: str) -> str:
+    return (
+        "You are the Chief of Staff in the Bigas chat UI. Answer general questions directly. "
+        "For marketing, product, engineering, or deployment tasks, delegate to the specialist "
+        "who owns that work.\n"
+        f"{SPECIALIST_CAPABILITIES}"
+        "Never say a specialist cannot do something listed above. Never 'virtually' delegate "
+        "or offer to build a tool that already exists — emit JSON so the specialist actually "
+        "receives the task and replies in this thread.\n"
+        "You MAY call a tool yourself only for a simple/quick lookup (live status, health, "
+        "a short analytics question). Do NOT trigger deploys, autofix, weekly reports, or "
+        "other specialist pipelines yourself.\n\n"
+        "If you should delegate, respond with ONLY:\n"
+        '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>"}\n'
+        "If you should call a simple tool, respond with ONLY:\n"
+        '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
+        "Include project_key when the user named a product, site, or Jira key. "
+        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url.\n"
+        "Otherwise respond with ONLY:\n"
+        '{"action":"answer","text":"<your reply>"}\n\n'
+        f"Tools you may call directly:\n{tool_summary or '(none — delegate instead)'}"
+    )
+
+
+def _specialist_json_extra(tool_summary: str) -> str:
+    return (
+        "You are responding in the Bigas chat interface. "
+        "If the user request requires calling a backend tool, respond with ONLY a JSON object:\n"
+        '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
+        "Include project_key when the user named a product, site, or Jira key. "
+        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
+        "(a github.com/.../pull/N link is enough). "
+        "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL.\n"
+        "Otherwise respond with ONLY:\n"
+        '{"action":"answer","text":"<your reply>"}\n\n'
+        f"Available tools:\n{tool_summary}"
+    )
+
+
+def _list_chief_mcp_tools() -> Tuple[Optional[MCPClient], List[Dict[str, Any]]]:
+    try:
+        client = _mcp_client()
+        return client, client.list_tools()
+    except Exception:
+        logger.exception("Failed to list MCP tools for Chief of Staff")
+        return None, []
+
+
+def _dispatch_chief_tool(
+    tool_name: Optional[str],
+    tool_args: Optional[Dict[str, Any]],
+    *,
+    user_message: str,
+    thread_id: str,
+    mcp_client: Optional[MCPClient],
+) -> Optional[str]:
+    """Run a COS tool call, rewriting specialist pipelines into a real handoff."""
+    if not tool_name:
+        return None
+    target = None
+    if tool_name.startswith("__delegate__:"):
+        target = _resolve_delegate_target(tool_name.split(":", 1)[1])
+    else:
+        target = DELEGATE_MAP.get(tool_name) or _resolve_delegate_target(tool_name)
+        if not target:
+            target = MUST_DELEGATE_TOOLS.get(tool_name) or MUST_DELEGATE_TOOLS.get(
+                (tool_name or "").strip().lower()
+            )
+    if target:
+        task = (tool_args or {}).get("task") or user_message
+        return run_specialist_task(target, task, thread_id=thread_id, async_mode=True)
+    if mcp_client:
+        return _run_tool_call(
+            mcp_client,
+            tool_name,
+            _enrich_tool_args(tool_name, tool_args or {}, user_message),
+        )
+    return f"I couldn't run {tool_name} (tools unavailable)."
 
 
 def _mcp_client() -> MCPClient:
@@ -336,19 +491,13 @@ def _select_tool_via_llm(
     history: List[Dict[str, str]],
 ) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
     """Returns (response_text, tool_name, tool_args) — tool fields set if a tool should run."""
-    llm, model = get_llm_client(feature="chat")
-    tool_summary = _tools_summary(tools)
+    llm, _model = get_llm_client(feature="chat")
+    prompt_tools = _chief_direct_tools(tools) if agent_id == "chief" else tools
+    tool_summary = _tools_summary(prompt_tools)
     extra = (
-        "You are responding in the Bigas chat interface. "
-        "If the user request requires calling a backend tool, respond with ONLY a JSON object:\n"
-        '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
-        "Include project_key when the user named a product, site, or Jira key. "
-        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
-        "(a github.com/.../pull/N link is enough). "
-        "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL.\n"
-        "Otherwise respond with ONLY:\n"
-        '{"action":"answer","text":"<your reply>"}\n\n'
-        f"Available tools:\n{tool_summary}"
+        _chief_routing_extra(tool_summary)
+        if agent_id == "chief"
+        else _specialist_json_extra(tool_summary)
     )
     system = _agent_system_prompt(agent_config, extra)
     messages = [{"role": "system", "content": system}]
@@ -367,8 +516,14 @@ def _select_tool_via_llm(
         return "", str(action.get("tool_name") or ""), action.get("arguments") or {}
 
     if action.get("action") == "delegate" and agent_id == "chief":
-        target = action.get("agent_id") or action.get("agent")
+        target = _resolve_delegate_target(action.get("agent_id") or action.get("agent"))
         task = action.get("task") or user_message
+        if not target:
+            return (
+                "I need a specialist to handle that (marketing, product, CTO, or DevOps).",
+                None,
+                None,
+            )
         return "", f"__delegate__:{target}", {"task": task}
 
     return raw.strip(), None, None
@@ -378,16 +533,24 @@ def _run_openai_tool_loop(
     llm,
     messages: List[Dict[str, Any]],
     thread_id: str,
+    *,
+    mcp_client: Optional[MCPClient] = None,
+    extra_tools: Optional[List[Dict[str, Any]]] = None,
+    user_message: str = "",
 ) -> str:
     """OpenAI function-calling loop for chief of staff."""
     if not hasattr(llm, "_client"):
         return "Tool delegation requires an OpenAI model."
 
+    openai_tools = list(DELEGATE_TOOL_DEFS)
+    if extra_tools:
+        openai_tools.extend(extra_tools)
+
     for _ in range(5):
         resp = llm._client.chat.completions.create(
             model=llm.model_name,
             messages=messages,
-            tools=DELEGATE_TOOL_DEFS,
+            tools=openai_tools,
             tool_choice="auto",
             temperature=0.3,
         )
@@ -416,16 +579,13 @@ def _run_openai_tool_loop(
                     args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                target = DELEGATE_MAP.get(fn)
-                if target:
-                    result = run_specialist_task(
-                        target,
-                        args.get("task") or "",
-                        thread_id=thread_id,
-                        async_mode=True,
-                    )
-                else:
-                    result = "Unknown delegation target."
+                result = _dispatch_chief_tool(
+                    fn,
+                    args,
+                    user_message=user_message,
+                    thread_id=thread_id,
+                    mcp_client=mcp_client,
+                ) or "Unknown tool."
                 messages.append(
                     {
                         "role": "tool",
@@ -641,38 +801,61 @@ def handle_chat_message(
     store.add_message(thread_id, role="user", content=user_message, metadata=user_metadata)
 
     if agent_id == "chief":
+        if is_deploy_start(user_message):
+            response_text = run_specialist_task(
+                "devops",
+                user_message,
+                thread_id=thread_id,
+                async_mode=True,
+            )
+            msg = store.add_message(
+                thread_id,
+                role="assistant",
+                content=response_text,
+                metadata={"agent_id": "chief", "delegated": True, "delegated_to": "devops"},
+            )
+            return {"status": "complete", "message": msg}
+
         llm, model = get_llm_client(feature="chat")
         system = _agent_system_prompt(
             agent_config,
             "You are the Chief of Staff in the Bigas chat UI. Answer general questions directly. "
-            "For marketing, product, engineering, or deployment tasks, delegate to the appropriate specialist. "
+            f"{SPECIALIST_CAPABILITIES}"
+            "Never say a specialist cannot do something listed above. Never 'virtually' delegate — "
+            "call the specialist so they receive the task and reply in this thread. "
+            "You may run a simple lookup yourself (status, health, a short analytics question) "
+            "but never trigger a production deploy — that is DevOps. "
             "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
         )
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
         messages.extend(history[-10:])
         messages.append({"role": "user", "content": user_message})
 
-        # Try OpenAI tool calling when available
+        mcp_client, all_tools = _list_chief_mcp_tools()
+        extra_openai = [_mcp_tool_to_openai_def(t) for t in _chief_direct_tools(all_tools)]
+
         if model.lower().startswith("gpt") and hasattr(llm, "_client"):
-            response_text = _run_openai_tool_loop(llm, messages, thread_id)
+            response_text = _run_openai_tool_loop(
+                llm,
+                messages,
+                thread_id,
+                mcp_client=mcp_client,
+                extra_tools=extra_openai,
+                user_message=user_message,
+            )
         else:
-            client = _mcp_client()
-            all_tools = client.list_tools()
             response_text, tool_name, tool_args = _select_tool_via_llm(
                 "chief", agent_config, user_message, all_tools, history
             )
-            if tool_name and tool_name.startswith("__delegate__:"):
-                target = tool_name.split(":", 1)[1]
-                response_text = run_specialist_task(
-                    target,
-                    (tool_args or {}).get("task") or user_message,
-                    thread_id=thread_id,
-                    async_mode=True,
-                )
-            elif tool_name:
-                response_text = _run_tool_call(
-                    client, tool_name, _enrich_tool_args(tool_name, tool_args or {}, user_message)
-                )
+            dispatched = _dispatch_chief_tool(
+                tool_name,
+                tool_args,
+                user_message=user_message,
+                thread_id=thread_id,
+                mcp_client=mcp_client,
+            )
+            if dispatched is not None:
+                response_text = dispatched
 
         if response_text:
             msg = store.add_message(
