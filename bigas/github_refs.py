@@ -18,6 +18,19 @@ CURSOR_AGENT_ID_RE = re.compile(
 )
 
 
+def format_pr_discord_line(pr_url: str, title: str = "") -> str:
+    """Discord/activity-feed line for a PR. Title becomes a markdown link when present."""
+    url = (pr_url or "").strip()
+    cleaned = " ".join((title or "").split())
+    if cleaned and url:
+        # Square brackets would break markdown links; keep the title readable.
+        safe = cleaned.replace("[", "(").replace("]", ")")
+        return f"[{safe}]({url})"
+    if url:
+        return f"PR: {url}"
+    return cleaned
+
+
 def is_owner_repo(value: Optional[str]) -> bool:
     repo = (value or "").strip()
     if repo.count("/") != 1:
