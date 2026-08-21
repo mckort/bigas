@@ -182,6 +182,9 @@ def test_manifest_includes_create_jira_issue():
     assert set(params["properties"]["issue_type"]["enum"]) == ALLOWED_ISSUE_TYPES
     assert "marketing" in tool["description"].lower()
     assert "every chat agent" in tool["description"].lower()
+    parent_desc = params["properties"]["parent_epic_key"]["description"].lower()
+    assert "omit" in parent_desc
+    assert "standalone" in parent_desc
 
 
 @pytest.fixture
@@ -311,3 +314,69 @@ def test_create_jira_issue_accepts_case_insensitive_issue_type(monkeypatch):
     )
     assert result["issue_type"] == "Bug"
     assert captured["issue_type"] == "Bug"
+
+
+def test_create_jira_issue_omits_invalid_parent_key(monkeypatch):
+    captured = {}
+
+    def fake_create_issue(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "key": "GPWW-10", "url": "https://x/browse/GPWW-10"}
+
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        create_issue = staticmethod(lambda **kw: fake_create_issue(**kw))
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraConfig",
+        type("C", (), {"from_env": staticmethod(lambda: object())})(),
+    )
+
+    result = CreateJiraIssueService().create(
+        project_key="GPWW",
+        summary="Fix tracking",
+        description="GA4 key events",
+        parent_epic_key="GPWW",
+    )
+    assert result["ok"] is True
+    assert "parent_epic_key" not in result
+    assert captured["parent_epic_key"] is None
+
+
+def test_create_jira_issue_passes_through_dropped_parent(monkeypatch):
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        def create_issue(self, **kwargs):
+            return {
+                "ok": True,
+                "key": "GPWW-11",
+                "url": "https://x/browse/GPWW-11",
+                "parent_dropped": True,
+            }
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraConfig",
+        type("C", (), {"from_env": staticmethod(lambda: object())})(),
+    )
+
+    result = CreateJiraIssueService().create(
+        project_key="GPWW",
+        summary="Fix tracking",
+        description="GA4 key events",
+        parent_epic_key="GPWW-9",
+    )
+    assert result["key"] == "GPWW-11"
+    assert "parent_epic_key" not in result
+    assert result["parent_dropped"] is True

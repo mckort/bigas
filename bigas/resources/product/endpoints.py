@@ -657,8 +657,9 @@ def get_manifest():
                         "parent_epic_key": {
                             "type": "string",
                             "description": (
-                                "Optional Epic key to link this Task/Bug as a child of a goal Epic "
-                                "(uses JIRA_EPIC_LINK_FIELD, default parent)."
+                                "Optional existing Epic key only (e.g. GPWW-2). "
+                                "Omit this field to create a standalone Task/Bug — that is the default. "
+                                "Do not pass a Task/Bug key or guess a parent."
                             ),
                         },
                     },

@@ -76,7 +76,7 @@ class CreateJiraIssueService:
                 description_markdown=body,
                 issue_type=itype,
                 labels=labels,
-                parent_epic_key=(str(parent_epic_key).strip() or None),
+                parent_epic_key=parent_epic_key,
             )
             out: Dict[str, Any] = {
                 "ok": True,
@@ -87,9 +87,10 @@ class CreateJiraIssueService:
             }
             if labels:
                 out["labels"] = labels
-            epic = (str(parent_epic_key).strip() or None)
-            if epic:
-                out["parent_epic_key"] = epic
+            if result.get("parent_dropped"):
+                out["parent_dropped"] = True
+            elif result.get("parent_epic_key"):
+                out["parent_epic_key"] = result.get("parent_epic_key")
             return out
         except JiraError as e:
             raise CreateJiraIssueError(_format_jira_error(e, project_key=proj)) from e
