@@ -1,8 +1,8 @@
 """
 LLM usage from Cloud Run / Cloud Logging ``llm_usage`` JSON lines.
 
-Covers Gemini, OpenAI, and future Claude calls that go through ``bigas.llm``
-and emit ``event: llm_usage`` structured logs.
+Covers Gemini, OpenAI, and future Claude calls that go through ``get_llm_client``
+(``LoggingLLMClient``) and emit ``event: llm_usage`` structured logs.
 """
 from __future__ import annotations
 

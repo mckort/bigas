@@ -389,6 +389,9 @@ def _run_openai_tool_loop(
             tool_choice="auto",
             temperature=0.3,
         )
+        record = getattr(llm, "record_openai_response", None)
+        if callable(record):
+            record(resp)
         msg = resp.choices[0].message
         if msg.tool_calls:
             messages.append(

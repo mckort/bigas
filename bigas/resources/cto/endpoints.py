@@ -1424,7 +1424,10 @@ def fetch_ai_usage_endpoint():
 @cto_bp.route("/weekly_cto_ai_report", methods=["POST"])
 def weekly_cto_ai_report():
     """
-    Weekly CTO AI cost summary from all active usage providers → Discord.
+    Weekly Bigas AI cost summary from all active usage providers → Discord.
+
+    Includes Cursor autofix plus every LLM feature that emits llm_usage
+    (chat, PR review, marketing, Jira, …).
 
     Request JSON:
       - days (int, default 7)
@@ -1441,7 +1444,7 @@ def weekly_cto_ai_report():
         data.get("post_to_discord")
     )
 
-    report = fetch_ai_usage(days=days, provider="all", feature_prefix="cto_")
+    report = fetch_ai_usage(days=days, provider="all", feature_prefix=None)
     message = format_weekly_cto_ai_report(report)
     if post_to_discord:
         _post_to_discord_cto(message)
@@ -1766,8 +1769,9 @@ def get_manifest():
             {
                 "name": "weekly_cto_ai_report",
                 "description": (
-                    "Weekly CTO AI cost summary across active usage providers "
-                    "(Cursor autofix + LLM reviews from Cloud Logging). "
+                    "Weekly Bigas AI cost summary across active usage providers "
+                    "(Cursor autofix + LLM usage from Cloud Logging: chat, "
+                    "PR review, marketing, and other features). "
                     "Posts to Discord by default — suitable for Cloud Scheduler."
                 ),
                 "path": "/mcp/tools/weekly_cto_ai_report",

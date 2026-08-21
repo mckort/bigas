@@ -213,9 +213,11 @@ def fetch_ai_usage(
 
     by_provider: Dict[str, float] = defaultdict(float)
     by_feature: Dict[str, float] = defaultdict(float)
+    activity_by_feature: Dict[str, int] = defaultdict(int)
     cost_total = 0.0
     cost_known = 0
     for ev in events:
+        activity_by_feature[ev.feature or "unknown"] += 1
         if ev.est_cost_usd is None:
             continue
         cost_total += float(ev.est_cost_usd)
@@ -245,6 +247,7 @@ def fetch_ai_usage(
             "events_with_cost": cost_known,
             "by_provider": {k: round(v, 6) for k, v in sorted(by_provider.items())},
             "by_feature": {k: round(v, 6) for k, v in sorted(by_feature.items())},
+            "activity_by_feature": dict(sorted(activity_by_feature.items())),
         },
         "top_prs": [{"pr_url": u, "est_cost_usd": round(c, 6)} for u, c in top_prs],
         "events": [e.as_dict() for e in events],
@@ -257,7 +260,7 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
     totals = report.get("totals") or {}
     est = totals.get("est_cost_usd")
     lines = [
-        f"**CTO AI usage (last {days} days)**",
+        f"**Bigas AI usage (last {days} days)**",
         (
             f"Estimated list-price total: ~${float(est):.4f}"
             if est is not None
@@ -276,14 +279,11 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         for name, cost in sorted(by_feature.items(), key=lambda kv: kv[1], reverse=True):
             lines.append(f"- {name}: ~${float(cost):.4f}")
 
-    # Accomplishments-ish: count autofix agents / review totals from events.
-    events = report.get("events") or []
-    autofix_n = sum(1 for e in events if e.get("feature") == "cto_autofix")
-    review_n = sum(1 for e in events if e.get("feature") == "cto_pr_review")
-    if autofix_n or review_n:
-        lines.append(
-            f"Activity: {autofix_n} Cursor autofix agent(s), {review_n} PR review total(s)"
-        )
+    activity_by_feature = totals.get("activity_by_feature") or {}
+    if activity_by_feature:
+        lines.append("LLM calls:")
+        for name, n in sorted(activity_by_feature.items(), key=lambda kv: kv[1], reverse=True):
+            lines.append(f"- {name}: {n}")
 
     top_prs = report.get("top_prs") or []
     if top_prs:
