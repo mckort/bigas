@@ -76,9 +76,14 @@ class WeeklyReportTests(unittest.TestCase):
             "days": 7,
             "totals": {
                 "est_cost_usd": 12.34,
-                "events": 3,
+                "events": 4,
                 "by_provider": {"cursor": 8.1, "llm_logs": 4.24},
                 "by_feature": {"cto_autofix": 8.1, "cto_pr_review": 4.24, "chat": 1.1},
+                "activity_by_feature": {
+                    "cto_autofix": 2,
+                    "cto_pr_review": 1,
+                    "chat": 1,
+                },
             },
             "events": [
                 {"feature": "cto_autofix"},
@@ -133,8 +138,24 @@ class FetchAiUsageTests(unittest.TestCase):
         )
         self.assertTrue(report["success"])
         self.assertEqual(report["totals"]["events"], 1)
+        self.assertEqual(report["totals"]["activity_by_feature"], {"cto_autofix": 1})
         self.assertEqual(report["totals"]["est_cost_usd"], 1.25)
         self.assertEqual(report["top_prs"][0]["pr_url"], "https://github.com/o/r/pull/9")
+
+    def test_weekly_report_uses_totals_not_truncated_events(self):
+        report = {
+            "days": 7,
+            "totals": {
+                "est_cost_usd": 5.0,
+                "events": 250,
+                "activity_by_feature": {"chat": 200, "cto_pr_review": 50},
+            },
+            "events": [{"feature": "chat"}] * 200,
+        }
+        msg = format_weekly_cto_ai_report(report)
+        self.assertIn("LLM calls:", msg)
+        self.assertIn("- chat: 200", msg)
+        self.assertIn("- cto_pr_review: 50", msg)
 
 
 class LlmLogsParseTests(unittest.TestCase):

@@ -213,9 +213,11 @@ def fetch_ai_usage(
 
     by_provider: Dict[str, float] = defaultdict(float)
     by_feature: Dict[str, float] = defaultdict(float)
+    activity_by_feature: Dict[str, int] = defaultdict(int)
     cost_total = 0.0
     cost_known = 0
     for ev in events:
+        activity_by_feature[ev.feature or "unknown"] += 1
         if ev.est_cost_usd is None:
             continue
         cost_total += float(ev.est_cost_usd)
@@ -245,6 +247,7 @@ def fetch_ai_usage(
             "events_with_cost": cost_known,
             "by_provider": {k: round(v, 6) for k, v in sorted(by_provider.items())},
             "by_feature": {k: round(v, 6) for k, v in sorted(by_feature.items())},
+            "activity_by_feature": dict(sorted(activity_by_feature.items())),
         },
         "top_prs": [{"pr_url": u, "est_cost_usd": round(c, 6)} for u, c in top_prs],
         "events": [e.as_dict() for e in events],
@@ -276,13 +279,10 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         for name, cost in sorted(by_feature.items(), key=lambda kv: kv[1], reverse=True):
             lines.append(f"- {name}: ~${float(cost):.4f}")
 
-    events = report.get("events") or []
-    feature_counts: Dict[str, int] = defaultdict(int)
-    for ev in events:
-        feature_counts[str(ev.get("feature") or "unknown")] += 1
-    if feature_counts:
-        lines.append("Activity:")
-        for name, n in sorted(feature_counts.items(), key=lambda kv: kv[1], reverse=True):
+    activity_by_feature = totals.get("activity_by_feature") or {}
+    if activity_by_feature:
+        lines.append("LLM calls:")
+        for name, n in sorted(activity_by_feature.items(), key=lambda kv: kv[1], reverse=True):
             lines.append(f"- {name}: {n}")
 
     top_prs = report.get("top_prs") or []

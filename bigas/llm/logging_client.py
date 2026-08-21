@@ -5,13 +5,14 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from bigas.llm.client import LLMClient
 from bigas.llm.completion import LLMCompletion
 from bigas.llm.usage import TokenUsage, usage_from_mapping, usage_log_payload
 
 logger = logging.getLogger(__name__)
 
 
-class LoggingLLMClient:
+class LoggingLLMClient(LLMClient):
     """
     Delegates to an inner LLMClient and logs list-price usage after each call.
 
@@ -101,3 +102,6 @@ class LoggingLLMClient:
             )
         except Exception:
             logger.warning("Failed to emit llm_usage log", exc_info=True)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)

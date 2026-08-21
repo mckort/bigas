@@ -38,7 +38,7 @@ List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) wh
 
 - `provider`: `all` | `cursor` | `llm_logs`
 - `feature_prefix`: optional filter (default `cto_`). Pass `""` / omit via weekly report for all features (`chat`, `marketing`, `cto_pr_review`, …).
-- Returns totals, per-provider / per-feature costs, top PRs (from Cursor agent names), and events (capped at 200 in the HTTP body).
+- Returns totals (including `activity_by_feature` LLM call counts), per-provider / per-feature costs, top PRs (from Cursor agent names), and events (capped at 200 in the HTTP body). Weekly Discord reports use `totals.activity_by_feature`, not the truncated events list.
 
 ### `POST /mcp/tools/weekly_cto_ai_report`
 

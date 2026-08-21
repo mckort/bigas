@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from bigas.llm.completion import LLMCompletion
 
 
+@runtime_checkable
 class LLMClient(Protocol):
     """
     Minimal provider-agnostic interface for chat-style LLMs.

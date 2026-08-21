@@ -7,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from bigas.llm.client import LLMClient
 from bigas.llm.completion import LLMCompletion
 from bigas.llm.factory import get_llm_client
 from bigas.llm.logging_client import LoggingLLMClient
@@ -141,12 +142,27 @@ class LoggingLLMClientTests(unittest.TestCase):
             text = client.complete([{"role": "user", "content": "hi"}])
         self.assertEqual(text, "hello")
 
+    def test_proxies_unknown_attributes(self):
+        inner = MagicMock()
+        inner.complete_detailed.return_value = LLMCompletion(text="ok", finish_reason="STOP")
+        inner.stream = MagicMock(return_value="streamed")
+        client = LoggingLLMClient(inner, feature="chat", model="gemini-2.5-flash")
+        self.assertIs(client.stream, inner.stream)
+        self.assertEqual(client.stream(), "streamed")
+
+    def test_is_llm_client_instance(self):
+        inner = MagicMock()
+        inner.complete_detailed.return_value = LLMCompletion(text="ok", finish_reason="STOP")
+        client = LoggingLLMClient(inner, feature="chat", model="gemini-2.5-flash")
+        self.assertIsInstance(client, LLMClient)
+
     @patch("bigas.llm.factory.GeminiLLMClient")
     @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False)
     def test_factory_wraps_client(self, mock_cls):
         mock_cls.return_value = MagicMock()
         client, model = get_llm_client(feature="chat", explicit_model="gemini-2.5-flash")
         self.assertIsInstance(client, LoggingLLMClient)
+        self.assertIsInstance(client, LLMClient)
         self.assertEqual(client._feature, "chat")
         self.assertEqual(model, "gemini-2.5-flash")
 
