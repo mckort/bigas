@@ -145,6 +145,7 @@ Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_r
 ### Product
 
 - **`CreateReleaseNotesService`**: Fetches Jira issues by Fix Version and generates customer-facing release notes + comms pack (blog, social drafts).
+- **`CreateJiraIssueService`**: MCP tool `create_jira_issue` — creates Task/Bug issues via shared `JiraClient` (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`). Returns issue key + browse URL. Optional `marketing=true` adds the Jira label `marketing` for marketing-related work.
 - **`ProgressUpdatesService`**: Jira issues moved to Done in a window → team progress “coach” message (e.g. to Discord).
 - **`XPostsService`**: last N days of git activity → LLM-filtered X draft stored in GCS (`x_drafts/`) → Discord Approve/Decline. Publishing uses the X notification provider (`bigas/providers/notifications/x.py`).
 
