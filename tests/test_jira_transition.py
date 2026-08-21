@@ -155,7 +155,7 @@ def test_jira_transition_endpoint_logs_activity(client, monkeypatch):
             include_transition_button=False,
         )
         mirror_to_activity_feed(
-            f"AI moved {link} to In Review",
+            f"Moved {link} to In Review",
             type_="jira",
             source="product",
         )
@@ -180,7 +180,7 @@ def test_jira_transition_endpoint_logs_activity(client, monkeypatch):
 
     feed = client.get("/api/feed", headers=_auth_headers())
     events = feed.get_json()["events"]
-    assert any("AI moved" in e["content"] and "In Review" in e["content"] for e in events)
+    assert any("Moved" in e["content"] and "In Review" in e["content"] for e in events)
     assert any(e.get("type") == "jira" for e in events)
 
 

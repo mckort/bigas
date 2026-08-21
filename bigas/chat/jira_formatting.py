@@ -17,10 +17,6 @@ Jira ticket formatting (mandatory):
 
 JIRA_AWARE_AGENT_IDS = frozenset({"chief", "product"})
 
-_BACKWARD_TRANSITION_KEYWORDS = frozenset(
-    {"back", "reopen", "undo", "previous", "return", "won't do", "wont do", "cancel"}
-)
-
 
 def jira_transition_action_markdown(issue_key: str) -> str:
     """Markdown action link rendered as a button in the chat UI."""

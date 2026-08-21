@@ -1,7 +1,10 @@
 """Move a Jira issue to the next workflow column (chat UI action)."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 from bigas.chat.activity import mirror_to_activity_feed
 from bigas.chat.jira_formatting import format_jira_issue_markdown
@@ -37,8 +40,11 @@ def transition_issue_to_next_column(issue_key: str) -> Dict[str, Any]:
         summary=summary,
         include_transition_button=False,
     )
-    activity_message = f"AI moved {link} to {new_status}"
-    mirror_to_activity_feed(activity_message, type_="jira", source="product")
+    activity_message = f"Moved {link} to {new_status}"
+    try:
+        mirror_to_activity_feed(activity_message, type_="jira", source="product")
+    except Exception:
+        logger.exception("Failed to mirror Jira transition to activity feed")
 
     return {
         "success": True,

@@ -67,6 +67,9 @@ function JiraTransitionButton({ issueKey, label }) {
     setState('loading')
     try {
       const result = await transitionJiraIssue(issueKey)
+      if (result.error || result.success === false) {
+        throw new Error(result.error || 'Failed to move issue')
+      }
       setStatusLabel(result.new_status || '')
       setState('success')
     } catch (err) {
@@ -80,7 +83,7 @@ function JiraTransitionButton({ issueKey, label }) {
   if (state === 'success') text = statusLabel ? `Moved to ${statusLabel}` : 'Moved'
 
   return (
-    <div className="mt-2">
+    <span className="inline-block mt-2">
       <button
         type="button"
         onClick={handleClick}
@@ -89,7 +92,7 @@ function JiraTransitionButton({ issueKey, label }) {
       >
         {text}
       </button>
-    </div>
+    </span>
   )
 }
 
