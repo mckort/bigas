@@ -4,10 +4,12 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
-# Appended to Chief of Staff and Product Manager system prompts at runtime.
+# Appended to every chat agent system prompt at runtime.
 JIRA_FORMATTING_RULES = """
 Jira ticket formatting (mandatory):
 - Always respond in English. Never use Swedish or any other language.
+- When you should file work in Jira, call create_jira_issue yourself (Task or Bug only — never Epics). Never tell the user to create the issue in Jira.
+- Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true. Use parent_epic_key to link a Task/Bug to an existing goal Epic.
 - When creating or referencing a Jira ticket, include the ticket title and a clickable Markdown link: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`.
 - Never output raw JSON or HTML to the user.
 - When discussing a Jira ticket, always provide a button to move it to the next workflow column by outputting this exact markdown on its own line:
@@ -15,7 +17,7 @@ Jira ticket formatting (mandatory):
   Replace TICKET-KEY with the actual issue key (e.g. BIG-13).
 """.strip()
 
-JIRA_AWARE_AGENT_IDS = frozenset({"chief", "product"})
+JIRA_AWARE_AGENT_IDS = frozenset({"chief", "marketing", "product", "cto", "devops"})
 
 
 def jira_transition_action_markdown(issue_key: str) -> str:

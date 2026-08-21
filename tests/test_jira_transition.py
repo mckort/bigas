@@ -83,8 +83,21 @@ def test_humanize_tool_result_prefers_jira_markdown():
 
 
 def test_jira_formatting_rules_require_english():
+    from bigas.agents.chief_of_staff import _agent_system_prompt
+    from bigas.chat.jira_formatting import JIRA_AWARE_AGENT_IDS
+
     assert "Always respond in English" in JIRA_FORMATTING_RULES
     assert "Never output raw JSON or HTML" in JIRA_FORMATTING_RULES
+    assert "create_jira_issue" in JIRA_FORMATTING_RULES
+    assert "Never tell the user to create the issue in Jira" in JIRA_FORMATTING_RULES
+    assert JIRA_AWARE_AGENT_IDS == frozenset(
+        {"chief", "marketing", "product", "cto", "devops"}
+    )
+    prompt = _agent_system_prompt(
+        {"agent_id": "marketing", "system_prompt_goals": "GA4 analyst."}
+    )
+    assert "create_jira_issue" in prompt
+    assert "Never tell the user to create the issue in Jira" in prompt
 
 
 def test_transition_issue_to_next_skips_backward(monkeypatch):

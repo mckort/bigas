@@ -574,10 +574,85 @@ def test_chief_direct_tools_exclude_deploy_trigger():
                 {"name": "get_deployment_status", "description": "status"},
                 {"name": "fetch_analytics_report", "description": "ga4"},
                 {"name": "check_website_health", "description": "ping"},
+                {"name": "create_jira_issue", "description": "file a ticket"},
             ]
         )
     }
-    assert names == {"get_deployment_status", "check_website_health"}
+    assert names == {"get_deployment_status", "check_website_health", "create_jira_issue"}
+
+
+def test_create_jira_issue_is_shared_across_agents():
+    from bigas.agents.chief_of_staff import (
+        CHIEF_DIRECT_TOOL_NAMES,
+        MUST_DELEGATE_TOOLS,
+        SHARED_AGENT_TOOLS,
+        _filter_tools_for_agent,
+    )
+
+    assert "create_jira_issue" in SHARED_AGENT_TOOLS
+    assert "create_jira_issue" in CHIEF_DIRECT_TOOL_NAMES
+    assert "create_jira_issue" not in MUST_DELEGATE_TOOLS
+
+    catalog = [
+        {"name": "fetch_analytics_report", "description": "ga4"},
+        {"name": "create_jira_issue", "description": "file a ticket"},
+        {"name": "create_release_notes", "description": "notes"},
+        {"name": "review_and_comment_pr", "description": "review"},
+        {"name": "trigger_deployment", "description": "deploy"},
+    ]
+    for agent_id in ("marketing", "product", "cto", "devops"):
+        names = [t["name"] for t in _filter_tools_for_agent(catalog, agent_id)]
+        assert names[0] == "create_jira_issue", agent_id
+        assert "create_jira_issue" in names
+
+
+def test_dispatch_chief_tool_allows_create_jira_issue():
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    called = {}
+
+    class FakeMcp:
+        def call_tool(self, name, args):
+            called["name"] = name
+            called["args"] = args
+            payload = {
+                "ok": True,
+                "key": "GPWW-9",
+                "url": "https://example.atlassian.net/browse/GPWW-9",
+                "summary": "Fix tracking",
+            }
+            return {"is_error": False, "text": "", "structured": payload}
+
+    result = _dispatch_chief_tool(
+        "create_jira_issue",
+        {"project_key": "GPWW", "summary": "Fix tracking", "description": "GA4 key events"},
+        user_message="create a GPWW ticket for tracking",
+        thread_id="thread-1",
+        mcp_client=FakeMcp(),
+    )
+    assert called["name"] == "create_jira_issue"
+    assert called["args"]["project_key"] == "GPWW"
+    assert "GPWW-9" in (result or "")
+
+
+def test_enrich_create_jira_issue_sets_marketing_for_marketing_agent():
+    from bigas.agents.chief_of_staff import _enrich_tool_args
+
+    args = _enrich_tool_args(
+        "create_jira_issue",
+        {"project_key": "GPWW", "summary": "CTA", "description": "Fix homepage CTA"},
+        "create a GPWW ticket",
+        caller_agent_id="marketing",
+    )
+    assert args["marketing"] is True
+
+    product_args = _enrich_tool_args(
+        "create_jira_issue",
+        {"project_key": "GPWW", "summary": "CTA", "description": "Fix homepage CTA"},
+        "create a GPWW ticket",
+        caller_agent_id="product",
+    )
+    assert "marketing" not in product_args
 
 
 def test_dispatch_chief_tool_rejects_unauthorized_tool():

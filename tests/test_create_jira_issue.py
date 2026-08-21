@@ -181,6 +181,7 @@ def test_manifest_includes_create_jira_issue():
     assert params["properties"]["issue_type"]["default"] == "Task"
     assert set(params["properties"]["issue_type"]["enum"]) == ALLOWED_ISSUE_TYPES
     assert "marketing" in tool["description"].lower()
+    assert "every chat agent" in tool["description"].lower()
 
 
 @pytest.fixture
