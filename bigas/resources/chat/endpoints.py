@@ -10,13 +10,14 @@ from flask import Blueprint, g, jsonify, request, send_from_directory
 from bigas.access import require_bigas_access_key
 from bigas.agents.chief_of_staff import handle_chat_message, post_agent_callback
 from bigas.agents.proactive_engine import ProactiveGoalEngineError, run_evaluation_loop
+from bigas.agents.task_runtime import tick_all_open_tasks, tick_thread
 from bigas.chat.auth import is_chat_admin, require_chat_auth, verify_callback_secret
 from bigas.chat.db import (
     DEFAULT_ACTIVITY_KEEP_DAYS,
     DEFAULT_ACTIVITY_MAX_DELETE,
     get_chat_store,
 )
-from bigas.resources.devops.pipeline import poll_deploy_postcheck
+from bigas.chat.tasks import thread_has_open_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +112,14 @@ def thread_messages(thread_id: str):
     if request.method == "GET":
         since = request.args.get("since")
         messages = store.list_messages(thread_id, since=since)
+        task_poll_active = thread_has_open_tasks(thread_id)
         thread_data = store.get_thread(thread_id) or {}
-        deploy_poll_active = bool(thread_data.get("pending_deploy_poll"))
-        return jsonify({"messages": messages, "deploy_poll_active": deploy_poll_active})
+        deploy_poll_active = task_poll_active or bool(thread_data.get("pending_deploy_poll"))
+        return jsonify({
+            "messages": messages,
+            "deploy_poll_active": deploy_poll_active,
+            "task_poll_active": task_poll_active,
+        })
 
     body = request.get_json(silent=True) or {}
     content = (body.get("content") or "").strip()
@@ -142,22 +148,33 @@ def thread_messages(thread_id: str):
         return jsonify({"error": str(e)}), 500
 
 
+@chat_bp.route("/api/chat/threads/<thread_id>/tasks/tick", methods=["POST"])
 @chat_bp.route("/api/chat/threads/<thread_id>/deploy-poll", methods=["POST"])
 @require_chat_auth
-def deploy_poll(thread_id: str):
-    """Client-driven poll step for DevOps deploy post-check (GitHub Actions + health)."""
+def thread_task_tick(thread_id: str):
+    """Advance open agent tasks for this thread (deploy poll, nudges, completion)."""
     store = get_chat_store()
     user_id = g.chat_user["uid"]
     thread = store.get_thread(thread_id)
     if not thread or thread.get("user_id") != user_id:
         return jsonify({"error": "Thread not found"}), 404
     try:
-        result = poll_deploy_postcheck(thread_id)
+        result = tick_thread(thread_id)
         messages = store.list_messages(thread_id)
-        return jsonify({**result, "messages": messages})
+        return jsonify({**result, "messages": messages, "task_poll_active": result.get("active")})
     except Exception as e:
-        logger.exception("Deploy post-check poll failed")
+        logger.exception("Task tick failed")
         return jsonify({"error": str(e)}), 500
+
+
+@chat_bp.route("/api/agents/tick-tasks", methods=["POST"])
+def tick_tasks():
+    """Scheduler webhook: nudge overdue tasks and advance deploy polls (Cloud Run safe)."""
+    try:
+        return jsonify(tick_all_open_tasks())
+    except Exception:
+        logger.exception("tick-tasks failed")
+        return jsonify({"ok": False, "error": "Internal error"}), 500
 
 
 @chat_bp.route("/api/chat/callback", methods=["POST"])
@@ -169,9 +186,20 @@ def chat_callback():
     thread_id = (body.get("thread_id") or "").strip()
     content = (body.get("content") or "").strip()
     agent_id = (body.get("agent_id") or "system").strip()
-    if not thread_id or not content:
-        return jsonify({"error": "thread_id and content are required"}), 400
-    message = post_agent_callback(thread_id, content, agent_id=agent_id)
+    task_id = (body.get("task_id") or "").strip() or None
+    final = bool(body.get("final") or body.get("complete"))
+    if (not thread_id and not task_id) or not content:
+        return jsonify({"error": "content and thread_id or task_id are required"}), 400
+    if not thread_id and task_id:
+        from bigas.chat.tasks import get_task
+
+        task = get_task(task_id) or {}
+        thread_id = task.get("source_thread_id") or ""
+        if not thread_id:
+            return jsonify({"error": "thread_id is required when task has no source thread"}), 400
+    message = post_agent_callback(
+        thread_id, content, agent_id=agent_id, task_id=task_id, final=final
+    )
     return jsonify({"message": message})
 
 

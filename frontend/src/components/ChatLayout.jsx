@@ -339,10 +339,14 @@ function lastMessageIsInProgress(messages) {
 
 const DEPLOY_POLL_INTERVAL_MS = 20000
 
+function isTaskPollActive(res) {
+  return Boolean(res?.deploy_poll_active || res?.task_poll_active)
+}
+
 function applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res) {
   const next = res.messages || []
   setMessages(next)
-  if (res.deploy_poll_active) {
+  if (isTaskPollActive(res)) {
     setDeployPollActive(true)
     setWaitingForReply(true)
   }
@@ -623,7 +627,7 @@ export default function ChatLayout({ user, onLogout }) {
             return {
               candidate,
               msgs: msgRes.messages || [],
-              deployPollActive: Boolean(msgRes.deploy_poll_active),
+              deployPollActive: Boolean(msgRes.deploy_poll_active || msgRes.task_poll_active),
               ok: true,
             }
           } catch {
@@ -694,7 +698,7 @@ export default function ChatLayout({ user, onLogout }) {
       if (cancelled?.()) return
       const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, msgRes)
       if (next.length) lastMsgTs.current = next[next.length - 1].created_at
-      if (!msgRes.deploy_poll_active) {
+      if (!isTaskPollActive(msgRes)) {
         setWaitingForReply(lastMessageIsInProgress(next))
       }
     } catch {
@@ -820,15 +824,15 @@ export default function ChatLayout({ user, onLogout }) {
       try {
         const res = await fetchMessages(threadId, lastMsgTs.current || undefined)
         if (cancelled || !res.messages?.length) {
-          if (!cancelled && res.deploy_poll_active) setDeployPollActive(true)
+          if (!cancelled && isTaskPollActive(res)) setDeployPollActive(true)
           return
         }
         setMessages((prev) => mergePolledMessages(prev, res.messages))
-        if (res.deploy_poll_active) setDeployPollActive(true)
+        if (isTaskPollActive(res)) setDeployPollActive(true)
         const latest = res.messages[res.messages.length - 1]
         if (latest?.created_at) lastMsgTs.current = latest.created_at
         if (latest?.role === 'assistant' && latest.metadata?.status !== 'in_progress') {
-          if (!res.deploy_poll_active) setWaitingForReply(false)
+          if (!isTaskPollActive(res)) setWaitingForReply(false)
         }
       } catch {
         /* ignore poll errors */
@@ -948,12 +952,12 @@ export default function ChatLayout({ user, onLogout }) {
       if (next.length) {
         lastMsgTs.current = next[next.length - 1].created_at
       }
-      if (result.deploy_poll_active) {
+      if (isTaskPollActive(result) || isTaskPollActive(res)) {
         setDeployPollActive(true)
         setWaitingForReply(true)
       } else {
         const done =
-          result.status !== 'in_progress' && !lastMessageIsInProgress(next) && !res.deploy_poll_active
+          result.status !== 'in_progress' && !lastMessageIsInProgress(next) && !isTaskPollActive(res)
         if (done) setWaitingForReply(false)
       }
     } catch (err) {

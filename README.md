@@ -404,7 +404,7 @@ This is the flow that makes the **DevOps** specialist work: you ask in chat, Big
 
 Think of three layers:
 
-1. **Chat is the remote control.** You talk to **DevOps** (or **Chief of Staff**, who delegates). Bigas does not run `gcloud` or `firebase` itself. It (a) diffs git for risky files (migrations, lockfiles, deploy config), (b) tells GitHub “run these workflows on `main`”, (c) HTTP-checks the live URL when you ask for status later.
+1. **Chat is the remote control.** You talk to **DevOps** (or **Chief of Staff**, who delegates). Bigas does not run `gcloud` or `firebase` itself. It (a) diffs git for risky files (migrations, lockfiles, deploy config), (b) tells GitHub “run these workflows on `main`”, (c) HTTP-checks the live URL when you ask for status later. Progress (pre-check, trigger, post-check) is posted in the chat you asked from; if COS delegated, the same updates also appear in the DevOps thread. COS does not run an LLM on those status lines — only on a specialist `final` result when the delegator set `review_result=true`.
 2. **GitHub Actions is the workshop.** Target repos need workflow files with `on: workflow_dispatch` (manual/API start, not only on push). For VC Field Assistant that is `deploy-backend.yml` and `deploy-web.yml`, which wrap `deploy-vcfieldassistant-backend.sh` and `deploy-vcfieldassistant-web.sh`. A GitHub-hosted runner checks out the repo, logs into GCP, writes env files from GitHub secrets, and executes those scripts — Docker build + Cloud Run for the API/worker, Vite + Firebase Hosting for the web app.
 3. **Three identities, three jobs.** Your **`GITHUB_TOKEN`** in Bigas only needs Actions write so it can *press the button*. A dedicated GCP deploy service account (GitHub OIDC / Workload Identity — no JSON key in secrets) is allowed to push images and `gcloud run deploy`. The **runtime** service account is still what the app uses in production; the deploy account may impersonate it only while deploying.
 
@@ -543,12 +543,14 @@ The login page has no “create account” button, but that is not enough on its
 | `PUT /api/agents/<id>` | Update agent name and goals |
 | `POST /api/chat/threads` | Create thread (`agent_id`: chief, marketing, product, cto, devops) |
 | `GET /api/chat/threads` | List the user's threads (`last_incoming_at` / `last_message_role` used for unread dots) |
-| `GET/POST /api/chat/threads/<id>/messages` | Fetch history / send message (poll GET for async results) |
-| `POST /api/chat/callback` | Sub-agents report async completion (`X-Bigas-Chat-Callback` header) |
+| `GET/POST /api/chat/threads/<id>/messages` | Fetch history / send message (poll GET for async results; `task_poll_active` when an agent task is open) |
+| `POST /api/chat/threads/<id>/tasks/tick` | Advance open tasks for the thread (deploy post-check, 5‑min nudge). Alias: `/deploy-poll` |
+| `POST /api/agents/tick-tasks` | Scheduler tick of all open tasks (same auth as evaluate-goals) |
+| `POST /api/chat/callback` | Sub-agents report status or completion (`X-Bigas-Chat-Callback`; `task_id`, `final`) |
 | `GET /api/feed` | Activity feed (Discord mirror) |
 | `POST /mcp/tools/cleanup_old_activity` | Delete activity events older than 7 days (Cloud Scheduler) |
 
-Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_id}` when a delegated task finishes asynchronously.
+Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_id, task_id, final}` when a delegated task has a status update (`final: false`) or is done (`final: true`).
 
 ---
 
@@ -682,6 +684,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Bigas AI usage | `0 9 * * 1` | `.../weekly_cto_ai_report` |
 | Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
 | Proactive goal evaluation | `0 23 * * 0` | `.../api/agents/evaluate-goals` |
+| Agent task tick (nudge / deploy poll) | `* * * * *` | `.../api/agents/tick-tasks` |
 
 All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
 
@@ -721,6 +724,19 @@ gcloud scheduler jobs create http bigas-evaluate-goals \
 Returns **200 OK** with the full evaluation result. Runs synchronously so Cloud Run keeps CPU allocated for the duration (Cloud Run timeout is 900s). `0 23 * * 0` = Sunday 23:00 Europe/Stockholm.
 
 Cloud Scheduler must send `X-Bigas-Access-Key` or `Authorization: Bearer` with a configured `BIGAS_ACCESS_KEY`. Existing jobs that still send `Authorization: Bearer <CRON_SECRET>` continue to work when `CRON_SECRET` is set.
+
+Open agent tasks (deploy post-check and a one-shot 5-minute nudge) are advanced by the chat UI every ~20s and by:
+
+```bash
+gcloud scheduler jobs create http bigas-tick-tasks \
+  --location=europe-west1 \
+  --schedule="* * * * *" \
+  --time-zone="Europe/Stockholm" \
+  --uri="https://YOUR-SERVICE-URL.a.run.app/api/agents/tick-tasks" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
+  --attempt-deadline=120s
+```
 
 ### Email ingest with Cloud Scheduler
 

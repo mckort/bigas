@@ -193,7 +193,7 @@ def create_app():
 
     def _is_public_path(path: str) -> bool:
         # Scheduler webhook: same X-Bigas-Access-Key as other cron jobs.
-        if path.rstrip("/") == "/api/agents/evaluate-goals":
+        if path.rstrip("/") in ("/api/agents/evaluate-goals", "/api/agents/tick-tasks"):
             return False
         return (
             path in public_paths
@@ -217,7 +217,7 @@ def create_app():
         The key is expected in the configured HTTP header. If missing or invalid,
         the request is rejected before handlers run.
         """
-        if request.path.rstrip("/") == "/api/agents/evaluate-goals":
+        if request.path.rstrip("/") in ("/api/agents/evaluate-goals", "/api/agents/tick-tasks"):
             from bigas.access import verify_evaluate_goals_webhook_auth
 
             err = verify_evaluate_goals_webhook_auth()

@@ -99,12 +99,15 @@ def test_pipeline_posts_precheck_then_triggers(monkeypatch):
     assert triggered["called"] is True
     assert result["status"] == "in_progress"
     assert result.get("deploy_poll_active") is True
-    poll = store.get_thread(thread["thread_id"]).get("pending_deploy_poll")
-    assert poll and poll.get("triggered")
+    from bigas.chat.tasks import get_open_task_for_thread, get_task, is_terminal
+
+    task = get_open_task_for_thread(thread["thread_id"], kind="deploy")
+    assert task and (task.get("metadata") or {}).get("poll", {}).get("triggered")
 
     poll_result = poll_deploy_postcheck(thread["thread_id"])
     assert poll_result["status"] == "complete"
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy_poll") is None
+    finished = get_task(task["task_id"])
+    assert finished and is_terminal(finished)
 
     contents = [m["content"] for m in store.list_messages(thread["thread_id"])]
     blob = "\n".join(contents)
@@ -143,8 +146,10 @@ def test_pipeline_asks_confirmation_on_high_risk(monkeypatch):
     )
     assert triggered["called"] is False
     assert result["status"] == "complete"
-    pending = store.get_thread(thread["thread_id"]).get("pending_deploy")
-    assert pending and pending["risk_level"] == "high"
+    from bigas.chat.tasks import STATE_INPUT_REQUIRED, get_open_task_for_thread
+
+    task = get_open_task_for_thread(thread["thread_id"], kind="deploy")
+    assert task and task["state"] == STATE_INPUT_REQUIRED
     contents = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
     assert "yes" in contents.lower()
 
@@ -171,7 +176,11 @@ def test_pipeline_asks_confirmation_on_high_risk(monkeypatch):
     assert should_run_deploy_pipeline("ja", thread["thread_id"]) is True
     confirmed = run_chat_deploy_pipeline(thread_id=thread["thread_id"], user_message="ja")
     assert confirmed["status"] == "in_progress"
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    from bigas.chat.tasks import STATE_WORKING, get_open_task_for_thread
+
+    after = get_open_task_for_thread(thread["thread_id"], kind="deploy")
+    assert after and after["state"] == STATE_WORKING
+    assert not (after.get("metadata") or {}).get("pending_deploy")
     poll_deploy_postcheck(thread["thread_id"])
 
 
@@ -191,14 +200,26 @@ def test_pipeline_requires_project_key(monkeypatch):
 def test_clear_stale_pending_on_unrelated_message(monkeypatch):
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
-    store.patch_thread(
-        thread["thread_id"],
+    from bigas.agents.task_runtime import ensure_task, set_task_input_required
+    from bigas.chat.tasks import STATE_CANCELED, get_task
+
+    task = ensure_task(
+        thread_id=thread["thread_id"],
+        to_agent_id="devops",
+        instruction="deploya VFA",
+        review_result=False,
+        kind="deploy",
+    )
+    set_task_input_required(
+        task["task_id"],
+        "confirm",
         pending_deploy={"project_key": "VFA", "risk_level": "high", "repo": "mckort/vcfieldassistant"},
     )
 
     assert should_run_deploy_pipeline("what is the status?", thread["thread_id"]) is False
     clear_stale_pending_deploy("what is the status?", thread["thread_id"])
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    updated = get_task(task["task_id"])
+    assert updated and updated["state"] == STATE_CANCELED
 
 
 def test_pipeline_marks_in_progress_messages_complete(monkeypatch):
@@ -414,3 +435,102 @@ def test_pipeline_does_not_handoff_cancelled_runs(monkeypatch):
     assert launched["called"] is False
     blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
     assert "CTO agent launched" not in blob
+
+
+def _stub_successful_deploy(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_deployment_risk",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": (
+                "Currently deployed: prod backend deploy-backend-old. "
+                "Compared deploy-backend-old → main on mckort/vcfieldassistant. "
+                "2 file(s) changed. No migration or critical config changes detected."
+            ),
+            "risk_level": "low",
+            "findings": {},
+            "repo": "mckort/vcfieldassistant",
+            "site_urls": ["https://vcfieldassistant.com"],
+            "no_prod_version": False,
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Triggered 2 workflow(s) on mckort/vcfieldassistant @ main.",
+            "repo": "mckort/vcfieldassistant",
+            "triggered": [
+                {
+                    "workflow": "deploy-backend.yml",
+                    "run_id": 11,
+                    "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/11",
+                },
+                {
+                    "workflow": "deploy-web.yml",
+                    "run_id": 12,
+                    "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/12",
+                },
+            ],
+            "errors": [],
+            "site_urls": ["https://vcfieldassistant.com"],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/example/run",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} returned HTTP 200 in 40ms."},
+    )
+
+
+def test_pipeline_mirrors_progress_and_postcheck(monkeypatch):
+    store = get_chat_store()
+    chief = store.create_thread("mirror-user", "chief")
+    devops = store.create_thread("mirror-user", "devops")
+    _stub_successful_deploy(monkeypatch)
+
+    result = run_chat_deploy_pipeline(
+        thread_id=chief["thread_id"],
+        user_message="deploya vcfieldassistant",
+        mirror_thread_ids=[devops["thread_id"]],
+    )
+    assert result.get("deploy_poll_active") is True
+    from bigas.chat.tasks import get_open_task_for_thread, get_task, is_terminal
+
+    task = get_open_task_for_thread(chief["thread_id"], kind="deploy")
+    assert task
+    poll = (task.get("metadata") or {}).get("poll") or {}
+    assert poll.get("triggered")
+    assert set(task.get("thread_ids") or []) == {chief["thread_id"], devops["thread_id"]}
+
+    for thread in (chief, devops):
+        blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+        assert "Pre-check" in blob
+        assert "Triggered 2 workflow(s)" in blob
+        assert "Post-check:** waiting" in blob or "Post-check: waiting" in blob
+
+    poll_result = poll_deploy_postcheck(devops["thread_id"])
+    assert poll_result["status"] == "complete"
+    finished = get_task(task["task_id"])
+    assert finished and is_terminal(finished)
+
+    for thread in (chief, devops):
+        blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+        assert "**Post-check.**" in blob
+        assert "HTTP 200" in blob
+
+    poll_deploy_postcheck(chief["thread_id"])
+    for thread in (chief, devops):
+        posts = [
+            m["content"]
+            for m in store.list_messages(thread["thread_id"])
+            if (m.get("content") or "").startswith("**Post-check.**")
+        ]
+        assert len(posts) == 1
