@@ -189,11 +189,12 @@ def create_app():
         "/mcp/providers",
         "/openapi.json",
         "/api/auth/config",
-        # Cloud Scheduler webhook; CRON_SECRET auth is enforced in the route handler.
-        "/api/agents/evaluate-goals",
     }
 
     def _is_public_path(path: str) -> bool:
+        # Scheduler webhook: same X-Bigas-Access-Key as other cron jobs.
+        if path.rstrip("/") == "/api/agents/evaluate-goals":
+            return False
         return (
             path in public_paths
             or path == "/"

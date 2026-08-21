@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from flask import Blueprint, g, jsonify, request, send_from_directory
 
@@ -18,8 +17,6 @@ from bigas.chat.db import (
     get_chat_store,
 )
 from bigas.resources.devops.pipeline import poll_deploy_postcheck
-
-from bigas.resources.product.jira_automation.service import verify_webhook_secret
 
 logger = logging.getLogger(__name__)
 
@@ -211,39 +208,17 @@ def activity_feed():
     return jsonify({"events": events})
 
 
-def _extract_cron_secret() -> str:
-    auth = (request.headers.get("Authorization") or "").strip()
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return (request.headers.get("X-Cron-Secret") or "").strip()
-
-
-def _verify_cron_secret() -> Optional[str]:
-    """Return an error message when auth fails, else None."""
-    expected = (os.environ.get("CRON_SECRET") or "").strip()
-    if not expected:
-        return "CRON_SECRET is not configured on the server"
-    provided = _extract_cron_secret()
-    if not verify_webhook_secret(provided, expected):
-        return "Unauthorized"
-    return None
-
-
 @chat_bp.route("/api/agents/evaluate-goals", methods=["POST"])
+@require_bigas_access_key
 def evaluate_goals():
     """
     Proactive Goal Engine — scheduled Epic evaluation (Cloud Scheduler).
 
-    Auth: Authorization: Bearer <CRON_SECRET> or X-Cron-Secret header.
+    Auth: X-Bigas-Access-Key (or Authorization: Bearer) when BIGAS_ACCESS_MODE=restricted.
 
     Body JSON:
       { "timeframe_days": 7 }  — lookback for progress; tasks target the next N days.
     """
-    auth_err = _verify_cron_secret()
-    if auth_err:
-        status = 401 if auth_err == "Unauthorized" else 503
-        return jsonify({"ok": False, "error": auth_err}), status
-
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         data = {}

@@ -602,7 +602,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Website monitoring | `0 8 * * *` | `.../website_monitor` |
 | Bigas AI usage | `0 9 * * 1` | `.../weekly_cto_ai_report` |
 | Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
-| Proactive goal evaluation | `0 7 * * 1` | `.../api/agents/evaluate-goals` |
+| Proactive goal evaluation | `0 23 * * 0` | `.../api/agents/evaluate-goals` |
 
 All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
 
@@ -617,7 +617,7 @@ Bigas treats **Jira Epics** as high-level project goals. You create Epics manual
 | **In Progress** | Weekly evaluation: progress report → Discord + Chief chat; delegates to Product, Marketing, CTO, and DevOps for next-cycle task suggestions; creates new Tasks (never Epics) |
 | **To Do** (Epic) | Ignored — not treated as an active goal |
 
-Set `CRON_SECRET` in Secret Manager (add to `SECRET_MANAGER_SECRET_NAMES`). The scheduler sends `Authorization: Bearer <CRON_SECRET>`.
+With `BIGAS_ACCESS_MODE=restricted`, Cloud Scheduler sends `X-Bigas-Access-Key` (same as email ingest and website monitor). `/api/agents` stays public for the chat UI; this webhook is the exception.
 
 Optional env:
 
@@ -629,17 +629,18 @@ Optional env:
 ```bash
 gcloud scheduler jobs create http bigas-evaluate-goals \
   --location=europe-west1 \
-  --schedule="0 7 * * 1" \
+  --schedule="0 23 * * 0" \
   --time-zone="Europe/Stockholm" \
   --uri="https://YOUR-SERVICE-URL.a.run.app/api/agents/evaluate-goals" \
   --http-method=POST \
-  --headers="Content-Type=application/json,Authorization=Bearer YOUR_CRON_SECRET" \
-  --message-body='{"timeframe_days": 7}'
+  --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
+  --message-body='{"timeframe_days": 7}' \
+  --attempt-deadline=900s
 ```
 
-Returns **200 OK** with the full evaluation result. Runs synchronously so Cloud Run keeps CPU allocated for the duration (Cloud Scheduler supports timeouts up to 30 minutes).
+Returns **200 OK** with the full evaluation result. Runs synchronously so Cloud Run keeps CPU allocated for the duration (Cloud Run timeout is 900s). `0 23 * * 0` = Sunday 23:00 Europe/Stockholm.
 
-With `BIGAS_ACCESS_MODE=restricted`, this route is public to the global access-key middleware; auth is handled by `CRON_SECRET` in the route handler (not `X-Bigas-Access-Key`).
+With `BIGAS_ACCESS_MODE=restricted`, Cloud Scheduler must send `X-Bigas-Access-Key` (or `Authorization: Bearer`).
 
 ### Email ingest with Cloud Scheduler
 
