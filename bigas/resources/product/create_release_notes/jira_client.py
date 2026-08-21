@@ -53,13 +53,11 @@ def normalize_parent_epic_key(
     Standalone Tasks/Bugs omit parent. Project keys, empty values, and
     non-issue tokens are dropped so agents can create tickets without a parent.
     """
-    key = (raw or "").strip().upper()
+    key = normalize_issue_key(raw)
     if not key:
         return None
     proj = (project_key or "").strip().upper()
     if proj and key == proj:
-        return None
-    if not _ISSUE_KEY_RE.match(key):
         return None
     return key
 
@@ -73,8 +71,110 @@ def is_invalid_parent_error(exc: BaseException) -> bool:
     return field in err_str or "does not exist" in err_str
 
 
+def normalize_issue_key(raw: Optional[str]) -> Optional[str]:
+    """Return a canonical Jira issue key (e.g. GPWW-3) or None."""
+    key = (raw or "").strip().upper()
+    if not key or not _ISSUE_KEY_RE.match(key):
+        return None
+    return key
+
+
 def _epic_link_field_name() -> str:
     return (os.environ.get("JIRA_EPIC_LINK_FIELD") or "parent").strip() or "parent"
+
+
+def _browse_url(base_url: str, issue_key: str) -> str:
+    key = (issue_key or "").strip()
+    root = (base_url or "").rstrip("/")
+    if not key or not root:
+        return ""
+    return f"{root}/browse/{key}"
+
+
+def _issue_fields(raw: Dict[str, Any]) -> Dict[str, Any]:
+    fields = raw.get("fields")
+    return fields if isinstance(fields, dict) else {}
+
+
+def _named(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("name") or "").strip()
+    return str(value or "").strip()
+
+
+def compact_parent_from_fields(
+    fields: Dict[str, Any],
+    *,
+    base_url: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Extract a compact parent/Epic from Jira issue fields."""
+    parent = fields.get("parent")
+    if isinstance(parent, dict) and (parent.get("key") or "").strip():
+        pfields = parent.get("fields") if isinstance(parent.get("fields"), dict) else {}
+        key = str(parent.get("key") or "").strip().upper()
+        return {
+            "key": key,
+            "summary": str(pfields.get("summary") or "").strip(),
+            "issue_type": _named(pfields.get("issuetype")),
+            "status": _named(pfields.get("status")),
+            "url": _browse_url(base_url, key),
+        }
+    field = _epic_link_field_name()
+    if field.lower() == "parent":
+        return None
+    raw = fields.get(field)
+    if isinstance(raw, dict) and (raw.get("key") or "").strip():
+        key = str(raw.get("key") or "").strip().upper()
+        return {
+            "key": key,
+            "summary": str(raw.get("summary") or "").strip(),
+            "issue_type": _named(raw.get("issuetype")) or "Epic",
+            "status": _named(raw.get("status")),
+            "url": _browse_url(base_url, key),
+        }
+    if isinstance(raw, str) and normalize_issue_key(raw):
+        key = normalize_issue_key(raw) or ""
+        return {
+            "key": key,
+            "summary": "",
+            "issue_type": "Epic",
+            "status": "",
+            "url": _browse_url(base_url, key),
+        }
+    return None
+
+
+def compact_jira_issue(
+    raw: Dict[str, Any],
+    *,
+    base_url: str = "",
+) -> Dict[str, Any]:
+    """Shrink a Jira issue payload to keys an agent can reason about."""
+    fields = _issue_fields(raw)
+    key = str(raw.get("key") or fields.get("key") or "").strip().upper()
+    project = fields.get("project") if isinstance(fields.get("project"), dict) else {}
+    out: Dict[str, Any] = {
+        "key": key,
+        "summary": str(fields.get("summary") or "").strip(),
+        "issue_type": _named(fields.get("issuetype")),
+        "status": _named(fields.get("status")),
+        "project_key": str(project.get("key") or "").strip().upper(),
+        "url": _browse_url(base_url, key),
+    }
+    parent = compact_parent_from_fields(fields, base_url=base_url)
+    if parent:
+        out["parent"] = parent
+        if (parent.get("issue_type") or "").strip().lower() == "epic":
+            out["parent_epic_key"] = parent["key"]
+    return out
+
+
+def issue_lookup_fields() -> List[str]:
+    fields = ["summary", "status", "issuetype", "parent", "project"]
+    extra = _epic_link_field_name()
+    if extra.lower() != "parent" and extra not in fields:
+        fields.append(extra)
+    return fields
 
 
 def normalize_project_keys(
@@ -375,6 +475,30 @@ class JiraClient:
             max_results_per_page=50,
             max_pages=20,
         )
+
+    def list_open_epics(
+        self,
+        project_keys: Optional[Union[str, Sequence[str]]] = None,
+        *,
+        max_results: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Open (non-Done) Epics in a project, compacted for agents."""
+        keys = self._resolve_project_keys(project_keys)
+        jql = (
+            f"{project_jql_clause(keys)} "
+            "AND issuetype = Epic "
+            "AND statusCategory != Done "
+            "ORDER BY key ASC"
+        )
+        raw = self._search_jql(
+            jql=jql,
+            fields=["summary", "status", "issuetype", "project"],
+            max_results_per_page=max(1, min(int(max_results), 50)),
+            max_pages=1,
+        )
+        return [
+            compact_jira_issue(issue, base_url=self._config.base_url) for issue in raw
+        ]
 
     def get_issues_for_epic(
         self,
