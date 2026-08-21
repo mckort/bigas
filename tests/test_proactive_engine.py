@@ -239,18 +239,54 @@ def test_evaluate_goals_requires_access_key_in_restricted_mode(client, monkeypat
 
 def test_evaluate_goals_runs_synchronously(client, monkeypatch):
     client.application.config["BIGAS_ACCESS_MODE"] = "open"
+    client.application.config["BIGAS_ACCESS_KEYS"] = {"scheduler-key"}
+    monkeypatch.delenv("CRON_SECRET", raising=False)
     monkeypatch.setattr(
         "bigas.resources.chat.endpoints.run_evaluation_loop",
         lambda timeframe_days: {"ok": True, "results": [], "timeframe_days": timeframe_days},
     )
 
+    denied = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 14})
+    assert denied.status_code == 401
+
     resp = client.post(
         "/api/agents/evaluate-goals",
         json={"timeframe_days": 14},
+        headers={"X-Bigas-Access-Key": "scheduler-key"},
     )
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
     assert resp.get_json()["timeframe_days"] == 14
+
+
+def test_evaluate_goals_accepts_cron_secret_fallback(client, monkeypatch):
+    client.application.config["BIGAS_ACCESS_MODE"] = "open"
+    client.application.config["BIGAS_ACCESS_KEYS"] = set()
+    monkeypatch.setenv("CRON_SECRET", "legacy-cron-secret")
+    monkeypatch.setattr(
+        "bigas.resources.chat.endpoints.run_evaluation_loop",
+        lambda timeframe_days: {"ok": True, "results": []},
+    )
+
+    denied = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 7})
+    assert denied.status_code == 401
+
+    ok = client.post(
+        "/api/agents/evaluate-goals",
+        json={"timeframe_days": 7},
+        headers={"Authorization": "Bearer legacy-cron-secret"},
+    )
+    assert ok.status_code == 200
+    assert ok.get_json()["ok"] is True
+
+
+def test_evaluate_goals_requires_webhook_secret_configuration(client, monkeypatch):
+    client.application.config["BIGAS_ACCESS_MODE"] = "open"
+    client.application.config["BIGAS_ACCESS_KEYS"] = set()
+    monkeypatch.delenv("CRON_SECRET", raising=False)
+
+    resp = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 7})
+    assert resp.status_code == 503
 
 
 def test_run_evaluation_loop_entrypoint(monkeypatch):

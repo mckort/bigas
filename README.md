@@ -617,7 +617,7 @@ Bigas treats **Jira Epics** as high-level project goals. You create Epics manual
 | **In Progress** | Weekly evaluation: progress report → Discord + Chief chat; delegates to Product, Marketing, CTO, and DevOps for next-cycle task suggestions; creates new Tasks (never Epics) |
 | **To Do** (Epic) | Ignored — not treated as an active goal |
 
-With `BIGAS_ACCESS_MODE=restricted`, Cloud Scheduler sends `X-Bigas-Access-Key` (same as email ingest and website monitor). `/api/agents` stays public for the chat UI; this webhook is the exception.
+With `BIGAS_ACCESS_MODE=restricted`, Cloud Scheduler sends `X-Bigas-Access-Key` (same as email ingest and website monitor). `/api/agents` stays public for the chat UI; this webhook is the exception and **always** requires auth (access key or legacy `CRON_SECRET`), even when access mode is `open`.
 
 Optional env:
 
@@ -640,7 +640,7 @@ gcloud scheduler jobs create http bigas-evaluate-goals \
 
 Returns **200 OK** with the full evaluation result. Runs synchronously so Cloud Run keeps CPU allocated for the duration (Cloud Run timeout is 900s). `0 23 * * 0` = Sunday 23:00 Europe/Stockholm.
 
-With `BIGAS_ACCESS_MODE=restricted`, Cloud Scheduler must send `X-Bigas-Access-Key` (or `Authorization: Bearer`).
+Cloud Scheduler must send `X-Bigas-Access-Key` or `Authorization: Bearer` with a configured `BIGAS_ACCESS_KEY`. Existing jobs that still send `Authorization: Bearer <CRON_SECRET>` continue to work when `CRON_SECRET` is set.
 
 ### Email ingest with Cloud Scheduler
 

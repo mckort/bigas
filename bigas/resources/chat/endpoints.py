@@ -209,12 +209,12 @@ def activity_feed():
 
 
 @chat_bp.route("/api/agents/evaluate-goals", methods=["POST"])
-@require_bigas_access_key
 def evaluate_goals():
     """
     Proactive Goal Engine — scheduled Epic evaluation (Cloud Scheduler).
 
-    Auth: X-Bigas-Access-Key (or Authorization: Bearer) when BIGAS_ACCESS_MODE=restricted.
+    Auth: always required — X-Bigas-Access-Key or Authorization: Bearer (BIGAS_ACCESS_KEY),
+    or legacy CRON_SECRET via Bearer / X-Cron-Secret. Enforced in app middleware.
 
     Body JSON:
       { "timeframe_days": 7 }  — lookback for progress; tasks target the next N days.

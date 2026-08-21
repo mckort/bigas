@@ -217,6 +217,14 @@ def create_app():
         The key is expected in the configured HTTP header. If missing or invalid,
         the request is rejected before handlers run.
         """
+        if request.path.rstrip("/") == "/api/agents/evaluate-goals":
+            from bigas.access import verify_evaluate_goals_webhook_auth
+
+            err = verify_evaluate_goals_webhook_auth()
+            if err is not None:
+                return err
+            return
+
         mode = app.config.get("BIGAS_ACCESS_MODE", "open")
         if mode != "restricted":
             return
