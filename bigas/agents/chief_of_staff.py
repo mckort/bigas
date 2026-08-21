@@ -158,12 +158,13 @@ SPECIALIST_CAPABILITIES = (
     "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, AI usage, monitoring.\n"
     "- devops: production deploy via GitHub Actions (including manual trigger_deployment), "
     "deploy status, site health, CI logs, hotfix PRs. vcfieldassistant/VFA is a DevOps deploy.\n"
-    "Every specialist and Chief of Staff can call create_jira_issue (Task/Bug). "
+    "Every specialist and Chief of Staff can call lookup_jira and create_jira_issue (Task/Bug). "
+    "Look up Epics when needed, then decide whether the new work belongs under one or should be standalone. "
     "Never tell the user to create the Jira issue themselves.\n"
 )
 
 # Shared with every specialist; COS may also call these without a handoff.
-SHARED_AGENT_TOOLS = frozenset({"create_jira_issue"})
+SHARED_AGENT_TOOLS = frozenset({"create_jira_issue", "lookup_jira"})
 
 # Read-only / quick lookups COS may run without a specialist handoff,
 # plus shared write tools such as create_jira_issue.
@@ -239,7 +240,7 @@ def _chief_routing_extra(tool_summary: str) -> str:
         "or offer to build a tool that already exists — emit JSON so the specialist actually "
         "receives the task and replies in this thread.\n"
         "You MAY call a tool yourself for a simple/quick lookup (live status, health, "
-        "a short analytics question) and to file a Jira Task/Bug with create_jira_issue. "
+        "a short analytics question, lookup_jira) and to file a Jira Task/Bug with create_jira_issue. "
         "Do NOT trigger deploys, autofix, weekly reports, or other specialist pipelines yourself.\n\n"
         "If you should delegate, respond with ONLY:\n"
         '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>"}\n'
@@ -262,7 +263,9 @@ def _specialist_json_extra(tool_summary: str) -> str:
         "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
         "(a github.com/.../pull/N link is enough). "
         "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL. "
-        "To file work in Jira, call create_jira_issue — do not ask the user to create the ticket.\n"
+        "To file work in Jira, call lookup_jira if you need Epic/parent context, then create_jira_issue. "
+        "Do not ask the user for an Epic key or to create the ticket. "
+        "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone.\n"
         "Otherwise respond with ONLY:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
         f"Available tools:\n{tool_summary}"
@@ -874,7 +877,7 @@ def handle_chat_message(
             "Never say a specialist cannot do something listed above. Never 'virtually' delegate — "
             "call the specialist so they receive the task and reply in this thread. "
             "You may run a simple lookup yourself (status, health, a short analytics question) "
-            "or file a Jira Task/Bug with create_jira_issue, "
+            "or look up Jira with lookup_jira / file a Task/Bug with create_jira_issue, "
             "but never trigger a production deploy — that is DevOps. "
             "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
         )

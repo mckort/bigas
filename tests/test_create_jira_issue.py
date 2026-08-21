@@ -185,6 +185,10 @@ def test_manifest_includes_create_jira_issue():
     parent_desc = params["properties"]["parent_epic_key"]["description"].lower()
     assert "omit" in parent_desc
     assert "standalone" in parent_desc
+    lookup = tools["lookup_jira"]
+    assert lookup["path"] == "/mcp/tools/lookup_jira"
+    assert "parent" in lookup["description"].lower()
+    assert "standalone" in lookup["description"].lower()
 
 
 @pytest.fixture

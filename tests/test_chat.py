@@ -575,10 +575,11 @@ def test_chief_direct_tools_exclude_deploy_trigger():
                 {"name": "fetch_analytics_report", "description": "ga4"},
                 {"name": "check_website_health", "description": "ping"},
                 {"name": "create_jira_issue", "description": "file a ticket"},
+                {"name": "lookup_jira", "description": "look up a ticket"},
             ]
         )
     }
-    assert names == {"get_deployment_status", "check_website_health", "create_jira_issue"}
+    assert names == {"get_deployment_status", "check_website_health", "create_jira_issue", "lookup_jira"}
 
 
 def test_create_jira_issue_is_shared_across_agents():
@@ -589,12 +590,14 @@ def test_create_jira_issue_is_shared_across_agents():
         _filter_tools_for_agent,
     )
 
-    assert "create_jira_issue" in SHARED_AGENT_TOOLS
-    assert "create_jira_issue" in CHIEF_DIRECT_TOOL_NAMES
-    assert "create_jira_issue" not in MUST_DELEGATE_TOOLS
+    assert SHARED_AGENT_TOOLS == frozenset({"create_jira_issue", "lookup_jira"})
+    for name in SHARED_AGENT_TOOLS:
+        assert name in CHIEF_DIRECT_TOOL_NAMES
+        assert name not in MUST_DELEGATE_TOOLS
 
     catalog = [
         {"name": "fetch_analytics_report", "description": "ga4"},
+        {"name": "lookup_jira", "description": "look up a ticket"},
         {"name": "create_jira_issue", "description": "file a ticket"},
         {"name": "create_release_notes", "description": "notes"},
         {"name": "review_and_comment_pr", "description": "review"},
@@ -602,7 +605,8 @@ def test_create_jira_issue_is_shared_across_agents():
     ]
     for agent_id in ("marketing", "product", "cto", "devops"):
         names = [t["name"] for t in _filter_tools_for_agent(catalog, agent_id)]
-        assert names[0] == "create_jira_issue", agent_id
+        assert names[:2] == ["lookup_jira", "create_jira_issue"], agent_id
+        assert "lookup_jira" in names
         assert "create_jira_issue" in names
 
 

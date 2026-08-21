@@ -340,7 +340,7 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 
 Every AI step lands in a column with **"(manual)"** in the name — cards do not advance without a human drag. Merging the PR stays manual unless you enable `BIGAS_CTO_AUTO_MERGE` (see [cto-autofix.md](docs/cto-autofix.md)).
 
-**From chat:** any specialist or Chief of Staff can create a Jira Task/Bug with `create_jira_issue` (Marketing sets `marketing=true`). When you ask about a ticket, the reply includes the ticket title as a Markdown link and a **Move to next column** button. Clicking it advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
+**From chat:** any specialist or Chief of Staff can look up Jira issues/Epics with `lookup_jira` and create a Task/Bug with `create_jira_issue` (Marketing sets `marketing=true`). Parent is optional: link an Epic only when the new work belongs under that goal; otherwise create a standalone ticket. When you ask about a ticket, the reply includes the ticket title as a Markdown link and a **Move to next column** button. Clicking it advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
 
 **Prompt workstream:** by default Bigas uses **product** Research/Design/Implement prompts. Add the Jira label `marketing` on website/SEO/content issues to switch to marketing-oriented prompts (audience, copy, SEO, site files in the repo).
 
@@ -637,7 +637,8 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 
 | Endpoint | Description |
 |---|---|
-| `POST create_jira_issue` | Create a Jira Task or Bug in a project; returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`) |
+| `POST create_jira_issue` | Create a Jira Task or Bug in a project; returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket |
+| `POST lookup_jira` | Look up a Jira issue (including parent Epic) and/or list open Epics in a project. Shared by every chat agent. Does not decide whether a new ticket should use that parent |
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
