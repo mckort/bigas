@@ -174,6 +174,29 @@ def chat_callback():
     return jsonify({"message": message})
 
 
+@chat_bp.route("/api/jira/transition", methods=["POST"])
+@require_chat_auth
+def jira_transition():
+    """Move a Jira issue to the next workflow column (chat UI button action)."""
+    from bigas.resources.product.jira_transition.service import (
+        JiraTransitionError,
+        transition_issue_to_next_column,
+    )
+
+    body = request.get_json(silent=True) or {}
+    issue_key = (body.get("issue_key") or "").strip()
+    if not issue_key:
+        return jsonify({"error": "issue_key is required"}), 400
+    try:
+        result = transition_issue_to_next_column(issue_key)
+        return jsonify(result)
+    except JiraTransitionError as exc:
+        return jsonify({"error": str(exc), "success": False}), 400
+    except Exception:
+        logger.exception("Jira transition failed for %s", issue_key)
+        return jsonify({"error": "Failed to transition Jira issue", "success": False}), 500
+
+
 @chat_bp.route("/api/feed", methods=["GET"])
 @require_chat_auth
 def activity_feed():

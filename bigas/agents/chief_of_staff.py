@@ -9,6 +9,11 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from bigas.chat.db import get_chat_store
+from bigas.chat.jira_formatting import (
+    JIRA_AWARE_AGENT_IDS,
+    JIRA_FORMATTING_RULES,
+    humanize_jira_tool_result,
+)
 from bigas.github_refs import is_owner_repo, parse_cursor_agent_id, resolve_repo_and_pr
 from bigas.llm.factory import get_llm_client
 from bigas.portfolio import (
@@ -217,6 +222,9 @@ def humanize_tool_result(payload: Any) -> Optional[str]:
     if payload is None:
         return None
     if isinstance(payload, dict):
+        jira_text = humanize_jira_tool_result(payload)
+        if jira_text:
+            return jira_text
         for key in _HUMAN_TEXT_KEYS:
             val = payload.get(key)
             if isinstance(val, str) and val.strip():
@@ -280,8 +288,11 @@ def _agent_system_prompt(agent_config: Dict[str, Any], extra: str = "") -> str:
     parts = [
         agent_config.get("system_prompt_goals") or "",
         _catalog_prompt(),
-        extra,
     ]
+    agent_id = (agent_config.get("agent_id") or "").strip()
+    if agent_id in JIRA_AWARE_AGENT_IDS:
+        parts.append(JIRA_FORMATTING_RULES)
+    parts.append(extra)
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 

@@ -13,6 +13,7 @@ import {
   pollDeployPostcheck,
   rejectProposal,
   sendMessage,
+  transitionJiraIssue,
 } from '../lib/api'
 import { logout } from '../lib/auth'
 
@@ -37,6 +38,89 @@ function humanizeChatContent(content) {
     /* keep original */
   }
   return content
+}
+
+function parseBigasJiraTransitionHref(href) {
+  if (!href || !href.startsWith('bigas://action/jira_transition')) return null
+  try {
+    const url = new URL(href.replace('bigas://', 'https://bigas.local/'))
+    const issue = url.searchParams.get('issue')
+    return issue ? issue.trim() : null
+  } catch {
+    return null
+  }
+}
+
+function linkChildText(children) {
+  if (typeof children === 'string') return children
+  if (Array.isArray(children)) return children.map((c) => (typeof c === 'string' ? c : '')).join('')
+  return 'Move to next column'
+}
+
+function JiraTransitionButton({ issueKey, label }) {
+  const [state, setState] = useState('idle')
+  const [statusLabel, setStatusLabel] = useState('')
+
+  async function handleClick(e) {
+    e.preventDefault()
+    if (state === 'loading' || state === 'success') return
+    setState('loading')
+    try {
+      const result = await transitionJiraIssue(issueKey)
+      if (result.error || result.success === false) {
+        throw new Error(result.error || 'Failed to move issue')
+      }
+      setStatusLabel(result.new_status || '')
+      setState('success')
+    } catch (err) {
+      setState('idle')
+      alert(err.message || 'Failed to move issue')
+    }
+  }
+
+  let text = label || 'Move to next column'
+  if (state === 'loading') text = 'Moving…'
+  if (state === 'success') text = statusLabel ? `Moved to ${statusLabel}` : 'Moved'
+
+  return (
+    <span className="inline-block mt-2">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={state === 'loading' || state === 'success'}
+        className="inline-flex items-center justify-center bg-bigas-black text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 min-h-[44px] max-w-full break-words hover:opacity-90 transition-opacity"
+      >
+        {text}
+      </button>
+    </span>
+  )
+}
+
+const chatMarkdownComponents = {
+  a({ href, children }) {
+    const issueKey = parseBigasJiraTransitionHref(href)
+    if (issueKey) {
+      return <JiraTransitionButton issueKey={issueKey} label={linkChildText(children)} />
+    }
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-bigas-black underline underline-offset-2 hover:opacity-70 break-all"
+      >
+        {children}
+      </a>
+    )
+  },
+}
+
+function ChatMarkdown({ content }) {
+  return (
+    <ReactMarkdown components={chatMarkdownComponents}>
+      {humanizeChatContent(content)}
+    </ReactMarkdown>
+  )
 }
 
 function ActionProposalCard({ message, onResolved }) {
@@ -165,7 +249,7 @@ function EmailTriageBody({ message }) {
   const meta = message.metadata || {}
   const body = (meta.email_body || '').trim()
   if (!body) {
-    return <ReactMarkdown>{humanizeChatContent(message.content)}</ReactMarkdown>
+    return <ChatMarkdown content={message.content} />
   }
   return (
     <div className="text-sm sm:text-base break-words">
@@ -215,7 +299,7 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
           {meta.source === 'email' ? (
             <EmailTriageBody message={message} />
           ) : (
-            <ReactMarkdown>{humanizeChatContent(message.content)}</ReactMarkdown>
+            <ChatMarkdown content={message.content} />
           )}
         </div>
         <ActionProposalCard message={message} onResolved={onProposalResolved} />

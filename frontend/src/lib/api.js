@@ -91,3 +91,10 @@ export async function rejectProposal(proposalId, messageId) {
     body: JSON.stringify({ message_id: messageId }),
   })
 }
+
+export async function transitionJiraIssue(issueKey) {
+  return apiFetch('/api/jira/transition', {
+    method: 'POST',
+    body: JSON.stringify({ issue_key: issueKey }),
+  })
+}
