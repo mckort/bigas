@@ -618,6 +618,7 @@ def get_manifest():
                 "name": "create_jira_issue",
                 "description": (
                     "Create a new Jira issue in the specified project. "
+                    "Available to every chat agent and MCP client. "
                     "Returns the issue key (e.g. BIG-42) and browse URL. "
                     "For marketing-related tickets (website, SEO, content, ads), set marketing=true "
                     "to add the Jira label \"marketing\" (no other labels are needed)."

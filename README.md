@@ -114,11 +114,11 @@ It currently ships five specialists, reachable from the **[web chat](#chat-web-i
 
 | Specialist | What it does |
 |---|---|
-| **Chief of Staff** | Default chat agent across the whole Jira/GitHub portfolio: answers general questions, delegates to Marketing / Product / CTO / DevOps, and monitors progress |
-| **Senior Marketing Analyst** | GA4 web analytics (per site via `BIGAS_GA4_PROPERTY_MAP`) + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
-| **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval |
-| **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord |
-| **DevOps** | Pre-flight deployment risk checks (migrations, config), trigger GitHub Actions deploy workflows (e.g. separate backend + web for vcfieldassistant), post-deploy HTTP health checks, **self-healing CI/CD** (failed workflow_run webhook → log analysis → hotfix PR on `bigas-hotfix/*`) |
+| **Chief of Staff** | Default chat agent across the whole Jira/GitHub portfolio: answers general questions, delegates to Marketing / Product / CTO / DevOps, can file Jira Task/Bug issues, and monitors progress |
+| **Senior Marketing Analyst** | GA4 web analytics (per site via `BIGAS_GA4_PROPERTY_MAP`) + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis; can file marketing Jira issues |
+| **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval; can create Jira Task/Bug issues |
+| **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord; can file Jira follow-ups |
+| **DevOps** | Pre-flight deployment risk checks (migrations, config), trigger GitHub Actions deploy workflows (e.g. separate backend + web for vcfieldassistant), post-deploy HTTP health checks, **self-healing CI/CD** (failed workflow_run webhook → log analysis → hotfix PR on `bigas-hotfix/*`); can file Jira follow-ups |
 
 Two design decisions shape everything else in this document:
 
@@ -340,7 +340,7 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 
 Every AI step lands in a column with **"(manual)"** in the name — cards do not advance without a human drag. Merging the PR stays manual unless you enable `BIGAS_CTO_AUTO_MERGE` (see [cto-autofix.md](docs/cto-autofix.md)).
 
-**From chat:** when you ask the Product Manager or Chief of Staff about a Jira ticket, the reply includes the ticket title as a Markdown link and a **Move to next column** button. Clicking it advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
+**From chat:** any specialist or Chief of Staff can create a Jira Task/Bug with `create_jira_issue` (Marketing sets `marketing=true`). When you ask about a ticket, the reply includes the ticket title as a Markdown link and a **Move to next column** button. Clicking it advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
 
 **Prompt workstream:** by default Bigas uses **product** Research/Design/Implement prompts. Add the Jira label `marketing` on website/SEO/content issues to switch to marketing-oriented prompts (audience, copy, SEO, site files in the repo).
 
@@ -477,7 +477,7 @@ Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend 
 
 | Feature | Description |
 |---|---|
-| **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; delegates domain tasks to specialists |
+| **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; can file Jira Task/Bug issues; delegates domain tasks to specialists |
 | **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows |
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
 | **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
@@ -637,7 +637,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 
 | Endpoint | Description |
 |---|---|
-| `POST create_jira_issue` | Create a Jira Task or Bug in a project; returns issue key + URL. Set `marketing=true` for marketing-related tickets (adds label `marketing`) |
+| `POST create_jira_issue` | Create a Jira Task or Bug in a project; returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`) |
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |

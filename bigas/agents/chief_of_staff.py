@@ -154,13 +154,19 @@ SPECIALIST_IDS = ("marketing", "product", "cto", "devops")
 SPECIALIST_CAPABILITIES = (
     "Specialists (always delegate domain work to them — they have the tools and will reply here):\n"
     "- marketing: GA4, ads (Google/Meta/LinkedIn/Reddit), trends, weekly/portfolio reports.\n"
-    "- product: Jira, release notes, progress updates, social drafts.\n"
+    "- product: Jira release notes, progress updates, social drafts, board automation.\n"
     "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, AI usage, monitoring.\n"
     "- devops: production deploy via GitHub Actions (including manual trigger_deployment), "
     "deploy status, site health, CI logs, hotfix PRs. vcfieldassistant/VFA is a DevOps deploy.\n"
+    "Every specialist and Chief of Staff can call create_jira_issue (Task/Bug). "
+    "Never tell the user to create the Jira issue themselves.\n"
 )
 
-# Read-only / quick lookups COS may run without a specialist handoff.
+# Shared with every specialist; COS may also call these without a handoff.
+SHARED_AGENT_TOOLS = frozenset({"create_jira_issue"})
+
+# Read-only / quick lookups COS may run without a specialist handoff,
+# plus shared write tools such as create_jira_issue.
 CHIEF_DIRECT_TOOL_NAMES = {
     "get_deployment_status",
     "check_website_health",
@@ -171,7 +177,7 @@ CHIEF_DIRECT_TOOL_NAMES = {
     "website_monitor",
     "get_job_status",
     "get_job_result",
-}
+} | set(SHARED_AGENT_TOOLS)
 
 # If COS tries to invoke these itself, rewrite to a real specialist handoff.
 MUST_DELEGATE_TOOLS = {
@@ -188,7 +194,6 @@ MUST_DELEGATE_TOOLS = {
     "create_release_notes": "product",
     "progress_updates": "product",
     "generate_weekly_x_post": "product",
-    "create_jira_issue": "product",
     "jira_status_automation": "product",
 }
 
@@ -233,9 +238,9 @@ def _chief_routing_extra(tool_summary: str) -> str:
         "Never say a specialist cannot do something listed above. Never 'virtually' delegate "
         "or offer to build a tool that already exists — emit JSON so the specialist actually "
         "receives the task and replies in this thread.\n"
-        "You MAY call a tool yourself only for a simple/quick lookup (live status, health, "
-        "a short analytics question). Do NOT trigger deploys, autofix, weekly reports, or "
-        "other specialist pipelines yourself.\n\n"
+        "You MAY call a tool yourself for a simple/quick lookup (live status, health, "
+        "a short analytics question) and to file a Jira Task/Bug with create_jira_issue. "
+        "Do NOT trigger deploys, autofix, weekly reports, or other specialist pipelines yourself.\n\n"
         "If you should delegate, respond with ONLY:\n"
         '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>"}\n'
         "If you should call a simple tool, respond with ONLY:\n"
@@ -256,7 +261,8 @@ def _specialist_json_extra(tool_summary: str) -> str:
         "Include project_key when the user named a product, site, or Jira key. "
         "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
         "(a github.com/.../pull/N link is enough). "
-        "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL.\n"
+        "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL. "
+        "To file work in Jira, call create_jira_issue — do not ask the user to create the ticket.\n"
         "Otherwise respond with ONLY:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
         f"Available tools:\n{tool_summary}"
@@ -308,7 +314,7 @@ def _dispatch_chief_tool(
         return _run_tool_call(
             mcp_client,
             tool_name,
-            _enrich_tool_args(tool_name, tool_args, user_message),
+            _enrich_tool_args(tool_name, tool_args, user_message, caller_agent_id="chief"),
         )
     return f"I couldn't run {tool_name} (tools unavailable)."
 
@@ -322,12 +328,22 @@ def _mcp_client() -> MCPClient:
 
 def _filter_tools_for_agent(tools: List[Dict[str, Any]], agent_id: str) -> List[Dict[str, Any]]:
     prefixes = AGENT_TOOL_PREFIXES.get(agent_id, ())
-    out = []
+    shared = {n.lower() for n in SHARED_AGENT_TOOLS}
+    shared_out: List[Dict[str, Any]] = []
+    domain_out: List[Dict[str, Any]] = []
+    seen = set()
     for tool in tools:
         name = (tool.get("name") or "").lower()
+        if not name or name in seen:
+            continue
+        if name in shared:
+            shared_out.append(tool)
+            seen.add(name)
+            continue
         if any(name.startswith(p.lower()) or p.lower() in name for p in prefixes):
-            out.append(tool)
-    return out
+            domain_out.append(tool)
+            seen.add(name)
+    return shared_out + domain_out
 
 
 def _tools_summary(tools: List[Dict[str, Any]], limit: int = 20) -> str:
@@ -454,13 +470,19 @@ def _agent_system_prompt(agent_config: Dict[str, Any], extra: str = "") -> str:
         _catalog_prompt(),
     ]
     agent_id = (agent_config.get("agent_id") or "").strip()
-    if agent_id in JIRA_AWARE_AGENT_IDS:
+    if not agent_id or agent_id in JIRA_AWARE_AGENT_IDS:
         parts.append(JIRA_FORMATTING_RULES)
     parts.append(extra)
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
-def _enrich_tool_args(tool_name: str, arguments: Dict[str, Any], user_message: str) -> Dict[str, Any]:
+def _enrich_tool_args(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    user_message: str,
+    *,
+    caller_agent_id: Optional[str] = None,
+) -> Dict[str, Any]:
     args = dict(arguments or {})
     haystack = " ".join(
         [
@@ -500,6 +522,10 @@ def _enrich_tool_args(tool_name: str, arguments: Dict[str, Any], user_message: s
         args.setdefault("project_key", project)
         if "ask_analytics" in (tool_name or "").lower():
             args["question"] = scrub_analytics_question(args.get("question") or user_message, project)
+    if (tool_name or "").lower() == "create_jira_issue" and (
+        (caller_agent_id or "").strip().lower() == "marketing"
+    ):
+        args.setdefault("marketing", True)
     return args
 
 
@@ -733,7 +759,11 @@ def run_specialist_task(
         if tool_name and tool_name.startswith("__delegate__"):
             return "Specialist agents cannot delegate further."
         if tool_name:
-            result = _run_tool_call(client, tool_name, _enrich_tool_args(tool_name, tool_args or {}, task))
+            result = _run_tool_call(
+                client,
+                tool_name,
+                _enrich_tool_args(tool_name, tool_args or {}, task, caller_agent_id=agent_id),
+            )
         else:
             llm, _ = get_llm_client(feature="chat")
             system = _agent_system_prompt(agent_config)
@@ -844,6 +874,7 @@ def handle_chat_message(
             "Never say a specialist cannot do something listed above. Never 'virtually' delegate — "
             "call the specialist so they receive the task and reply in this thread. "
             "You may run a simple lookup yourself (status, health, a short analytics question) "
+            "or file a Jira Task/Bug with create_jira_issue, "
             "but never trigger a production deploy — that is DevOps. "
             "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
         )
@@ -912,7 +943,11 @@ def handle_chat_message(
 
     if tool_name:
         response_text = _run_tool_call(
-            client, tool_name, _enrich_tool_args(tool_name, tool_args or {}, user_message)
+            client,
+            tool_name,
+            _enrich_tool_args(
+                tool_name, tool_args or {}, user_message, caller_agent_id=agent_id
+            ),
         )
 
     msg = store.add_message(
