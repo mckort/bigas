@@ -580,6 +580,93 @@ def test_chief_direct_tools_exclude_deploy_trigger():
     assert names == {"get_deployment_status", "check_website_health"}
 
 
+def test_dispatch_chief_tool_rejects_unauthorized_tool():
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    class FakeMcp:
+        def call_tool(self, name, args):
+            raise AssertionError("should not call unauthorized tool")
+
+    result = _dispatch_chief_tool(
+        "trigger_deployment",
+        {"project_key": "VFA"},
+        user_message="deploy vfa",
+        thread_id="thread-1",
+        mcp_client=FakeMcp(),
+    )
+    assert "Delegated to devops" in result
+
+
+def test_dispatch_chief_tool_blocks_disallowed_direct_tool():
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    class FakeMcp:
+        def call_tool(self, name, args):
+            raise AssertionError("should not call disallowed tool")
+
+    result = _dispatch_chief_tool(
+        "fetch_analytics_report",
+        {},
+        user_message="show analytics",
+        thread_id="thread-1",
+        mcp_client=FakeMcp(),
+    )
+    assert result == "Tool fetch_analytics_report is not allowed for Chief of Staff."
+
+
+def test_dispatch_chief_tool_coerces_non_dict_args(monkeypatch):
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    called = {}
+
+    def fake_run(agent_id, task, **kwargs):
+        called["task"] = task
+        return "Delegated to devops agent."
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+
+    result = _dispatch_chief_tool(
+        "trigger_deployment",
+        ["bad", "args"],
+        user_message="deploy vfa",
+        thread_id="thread-1",
+        mcp_client=None,
+    )
+    assert "Delegated to devops" in result
+    assert called["task"] == "deploy vfa"
+
+
+def test_dispatch_chief_tool_preserves_delegated_context(monkeypatch):
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    called = {}
+
+    def fake_run(agent_id, task, **kwargs):
+        called["task"] = task
+        return "Delegated to devops agent."
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+
+    _dispatch_chief_tool(
+        "trigger_deployment",
+        {"project_key": "VFA", "environment": "production"},
+        user_message="please deploy",
+        thread_id="thread-1",
+        mcp_client=None,
+    )
+    assert "please deploy" in called["task"]
+    assert "Context:" in called["task"]
+    assert "VFA" in called["task"]
+
+
+def test_mcp_tool_to_openai_def_allows_long_description():
+    from bigas.agents.chief_of_staff import _mcp_tool_to_openai_def
+
+    long_desc = "x" * 500
+    out = _mcp_tool_to_openai_def({"name": "get_job_status", "description": long_desc})
+    assert len(out["function"]["description"]) == 500
+
+
 def test_chief_select_tool_prompt_documents_delegate(monkeypatch):
     from bigas.agents.chief_of_staff import _select_tool_via_llm
 

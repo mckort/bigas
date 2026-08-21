@@ -218,7 +218,7 @@ def _mcp_tool_to_openai_def(tool: Dict[str, Any]) -> Dict[str, Any]:
         "type": "function",
         "function": {
             "name": tool.get("name") or "tool",
-            "description": (tool.get("description") or "")[:300],
+            "description": (tool.get("description") or "")[:1024],
             "parameters": params,
         },
     }
@@ -283,9 +283,11 @@ def _dispatch_chief_tool(
     """Run a COS tool call, rewriting specialist pipelines into a real handoff."""
     if not tool_name:
         return None
+    if not isinstance(tool_args, dict):
+        tool_args = {}
     target = None
     if tool_name.startswith("__delegate__:"):
-        target = _resolve_delegate_target(tool_name.split(":", 1)[1])
+        target = tool_name.split(":", 1)[1]
     else:
         target = DELEGATE_MAP.get(tool_name) or _resolve_delegate_target(tool_name)
         if not target:
@@ -293,13 +295,20 @@ def _dispatch_chief_tool(
                 (tool_name or "").strip().lower()
             )
     if target:
-        task = (tool_args or {}).get("task") or user_message
+        base_task = tool_args.get("task") or user_message
+        extra = {k: v for k, v in tool_args.items() if k != "task"}
+        if extra:
+            task = f"{base_task}\n\nContext: {json.dumps(extra)}"
+        else:
+            task = base_task
         return run_specialist_task(target, task, thread_id=thread_id, async_mode=True)
+    if tool_name.lower() not in {n.lower() for n in CHIEF_DIRECT_TOOL_NAMES}:
+        return f"Tool {tool_name} is not allowed for Chief of Staff."
     if mcp_client:
         return _run_tool_call(
             mcp_client,
             tool_name,
-            _enrich_tool_args(tool_name, tool_args or {}, user_message),
+            _enrich_tool_args(tool_name, tool_args, user_message),
         )
     return f"I couldn't run {tool_name} (tools unavailable)."
 
