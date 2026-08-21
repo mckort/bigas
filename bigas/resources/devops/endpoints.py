@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 from flask import Blueprint, jsonify, request
 
@@ -9,10 +10,27 @@ from bigas.resources.devops.service import (
     DevOpsError,
     check_deployment_risk,
     check_website_health,
+    create_github_pr,
+    fetch_github_action_logs,
+    get_commit_diff,
     get_deployment_status,
     trigger_deployment,
 )
+from bigas.resources.devops.self_healing import (
+    SelfHealingError,
+    enqueue_self_healing,
+    get_self_healing_job,
+    parse_workflow_run_payload,
+    self_healing_enabled,
+    should_process_workflow_run,
+    verify_github_signature,
+    webhook_secret,
+)
 from bigas.resources.marketing.utils import sanitize_error_message, validate_request_data
+from bigas.resources.product.jira_automation.service import (
+    extract_webhook_secret_from_headers,
+    verify_webhook_secret,
+)
 
 devops_bp = Blueprint("devops_bp", __name__, url_prefix="/mcp/tools")
 logger = logging.getLogger(__name__)
@@ -113,6 +131,163 @@ def get_deployment_status_endpoint():
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 
+@devops_bp.route("/fetch_github_action_logs", methods=["POST"])
+def fetch_github_action_logs_endpoint():
+    """
+    Download and parse logs from failed jobs on a GitHub Actions workflow run.
+
+    Request JSON:
+      {"repo": "owner/repo", "run_id": 12345678}
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data, required_fields=["repo", "run_id"])
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+    try:
+        run_id = int(data["run_id"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "run_id must be a valid integer"}), 400
+    try:
+        result = fetch_github_action_logs(
+            repo=data["repo"],
+            run_id=run_id,
+            github_token=data.get("github_token"),
+        )
+        return jsonify(result)
+    except DevOpsError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("fetch_github_action_logs failed")
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
+@devops_bp.route("/create_github_pr", methods=["POST"])
+def create_github_pr_endpoint():
+    """
+    Create a hotfix branch with file changes and open a pull request.
+
+    Request JSON:
+      {
+        "repo": "owner/repo",
+        "base_branch": "main",
+        "new_branch_name": "bigas-hotfix/run-123",
+        "title": "fix(ci): ...",
+        "body": "Root cause ...",
+        "files_to_change": {"path/to/file.py": "full new contents"}
+      }
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(
+        data,
+        required_fields=["repo", "new_branch_name", "title", "files_to_change"],
+    )
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+    files = data.get("files_to_change")
+    if not isinstance(files, dict) or not files:
+        return jsonify({"error": "files_to_change must be a non-empty object"}), 400
+    try:
+        result = create_github_pr(
+            repo=data["repo"],
+            base_branch=data.get("base_branch") or "main",
+            new_branch_name=data["new_branch_name"],
+            title=data["title"],
+            body=data.get("body") or "",
+            files_to_change={str(k): str(v) for k, v in files.items()},
+            github_token=data.get("github_token"),
+        )
+        return jsonify(result)
+    except DevOpsError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("create_github_pr failed")
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
+@devops_bp.route("/github_workflow_run", methods=["POST"])
+def github_workflow_run_webhook():
+    """
+    GitHub webhook for workflow_run events (self-healing CI/CD).
+
+    Configure the repo webhook with content type application/json and
+    subscribe to Workflow runs. Verifies X-Hub-Signature-256 when
+    GITHUB_WEBHOOK_SECRET is set, or X-Bigas-Webhook-Secret otherwise.
+
+    Only processes completed runs with conclusion failure. Ignores branches
+    starting with bigas-hotfix/ to prevent infinite fix loops.
+    """
+    payload_bytes = request.get_data() or b""
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        payload = {}
+
+    secret = webhook_secret()
+    sig_ok = verify_github_signature(
+        payload_bytes,
+        request.headers.get("X-Hub-Signature-256"),
+        secret,
+    )
+    header_secret = extract_webhook_secret_from_headers(request.headers)
+    header_ok = verify_webhook_secret(header_secret, secret) if secret else False
+    if secret and not sig_ok and not header_ok:
+        return jsonify({"error": "unauthorized"}), 401
+
+    event = (request.headers.get("X-GitHub-Event") or "").strip().lower()
+    if event and event != "workflow_run":
+        return jsonify({"ok": True, "ignored": True, "reason": f"event:{event}"}), 200
+
+    should_run, reason = should_process_workflow_run(payload if isinstance(payload, dict) else {})
+    if not should_run:
+        return jsonify({"ok": True, "ignored": True, "reason": reason}), 200
+
+    if not self_healing_enabled():
+        return jsonify({"ok": True, "ignored": True, "reason": "self_healing_disabled"}), 200
+
+    try:
+        context = parse_workflow_run_payload(payload)
+    except (TypeError, ValueError) as e:
+        return jsonify({"error": sanitize_error_message(str(e))}), 400
+
+    sync = bool((payload or {}).get("sync", False))
+    if sync:
+        try:
+            from bigas.resources.devops.self_healing import run_self_healing_fix
+
+            result = run_self_healing_fix(
+                repo=context["repo"],
+                run_id=int(context["run_id"]),
+                head_sha=context.get("head_sha") or "",
+                head_branch=context.get("head_branch") or "main",
+                workflow_name=context.get("workflow_name") or "workflow",
+                html_url=context.get("html_url") or "",
+                github_token=(payload or {}).get("github_token"),
+            )
+            return jsonify({"ok": True, **result}), 200
+        except (DevOpsError, SelfHealingError) as e:
+            return jsonify({"error": sanitize_error_message(str(e))}), 400
+        except Exception as e:
+            logger.exception("github_workflow_run sync failed")
+            return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+    job_id = str(uuid.uuid4())
+    enqueue_self_healing(context, job_id=job_id)
+    return jsonify({"ok": True, "accepted": True, "job_id": job_id, **context}), 202
+
+
+@devops_bp.route("/self_healing_ci_job", methods=["POST"])
+def self_healing_ci_job_endpoint():
+    """Poll status of an async self-healing CI job."""
+    data = request.json or {}
+    job_id = (data.get("job_id") or "").strip()
+    if not job_id:
+        return jsonify({"error": "job_id is required"}), 400
+    job = get_self_healing_job(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
 @devops_bp.route("/check_website_health", methods=["POST"])
 def check_website_health_endpoint():
     """
@@ -139,7 +314,10 @@ def get_manifest():
     """Return the DevOps tools manifest for the combined MCP manifest."""
     return {
         "name": "DevOps Tools",
-        "description": "Pre-flight deployment risk checks, GitHub Actions triggers, and post-deploy health checks.",
+        "description": (
+            "Pre-flight deployment risk checks, GitHub Actions triggers, post-deploy health checks, "
+            "CI log fetching, and self-healing hotfix PR creation."
+        ),
         "tools": [
             {
                 "name": "check_deployment_risk",
@@ -239,6 +417,77 @@ def get_manifest():
                         },
                     },
                     "required": ["url"],
+                },
+            },
+            {
+                "name": "fetch_github_action_logs",
+                "description": (
+                    "Download and parse error logs from failed jobs on a GitHub Actions workflow run. "
+                    "Uses the run logs zip when small enough, otherwise fetches per-job logs."
+                ),
+                "path": "/mcp/tools/fetch_github_action_logs",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository owner/repo (required)",
+                        },
+                        "run_id": {
+                            "type": "integer",
+                            "description": "GitHub Actions run ID (required)",
+                        },
+                    },
+                    "required": ["repo", "run_id"],
+                },
+            },
+            {
+                "name": "create_github_pr",
+                "description": (
+                    "Create a hotfix branch with updated file contents and open a pull request. "
+                    "Branch name must start with bigas-hotfix/."
+                ),
+                "path": "/mcp/tools/create_github_pr",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo": {"type": "string", "description": "Repository owner/repo (required)"},
+                        "base_branch": {
+                            "type": "string",
+                            "description": "Base branch for the PR (default: repo default branch)",
+                        },
+                        "new_branch_name": {
+                            "type": "string",
+                            "description": "New branch name; must start with bigas-hotfix/ (required)",
+                        },
+                        "title": {"type": "string", "description": "PR title (required)"},
+                        "body": {"type": "string", "description": "PR description"},
+                        "files_to_change": {
+                            "type": "object",
+                            "description": "Map of file path → full new file contents (required)",
+                        },
+                    },
+                    "required": ["repo", "new_branch_name", "title", "files_to_change"],
+                },
+            },
+            {
+                "name": "github_workflow_run",
+                "description": (
+                    "GitHub webhook endpoint for workflow_run failures. Autonomously opens hotfix PRs "
+                    "via the DevOps agent. Configure in GitHub repo Settings → Webhooks."
+                ),
+                "path": "/mcp/tools/github_workflow_run",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sync": {
+                            "type": "boolean",
+                            "description": "Run synchronously (default false — returns 202 + job_id)",
+                        },
+                    },
                 },
             },
         ],
