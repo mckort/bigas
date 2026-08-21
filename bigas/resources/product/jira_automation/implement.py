@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 
 import requests
 
+from bigas.discord_webhook import post_to_discord
+from bigas.github_refs import format_pr_discord_line, parse_github_pr
 from bigas.resources.cto.autofix.cursor_client import (
     CursorCloudAgentClient,
     CursorCloudAgentError,
@@ -80,12 +82,12 @@ def _monitor_interval_seconds() -> int:
 # Backward-compatible alias (product workstream).
 build_implement_prompt = build_implement_prompt_product
 
-def lookup_pr_url_for_branch(*, repo: str, branch_name: str) -> str:
-    """Return open PR URL for branch if found via GitHub API."""
+def lookup_pr_for_branch(*, repo: str, branch_name: str) -> tuple[str, str]:
+    """Return (html_url, title) for an open PR on branch, or ("", "")."""
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
     branch = (branch_name or "").strip()
     if not token or not branch or "/" not in repo:
-        return ""
+        return "", ""
     owner, name = repo.split("/", 1)
     try:
         resp = requests.get(
@@ -99,33 +101,73 @@ def lookup_pr_url_for_branch(*, repo: str, branch_name: str) -> str:
             timeout=30,
         )
         if resp.status_code >= 400:
-            return ""
+            return "", ""
         items = resp.json() if resp.text else []
         if isinstance(items, list) and items:
             url = (items[0].get("html_url") or "").strip()
-            return url
+            title = (items[0].get("title") or "").strip()
+            return url, title
     except Exception:
         logger.warning("GitHub PR lookup failed for %s@%s", repo, branch, exc_info=True)
-    return ""
+    return "", ""
+
+
+def lookup_pr_url_for_branch(*, repo: str, branch_name: str) -> str:
+    """Return open PR URL for branch if found via GitHub API."""
+    url, _title = lookup_pr_for_branch(repo=repo, branch_name=branch_name)
+    return url
+
+
+def _github_pr_title(pr_url: str) -> str:
+    parsed = parse_github_pr(pr_url)
+    token = (os.environ.get("GITHUB_TOKEN") or "").strip()
+    if not parsed or not token:
+        return ""
+    repo, number = parsed
+    owner, name = repo.split("/", 1)
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{name}/pulls/{number}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            return ""
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            return ""
+        return (data.get("title") or "").strip()
+    except Exception:
+        logger.warning("GitHub PR title fetch failed for %s", pr_url, exc_info=True)
+        return ""
 
 
 def evaluate_implementation_outcome(status: Dict[str, Any], *, repo: str) -> Dict[str, Any]:
     """
     Classify a terminal Cursor run for implement monitoring.
 
-    Returns keys: kind (pr_opened|finished_no_pr|failed), pr_url, status, agent_url, detail
+    Returns keys: kind (pr_opened|finished_no_pr|failed), pr_url, pr_title, status, agent_url, detail
     """
     st = (status.get("status") or "").strip().upper()
     agent_url = (status.get("agent_url") or "").strip()
     pr_url = (status.get("pr_url") or "").strip()
+    pr_title = (status.get("pr_title") or "").strip()
     branch = (status.get("branch_name") or "").strip()
     if not pr_url and branch:
-        pr_url = lookup_pr_url_for_branch(repo=repo, branch_name=branch)
+        pr_url, looked_title = lookup_pr_for_branch(repo=repo, branch_name=branch)
+        pr_title = pr_title or looked_title
+    elif pr_url and not pr_title:
+        pr_title = _github_pr_title(pr_url)
 
     if st == "FINISHED" and pr_url:
         return {
             "kind": "pr_opened",
             "pr_url": pr_url,
+            "pr_title": pr_title,
             "status": st,
             "agent_url": agent_url,
             "branch_name": branch,
@@ -157,13 +199,7 @@ def _post_discord_cto(message: str) -> None:
     url = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
     if not url or url.startswith("placeholder"):
         return
-    msg = (message or "").strip()
-    if len(msg) > 1900:
-        msg = msg[:1897] + "..."
-    try:
-        requests.post(url, json={"content": msg}, timeout=20)
-    except Exception:
-        logger.warning("Discord CTO notify failed for implement monitor", exc_info=True)
+    post_to_discord(url, (message or "").strip())
 
 
 class ImplementHandler:
@@ -460,7 +496,7 @@ class ImplementHandler:
                 )
             _post_discord_cto(
                 f"**Implementation PR opened** {label}\n"
-                f"PR: {pr_url}\n"
+                f"{format_pr_discord_line(pr_url, outcome.get('pr_title') or '')}\n"
                 f"Agent: {agent_url or agent_id}"
             )
             return

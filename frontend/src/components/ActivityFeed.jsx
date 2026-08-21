@@ -2,25 +2,48 @@ import { useState } from 'react'
 
 const PREVIEW_LINES = 5
 const URL_RE = /(https?:\/\/[^\s<>"'`\]},]+(?:\([^\s<>"'`\]},)]*\)[^\s<>"'`\]},]*)*)/g
+const MD_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g
+
+function linkAnchor(href, label, key) {
+  return (
+    <a
+      key={key}
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-bigas-black underline underline-offset-2 hover:opacity-70 break-all"
+    >
+      {label}
+    </a>
+  )
+}
+
+function linkifyUrls(text, keyPrefix) {
+  const parts = text.split(URL_RE)
+  return parts.map((part, i) =>
+    i % 2 === 1 ? linkAnchor(part, part, `${keyPrefix}-u${i}`) : part
+  )
+}
 
 function linkify(text) {
   if (!text || typeof text !== 'string') return text
-  const parts = text.split(URL_RE)
-  return parts.map((part, i) =>
-    i % 2 === 1 ? (
-      <a
-        key={i}
-        href={part}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-bigas-black underline underline-offset-2 hover:opacity-70 break-all"
-      >
-        {part}
-      </a>
-    ) : (
-      part
-    )
-  )
+  const nodes = []
+  let lastIndex = 0
+  let match
+  const re = new RegExp(MD_LINK_RE.source, 'g')
+  let idx = 0
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(...linkifyUrls(text.slice(lastIndex, match.index), `t${idx}`))
+    }
+    nodes.push(linkAnchor(match[2], match[1], `m${idx}`))
+    lastIndex = match.index + match[0].length
+    idx += 1
+  }
+  if (lastIndex < text.length) {
+    nodes.push(...linkifyUrls(text.slice(lastIndex), `t${idx}`))
+  }
+  return nodes
 }
 
 function CollapsibleContent({ content }) {

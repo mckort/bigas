@@ -6,7 +6,6 @@ from __future__ import annotations
 import logging
 import os
 
-import requests
 from flask import Blueprint, jsonify, request
 
 from bigas.resources.cto.chat_summaries import (
@@ -42,7 +41,12 @@ from bigas.resources.cto.pr_review.service import (
     PRReviewService,
 )
 from bigas.discord_webhook import post_long_to_discord, post_to_discord
-from bigas.github_refs import is_owner_repo, parse_cursor_agent_id, resolve_repo_and_pr
+from bigas.github_refs import (
+    format_pr_discord_line,
+    is_owner_repo,
+    parse_cursor_agent_id,
+    resolve_repo_and_pr,
+)
 from bigas.resources.marketing.utils import sanitize_error_message
 from bigas.providers.monitoring.service import MonitoringService, run_monitoring_checks
 from bigas.resources.cto.qa_agent.service import QAAgentError, QAAgentService
@@ -114,6 +118,7 @@ def _discord_review_posted_message(
     comment_url: str,
     review_body: str,
     cost_suffix: str = "",
+    pr_title: str = "",
 ) -> str:
     """Single Discord payload so the first chunk always identifies the PR."""
     comment_line = (
@@ -123,7 +128,7 @@ def _discord_review_posted_message(
     )
     return (
         f"{done_label}\n"
-        f"PR: {pr_url}\n"
+        f"{format_pr_discord_line(pr_url, pr_title)}\n"
         f"{comment_line}{cost_suffix}\n\n"
         f"---\n\n"
         f"{(review_body or '').strip()}"
@@ -199,14 +204,16 @@ def _jira_final_approval_for_pr(
         return {"ok": False, "error": "final_approval_hook_exception"}
 
 
-def _pr_already_merged(
+def _fetch_pull_request(
     *,
     owner: str,
     repo_name: str,
     pr_number: int,
     github_token: str,
-) -> bool:
-    """Return True when the PR is already merged (best-effort; False on fetch errors)."""
+) -> dict:
+    """Best-effort PR JSON. Empty dict on missing token or fetch errors."""
+    if not (github_token or "").strip():
+        return {}
     try:
         pr = GitHubPRCommentClient(token=github_token).get_pull_request(
             owner=owner,
@@ -215,14 +222,36 @@ def _pr_already_merged(
         )
     except GitHubPRCommentError:
         logger.warning(
-            "Could not check merged state for %s/%s#%s",
+            "Could not fetch PR %s/%s#%s",
             owner,
             repo_name,
             pr_number,
             exc_info=True,
         )
-        return False
-    return bool(pr.get("merged"))
+        return {}
+    return pr if isinstance(pr, dict) else {}
+
+
+def _pr_title_of(pr: dict | None) -> str:
+    return ((pr or {}).get("title") or "").strip()
+
+
+def _pr_already_merged(
+    *,
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    github_token: str,
+) -> bool:
+    """Return True when the PR is already merged (best-effort; False on fetch errors)."""
+    return bool(
+        _fetch_pull_request(
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            github_token=github_token,
+        ).get("merged")
+    )
 
 
 def _maybe_auto_merge_pr(
@@ -245,11 +274,15 @@ def _maybe_auto_merge_pr(
         return {"skipped": True, "reason": "BIGAS_CTO_AUTO_MERGE not enabled"}
     if not (github_token or "").strip():
         err = "GITHUB_TOKEN missing"
-        _post_to_discord_cto(f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}")
+        _post_to_discord_cto(
+            f"**PR auto-merge failed**\n{format_pr_discord_line(pr_url)}\nReason: {err}"
+        )
         return {"ok": False, "merged": False, "error": err}
     if "/" not in repo or repo.count("/") != 1:
         err = "repo must be owner/repo"
-        _post_to_discord_cto(f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}")
+        _post_to_discord_cto(
+            f"**PR auto-merge failed**\n{format_pr_discord_line(pr_url)}\nReason: {err}"
+        )
         return {"ok": False, "merged": False, "error": err}
 
     owner, repo_name = repo.split("/", 1)
@@ -268,6 +301,8 @@ def _maybe_auto_merge_pr(
             pr_number,
             exc_info=True,
         )
+    pr_title = _pr_title_of(pr)
+    pr_ref = format_pr_discord_line(pr_url, pr_title)
 
     # Quiet skip when a parallel review already merged (no Discord spam).
     if pr.get("merged"):
@@ -302,7 +337,7 @@ def _maybe_auto_merge_pr(
                 err,
             )
             _post_to_discord_cto(
-                f"**PR auto-merge failed**\nPR: {pr_url}\n"
+                f"**PR auto-merge failed**\n{pr_ref}\n"
                 f"PR is still a draft; could not mark ready for review.\n"
                 f"Reason: {err}"
             )
@@ -363,7 +398,7 @@ def _maybe_auto_merge_pr(
                 err,
             )
             _post_to_discord_cto(
-                f"**PR auto-merge failed**\nPR: {pr_url}\n"
+                f"**PR auto-merge failed**\n{pr_ref}\n"
                 f"Immediate merge blocked: {sync_err}\n"
                 f"Enable auto-merge failed: {err}"
             )
@@ -384,7 +419,7 @@ def _maybe_auto_merge_pr(
                 exc_info=True,
             )
             _post_to_discord_cto(
-                f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+                f"**PR auto-merge failed**\n{pr_ref}\nReason: {err}"
             )
             return {
                 "ok": False,
@@ -399,7 +434,7 @@ def _maybe_auto_merge_pr(
         _post_to_discord_cto(
             f"**PR auto-merge enabled** ({method}){draft_line}\n"
             f"Waiting for required checks, then GitHub will squash-merge.\n"
-            f"PR: {pr_url}"
+            f"{pr_ref}"
         )
         return {
             "ok": True,
@@ -414,7 +449,7 @@ def _maybe_auto_merge_pr(
         err = sanitize_error_message(str(e))
         logger.warning("Auto-merge failed for %s#%s: %s", repo, pr_number, err)
         _post_to_discord_cto(
-            f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+            f"**PR auto-merge failed**\n{pr_ref}\nReason: {err}"
         )
         return {
             "ok": False,
@@ -426,7 +461,7 @@ def _maybe_auto_merge_pr(
         err = sanitize_error_message(str(e))
         logger.warning("Auto-merge unexpected error for %s#%s", repo, pr_number, exc_info=True)
         _post_to_discord_cto(
-            f"**PR auto-merge failed**\nPR: {pr_url}\nReason: {err}"
+            f"**PR auto-merge failed**\n{pr_ref}\nReason: {err}"
         )
         return {
             "ok": False,
@@ -438,7 +473,7 @@ def _maybe_auto_merge_pr(
     sha = (result.get("sha") or "").strip()
     sha_line = f"\nSHA: `{sha}`" if sha else ""
     _post_to_discord_cto(
-        f"**PR auto-merged** (squash){draft_line}\nPR: {pr_url}{sha_line}"
+        f"**PR auto-merged** (squash){draft_line}\n{pr_ref}{sha_line}"
     )
     return {
         "ok": True,
@@ -463,12 +498,21 @@ def _notify_autofix_loop_protection(
     detail = format_loop_protection_message(
         autofix_count=autofix_count, max_iterations=max_iterations
     )
-    msg = (
+    token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
+    pr: dict = {}
+    if token and "/" in repo and repo.count("/") == 1:
+        owner, name = repo.split("/", 1)
+        pr = _fetch_pull_request(
+            owner=owner,
+            repo_name=name,
+            pr_number=pr_number,
+            github_token=token,
+        )
+    _post_to_discord_cto(
         f"**CTO autofix stopped (loop protection)**\n"
         f"{detail}\n"
-        f"PR: {pr_url}"
+        f"{format_pr_discord_line(pr_url, _pr_title_of(pr))}"
     )
-    _post_to_discord_cto(msg)
     # Best-effort Jira comment on linked issue (no status change).
     try:
         from bigas.resources.product.create_release_notes.jira_client import (
@@ -480,23 +524,8 @@ def _notify_autofix_loop_protection(
             extract_jira_issue_key,
         )
 
-        token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
-        if not token or "/" not in repo:
+        if not pr:
             return
-        owner, name = repo.split("/", 1)
-
-        resp = requests.get(
-            f"https://api.github.com/repos/{owner}/{name}/pulls/{pr_number}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=30,
-        )
-        if resp.status_code >= 400:
-            return
-        pr = resp.json() if resp.text else {}
         issue_key = extract_jira_issue_key(
             (pr.get("title") or ""),
             (pr.get("body") or ""),
@@ -589,15 +618,18 @@ def review_and_comment_pr():
 
     owner, repo_name = repo.split("/", 1)
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
-
-    # Parallel Actions runs (or a late followup) should not re-review / Discord
-    # after the PR was already squash-merged.
-    if _pr_already_merged(
+    pr = _fetch_pull_request(
         owner=owner,
         repo_name=repo_name,
         pr_number=pr_number,
         github_token=github_token,
-    ):
+    )
+    pr_title = _pr_title_of(pr)
+    pr_ref = format_pr_discord_line(pr_url, pr_title)
+
+    # Parallel Actions runs (or a late followup) should not re-review / Discord
+    # after the PR was already squash-merged.
+    if pr.get("merged"):
         return _json_summary(
             {
                 "success": True,
@@ -636,11 +668,11 @@ def review_and_comment_pr():
     # Notify Discord only once we have a usable diff (avoids started+failed spam).
     if phase == "post_autofix":
         _post_to_discord_cto(
-            f"**CTO PR re-review after autofix started**\nPR: https://github.com/{repo}/pull/{pr_number}"
+            f"**CTO PR re-review after autofix started**\n{pr_ref}"
         )
     else:
         _post_to_discord_cto(
-            f"**CTO PR review started**\nPR: https://github.com/{repo}/pull/{pr_number}"
+            f"**CTO PR review started**\n{pr_ref}"
         )
 
     previous_review = None
@@ -718,18 +750,19 @@ def review_and_comment_pr():
                 comment_url=comment_url,
                 review_body=review_body,
                 cost_suffix=cost_suffix,
+                pr_title=pr_title,
             )
         )
     else:
         _post_to_discord_cto(
             f"{done_label}\nNo comment posted. (No URL returned from GitHub.)"
-            f"{cost_suffix}\nPR: {pr_url}"
+            f"{cost_suffix}\n{pr_ref}"
         )
 
     auto_merge: dict = {"skipped": True, "reason": "not_ready"}
     if ready:
         _post_to_discord_cto(
-            f"**Ready to merge**\nPR: {pr_url}\n"
+            f"**Ready to merge**\n{pr_ref}\n"
             + (f"Comment: {comment_url}" if comment_url else "")
         )
         jira_final = _jira_final_approval_for_pr(
@@ -803,6 +836,17 @@ def autofix_pr():
         )
 
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
+    owner, repo_name = repo.split("/", 1)
+    gh_token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
+    pr_title = _pr_title_of(
+        _fetch_pull_request(
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            github_token=gh_token,
+        )
+    )
+    pr_ref = format_pr_discord_line(pr_url, pr_title)
 
     try:
         service = AutofixService(
@@ -818,7 +862,9 @@ def autofix_pr():
     except AutofixError as e:
         err = sanitize_error_message(str(e))
         logger.warning("Autofix failed: %s", e)
-        _post_to_discord_cto(f"**CTO autofix done**\nNot launched.\nReason: {err}")
+        _post_to_discord_cto(
+            f"**CTO autofix done**\nNot launched.\nReason: {err}\n{pr_ref}"
+        )
         if "401" in str(e) or "auth" in str(e).lower():
             status = 401
         elif "403" in str(e):
@@ -848,7 +894,7 @@ def autofix_pr():
             _post_to_discord_cto(
                 f"**CTO autofix skipped**\n"
                 f"Review does not need autofix ({sanitize_error_message(reason)}).\n"
-                f"PR: {pr_url}"
+                f"{pr_ref}"
             )
         elif result.get("cooldown"):
             reason = result.get("reason") or "cooldown"
@@ -898,12 +944,12 @@ def autofix_pr():
                 _post_to_discord_cto(
                     f"**CTO autofix skipped (stale review)**\n"
                     f"Review predates the latest autofix commit; waiting for re-review.\n"
-                    f"PR: {pr_url}"
+                    f"{pr_ref}"
                 )
         elif not is_retry:
             _post_to_discord_cto(
                 f"**CTO autofix skipped**\n"
-                f"Reason: {sanitize_error_message(reason)}\nPR: {pr_url}"
+                f"Reason: {sanitize_error_message(reason)}\n{pr_ref}"
             )
         # Delete any stale cooldown comment when skipped for non-cooldown reasons.
         if not result.get("cooldown"):
@@ -948,7 +994,7 @@ def autofix_pr():
 
     _post_to_discord_cto(
         f"**CTO autofix launched** ({round_n}/{max_n})\n"
-        f"PR: {pr_url}\nAgent: {agent_url or agent_id}"
+        f"{pr_ref}\nAgent: {agent_url or agent_id}"
     )
     return _json_summary({"success": True, **result}, summarize_autofix_result)
 
@@ -1030,12 +1076,15 @@ def autofix_followup():
         return _json_summary(base, summarize_followup_result)
 
     gh_token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
-    if gh_token and _pr_already_merged(
+    pr = _fetch_pull_request(
         owner=owner,
         repo_name=repo_name,
         pr_number=pr_number,
         github_token=gh_token,
-    ):
+    ) if gh_token else {}
+    pr_title = _pr_title_of(pr)
+    pr_ref = format_pr_discord_line(pr_url, pr_title)
+    if pr.get("merged"):
         # Another path already merged (or a late finalize after auto-merge).
         base.update(
             {
@@ -1058,7 +1107,7 @@ def autofix_followup():
     )
     if not status.get("ok"):
         _post_to_discord_cto(
-            f"**CTO autofix failed**\nPR: {pr_url}\n"
+            f"**CTO autofix failed**\n{pr_ref}\n"
             f"Status: {run_status}\nAgent: {agent_url}{usage_suffix}"
         )
         base.update({"finalized": True, "ready_to_merge": False, "fixes_pushed": False})
@@ -1098,7 +1147,7 @@ def autofix_followup():
                 "(nothing pushed, or agent only proposed changes)."
             )
         _post_to_discord_cto(
-            f"**CTO autofix finished without commits**{round_bit}\nPR: {pr_url}\n"
+            f"**CTO autofix finished without commits**{round_bit}\n{pr_ref}\n"
             f"{why}\nAgent: {agent_url}{usage_suffix}\n"
             f"Stopping autofix loop for this run (no re-review without a new commit)."
         )
@@ -1117,7 +1166,7 @@ def autofix_followup():
         return _json_summary(base, summarize_followup_result)
 
     _post_to_discord_cto(
-        f"**CTO autofix completed**\nPR: {pr_url}\n"
+        f"**CTO autofix completed**\n{pr_ref}\n"
         f"Fixes pushed to the PR branch.\nAgent: {agent_url}{usage_suffix}"
     )
 
@@ -1135,7 +1184,7 @@ def autofix_followup():
         )
 
     gh_token = github_token or os.environ.get("GITHUB_TOKEN") or ""
-    _post_to_discord_cto(f"**CTO PR re-review after autofix started**\nPR: {pr_url}")
+    _post_to_discord_cto(f"**CTO PR re-review after autofix started**\n{pr_ref}")
     previous_review = None
     try:
         previous_review = GitHubPRCommentClient(token=gh_token).get_marked_comment_body(
@@ -1203,6 +1252,7 @@ def autofix_followup():
             comment_url=comment_url,
             review_body=review_body,
             cost_suffix=cost_suffix,
+            pr_title=pr_title,
         )
     )
 
@@ -1217,7 +1267,7 @@ def autofix_followup():
     auto_merge: dict = {"skipped": True, "reason": "not_ready"}
     if ready:
         _post_to_discord_cto(
-            f"**Ready to merge**\nPR: {pr_url}\nComment: {comment_url}"
+            f"**Ready to merge**\n{pr_ref}\nComment: {comment_url}"
         )
         jira_final = _jira_final_approval_for_pr(
             repo=repo,
@@ -1250,7 +1300,7 @@ def autofix_followup():
             f"{completed_round}/{max_iters} "
             f"({autofix_count} `[bigas-autofix]` commit(s) on the PR).\n"
             f"Actions may launch another round if under the limit.\n"
-            f"PR: {pr_url}"
+            f"{pr_ref}"
         )
 
     base.update({

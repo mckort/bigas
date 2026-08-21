@@ -390,7 +390,7 @@ def test_extract_pr_and_branch_from_cursor_payload():
 def test_evaluate_implementation_outcome_finished_no_pr(monkeypatch):
     from bigas.resources.product.jira_automation import implement as impl
 
-    monkeypatch.setattr(impl, "lookup_pr_url_for_branch", lambda **_k: "")
+    monkeypatch.setattr(impl, "lookup_pr_for_branch", lambda **_k: ("", ""))
     out = impl.evaluate_implementation_outcome(
         {
             "status": "FINISHED",
@@ -407,7 +407,8 @@ def test_evaluate_implementation_outcome_finished_no_pr(monkeypatch):
 def test_evaluate_implementation_outcome_pr_opened(monkeypatch):
     from bigas.resources.product.jira_automation import implement as impl
 
-    monkeypatch.setattr(impl, "lookup_pr_url_for_branch", lambda **_k: "")
+    monkeypatch.setattr(impl, "lookup_pr_for_branch", lambda **_k: ("", ""))
+    monkeypatch.setattr(impl, "_github_pr_title", lambda _url: "VFA-12: Add reports")
     out = impl.evaluate_implementation_outcome(
         {
             "status": "FINISHED",
@@ -419,6 +420,7 @@ def test_evaluate_implementation_outcome_pr_opened(monkeypatch):
     )
     assert out["kind"] == "pr_opened"
     assert out["pr_url"].endswith("/pull/12")
+    assert out["pr_title"] == "VFA-12: Add reports"
 
 
 def test_config_maps_implement_status(monkeypatch):

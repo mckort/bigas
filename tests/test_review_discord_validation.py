@@ -117,3 +117,20 @@ def test_discord_review_posted_message_without_comment_url():
     assert msg.startswith("**CTO PR re-review after autofix done**\nPR: https://github.com/acme/repo/pull/2\n")
     assert "Comment: (no URL returned from GitHub.)" in msg
     assert "### Important:\nMissing CSS" in msg
+
+
+def test_discord_review_posted_message_includes_pr_title_as_link():
+    msg = _discord_review_posted_message(
+        done_label="**CTO PR review done**",
+        pr_url="https://github.com/mckort/bigas/pull/11",
+        comment_url="https://github.com/mckort/bigas/pull/11#issuecomment-1",
+        review_body="Looks good.",
+        pr_title="BIG-11: Implement create_jira_issue tool",
+    )
+    header, _, body = msg.partition("\n\n---\n\n")
+    assert (
+        "[BIG-11: Implement create_jira_issue tool]"
+        "(https://github.com/mckort/bigas/pull/11)"
+    ) in header
+    assert "PR: https://github.com/mckort/bigas/pull/11" not in header
+    assert body == "Looks good."

@@ -4,7 +4,12 @@ from __future__ import annotations
 import pytest
 
 from bigas.agents.chief_of_staff import _enrich_tool_args
-from bigas.github_refs import parse_cursor_agent_id, parse_github_pr, resolve_repo_and_pr
+from bigas.github_refs import (
+    format_pr_discord_line,
+    parse_cursor_agent_id,
+    parse_github_pr,
+    resolve_repo_and_pr,
+)
 from bigas.portfolio import (
     ga4_property_for_project,
     normalize_project_key,
@@ -104,6 +109,17 @@ def test_prompt_block_lists_all_projects(portfolio_env):
     assert "mckort/roadpal" in block
     assert "not configured" in block
     assert "pr_url" in block
+
+
+def test_format_pr_discord_line_uses_title_as_markdown_link():
+    url = "https://github.com/mckort/bigas/pull/11"
+    assert format_pr_discord_line(url, "BIG-11: Implement create_jira_issue tool") == (
+        "[BIG-11: Implement create_jira_issue tool](https://github.com/mckort/bigas/pull/11)"
+    )
+    assert format_pr_discord_line(url, "") == "PR: https://github.com/mckort/bigas/pull/11"
+    assert format_pr_discord_line(
+        url, "fix: handle [bigas-autofix] in gate"
+    ) == "[fix: handle (bigas-autofix) in gate](https://github.com/mckort/bigas/pull/11)"
 
 
 def test_parse_github_pr_and_cursor_agent():

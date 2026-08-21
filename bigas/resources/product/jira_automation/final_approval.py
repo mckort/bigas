@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 
 import requests
 
+from bigas.discord_webhook import post_to_discord
+from bigas.github_refs import format_pr_discord_line
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
     JiraConfig,
@@ -40,13 +42,7 @@ def _post_discord(message: str) -> None:
     url = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
     if not url or url.startswith("placeholder"):
         return
-    msg = (message or "").strip()
-    if len(msg) > 1900:
-        msg = msg[:1897] + "..."
-    try:
-        requests.post(url, json={"content": msg}, timeout=20)
-    except Exception:
-        logger.warning("Discord notify failed for final approval", exc_info=True)
+    post_to_discord(url, (message or "").strip())
 
 
 def transition_issue_to_final_approval_for_pr(
@@ -128,7 +124,7 @@ def transition_issue_to_final_approval_for_pr(
         _post_discord(
             f"**Ready for final approval** {issue_discord_label(issue_key, summary)}\n"
             f"Was `{current}` → **{cfg.status_final_approval}**\n"
-            f"PR: {pr_url}"
+            f"{format_pr_discord_line(pr_url, title)}"
         )
         return {
             "ok": True,
