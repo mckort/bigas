@@ -3,15 +3,24 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 import time
+import zipfile
 from typing import Any, Dict, List, Optional
 
 from bigas.providers.monitoring.service import _check_http_status
 from bigas.resources.devops.config import RISKY_PATH_PATTERNS, DeployTarget, parse_repo, resolve_deploy_target
 from bigas.resources.devops.github_actions import (
+    DEFAULT_LOG_TAIL_LINES,
+    DEFAULT_LOG_ZIP_MAX_BYTES,
+    HOTFIX_BRANCH_PREFIX,
     GitHubActionsClient,
     GitHubActionsError,
+    extract_job_logs_from_zip,
     excerpt_gha_logs,
+    find_failed_jobs,
+    format_commit_diff,
+    truncate_log_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -391,13 +400,20 @@ def get_deployment_status(
     }
 
 
-def get_failed_run_excerpt(
+def _log_zip_max_bytes() -> int:
+    raw = (os.environ.get("BIGAS_CI_LOG_ZIP_MAX_BYTES") or "").strip()
+    if raw.isdigit():
+        return max(1024, int(raw))
+    return DEFAULT_LOG_ZIP_MAX_BYTES
+
+
+def fetch_github_action_logs(
     *,
     repo: str,
     run_id: int,
     github_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Fetch a short log excerpt from failed jobs on a workflow run."""
+    """Download and parse logs from failed jobs on a GitHub Actions workflow run."""
     owner, name = parse_repo(repo)
     client = _github_client(github_token)
     try:
@@ -405,37 +421,62 @@ def get_failed_run_excerpt(
     except GitHubActionsError as e:
         raise DevOpsError(str(e)) from e
 
-    failed = [
-        job
-        for job in jobs
-        if isinstance(job, dict)
-        and (job.get("conclusion") or "").lower() == "failure"
-    ]
+    failed = find_failed_jobs(jobs)
     if not failed:
-        failed = [
-            job
-            for job in jobs
-            if isinstance(job, dict)
-            and (job.get("conclusion") or "").lower()
-            not in ("success", "skipped", "cancelled", "")
-        ]
+        raise DevOpsError(f"No failed jobs found for workflow run #{run_id}")
+
+    max_bytes = _log_zip_max_bytes()
+    zip_size = None
+    zip_path: Optional[str] = None
+    try:
+        zip_size = client.get_run_logs_zip_size(owner, name, int(run_id))
+    except GitHubActionsError:
+        zip_size = None
+
+    use_zip = zip_size is None or zip_size <= max_bytes
+    if use_zip:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp.close()
+        zip_path = tmp.name
+        try:
+            client.download_run_logs_zip(owner, name, int(run_id), max_bytes=max_bytes, dest_path=zip_path)
+        except Exception as e:
+            logger.warning("Could not download run logs zip for run #%s: %s", run_id, e)
+            use_zip = False
+            try:
+                os.unlink(zip_path)
+            except OSError:
+                pass
+            zip_path = None
 
     parts: List[str] = []
     job_names: List[str] = []
     for job in failed[:3]:
         job_name = (job.get("name") or "job").strip()
         job_names.append(job_name)
-        job_id = job.get("id")
-        if not job_id:
-            continue
-        try:
-            raw = client.get_job_logs(owner, name, int(job_id))
-        except GitHubActionsError as e:
-            parts.append(f"### {job_name}\n(could not fetch logs: {e})")
-            continue
-        excerpt = excerpt_gha_logs(raw)
+        raw = ""
+        if use_zip and zip_path:
+            try:
+                raw = extract_job_logs_from_zip(zip_path, job_name)
+            except (OSError, zipfile.ZipError) as e:
+                logger.warning("Could not extract zip logs for job %s: %s", job_name, e)
+        if not raw.strip():
+            job_id = job.get("id")
+            if job_id:
+                try:
+                    raw = client.get_job_logs(owner, name, int(job_id))
+                except GitHubActionsError as e:
+                    parts.append(f"### {job_name}\n(could not fetch logs: {e})")
+                    continue
+        excerpt = truncate_log_text(raw) if raw.strip() else ""
         if excerpt:
             parts.append(f"### {job_name}\n{excerpt}")
+
+    if zip_path:
+        try:
+            os.unlink(zip_path)
+        except OSError:
+            pass
 
     combined = "\n\n".join(parts).strip()
     if not combined:
@@ -443,11 +484,137 @@ def get_failed_run_excerpt(
     names = ", ".join(job_names) or "unknown job"
     return {
         "status": "ok",
-        "summary": f"Failed job logs for run #{run_id} ({names}).",
+        "summary": f"Parsed failed job logs for run #{run_id} ({names}).",
         "repo": repo,
         "run_id": int(run_id),
         "failed_job_names": job_names,
-        "excerpt": combined[:8000],
+        "logs": combined[:32000],
+        "zip_size_bytes": zip_size,
+        "used_zip_download": use_zip,
+    }
+
+
+def get_commit_diff(
+    *,
+    repo: str,
+    commit_sha: str,
+    github_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch the diff/patches for a commit."""
+    owner, name = parse_repo(repo)
+    client = _github_client(github_token)
+    try:
+        commit = client.get_commit(owner, name, commit_sha.strip())
+    except GitHubActionsError as e:
+        raise DevOpsError(str(e)) from e
+    diff_text = format_commit_diff(commit)
+    sha = (commit.get("sha") or commit_sha).strip()
+    return {
+        "status": "ok",
+        "summary": f"Fetched diff for commit {sha[:12]}.",
+        "repo": repo,
+        "commit_sha": sha,
+        "diff": diff_text,
+        "files_changed": len(commit.get("files") or []),
+    }
+
+
+def create_github_pr(
+    *,
+    repo: str,
+    base_branch: str,
+    new_branch_name: str,
+    title: str,
+    body: str,
+    files_to_change: Dict[str, str],
+    github_token: Optional[str] = None,
+    base_commit_sha: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a branch with file changes and open a pull request."""
+    if not files_to_change:
+        raise DevOpsError("files_to_change must include at least one file path")
+    branch = (new_branch_name or "").strip()
+    if not branch.startswith(HOTFIX_BRANCH_PREFIX):
+        raise DevOpsError(f"new_branch_name must start with {HOTFIX_BRANCH_PREFIX}")
+
+    owner, name = parse_repo(repo)
+    client = _github_client(github_token)
+    base = (base_branch or client.get_default_branch(owner, name)).strip()
+    parent_sha = (base_commit_sha or "").strip()
+    if not parent_sha:
+        try:
+            parent_sha = client.get_ref_sha(owner, name, base)
+        except GitHubActionsError as e:
+            raise DevOpsError(str(e)) from e
+    try:
+        base_commit = client.get_commit(owner, name, parent_sha)
+    except GitHubActionsError as e:
+        raise DevOpsError(str(e)) from e
+
+    base_tree = ((base_commit.get("commit") or {}).get("tree") or {}).get("sha") or ""
+    if not base_tree:
+        raise DevOpsError(f"Could not resolve tree for base branch {base}")
+
+    entries: List[Dict[str, str]] = []
+    for path, content in files_to_change.items():
+        filename = (path or "").strip().lstrip("/")
+        if not filename:
+            continue
+        blob_sha = client.create_blob(owner, name, content)
+        entries.append({"path": filename, "mode": "100644", "type": "blob", "sha": blob_sha})
+    if not entries:
+        raise DevOpsError("No valid file paths in files_to_change")
+
+    try:
+        tree_sha = client.create_tree(owner, name, base_tree, entries)
+        commit_sha = client.create_git_commit(
+            owner,
+            name,
+            message=title.strip() or f"fix: {branch}",
+            tree_sha=tree_sha,
+            parent_sha=parent_sha,
+        )
+        client.create_branch_ref(owner, name, branch, commit_sha)
+        pr = client.create_pull_request(
+            owner,
+            name,
+            title=title.strip() or f"Hotfix: {branch}",
+            body=(body or "").strip() or "Automated hotfix from Bigas self-healing CI.",
+            head=branch,
+            base=base,
+        )
+    except GitHubActionsError as e:
+        raise DevOpsError(str(e)) from e
+
+    pr_number = pr.get("number")
+    html_url = (pr.get("html_url") or "").strip()
+    return {
+        "status": "ok",
+        "summary": f"Opened pull request #{pr_number} from `{branch}` → `{base}`.",
+        "repo": repo,
+        "base_branch": base,
+        "head_branch": branch,
+        "pr_number": pr_number,
+        "html_url": html_url,
+        "commit_sha": commit_sha,
+    }
+
+
+def get_failed_run_excerpt(
+    *,
+    repo: str,
+    run_id: int,
+    github_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch a short log excerpt from failed jobs on a workflow run."""
+    fetched = fetch_github_action_logs(repo=repo, run_id=run_id, github_token=github_token)
+    return {
+        "status": "ok",
+        "summary": fetched.get("summary") or "",
+        "repo": repo,
+        "run_id": int(run_id),
+        "failed_job_names": fetched.get("failed_job_names") or [],
+        "excerpt": (fetched.get("logs") or "")[:8000],
     }
 
 
