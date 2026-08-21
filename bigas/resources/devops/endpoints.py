@@ -18,6 +18,7 @@ from bigas.resources.devops.service import (
 )
 from bigas.resources.devops.self_healing import (
     SelfHealingError,
+    _run_self_healing_job,
     enqueue_self_healing,
     get_self_healing_job,
     parse_workflow_run_payload,
@@ -223,14 +224,18 @@ def github_workflow_run_webhook():
         payload = {}
 
     secret = webhook_secret()
+    if not secret:
+        logger.error("github_workflow_run webhook rejected: GITHUB_WEBHOOK_SECRET not configured")
+        return jsonify({"error": "webhook secret not configured"}), 503
+
     sig_ok = verify_github_signature(
         payload_bytes,
         request.headers.get("X-Hub-Signature-256"),
         secret,
     )
     header_secret = extract_webhook_secret_from_headers(request.headers)
-    header_ok = verify_webhook_secret(header_secret, secret) if secret else False
-    if secret and not sig_ok and not header_ok:
+    header_ok = verify_webhook_secret(header_secret, secret)
+    if not sig_ok and not header_ok:
         return jsonify({"error": "unauthorized"}), 401
 
     event = (request.headers.get("X-GitHub-Event") or "").strip().lower()
@@ -272,7 +277,50 @@ def github_workflow_run_webhook():
 
     job_id = str(uuid.uuid4())
     enqueue_self_healing(context, job_id=job_id)
-    return jsonify({"ok": True, "accepted": True, "job_id": job_id, **context}), 202
+    return jsonify({
+        "ok": True,
+        "accepted": True,
+        "job_id": job_id,
+        **context,
+        "warning": (
+            "Async self-healing runs in a separate HTTP worker request (Cloud Run-safe). "
+            "Poll self_healing_ci_job or set sync=true for inline processing."
+        ),
+    }), 202
+
+
+@devops_bp.route("/self_healing_ci_worker", methods=["POST"])
+def self_healing_ci_worker_endpoint():
+    """
+    Internal worker endpoint for async self-healing CI jobs.
+
+    Dispatched via HTTP from enqueue_self_healing so Cloud Run allocates CPU
+    for the full LLM + GitHub workflow instead of relying on background threads.
+    """
+    secret = webhook_secret()
+    header_secret = extract_webhook_secret_from_headers(request.headers)
+    if not secret or not verify_webhook_secret(header_secret, secret):
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.json or {}
+    job_id = (data.get("job_id") or "").strip()
+    if not job_id:
+        return jsonify({"error": "job_id is required"}), 400
+
+    context = {
+        key: data[key]
+        for key in ("repo", "run_id", "head_sha", "head_branch", "workflow_name", "html_url", "github_token")
+        if key in data
+    }
+    if not context.get("repo") or not context.get("run_id"):
+        return jsonify({"error": "repo and run_id are required"}), 400
+
+    _run_self_healing_job(job_id, context)
+    job = get_self_healing_job(job_id) or {}
+    status = job.get("status") or "unknown"
+    if status == "error":
+        return jsonify({"ok": False, "job_id": job_id, **job}), 500
+    return jsonify({"ok": True, "job_id": job_id, **job}), 200
 
 
 @devops_bp.route("/self_healing_ci_job", methods=["POST"])

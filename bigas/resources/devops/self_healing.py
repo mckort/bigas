@@ -10,6 +10,8 @@ import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
+
 from bigas.discord_webhook import post_to_discord
 from bigas.resources.devops.github_actions import HOTFIX_BRANCH_PREFIX
 from bigas.resources.devops.service import (
@@ -176,7 +178,7 @@ def _parse_json_action(text: str) -> Optional[Dict[str, Any]]:
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if match:
         text = match.group(1)
-    elif not text.startswith("{"):
+    else:
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
             text = match.group(0)
@@ -339,16 +341,55 @@ def _run_self_healing_job(job_id: str, context: Dict[str, Any]) -> None:
             }
 
 
+def _self_healing_worker_url() -> str:
+    base = (os.environ.get("SERVER_URL") or "").strip().rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/mcp/tools/self_healing_ci_worker"
+
+
+def _self_healing_dispatch_headers() -> Dict[str, str]:
+    headers = {"Content-Type": "application/json", "User-Agent": "bigas-core/1.0 (self-healing-worker)"}
+    secret = webhook_secret()
+    if secret:
+        headers["X-Bigas-Webhook-Secret"] = secret
+    keys = (os.environ.get("BIGAS_ACCESS_KEYS") or "").split(",")
+    if keys and keys[0].strip():
+        headers["X-Bigas-Access-Key"] = keys[0].strip()
+    return headers
+
+
+def _dispatch_self_healing_worker(job_id: str, context: Dict[str, Any]) -> None:
+    """Dispatch self-healing work via HTTP so Cloud Run allocates CPU for a new request."""
+    url = _self_healing_worker_url()
+    payload = {"job_id": job_id, **context}
+    if not url:
+        logger.warning(
+            "SERVER_URL not set; running self-healing job %s inline (dev only — "
+            "set SERVER_URL on Cloud Run for reliable async dispatch)",
+            job_id,
+        )
+        _run_self_healing_job(job_id, context)
+        return
+
+    try:
+        # Short read timeout: accept the worker request without waiting for LLM completion.
+        requests.post(url, json=payload, headers=_self_healing_dispatch_headers(), timeout=(10, 1))
+    except requests.exceptions.ReadTimeout:
+        return
+    except requests.exceptions.RequestException as e:
+        logger.warning("Self-healing worker dispatch failed for job %s: %s", job_id, e)
+        with _SELF_HEALING_LOCK:
+            _SELF_HEALING_JOBS[job_id] = {
+                "status": "error",
+                "error": f"Failed to dispatch worker: {e}",
+            }
+
+
 def enqueue_self_healing(context: Dict[str, Any], *, job_id: str) -> None:
     with _SELF_HEALING_LOCK:
         _SELF_HEALING_JOBS[job_id] = {"status": "queued", **context}
-    thread = threading.Thread(
-        target=_run_self_healing_job,
-        args=(job_id, context),
-        daemon=True,
-        name=f"self-heal-{job_id[:8]}",
-    )
-    thread.start()
+    _dispatch_self_healing_worker(job_id, context)
 
 
 def get_self_healing_job(job_id: str) -> Optional[Dict[str, Any]]:

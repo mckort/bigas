@@ -451,47 +451,48 @@ def fetch_github_action_logs(
 
     parts: List[str] = []
     job_names: List[str] = []
-    for job in failed[:3]:
-        job_name = (job.get("name") or "job").strip()
-        job_names.append(job_name)
-        raw = ""
-        if use_zip and zip_path:
-            try:
-                raw = extract_job_logs_from_zip(zip_path, job_name)
-            except (OSError, zipfile.ZipError) as e:
-                logger.warning("Could not extract zip logs for job %s: %s", job_name, e)
-        if not raw.strip():
-            job_id = job.get("id")
-            if job_id:
+    try:
+        for job in failed[:3]:
+            job_name = (job.get("name") or "job").strip()
+            job_names.append(job_name)
+            raw = ""
+            if use_zip and zip_path:
                 try:
-                    raw = client.get_job_logs(owner, name, int(job_id))
-                except GitHubActionsError as e:
-                    parts.append(f"### {job_name}\n(could not fetch logs: {e})")
-                    continue
-        excerpt = truncate_log_text(raw) if raw.strip() else ""
-        if excerpt:
-            parts.append(f"### {job_name}\n{excerpt}")
+                    raw = extract_job_logs_from_zip(zip_path, job_name)
+                except (OSError, zipfile.BadZipFile) as e:
+                    logger.warning("Could not extract zip logs for job %s: %s", job_name, e)
+            if not raw.strip():
+                job_id = job.get("id")
+                if job_id:
+                    try:
+                        raw = client.get_job_logs(owner, name, int(job_id))
+                    except GitHubActionsError as e:
+                        parts.append(f"### {job_name}\n(could not fetch logs: {e})")
+                        continue
+            excerpt = truncate_log_text(raw) if raw.strip() else ""
+            if excerpt:
+                parts.append(f"### {job_name}\n{excerpt}")
 
-    if zip_path:
-        try:
-            os.unlink(zip_path)
-        except OSError:
-            pass
-
-    combined = "\n\n".join(parts).strip()
-    if not combined:
-        combined = f"No failed-job logs found for run #{run_id}."
-    names = ", ".join(job_names) or "unknown job"
-    return {
-        "status": "ok",
-        "summary": f"Parsed failed job logs for run #{run_id} ({names}).",
-        "repo": repo,
-        "run_id": int(run_id),
-        "failed_job_names": job_names,
-        "logs": combined[:32000],
-        "zip_size_bytes": zip_size,
-        "used_zip_download": use_zip,
-    }
+        combined = "\n\n".join(parts).strip()
+        if not combined:
+            combined = f"No failed-job logs found for run #{run_id}."
+        names = ", ".join(job_names) or "unknown job"
+        return {
+            "status": "ok",
+            "summary": f"Parsed failed job logs for run #{run_id} ({names}).",
+            "repo": repo,
+            "run_id": int(run_id),
+            "failed_job_names": job_names,
+            "logs": combined[:32000],
+            "zip_size_bytes": zip_size,
+            "used_zip_download": use_zip,
+        }
+    finally:
+        if zip_path:
+            try:
+                os.unlink(zip_path)
+            except OSError:
+                pass
 
 
 def get_commit_diff(

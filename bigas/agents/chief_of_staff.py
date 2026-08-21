@@ -71,7 +71,7 @@ AGENT_TOOL_PREFIXES = {
         "trigger_deployment",
         "get_deployment_status",
         "check_website_health",
-        "fetch_github_action",
+        "fetch_github_action_logs",
         "create_github_pr",
         "fix_failed",
     ),
