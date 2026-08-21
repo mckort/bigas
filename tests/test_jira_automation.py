@@ -17,6 +17,7 @@ from bigas.resources.product.jira_automation.comments import (
 from bigas.resources.product.jira_automation.config import (
     BIGAS_COMMENT_MARKER,
     HANDLER_DESIGN,
+    HANDLER_IMPLEMENT,
     HANDLER_RESEARCH,
     JiraAutomationConfig,
 )
@@ -577,3 +578,131 @@ def test_handle_event_failure_clears_idempotency_and_quota(monkeypatch):
     used, limit, _day = jira_automation_service._QUOTA.snapshot()
     assert used == 0
     assert limit == 5
+
+
+def _automation_cfg(**overrides):
+    values = dict(
+        webhook_secret="s",
+        allowed_projects=("BIG", "VFA"),
+        project_repos={"BIG": "mckort/bigas", "VFA": "mckort/vcfieldassistant"},
+        status_handlers={
+            "research and describe (ai)": HANDLER_RESEARCH,
+            "design and plan (ai)": HANDLER_DESIGN,
+            "in progress (ai)": HANDLER_IMPLEMENT,
+        },
+        status_description_approval="Description approval (manual)",
+        status_design_approval="Design approval (manual)",
+        status_final_approval="Final approval (manual)",
+        daily_quota=5,
+        default_base_branch="main",
+        repo_base_branches={"mckort/bigas": "main", "mckort/vcfieldassistant": "main"},
+        discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
+        discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
+    )
+    values.update(overrides)
+    return JiraAutomationConfig(**values)
+
+
+def test_handle_event_epic_runs_goal_engine_not_implement(monkeypatch):
+    jira_automation_service._IDEMPOTENCY = IdempotencyCache(ttl_s=60)
+    jira_automation_service._QUOTA = DailyQuota(5)
+
+    jira = MagicMock()
+    jira.get_issue.return_value = {
+        "key": "BIG-14",
+        "fields": {
+            "summary": "Easy to get started",
+            "issuetype": {"name": "Epic"},
+            "status": {"name": "In Progress (AI)"},
+            "project": {"key": "BIG"},
+        },
+    }
+    jira.add_comment = MagicMock()
+
+    implement_called = []
+
+    class BoomImplement:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, **kwargs):
+            implement_called.append(kwargs)
+            raise AssertionError("ImplementHandler must not run for Epics")
+
+    class FakeEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, *, timeframe_days, epic_key, status_hint):
+            assert epic_key == "BIG-14"
+            assert status_hint == "In Progress (AI)"
+            return {
+                "ok": True,
+                "results": [
+                    {
+                        "ok": True,
+                        "epic_key": "BIG-14",
+                        "phase": "in_progress",
+                        "tasks_created": [{"key": "BIG-99", "summary": "Write setup wizard"}],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(jira_automation_service, "ImplementHandler", BoomImplement)
+    monkeypatch.setattr("bigas.agents.proactive_engine.ProactiveGoalEngine", FakeEngine)
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL_CTO", "")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL_PRODUCT", "")
+
+    svc = JiraAutomationService(config=_automation_cfg(), jira=jira)
+    result = svc.handle_event(
+        issue_key="BIG-14",
+        to_status="In Progress (AI)",
+        from_status="Design approval (manual)",
+        project_key="BIG",
+        idempotency_key="epic-1",
+    )
+    assert result["ok"] is True
+    assert result["handler"] == "goal_engine"
+    assert result["phase"] == "in_progress"
+    assert result["left_in_status"] == "In Progress (AI)"
+    assert implement_called == []
+    comment = jira.add_comment.call_args[0][1]
+    assert "Goal Engine" in comment
+    assert "BIG-99" in comment
+
+
+def test_handle_event_task_still_uses_research_handler(monkeypatch):
+    jira_automation_service._IDEMPOTENCY = IdempotencyCache(ttl_s=60)
+    jira_automation_service._QUOTA = DailyQuota(5)
+
+    jira = MagicMock()
+    jira.get_issue.return_value = {
+        "key": "VFA-1",
+        "fields": {
+            "summary": "Ship export",
+            "issuetype": {"name": "Task"},
+            "status": {"name": "Research and describe (AI)"},
+            "project": {"key": "VFA"},
+        },
+    }
+
+    class OkHandler:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, **kwargs):
+            return {"ok": True, "summary": "Ship export", "model": "test"}
+
+    monkeypatch.setattr(jira_automation_service, "ResearchDescribeHandler", OkHandler)
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL_PRODUCT", "")
+
+    svc = JiraAutomationService(config=_automation_cfg(), jira=jira)
+    result = svc.handle_event(
+        issue_key="VFA-1",
+        to_status="Research and describe (AI)",
+        from_status="To Do",
+        project_key="VFA",
+        idempotency_key="task-1",
+    )
+    assert result["ok"] is True
+    assert result.get("handler") != "goal_engine"

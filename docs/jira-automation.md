@@ -18,6 +18,17 @@ Launch Cursor cloud agent on the mapped GitHub repo (`autoCreatePR=true`) → co
 ### Phase 4 — Ready to merge → Final approval
 When `autofix_followup` reports **ready to merge**, Bigas finds the Jira key on the PR (`VFA-14:` title / `Jira: VFA-14` body) and moves the issue to **Final approval (manual)** → Discord **bigas-cto**.
 
+### Epics — Goal Engine (not implement)
+If the issue is an **Epic**, Phases 1–3 above are skipped. The same webhook runs the Proactive Goal Engine for that Epic and leaves it in the column it was dragged to:
+
+| Column | Goal Engine phase |
+|---|---|
+| `Research and describe (AI)` | Create research/discovery child Tasks |
+| `Design and plan (AI)` | Create Todo-ready child Tasks |
+| `In Progress (AI)` | Progress report + next-cycle child Tasks |
+
+Weekly Cloud Scheduler (`/api/agents/evaluate-goals`) repeats the same evaluation for Epics still in those statuses. Child Tasks/Bugs still use Phases 1–4 as usual.
+
 ## Env
 
 | Variable | Purpose |
