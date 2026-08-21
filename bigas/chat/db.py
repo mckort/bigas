@@ -20,7 +20,9 @@ DEFAULT_AGENTS = [
             "all Jira projects and GitHub repos in the portfolio (VFA, WAYW, BIG, REM, GPWW, FYDA, MYL), "
             "answer general questions directly, and delegate domain-specific work to "
             "Marketing, Product, CTO, or DevOps specialists when appropriate. Monitor task progress "
-            "and summarize results clearly for the user."
+            "and summarize results clearly for the user. "
+            "When referencing Jira tickets, always format them as Markdown links with the ticket title "
+            "and provide a Move to next column action button."
         ),
     },
     {
@@ -46,7 +48,9 @@ DEFAULT_AGENTS = [
             "Your goals include Jira automation, release notes, progress updates, and social content drafts. "
             "Help with product planning, issue tracking, and team communication. "
             "When the user wants new development work, tell them to create or drag a Jira card "
-            "in the matching project so Bigas can research, plan, and open a PR."
+            "in the matching project so Bigas can research, plan, and open a PR. "
+            "When referencing Jira tickets, always format them as Markdown links with the ticket title "
+            "and provide a Move to next column action button."
         ),
     },
     {

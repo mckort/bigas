@@ -263,6 +263,8 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 
 Every AI step lands in a column with **"(manual)"** in the name — cards do not advance without a human drag. Merging the PR stays manual unless you enable `BIGAS_CTO_AUTO_MERGE` (see [cto-autofix.md](docs/cto-autofix.md)).
 
+**From chat:** when you ask the Product Manager or Chief of Staff about a Jira ticket, the reply includes the ticket title as a Markdown link and a **Move to next column** button. Clicking it advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
+
 **Prompt workstream:** by default Bigas uses **product** Research/Design/Implement prompts. Add the Jira label `marketing` on website/SEO/content issues to switch to marketing-oriented prompts (audience, copy, SEO, site files in the repo).
 
 Under the hood, each column is wired the same way: a **Jira Automation** rule (not the admin "Webhook listener") does a **Send web request** to `jira_status_automation` whenever an issue enters that status. One rule per AI status, same URL and headers, different trigger:

@@ -12,6 +12,10 @@ from requests.auth import HTTPBasicAuth
 
 logger = logging.getLogger(__name__)
 
+_BACKWARD_TRANSITION_KEYWORDS = frozenset(
+    {"back", "reopen", "undo", "previous", "return", "won't do", "wont do", "cancel"}
+)
+
 
 class JiraError(RuntimeError):
     pass
@@ -371,6 +375,55 @@ class JiraClient:
         url = f"{self._config.base_url}/rest/api/3/issue/{key}/transitions"
         data = self._request_with_retry_429("GET", url)
         return list(data.get("transitions") or [])
+
+    def transition_issue_to_next(self, issue_key: str) -> Dict[str, Any]:
+        """
+        Move an issue to the next logical workflow column.
+
+        Picks the first forward transition, skipping obvious backward moves
+        (reopen, undo, etc.). Falls back to the first available transition.
+        """
+        key = (issue_key or "").strip()
+        if not key:
+            raise JiraError("issue_key is required")
+
+        issue = self.get_issue(key, fields=["status", "summary"])
+        fields = issue.get("fields") or {}
+        current_status = ((fields.get("status") or {}).get("name") or "").strip()
+        summary = (fields.get("summary") or key).strip()
+
+        transitions = self.list_transitions(key)
+        if not transitions:
+            raise JiraError(f"No transitions available for {key}")
+
+        def is_backward(transition: Dict[str, Any]) -> bool:
+            name = (transition.get("name") or "").lower()
+            return any(kw in name for kw in _BACKWARD_TRANSITION_KEYWORDS)
+
+        forward = [t for t in transitions if not is_backward(t)]
+        chosen = forward[0] if forward else transitions[0]
+        to_status = ((chosen.get("to") or {}).get("name") or "").strip()
+        if not to_status:
+            raise JiraError(f"Could not resolve target status for {key}")
+
+        transition_id = str(chosen.get("id") or "")
+        if not transition_id:
+            raise JiraError(f"Invalid transition for {key}")
+
+        payload: Dict[str, Any] = {"transition": {"id": transition_id}}
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}/transitions"
+        self._request_with_retry_429("POST", url, json=payload, expect_json=False)
+
+        browse_url = f"{self._config.base_url}/browse/{key}"
+        return {
+            "ok": True,
+            "issue_key": key,
+            "summary": summary,
+            "url": browse_url,
+            "previous_status": current_status,
+            "new_status": to_status,
+            "message": f"Moved {key} to {to_status}",
+        }
 
     def transition_issue(
         self,
