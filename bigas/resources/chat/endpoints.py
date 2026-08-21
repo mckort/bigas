@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 from pathlib import Path
 from typing import Optional
 
@@ -250,34 +249,17 @@ def evaluate_goals():
         data = {}
     timeframe_days = _int_param(data, "timeframe_days", 7, minimum=1, maximum=365)
 
-    job_result: dict = {"ok": False}
+    try:
+        job_result = run_evaluation_loop(timeframe_days=timeframe_days)
+    except ProactiveGoalEngineError as e:
+        logger.error("evaluate-goals failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception:
+        logger.exception("evaluate-goals unexpected failure")
+        return jsonify({"ok": False, "error": "Internal error"}), 500
 
-    def _run() -> None:
-        nonlocal job_result
-        try:
-            job_result = run_evaluation_loop(timeframe_days=timeframe_days)
-        except ProactiveGoalEngineError as e:
-            logger.error("evaluate-goals failed: %s", e)
-            job_result = {"ok": False, "error": str(e)}
-        except Exception:
-            logger.exception("evaluate-goals unexpected failure")
-            job_result = {"ok": False, "error": "Internal error"}
-
-    sync = str(data.get("sync", "false")).strip().lower() in ("1", "true", "yes")
-    if sync:
-        _run()
-        status = 200 if job_result.get("ok") else 500
-        return jsonify(job_result), status
-
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify(
-        {
-            "ok": True,
-            "status": "accepted",
-            "timeframe_days": timeframe_days,
-            "message": "Goal evaluation started in background",
-        }
-    ), 202
+    status = 200 if job_result.get("ok") else 500
+    return jsonify(job_result), status
 
 
 def _int_param(data: dict, name: str, default: int, *, minimum: int, maximum: int) -> int:

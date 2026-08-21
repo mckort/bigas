@@ -1,5 +1,5 @@
 from datetime import date
-from typing import List
+from typing import List, Optional
 
 from bigas.providers.analytics.base import AnalyticsProvider, PageMetrics
 from bigas.resources.marketing.ga4_service import GA4Service
@@ -10,21 +10,22 @@ class GA4AnalyticsProvider(AnalyticsProvider):
     display_name = "Google Analytics 4"
 
     @classmethod
-    def is_configured(cls) -> bool:
+    def is_configured(cls, *, property_id: Optional[str] = None) -> bool:
         # GA4 requires a property ID; in standalone mode GA4_PROPERTY_ID is mandatory,
         # while in SaaS mode it is provided per-request. For discovery we only check
         # the global env; SaaS flows can construct providers differently later.
         from os import getenv
 
-        return bool(getenv("GA4_PROPERTY_ID"))
+        return bool((property_id or "").strip() or getenv("GA4_PROPERTY_ID"))
 
-    def __init__(self) -> None:
+    def __init__(self, *, property_id: Optional[str] = None) -> None:
+        self._property_id = (property_id or "").strip() or None
         self._service = GA4Service()
 
     def _ensure_property_id(self) -> str:
         from os import getenv
 
-        prop = getenv("GA4_PROPERTY_ID")
+        prop = self._property_id or getenv("GA4_PROPERTY_ID")
         if not prop:
             raise ValueError("GA4_PROPERTY_ID must be set to use GA4AnalyticsProvider.")
         return prop

@@ -195,6 +195,15 @@ def fetch_merged_pull_requests(
             for pr in batch:
                 if not isinstance(pr, dict):
                     continue
+                updated_at = (pr.get("updated_at") or "").strip()
+                if updated_at:
+                    try:
+                        updated_dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                        if updated_dt < since:
+                            stop = True
+                            break
+                    except ValueError:
+                        pass
                 merged_at = (pr.get("merged_at") or "").strip()
                 if not merged_at:
                     continue
@@ -203,8 +212,7 @@ def fetch_merged_pull_requests(
                 except ValueError:
                     continue
                 if merged_dt < since:
-                    stop = True
-                    break
+                    continue
                 merged.append(
                     {
                         "number": str(pr.get("number") or ""),
@@ -231,19 +239,11 @@ def fetch_marketing_snapshot(*, project_key: str, days: int) -> str:
         from bigas.resources.marketing.utils import get_date_range_strings
 
         start_date, end_date = get_date_range_strings(days)
-        prev_env = os.environ.get("GA4_PROPERTY_ID")
-        os.environ["GA4_PROPERTY_ID"] = prop
-        try:
-            from bigas.providers.analytics.ga4 import GA4AnalyticsProvider
+        from bigas.providers.analytics.ga4 import GA4AnalyticsProvider
 
-            if not GA4AnalyticsProvider.is_configured():
-                return "(GA4 not configured.)"
-            overview = GA4AnalyticsProvider().get_overview(start_date, end_date)
-        finally:
-            if prev_env is None:
-                os.environ.pop("GA4_PROPERTY_ID", None)
-            else:
-                os.environ["GA4_PROPERTY_ID"] = prev_env
+        if not GA4AnalyticsProvider.is_configured(property_id=prop):
+            return "(GA4 not configured.)"
+        overview = GA4AnalyticsProvider(property_id=prop).get_overview(start_date, end_date)
         return (
             f"GA4 property {prop} ({start_date} → {end_date}): "
             f"sessions={overview.get('sessions', 0)}, "
@@ -541,7 +541,7 @@ class ProactiveGoalEngine:
             store = get_chat_store()
             agent = store.get_agent(agent_id) or {}
             if not (agent.get("system_prompt_goals") or "").strip():
-                pass
+                return ""
             return (run_specialist_task(agent_id, task, async_mode=False) or "").strip()
         except Exception as e:
             logger.warning("Expert delegation to %s failed: %s", agent_id, e)

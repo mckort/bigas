@@ -637,9 +637,9 @@ gcloud scheduler jobs create http bigas-evaluate-goals \
   --message-body='{"timeframe_days": 7}'
 ```
 
-Returns **202 Accepted** by default (background thread). Pass `"sync": true` in the body to wait for the full result (useful for debugging; may exceed Cloud Scheduler timeout on large portfolios).
+Returns **200 OK** with the full evaluation result. Runs synchronously so Cloud Run keeps CPU allocated for the duration (Cloud Scheduler supports timeouts up to 30 minutes).
 
-With `BIGAS_ACCESS_MODE=restricted`, this route still requires `CRON_SECRET` (not `X-Bigas-Access-Key`).
+With `BIGAS_ACCESS_MODE=restricted`, this route is public to the global access-key middleware; auth is handled by `CRON_SECRET` in the route handler (not `X-Bigas-Access-Key`).
 
 ### Email ingest with Cloud Scheduler
 

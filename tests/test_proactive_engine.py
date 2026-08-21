@@ -231,18 +231,18 @@ def test_evaluate_goals_requires_cron_secret(client, monkeypatch):
 
     ok = client.post(
         "/api/agents/evaluate-goals",
-        json={"timeframe_days": 7, "sync": True},
+        json={"timeframe_days": 7},
         headers={"Authorization": "Bearer scheduler-secret"},
     )
     assert ok.status_code == 200
     assert ok.get_json()["ok"] is True
 
 
-def test_evaluate_goals_async_returns_202(client, monkeypatch):
+def test_evaluate_goals_runs_synchronously(client, monkeypatch):
     monkeypatch.setenv("CRON_SECRET", "scheduler-secret")
     monkeypatch.setattr(
         "bigas.resources.chat.endpoints.run_evaluation_loop",
-        lambda timeframe_days: {"ok": True, "results": []},
+        lambda timeframe_days: {"ok": True, "results": [], "timeframe_days": timeframe_days},
     )
 
     resp = client.post(
@@ -250,8 +250,27 @@ def test_evaluate_goals_async_returns_202(client, monkeypatch):
         json={"timeframe_days": 14},
         headers={"Authorization": "Bearer scheduler-secret"},
     )
-    assert resp.status_code == 202
-    assert resp.get_json()["status"] == "accepted"
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+    assert resp.get_json()["timeframe_days"] == 14
+
+
+def test_evaluate_goals_bypasses_access_key_in_restricted_mode(client, monkeypatch):
+    monkeypatch.setenv("CRON_SECRET", "scheduler-secret")
+    client.application.config["BIGAS_ACCESS_MODE"] = "restricted"
+    client.application.config["BIGAS_ACCESS_KEYS"] = {"other-key"}
+    monkeypatch.setattr(
+        "bigas.resources.chat.endpoints.run_evaluation_loop",
+        lambda timeframe_days: {"ok": True, "results": []},
+    )
+
+    resp = client.post(
+        "/api/agents/evaluate-goals",
+        json={"timeframe_days": 7},
+        headers={"Authorization": "Bearer scheduler-secret"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
 
 
 def test_run_evaluation_loop_entrypoint(monkeypatch):
