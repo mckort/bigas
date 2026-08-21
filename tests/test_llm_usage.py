@@ -1,8 +1,15 @@
-"""Unit tests for LLM token usage parsing and cost estimates."""
+"""Unit tests for LLM token usage parsing, cost estimates, and usage logging."""
 from __future__ import annotations
 
+import json
+import logging
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
+from bigas.llm.completion import LLMCompletion
+from bigas.llm.factory import get_llm_client
+from bigas.llm.logging_client import LoggingLLMClient
 from bigas.llm.usage import (
     TokenUsage,
     estimate_cost_usd,
@@ -82,6 +89,66 @@ class TokenUsageTests(unittest.TestCase):
         self.assertEqual(payload["phase"], "initial")
         self.assertTrue(payload["cost_estimate"])
         self.assertIn("est_cost_usd", payload)
+
+
+class LoggingLLMClientTests(unittest.TestCase):
+    def _inner(self, usage: TokenUsage) -> MagicMock:
+        inner = MagicMock()
+        inner.complete_detailed.return_value = LLMCompletion(
+            text="hello",
+            finish_reason="STOP",
+            usage=usage,
+        )
+        inner.model_name = "gemini-2.5-flash"
+        return inner
+
+    def test_complete_logs_once(self):
+        usage = TokenUsage(prompt_tokens=1000, candidates_tokens=100, total_tokens=1100)
+        client = LoggingLLMClient(self._inner(usage), feature="chat", model="gemini-2.5-flash")
+        with self.assertLogs("bigas.llm.logging_client", level=logging.INFO) as captured:
+            text = client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(text, "hello")
+        payloads = [json.loads(r.getMessage()) for r in captured.records]
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["event"], "llm_usage")
+        self.assertEqual(payloads[0]["feature"], "chat")
+        self.assertIn("est_cost_usd", payloads[0])
+        self.assertNotIn("attempt", payloads[0])
+
+    def test_skips_empty_usage(self):
+        client = LoggingLLMClient(self._inner(TokenUsage()), feature="chat", model="gemini-2.5-flash")
+        with patch("bigas.llm.logging_client.logger.info") as info:
+            client.complete_detailed([{"role": "user", "content": "hi"}])
+        info.assert_not_called()
+
+    def test_record_openai_response(self):
+        inner = MagicMock()
+        client = LoggingLLMClient(inner, feature="chat", model="gpt-4.1-mini")
+        resp = SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=20, completion_tokens=5, total_tokens=25)
+        )
+        with self.assertLogs("bigas.llm.logging_client", level=logging.INFO) as captured:
+            client.record_openai_response(resp)
+        payload = json.loads(captured.records[0].getMessage())
+        self.assertEqual(payload["feature"], "chat")
+        self.assertEqual(payload["prompt_tokens"], 20)
+        self.assertEqual(payload["candidates_tokens"], 5)
+
+    def test_log_failure_does_not_raise(self):
+        usage = TokenUsage(prompt_tokens=10, candidates_tokens=1, total_tokens=11)
+        client = LoggingLLMClient(self._inner(usage), feature="chat", model="gemini-2.5-flash")
+        with patch("bigas.llm.logging_client.usage_log_payload", side_effect=RuntimeError("boom")):
+            text = client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(text, "hello")
+
+    @patch("bigas.llm.factory.GeminiLLMClient")
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False)
+    def test_factory_wraps_client(self, mock_cls):
+        mock_cls.return_value = MagicMock()
+        client, model = get_llm_client(feature="chat", explicit_model="gemini-2.5-flash")
+        self.assertIsInstance(client, LoggingLLMClient)
+        self.assertEqual(client._feature, "chat")
+        self.assertEqual(model, "gemini-2.5-flash")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,6 @@ Uses Gemini by default (GEMINI_API_KEY); override via BIGAS_CTO_PR_REVIEW_MODEL 
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -13,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from bigas.llm.completion import LLMCompletion
 from bigas.llm.factory import get_llm_client
-from bigas.llm.usage import TokenUsage, estimate_cost_usd, usage_log_payload
+from bigas.llm.usage import TokenUsage, estimate_cost_usd
 
 from bigas.resources.cto.pr_review.prompts import (
     ReviewPhase,
@@ -238,22 +237,6 @@ class PRReviewService:
                 attempts_used = attempt + 1
                 if result.usage.has_counts:
                     usage_total = usage_total.merge(result.usage)
-                    logger.info(
-                        json.dumps(
-                            usage_log_payload(
-                                feature="cto_pr_review",
-                                model=str(self._model),
-                                usage=result.usage,
-                                extra={
-                                    "phase": phase,
-                                    "attempt": attempt,
-                                    "finish_reason": result.finish_reason,
-                                },
-                            ),
-                            ensure_ascii=True,
-                            sort_keys=True,
-                        )
-                    )
 
                 piece = (result.text or "").strip()
                 if not piece:
@@ -303,27 +286,9 @@ class PRReviewService:
         if truncated_note:
             content = truncated_note + content
 
-        review_result = PRReviewResult(
+        return PRReviewResult(
             text=content,
             model=str(self._model),
             usage=usage_total,
             attempts=max(1, attempts_used),
         )
-        if usage_total.has_counts:
-            logger.info(
-                json.dumps(
-                    usage_log_payload(
-                        feature="cto_pr_review",
-                        model=str(self._model),
-                        usage=usage_total,
-                        extra={
-                            "phase": phase,
-                            "attempt": "total",
-                            "attempts": review_result.attempts,
-                        },
-                    ),
-                    ensure_ascii=True,
-                    sort_keys=True,
-                )
-            )
-        return review_result

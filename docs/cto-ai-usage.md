@@ -1,9 +1,10 @@
-# CTO AI usage (Cursor + LLM logs)
+# Bigas AI usage (Cursor + LLM logs)
 
-List-price visibility for Bigas CTO automation:
+List-price visibility for Bigas AI spend:
 
 1. **Per autofix round** — Discord includes Cursor token usage + list-price estimate when `autofix_followup` finalizes.
-2. **Historical / weekly** — modular `UsageProvider`s fetch the last N days without a local event store.
+2. **Per LLM call** — `get_llm_client()` wraps the provider client and emits `event: llm_usage` (chat, PR review, marketing, Jira, …).
+3. **Historical / weekly** — modular `UsageProvider`s fetch the last N days without a local event store.
 
 Estimates are **operational only**, not invoices.
 
@@ -16,7 +17,7 @@ Registered under domain `usage` (see `GET /mcp/providers`):
 | `cursor` | Cursor Cloud Agents API (`List Agents` + `/usage`) | `CURSOR_API_KEY` |
 | `llm_logs` | Cloud Logging lines with `event: llm_usage` | `GOOGLE_CLOUD_PROJECT` (or `GOOGLE_PROJECT_ID`) + runtime credentials with `logging.read` |
 
-Adding Claude (or any LLM) later usually needs **no new history provider** if calls go through `bigas.llm` and keep emitting `llm_usage` logs. Add a new provider only for an external meter (like Cursor).
+Adding Claude (or any LLM) later usually needs **no new history provider** if calls go through `bigas.llm` (`get_llm_client`) and keep emitting `llm_usage` logs. Add a new provider only for an external meter (like Cursor).
 
 Optional: `BIGAS_CTO_USAGE_LOG_FILTER` — extra Cloud Logging filter clause ANDed into the query.
 
@@ -36,6 +37,7 @@ List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) wh
 ```
 
 - `provider`: `all` | `cursor` | `llm_logs`
+- `feature_prefix`: optional filter (default `cto_`). Pass `""` / omit via weekly report for all features (`chat`, `marketing`, `cto_pr_review`, …).
 - Returns totals, per-provider / per-feature costs, top PRs (from Cursor agent names), and events (capped at 200 in the HTTP body).
 
 ### `POST /mcp/tools/weekly_cto_ai_report`
@@ -47,7 +49,7 @@ List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) wh
 }
 ```
 
-Aggregates all active usage providers with `feature_prefix=cto_` and posts a Discord summary (default).
+Aggregates all active usage providers **without** a feature prefix (Cursor autofix + every `llm_usage` feature) and posts a Discord summary (default).
 
 ## Cloud Scheduler example
 
@@ -78,7 +80,7 @@ Estimated list-price: ~$0.4200 (composer-2.5)
 Weekly:
 
 ```text
-**CTO AI usage (last 7 days)**
+**Bigas AI usage (last 7 days)**
 Estimated list-price total: ~$12.3400
 …
 ```

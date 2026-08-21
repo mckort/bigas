@@ -4,6 +4,7 @@ import os
 from typing import Optional, Tuple
 
 from bigas.llm.client import LLMClient
+from bigas.llm.logging_client import LoggingLLMClient
 from bigas.llm.openai_client import OpenAILLMClient
 from bigas.llm.gemini_client import GeminiLLMClient
 
@@ -28,7 +29,10 @@ def get_llm_client(
     gemini_api_key: Optional[str] = None,
 ) -> Tuple[LLMClient, str]:
     """
-    Return an LLM client and the resolved model name for a given feature.
+    Return a logging-wrapped LLM client and the resolved model name for a given feature.
+
+    Every ``complete`` / ``complete_detailed`` call emits an ``llm_usage`` Cloud Logging
+    line (list-price estimate) tagged with ``feature``.
 
     Resolution order for the model:
       1. explicit_model (e.g. request body llm_model)
@@ -69,12 +73,12 @@ def get_llm_client(
                 "Gemini provider requires GEMINI_API_KEY (from https://aistudio.google.com/apikey)."
             )
         client = GeminiLLMClient(api_key=api_key, model=model)
-        return client, model
+        return LoggingLLMClient(client, feature=feature, model=model), model
 
     # default to OpenAI
     api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set for OpenAI provider")
     client = OpenAILLMClient(api_key=api_key, model=model)
-    return client, model
+    return LoggingLLMClient(client, feature=feature, model=model), model
 

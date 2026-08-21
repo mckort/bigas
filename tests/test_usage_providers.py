@@ -78,12 +78,13 @@ class WeeklyReportTests(unittest.TestCase):
                 "est_cost_usd": 12.34,
                 "events": 3,
                 "by_provider": {"cursor": 8.1, "llm_logs": 4.24},
-                "by_feature": {"cto_autofix": 8.1, "cto_pr_review": 4.24},
+                "by_feature": {"cto_autofix": 8.1, "cto_pr_review": 4.24, "chat": 1.1},
             },
             "events": [
                 {"feature": "cto_autofix"},
                 {"feature": "cto_autofix"},
                 {"feature": "cto_pr_review"},
+                {"feature": "chat"},
             ],
             "top_prs": [
                 {"pr_url": "https://github.com/o/r/pull/1", "est_cost_usd": 2.1},
@@ -91,10 +92,13 @@ class WeeklyReportTests(unittest.TestCase):
             "errors": [],
         }
         msg = format_weekly_cto_ai_report(report)
-        self.assertIn("CTO AI usage", msg)
+        self.assertIn("Bigas AI usage", msg)
         self.assertIn("$12.3400", msg)
         self.assertIn("cursor:", msg)
-        self.assertIn("2 Cursor autofix", msg)
+        self.assertIn("- cto_autofix: 2", msg)
+        self.assertIn("- cto_pr_review: 1", msg)
+        self.assertIn("- chat: 1", msg)
+        self.assertIn("chat:", msg)
 
 
 class FetchAiUsageTests(unittest.TestCase):

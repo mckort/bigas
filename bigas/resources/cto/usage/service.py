@@ -257,7 +257,7 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
     totals = report.get("totals") or {}
     est = totals.get("est_cost_usd")
     lines = [
-        f"**CTO AI usage (last {days} days)**",
+        f"**Bigas AI usage (last {days} days)**",
         (
             f"Estimated list-price total: ~${float(est):.4f}"
             if est is not None
@@ -276,14 +276,14 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         for name, cost in sorted(by_feature.items(), key=lambda kv: kv[1], reverse=True):
             lines.append(f"- {name}: ~${float(cost):.4f}")
 
-    # Accomplishments-ish: count autofix agents / review totals from events.
     events = report.get("events") or []
-    autofix_n = sum(1 for e in events if e.get("feature") == "cto_autofix")
-    review_n = sum(1 for e in events if e.get("feature") == "cto_pr_review")
-    if autofix_n or review_n:
-        lines.append(
-            f"Activity: {autofix_n} Cursor autofix agent(s), {review_n} PR review total(s)"
-        )
+    feature_counts: Dict[str, int] = defaultdict(int)
+    for ev in events:
+        feature_counts[str(ev.get("feature") or "unknown")] += 1
+    if feature_counts:
+        lines.append("Activity:")
+        for name, n in sorted(feature_counts.items(), key=lambda kv: kv[1], reverse=True):
+            lines.append(f"- {name}: {n}")
 
     top_prs = report.get("top_prs") or []
     if top_prs:
