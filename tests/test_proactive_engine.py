@@ -13,7 +13,6 @@ os.environ.setdefault("LLM_MODEL", "gpt-4.1-mini")
 os.environ.setdefault("CHAT_ENABLED", "true")
 os.environ.setdefault("CHAT_STORAGE_MODE", "memory")
 os.environ.setdefault("CHAT_AUTH_MODE", "dev")
-os.environ.setdefault("CRON_SECRET", "test-cron-secret")
 
 from bigas.agents.proactive_engine import (
     ProactiveGoalEngine,
@@ -218,59 +217,76 @@ def client():
         yield c
 
 
-def test_evaluate_goals_requires_cron_secret(client, monkeypatch):
-    monkeypatch.setenv("CRON_SECRET", "scheduler-secret")
-
-    denied = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 7})
-    assert denied.status_code == 401
-
+def test_evaluate_goals_requires_access_key_in_restricted_mode(client, monkeypatch):
+    client.application.config["BIGAS_ACCESS_MODE"] = "restricted"
+    client.application.config["BIGAS_ACCESS_KEYS"] = {"scheduler-key"}
     monkeypatch.setattr(
         "bigas.resources.chat.endpoints.run_evaluation_loop",
         lambda timeframe_days: {"ok": True, "results": []},
     )
 
+    denied = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 7})
+    assert denied.status_code == 401
+
     ok = client.post(
         "/api/agents/evaluate-goals",
         json={"timeframe_days": 7},
-        headers={"Authorization": "Bearer scheduler-secret"},
+        headers={"X-Bigas-Access-Key": "scheduler-key"},
     )
     assert ok.status_code == 200
     assert ok.get_json()["ok"] is True
 
 
 def test_evaluate_goals_runs_synchronously(client, monkeypatch):
-    monkeypatch.setenv("CRON_SECRET", "scheduler-secret")
+    client.application.config["BIGAS_ACCESS_MODE"] = "open"
+    client.application.config["BIGAS_ACCESS_KEYS"] = {"scheduler-key"}
+    monkeypatch.delenv("CRON_SECRET", raising=False)
     monkeypatch.setattr(
         "bigas.resources.chat.endpoints.run_evaluation_loop",
         lambda timeframe_days: {"ok": True, "results": [], "timeframe_days": timeframe_days},
     )
 
+    denied = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 14})
+    assert denied.status_code == 401
+
     resp = client.post(
         "/api/agents/evaluate-goals",
         json={"timeframe_days": 14},
-        headers={"Authorization": "Bearer scheduler-secret"},
+        headers={"X-Bigas-Access-Key": "scheduler-key"},
     )
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
     assert resp.get_json()["timeframe_days"] == 14
 
 
-def test_evaluate_goals_bypasses_access_key_in_restricted_mode(client, monkeypatch):
-    monkeypatch.setenv("CRON_SECRET", "scheduler-secret")
-    client.application.config["BIGAS_ACCESS_MODE"] = "restricted"
-    client.application.config["BIGAS_ACCESS_KEYS"] = {"other-key"}
+def test_evaluate_goals_accepts_cron_secret_fallback(client, monkeypatch):
+    client.application.config["BIGAS_ACCESS_MODE"] = "open"
+    client.application.config["BIGAS_ACCESS_KEYS"] = set()
+    monkeypatch.setenv("CRON_SECRET", "legacy-cron-secret")
     monkeypatch.setattr(
         "bigas.resources.chat.endpoints.run_evaluation_loop",
         lambda timeframe_days: {"ok": True, "results": []},
     )
 
-    resp = client.post(
+    denied = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 7})
+    assert denied.status_code == 401
+
+    ok = client.post(
         "/api/agents/evaluate-goals",
         json={"timeframe_days": 7},
-        headers={"Authorization": "Bearer scheduler-secret"},
+        headers={"Authorization": "Bearer legacy-cron-secret"},
     )
-    assert resp.status_code == 200
-    assert resp.get_json()["ok"] is True
+    assert ok.status_code == 200
+    assert ok.get_json()["ok"] is True
+
+
+def test_evaluate_goals_requires_webhook_secret_configuration(client, monkeypatch):
+    client.application.config["BIGAS_ACCESS_MODE"] = "open"
+    client.application.config["BIGAS_ACCESS_KEYS"] = set()
+    monkeypatch.delenv("CRON_SECRET", raising=False)
+
+    resp = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 7})
+    assert resp.status_code == 503
 
 
 def test_run_evaluation_loop_entrypoint(monkeypatch):
