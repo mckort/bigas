@@ -2,6 +2,48 @@
 
 This document preserves architecture, service design, and API implementation details for contributors. The main [README](../README.md) is kept short for users; use this doc when working on the codebase.
 
+## System overview
+
+```mermaid
+flowchart TB
+  subgraph clients [Clients and triggers]
+    Browser[Browser chat SPA]
+    MCP[MCP clients - Claude Cursor etc]
+    Scheduler[Cloud Scheduler]
+    Webhooks[Jira and GitHub webhooks]
+  end
+
+  subgraph platform [Bigas Flask app]
+    ChatAPI["/api/* chat REST"]
+    HTTPTools["/mcp/tools/* direct HTTP"]
+    MCPRPC["/mcp Streamable HTTP JSON-RPC"]
+    COS[Chief of Staff agent]
+    Marketing[Marketing resource]
+    Product[Product resource]
+    CTO[CTO resource]
+    DevOps[DevOps resource]
+  end
+
+  subgraph integrations [Integrations - all optional except LLM]
+    MemStore["Firestore or in-memory chat store"]
+    LLM[OpenAI or Gemini]
+    GCS[GCS report storage]
+    Discord[Discord webhooks]
+    GA4[GA4 and ad platforms]
+    JiraGH[Jira and GitHub APIs]
+  end
+
+  clients --> platform
+  COS --> Marketing & Product & CTO & DevOps
+  ChatAPI --> MemStore
+  Marketing --> GA4 & GCS & Discord & LLM
+  Product --> JiraGH & Discord & LLM
+  CTO --> JiraGH & Discord & LLM
+  DevOps --> JiraGH & Discord & LLM
+```
+
+**Modularity:** each resource under `bigas/resources/` is independent. Providers under `bigas/providers/` implement domain interfaces (`AdsProvider`, `AnalyticsProvider`, etc.) and load only when their env vars are set (`bigas/registry.py` → `GET /mcp/providers`).
+
 ## High-level architecture
 
 Bigas is built as a **modular monolith** with a service-oriented architecture:
@@ -215,6 +257,7 @@ The chat UI is a React SPA (`frontend/`) served from `frontend/dist` at `/`. Fla
 - **Scheduled reports**: `progress_updates` posts to the Product Manager thread; marketing Discord helpers (`post_long_to_discord` / `post_to_discord` in `marketing/endpoints.py`) also post the same text to the Marketing Analyst thread when `CHAT_ENABLED` is on. Discord “on its way…” pings are not mirrored to chat.
 - **Storage**: `bigas/chat/db.py` — `MemoryChatStore` when `CHAT_STORAGE_MODE=memory`; `FirestoreChatStore` when Firestore is configured. In-memory activity is capped at 500 events; Firestore `activity_feed` is pruned weekly by `POST /mcp/tools/cleanup_old_activity` (keep last 7 days).
 - **Auth**: `bigas/chat/auth.py` — Firebase JWT verification or dev token (`CHAT_AUTH_MODE=dev`). Chat access in Firebase mode is limited to `CHAT_ALLOWED_EMAILS` (set `*` for open chat; otherwise falls back to `CHAT_ADMIN_EMAILS` when unset). Agent config updates require an email listed in `CHAT_ADMIN_EMAILS`.
+- **Starter prompts (BIG-14)**: when a thread has no messages, the chat UI shows clickable example prompts (e.g. summarize PRs, draft a tweet, GA4 traffic). Clicking one sends the message immediately — a Grok-style empty-state onboarding pattern in `frontend/src/components/ChatLayout.jsx`.
 
 ## Email ingest (BIG-9)
 

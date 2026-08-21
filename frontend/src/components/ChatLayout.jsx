@@ -389,6 +389,46 @@ const LAST_OPENED_KEY = 'bigas_chat_last_opened'
 const UNREAD_CHANNEL = 'bigas-chat-unread'
 const THREAD_POLL_MS = 20000
 
+const STARTER_PROMPTS = [
+  {
+    label: 'Summarize my latest GitHub PRs',
+    prompt: 'Summarize my latest GitHub pull requests and flag anything that needs my attention.',
+  },
+  {
+    label: 'Draft a tweet about recent releases',
+    prompt: 'Draft a tweet about my recent Jira releases — short, founder-friendly, ready to post.',
+  },
+  {
+    label: 'What is my GA4 traffic this week?',
+    prompt: 'What is my GA4 traffic this week? Give me a quick summary of sessions, top pages, and trends.',
+  },
+  {
+    label: 'Help me prioritize this week',
+    prompt: 'I am a solo founder juggling multiple projects. Help me prioritize dev, maintenance, and distribution work this week.',
+  },
+]
+
+function StarterPrompts({ onSelect, disabled }) {
+  return (
+    <div className="mt-6 max-w-lg mx-auto">
+      <p className="text-xs font-medium text-muted uppercase tracking-wide mb-3">Try asking</p>
+      <div className="flex flex-wrap gap-3 justify-center">
+        {STARTER_PROMPTS.map(({ label, prompt }) => (
+          <button
+            key={label}
+            type="button"
+            disabled={disabled}
+            onClick={() => onSelect(prompt)}
+            className="text-left bg-white border border-border rounded-2xl px-4 py-3 text-sm text-text shadow-soft hover:border-bigas-blue/60 hover:bg-bigas-blue/10 disabled:opacity-50 transition-colors min-h-[44px] max-w-full sm:max-w-[280px]"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function readLastOpened() {
   try {
     const raw = localStorage.getItem(LAST_OPENED_KEY)
@@ -885,11 +925,11 @@ export default function ChatLayout({ user, onLogout }) {
     }
   }
 
-  async function handleSend(e) {
-    e.preventDefault()
-    const text = input.trim()
+  async function handleSend(e, messageText) {
+    e?.preventDefault?.()
+    const text = (messageText ?? input).trim()
     if (!text || !threadId || sending) return
-    setInput('')
+    if (!messageText) setInput('')
     setSending(true)
     setWaitingForReply(true)
     const clientId = createClientMessageId()
@@ -1015,6 +1055,10 @@ export default function ChatLayout({ user, onLogout }) {
                 <p className="text-sm text-muted max-w-md mx-auto leading-relaxed">
                   Ask questions, request reports, or delegate tasks across your AI team.
                 </p>
+                <StarterPrompts
+                  disabled={sending || !threadId}
+                  onSelect={(prompt) => handleSend({ preventDefault: () => {} }, prompt)}
+                />
               </div>
             )}
             {messages.map((m) => (
