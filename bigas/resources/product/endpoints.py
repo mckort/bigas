@@ -15,6 +15,10 @@ from bigas.resources.product.create_jira_issue.service import (
     CreateJiraIssueError,
     CreateJiraIssueService,
 )
+from bigas.resources.product.create_jira_issue.lookup import (
+    LookupJiraError,
+    LookupJiraService,
+)
 from bigas.resources.product.create_release_notes.jira_client import normalize_project_keys
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
 from bigas.resources.product.jira_automation.service import (
@@ -381,6 +385,48 @@ def create_jira_issue():
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route('/lookup_jira', methods=['POST'])
+@require_bigas_access_key
+def lookup_jira():
+    """
+    Look up a Jira issue (including parent Epic) and/or open Epics in a project.
+
+    Request JSON:
+      {
+        "issue_key": "GPWW-3",
+        "project_key": "GPWW"
+      }
+
+    At least one of issue_key or project_key is required.
+    """
+    data = request.json or {}
+    issue_key = (
+        str(data.get("issue_key") or data.get("issue") or data.get("key") or "").strip()
+        or None
+    )
+    project_key = str(data.get("project_key") or "").strip() or None
+    try:
+        result = LookupJiraService().lookup(
+            issue_key=issue_key,
+            project_key=project_key,
+        )
+        return jsonify(result)
+    except LookupJiraError as e:
+        msg = str(e)
+        status = 400 if any(
+            s in msg.lower()
+            for s in [
+                "required",
+                "not found",
+                "not accessible",
+            ]
+        ) else 500
+        return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
+    except Exception as e:
+        logger.error("Error in lookup_jira", exc_info=True)
+        return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
+
+
 def _run_jira_automation_job(job_id: str, parsed: dict) -> None:
     with _JIRA_AI_JOBS_LOCK:
         _JIRA_AI_JOBS[job_id] = {"status": "running", **parsed}
@@ -664,6 +710,31 @@ def get_manifest():
                         },
                     },
                     "required": ["project_key", "summary", "description"],
+                },
+            },
+            {
+                "name": "lookup_jira",
+                "description": (
+                    "Look up a Jira issue (summary, type, status, parent Epic) and/or list "
+                    "open Epics in a project. Use this before create_jira_issue when you need "
+                    "context. A parent on a referenced ticket is not automatically the parent "
+                    "for a new ticket — only link parent_epic_key if the new work belongs under "
+                    "that Epic; otherwise create a standalone Task/Bug."
+                ),
+                "path": "/mcp/tools/lookup_jira",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_key": {
+                            "type": "string",
+                            "description": "Issue to inspect, e.g. GPWW-3. Returns its parent Epic if any.",
+                        },
+                        "project_key": {
+                            "type": "string",
+                            "description": "Project whose open Epics should be listed, e.g. GPWW.",
+                        },
+                    },
                 },
             },
             {

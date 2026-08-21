@@ -69,6 +69,37 @@ def test_humanize_jira_tool_result():
     assert "bigas://action/jira_transition?issue=BIG-42" in result
 
 
+def test_humanize_lookup_jira_includes_parent_and_epics():
+    result = humanize_jira_tool_result(
+        {
+            "ok": True,
+            "issue": {
+                "key": "GPWW-3",
+                "summary": "Implement tracking",
+                "url": "https://example.atlassian.net/browse/GPWW-3",
+                "parent": {
+                    "key": "GPWW-2",
+                    "summary": "10 paying customers",
+                    "issue_type": "Epic",
+                    "url": "https://example.atlassian.net/browse/GPWW-2",
+                },
+            },
+            "epics": [
+                {
+                    "key": "GPWW-2",
+                    "summary": "10 paying customers",
+                    "url": "https://example.atlassian.net/browse/GPWW-2",
+                }
+            ],
+        }
+    )
+    assert result is not None
+    assert "[Implement tracking](https://example.atlassian.net/browse/GPWW-3)" in result
+    assert "Parent (Epic): [10 paying customers](https://example.atlassian.net/browse/GPWW-2)" in result
+    assert "Open Epics:" in result
+    assert "[10 paying customers](https://example.atlassian.net/browse/GPWW-2)" in result
+
+
 def test_humanize_tool_result_prefers_jira_markdown():
     text = humanize_tool_result(
         {
@@ -98,7 +129,8 @@ def test_jira_formatting_rules_require_english():
     )
     assert "create_jira_issue" in prompt
     assert "Never tell the user to create the issue in Jira" in prompt
-    assert "without a parent is the default" in prompt
+    assert "lookup_jira" in prompt
+    assert "does not mean the new work belongs under the same Epic" in prompt
 
 
 def test_transition_issue_to_next_skips_backward(monkeypatch):
