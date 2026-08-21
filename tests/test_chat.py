@@ -553,6 +553,283 @@ def test_direct_specialist_chat_does_not_mirror_handoff(monkeypatch):
     assert any("Direct product reply" in (m.get("content") or "") for m in msgs)
 
 
+def test_resolve_delegate_target_aliases():
+    from bigas.agents.chief_of_staff import _resolve_delegate_target
+
+    assert _resolve_delegate_target("devops") == "devops"
+    assert _resolve_delegate_target("delegate_to_devops") == "devops"
+    assert _resolve_delegate_target("DevOps") == "devops"
+    assert _resolve_delegate_target("cto") == "cto"
+    assert _resolve_delegate_target("unknown") is None
+
+
+def test_chief_direct_tools_exclude_deploy_trigger():
+    from bigas.agents.chief_of_staff import _chief_direct_tools
+
+    names = {
+        t["name"]
+        for t in _chief_direct_tools(
+            [
+                {"name": "trigger_deployment", "description": "deploy"},
+                {"name": "get_deployment_status", "description": "status"},
+                {"name": "fetch_analytics_report", "description": "ga4"},
+                {"name": "check_website_health", "description": "ping"},
+            ]
+        )
+    }
+    assert names == {"get_deployment_status", "check_website_health"}
+
+
+def test_dispatch_chief_tool_rejects_unauthorized_tool():
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    class FakeMcp:
+        def call_tool(self, name, args):
+            raise AssertionError("should not call unauthorized tool")
+
+    result = _dispatch_chief_tool(
+        "trigger_deployment",
+        {"project_key": "VFA"},
+        user_message="deploy vfa",
+        thread_id="thread-1",
+        mcp_client=FakeMcp(),
+    )
+    assert "Delegated to devops" in result
+
+
+def test_dispatch_chief_tool_blocks_disallowed_direct_tool():
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    class FakeMcp:
+        def call_tool(self, name, args):
+            raise AssertionError("should not call disallowed tool")
+
+    result = _dispatch_chief_tool(
+        "fetch_analytics_report",
+        {},
+        user_message="show analytics",
+        thread_id="thread-1",
+        mcp_client=FakeMcp(),
+    )
+    assert result == "Tool fetch_analytics_report is not allowed for Chief of Staff."
+
+
+def test_dispatch_chief_tool_coerces_non_dict_args(monkeypatch):
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    called = {}
+
+    def fake_run(agent_id, task, **kwargs):
+        called["task"] = task
+        return "Delegated to devops agent."
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+
+    result = _dispatch_chief_tool(
+        "trigger_deployment",
+        ["bad", "args"],
+        user_message="deploy vfa",
+        thread_id="thread-1",
+        mcp_client=None,
+    )
+    assert "Delegated to devops" in result
+    assert called["task"] == "deploy vfa"
+
+
+def test_dispatch_chief_tool_preserves_delegated_context(monkeypatch):
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    called = {}
+
+    def fake_run(agent_id, task, **kwargs):
+        called["task"] = task
+        return "Delegated to devops agent."
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+
+    _dispatch_chief_tool(
+        "trigger_deployment",
+        {"project_key": "VFA", "environment": "production"},
+        user_message="please deploy",
+        thread_id="thread-1",
+        mcp_client=None,
+    )
+    assert "please deploy" in called["task"]
+    assert "Context:" in called["task"]
+    assert "VFA" in called["task"]
+
+
+def test_mcp_tool_to_openai_def_allows_long_description():
+    from bigas.agents.chief_of_staff import _mcp_tool_to_openai_def
+
+    long_desc = "x" * 500
+    out = _mcp_tool_to_openai_def({"name": "get_job_status", "description": long_desc})
+    assert len(out["function"]["description"]) == 500
+
+
+def test_chief_select_tool_prompt_documents_delegate(monkeypatch):
+    from bigas.agents.chief_of_staff import _select_tool_via_llm
+
+    captured = {}
+
+    class FakeLlm:
+        def complete(self, messages, temperature=0.2):
+            captured["system"] = messages[0]["content"]
+            return json.dumps(
+                {
+                    "action": "delegate",
+                    "agent_id": "devops",
+                    "task": "Deploy VFA to production",
+                }
+            )
+
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff.get_llm_client",
+        lambda feature="chat": (FakeLlm(), "gemini-3.1-pro-preview"),
+    )
+
+    text, tool_name, args = _select_tool_via_llm(
+        "chief",
+        {"system_prompt_goals": "Coordinate the team."},
+        "please ask devops to ship vfa",
+        [
+            {"name": "fetch_analytics_report", "description": "ga4"},
+            {"name": "trigger_deployment", "description": "deploy now"},
+            {"name": "get_deployment_status", "description": "status of a run"},
+        ],
+        [],
+    )
+    assert not text
+    assert tool_name == "__delegate__:devops"
+    assert args["task"] == "Deploy VFA to production"
+    system = captured["system"]
+    assert '"action":"delegate"' in system
+    assert "- get_deployment_status:" in system
+    assert "- trigger_deployment:" not in system
+    assert "- fetch_analytics_report:" not in system
+    assert "devops" in system.lower()
+
+
+def test_chief_deploy_intent_delegates_without_llm(monkeypatch):
+    from bigas.agents.chief_of_staff import handle_chat_message
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    store.upsert_user("chief-deploy-user", "chief@bigas.local")
+    chief = store.create_thread("chief-deploy-user", "chief")
+    called = {}
+
+    def fake_run(agent_id, task, **kwargs):
+        called["agent_id"] = agent_id
+        called["task"] = task
+        called["thread_id"] = kwargs.get("thread_id")
+        called["async_mode"] = kwargs.get("async_mode")
+        return "Delegated to devops agent. Results will appear in this thread when ready."
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("LLM should not run for a deploy intent")
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+    monkeypatch.setattr("bigas.agents.chief_of_staff.get_llm_client", boom)
+
+    result = handle_chat_message(
+        thread_id=chief["thread_id"],
+        user_id="chief-deploy-user",
+        user_message="deploy vcfieldassistant",
+    )
+    assert called["agent_id"] == "devops"
+    assert called["task"] == "deploy vcfieldassistant"
+    assert called["thread_id"] == chief["thread_id"]
+    assert called["async_mode"] is True
+    assert "Delegated to devops" in (result.get("message") or {}).get("content", "")
+
+
+def test_chief_gemini_delegate_json_reaches_devops(monkeypatch):
+    from bigas.agents.chief_of_staff import handle_chat_message
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    store.upsert_user("chief-json-user", "chief@bigas.local")
+    chief = store.create_thread("chief-json-user", "chief")
+    called = {}
+
+    class FakeLlm:
+        def complete(self, messages, temperature=0.2):
+            return json.dumps(
+                {
+                    "action": "delegate",
+                    "agent_id": "devops",
+                    "task": "Deploy vcfieldassistant",
+                }
+            )
+
+    def fake_run(agent_id, task, **kwargs):
+        called["agent_id"] = agent_id
+        called["task"] = task
+        return "Delegated to devops agent. Results will appear in this thread when ready."
+
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff.get_llm_client",
+        lambda feature="chat": (FakeLlm(), "gemini-3.1-pro-preview"),
+    )
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff._list_chief_mcp_tools",
+        lambda: (None, []),
+    )
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+
+    handle_chat_message(
+        thread_id=chief["thread_id"],
+        user_id="chief-json-user",
+        user_message="delega till devops",
+    )
+    assert called["agent_id"] == "devops"
+    assert "Deploy vcfieldassistant" in called["task"]
+
+
+def test_chief_trigger_deployment_tool_is_rewritten_to_handoff(monkeypatch):
+    from bigas.agents.chief_of_staff import handle_chat_message
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    store.upsert_user("chief-rewrite-user", "chief@bigas.local")
+    chief = store.create_thread("chief-rewrite-user", "chief")
+    called = {}
+
+    class FakeLlm:
+        def complete(self, messages, temperature=0.2):
+            return json.dumps(
+                {
+                    "action": "tool",
+                    "tool_name": "trigger_deployment",
+                    "arguments": {"project_key": "VFA"},
+                }
+            )
+
+    def fake_run(agent_id, task, **kwargs):
+        called["agent_id"] = agent_id
+        called["task"] = task
+        return "Delegated to devops agent. Results will appear in this thread when ready."
+
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff.get_llm_client",
+        lambda feature="chat": (FakeLlm(), "gemini-3.1-pro-preview"),
+    )
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff._list_chief_mcp_tools",
+        lambda: (None, []),
+    )
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+
+    handle_chat_message(
+        thread_id=chief["thread_id"],
+        user_id="chief-rewrite-user",
+        user_message="can you start a production rollout for the field assistant site",
+    )
+    assert called["agent_id"] == "devops"
+    assert "production rollout" in called["task"]
+
+
 def test_humanize_tool_result_unwraps_answer_json():
     from bigas.agents.chief_of_staff import humanize_tool_result
 
