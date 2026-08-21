@@ -5,7 +5,16 @@ import threading
 import uuid
 import requests
 
-from bigas.resources.marketing.utils import sanitize_error_message, validate_request_data
+from bigas.access import require_bigas_access_key
+from bigas.resources.marketing.utils import (
+    request_flag,
+    sanitize_error_message,
+    validate_request_data,
+)
+from bigas.resources.product.create_jira_issue.service import (
+    CreateJiraIssueError,
+    CreateJiraIssueService,
+)
 from bigas.resources.product.create_release_notes.jira_client import normalize_project_keys
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
 from bigas.resources.product.jira_automation.service import (
@@ -312,6 +321,62 @@ def generate_weekly_x_post():
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route('/create_jira_issue', methods=['POST'])
+@require_bigas_access_key
+def create_jira_issue():
+    """
+    Create a Jira issue in the specified project.
+
+    Request JSON:
+      {
+        "project_key": "BIG",
+        "summary": "Ticket title",
+        "description": "Task description (markdown supported)",
+        "issue_type": "Task",
+        "marketing": false
+      }
+
+    Returns { "ok": true, "key": "BIG-42", "url": "https://..." } on success.
+    Set marketing=true for marketing-related tickets (adds the Jira label "marketing").
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(
+        data,
+        required_fields=["project_key", "summary", "description"],
+    )
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    issue_type = str(data.get("issue_type") or "Task").strip().title() or "Task"
+    marketing = request_flag(data, "marketing", False)
+
+    try:
+        service = CreateJiraIssueService()
+        result = service.create(
+            project_key=data.get("project_key"),
+            summary=data.get("summary"),
+            description=data.get("description"),
+            issue_type=issue_type,
+            marketing=marketing,
+        )
+        return jsonify(result)
+    except CreateJiraIssueError as e:
+        msg = str(e)
+        status = 400 if any(
+            s in msg.lower()
+            for s in [
+                "required",
+                "must be one of",
+                "not found",
+                "not accessible",
+            ]
+        ) else 500
+        return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
+    except Exception as e:
+        logger.error("Error in create_jira_issue", exc_info=True)
+        return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
+
+
 def _run_jira_automation_job(job_id: str, parsed: dict) -> None:
     with _JIRA_AI_JOBS_LOCK:
         _JIRA_AI_JOBS[job_id] = {"status": "running", **parsed}
@@ -544,6 +609,49 @@ def get_manifest():
                         }
                     }
                 }
+            },
+            {
+                "name": "create_jira_issue",
+                "description": (
+                    "Create a new Jira issue in the specified project. "
+                    "Returns the issue key (e.g. BIG-42) and browse URL. "
+                    "For marketing-related tickets (website, SEO, content, ads), set marketing=true "
+                    "to add the Jira label \"marketing\" (no other labels are needed)."
+                ),
+                "path": "/mcp/tools/create_jira_issue",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_key": {
+                            "type": "string",
+                            "description": "Jira project key, e.g. BIG, VFA, WAYW",
+                        },
+                        "summary": {
+                            "type": "string",
+                            "description": "Ticket title",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Task description (markdown supported)",
+                        },
+                        "issue_type": {
+                            "type": "string",
+                            "description": "Issue type name (Task or Bug). Default Task.",
+                            "default": "Task",
+                            "enum": ["Task", "Bug"],
+                        },
+                        "marketing": {
+                            "type": "boolean",
+                            "description": (
+                                "When true, adds the Jira label \"marketing\" for marketing-related work "
+                                "(website, SEO, content, ads). Default false."
+                            ),
+                            "default": False,
+                        },
+                    },
+                    "required": ["project_key", "summary", "description"],
+                },
             },
             {
                 "name": "jira_status_automation",

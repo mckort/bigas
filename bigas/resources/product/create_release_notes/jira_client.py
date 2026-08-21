@@ -287,6 +287,7 @@ class JiraClient:
         description_markdown: str = "",
         project_key: Optional[str] = None,
         issue_type: str = "Task",
+        labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Create a Jira issue and return key + browse URL."""
         title = (summary or "").strip()
@@ -297,13 +298,16 @@ class JiraClient:
             raise JiraError("project_key is required")
         proj = keys[0]
         url = f"{self._config.base_url}/rest/api/3/issue"
+        fields: Dict[str, Any] = {
+            "project": {"key": proj},
+            "summary": title[:255],
+            "issuetype": {"name": (issue_type or "Task").strip() or "Task"},
+            "description": markdown_to_adf(description_markdown or ""),
+        }
+        if labels:
+            fields["labels"] = [str(l).strip() for l in labels if str(l).strip()]
         payload = {
-            "fields": {
-                "project": {"key": proj},
-                "summary": title[:255],
-                "issuetype": {"name": (issue_type or "Task").strip() or "Task"},
-                "description": markdown_to_adf(description_markdown or ""),
-            }
+            "fields": fields,
         }
         data = self._request_with_retry_429("POST", url, json=payload)
         issue_key = (data.get("key") or "").strip()
