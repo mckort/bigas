@@ -329,10 +329,14 @@ This is the flow that makes the **Product Manager** and **CTO** specialists work
 
 Say you write a card with just a **Brief** — a couple of sentences on what you want and why — and drag it into the first AI column.
 
+**Tasks / Bugs / Stories** use this implement-a-PR loop:
+
 1. **`Research and describe (AI)`** — Bigas reads the Brief, researches the codebase/context, and writes an **AI Research** section onto the issue (your Brief is left untouched). The card moves itself to **Description approval (manual)** and posts to your `bigas-pm` Discord channel. You read the research, edit if needed, and drag the card forward yourself.
 2. **`Design and plan (AI)`** — Bigas reads Brief + Research + repo context and writes an **AI Plan**: the concrete implementation approach. Moves to **Design approval (manual)**, posts to `bigas-cto`. Again, a human reviews and approves by dragging the card.
 3. **`In Progress (AI)`** — Bigas launches a Cursor cloud agent against the repo mapped to this Jira project, which implements the plan and opens a pull request. The PR link is commented on the issue; you get pinged in `bigas-cto`.
 4. Once the CTO specialist's autofix loop reports the PR is **ready to merge**, Bigas finds the Jira key from the PR title/body and moves the card to **Final approval (manual)** automatically — your signal to review the PR and merge (unless `BIGAS_CTO_AUTO_MERGE=true`, in which case Bigas also squash-merges and posts to Discord). How that review/autofix loop works: [from PR to ready to merge](#walkthrough-from-pr-to-ready-to-merge).
+
+**Epics** take a different path (Goal Engine). Dragging an Epic into those same AI columns does **not** launch a Cursor implement agent. Instead Bigas creates child Tasks linked to the Epic, then (once the Epic is In Progress) posts a weekly progress report. Details: [Proactive Goal Engine](#proactive-goal-engine-cloud-scheduler).
 
 Every AI step lands in a column with **"(manual)"** in the name — cards do not advance without a human drag. Merging the PR stays manual unless you enable `BIGAS_CTO_AUTO_MERGE` (see [cto-autofix.md](docs/cto-autofix.md)).
 
@@ -682,20 +686,21 @@ All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales
 
 ### Proactive Goal Engine (Cloud Scheduler)
 
-Bigas treats **Jira Epics** as high-level project goals. You create Epics manually and move them through your board:
+Bigas treats **Jira Epics** as high-level project goals. You create Epics manually and drag them through the same board columns as Tasks — but Epics never go through Research-write / Design-write / Cursor implement. The same `jira_status_automation` webhook detects `issuetype = Epic` and runs the Goal Engine immediately; Cloud Scheduler repeats the evaluation weekly for Epics still in those columns.
 
 | Epic status | Agent behavior |
 |---|---|
-| **Research** | Chief of Staff suggests research/discovery Tasks linked to the Epic |
-| **Plan** | Chief of Staff breaks the Epic into Todo-ready Tasks |
-| **In Progress** | Weekly evaluation: progress report → Discord + Chief chat; delegates to Product, Marketing, CTO, and DevOps for next-cycle task suggestions; creates new Tasks (never Epics) |
+| **Research and describe (AI)** (or `Research`) | Chief of Staff suggests research/discovery Tasks linked to the Epic; Epic stays in the column |
+| **Design and plan (AI)** (or `Plan`) | Chief of Staff breaks the Epic into Todo-ready Tasks; Epic stays in the column |
+| **In Progress (AI)** (or `In Progress`) | Progress report → Discord + Chief chat; delegates to Product, Marketing, CTO, and DevOps; creates new Tasks for the next cycle (never Epics). Child work in `In Progress` / `In Progress (AI)` counts as active. |
 | **To Do** (Epic) | Ignored — not treated as an active goal |
 
 With `BIGAS_ACCESS_MODE=restricted`, Cloud Scheduler sends `X-Bigas-Access-Key` (same as email ingest and website monitor). `/api/agents` stays public for the chat UI; this webhook is the exception and **always** requires auth (access key or legacy `CRON_SECRET`), even when access mode is `open`.
 
 Optional env:
 
-- `BIGAS_GOAL_EPIC_STATUSES` — comma-separated Epic workflow statuses to evaluate (default: `Research,Plan,In Progress`)
+- `BIGAS_GOAL_EPIC_STATUSES` — comma-separated Epic workflow statuses to evaluate (default: `Research,Plan,In Progress,Research and describe (AI),Design and plan (AI),In Progress (AI)`)
+- `BIGAS_GOAL_IN_PROGRESS_TASK_STATUSES` — child-task statuses treated as active work (default: `In Progress,In Progress (AI)`)
 - `JIRA_EPIC_LINK_FIELD` / `JIRA_EPIC_JQL_FIELD` — `parent` for team-managed boards; `Epic Link` / your custom field ID for company-managed Jira
 - `DISCORD_WEBHOOK_URL_CHIEF` — progress reports (falls back to `DISCORD_WEBHOOK_URL_PRODUCT`)
 - `timeframe_days` in the scheduler body — lookback for closed Jira work, merged PRs, and GA4; tasks target the **next** same-length cycle

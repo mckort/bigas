@@ -18,6 +18,9 @@ from bigas.agents.proactive_engine import (
     ProactiveGoalEngine,
     _is_duplicate_task,
     _parse_llm_json,
+    goal_epic_statuses,
+    goal_phase_for_status,
+    in_progress_status_clause,
     run_evaluation_loop,
 )
 from bigas.resources.product.create_release_notes.jira_client import JiraClient
@@ -39,6 +42,7 @@ def _epic(key: str, status: str, summary: str = "Goal") -> dict:
             "status": {"name": status},
             "description": {"type": "doc", "content": []},
             "project": {"key": key.split("-")[0]},
+            "issuetype": {"name": "Epic"},
         },
     }
 
@@ -59,7 +63,19 @@ class FakeJiraClient:
         self.epic_children = epic_children or {}
 
     def get_epics_by_statuses(self, *, statuses, project_keys=None, fields=None):
-        return list(self.epics)
+        wanted = {str(s).strip().lower() for s in (statuses or [])}
+        if not wanted:
+            return list(self.epics)
+        return [
+            e for e in self.epics
+            if ((e.get("fields") or {}).get("status") or {}).get("name", "").strip().lower() in wanted
+        ]
+
+    def get_issue(self, issue_key, *, fields=None, expand=None):
+        for epic in self.epics:
+            if epic.get("key") == issue_key:
+                return epic
+        raise RuntimeError(f"not found: {issue_key}")
 
     def get_issues_for_epic(
         self,
@@ -71,13 +87,37 @@ class FakeJiraClient:
     ):
         rows = list(self.epic_children.get(epic_key, []))
         clause = (status_clause or "").strip().lower()
-        if 'status = done' in clause:
+        if "status = done" in clause:
             rows = [r for r in rows if r["fields"]["status"]["name"] == "Done"]
-        elif 'status = "in progress"' in clause:
-            rows = [r for r in rows if r["fields"]["status"]["name"] == "In Progress"]
         elif "status != done" in clause:
             rows = [r for r in rows if r["fields"]["status"]["name"] != "Done"]
+        elif "in progress" in clause:
+            rows = [
+                r
+                for r in rows
+                if "in progress" in r["fields"]["status"]["name"].lower()
+            ]
         return rows
+
+
+def test_goal_phase_maps_board_columns():
+    assert goal_phase_for_status("Research") == "research"
+    assert goal_phase_for_status("Research and describe (AI)") == "research"
+    assert goal_phase_for_status("Plan") == "plan"
+    assert goal_phase_for_status("Design and plan (AI)") == "plan"
+    assert goal_phase_for_status("In Progress") == "in_progress"
+    assert goal_phase_for_status("In Progress (AI)") == "in_progress"
+    assert goal_phase_for_status("To Do") is None
+
+
+def test_goal_epic_statuses_include_ai_columns(monkeypatch):
+    monkeypatch.delenv("BIGAS_GOAL_EPIC_STATUSES", raising=False)
+    statuses = goal_epic_statuses()
+    assert "Research and describe (AI)" in statuses
+    assert "Design and plan (AI)" in statuses
+    assert "In Progress (AI)" in statuses
+    assert "In Progress" in statuses
+    assert 'status in ("In Progress", "In Progress (AI)")' in in_progress_status_clause()
 
 
 def test_parse_llm_json_from_fence():
@@ -121,6 +161,7 @@ def test_research_epic_creates_tasks(monkeypatch):
         "bigas.agents.proactive_engine.CreateJiraIssueService.create",
         lambda self, **kw: fake_create(**kw),
     )
+    monkeypatch.setattr(engine, "_post_planning_update", lambda **kw: None)
 
     result = engine.run(timeframe_days=7)
     assert result["ok"] is True
@@ -129,13 +170,66 @@ def test_research_epic_creates_tasks(monkeypatch):
     assert created[0]["parent_epic_key"] == "BIG-10"
 
 
+def test_research_ai_column_epic_creates_tasks(monkeypatch):
+    fake_jira = FakeJiraClient(
+        epics=[_epic("BIG-10", "Research and describe (AI)", "Launch feature X")],
+        epic_children={"BIG-10": []},
+    )
+    engine = ProactiveGoalEngine(jira_client=fake_jira)
+    engine._llm = FakeLLM(
+        {
+            "analysis": "Need user interviews",
+            "tasks_to_create": [
+                {
+                    "summary": "Interview 5 users",
+                    "description": "Run discovery calls",
+                    "issue_type": "Task",
+                }
+            ],
+        }
+    )
+    created = []
+
+    def fake_create(**kwargs):
+        created.append(kwargs)
+        return {"ok": True, "key": "BIG-99", "url": "https://x/browse/BIG-99"}
+
+    monkeypatch.setattr(
+        "bigas.agents.proactive_engine.CreateJiraIssueService.create",
+        lambda self, **kw: fake_create(**kw),
+    )
+    monkeypatch.setattr(engine, "_post_planning_update", lambda **kw: None)
+
+    result = engine.run(timeframe_days=7)
+    assert result["results"][0]["phase"] == "research"
+    assert result["results"][0]["tasks_created"][0]["key"] == "BIG-99"
+
+
+def test_run_single_epic_key(monkeypatch):
+    fake_jira = FakeJiraClient(
+        epics=[
+            _epic("BIG-10", "Research and describe (AI)"),
+            _epic("BIG-11", "In Progress (AI)"),
+        ],
+        epic_children={"BIG-10": [], "BIG-11": []},
+    )
+    engine = ProactiveGoalEngine(jira_client=fake_jira)
+    engine._llm = FakeLLM({"analysis": "ok", "tasks_to_create": []})
+    monkeypatch.setattr(engine, "_post_planning_update", lambda **kw: None)
+
+    result = engine.run(timeframe_days=7, epic_key="BIG-10")
+    assert result["epics_found"] == 1
+    assert result["results"][0]["epic_key"] == "BIG-10"
+    assert result["results"][0]["phase"] == "research"
+
+
 def test_in_progress_epic_posts_report_and_skips_duplicates(monkeypatch):
     fake_jira = FakeJiraClient(
-        epics=[_epic("BIG-20", "In Progress", "Ship v2")],
+        epics=[_epic("BIG-20", "In Progress (AI)", "Ship v2")],
         epic_children={
             "BIG-20": [
                 _issue("BIG-21", "Done", "Finished API"),
-                _issue("BIG-22", "In Progress", "Build UI"),
+                _issue("BIG-22", "In Progress (AI)", "Build UI"),
                 _issue("BIG-23", "To Do", "Write docs"),
             ]
         },
@@ -291,7 +385,7 @@ def test_evaluate_goals_requires_webhook_secret_configuration(client, monkeypatc
 
 def test_run_evaluation_loop_entrypoint(monkeypatch):
     class FakeEngine:
-        def run(self, *, timeframe_days):
+        def run(self, *, timeframe_days, epic_key=None, status_hint=None):
             return {"ok": True, "epics_found": 0, "results": [], "timeframe_days": timeframe_days}
 
     monkeypatch.setattr(

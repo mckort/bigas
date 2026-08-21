@@ -232,6 +232,28 @@ class JiraAutomationService:
                 "issue_key": issue_key,
             }
 
+        try:
+            issue = self._jira.get_issue(
+                issue_key,
+                fields=["summary", "issuetype", "status", "description", "project"],
+            )
+        except JiraError as e:
+            raise JiraAutomationError(f"Failed to load {issue_key}: {e}") from e
+        if not (issue.get("key") or "").strip():
+            issue["key"] = issue_key
+
+        from bigas.agents.proactive_engine import issue_is_epic
+
+        if issue_is_epic(issue):
+            return self._handle_goal_epic(
+                issue=issue,
+                issue_key=issue_key,
+                to_status=to_status,
+                from_status=from_status,
+                idempotency_key=idempotency_key,
+                sync=sync,
+            )
+
         notify_channel = "pm" if handler == HANDLER_RESEARCH else "cto"
         handler_label = {
             HANDLER_RESEARCH: "research",
@@ -360,6 +382,135 @@ class JiraAutomationService:
         result["to_status"] = to_status
         result["sync"] = sync
         return result
+
+    def _handle_goal_epic(
+        self,
+        *,
+        issue: Dict[str, Any],
+        issue_key: str,
+        to_status: str,
+        from_status: str,
+        idempotency_key: str,
+        sync: bool,
+    ) -> Dict[str, Any]:
+        from bigas.agents.proactive_engine import (
+            ProactiveGoalEngine,
+            ProactiveGoalEngineError,
+            goal_phase_for_status,
+        )
+
+        phase = goal_phase_for_status(to_status)
+        summary = ((issue.get("fields") or {}).get("summary") or "").strip()
+        if not phase:
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": f"Epic {issue_key} has no Goal Engine phase for status {to_status!r}",
+                "issue_key": issue_key,
+                "issue_type": "Epic",
+            }
+
+        idem = idempotency_key or f"{issue_key}:{to_status}:{from_status}"
+        cache_key = f"goal_engine:{idem}"
+        if not _IDEMPOTENCY.try_claim(cache_key):
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "duplicate delivery",
+                "issue_key": issue_key,
+                "idempotency_key": idem,
+            }
+
+        ok_quota, used, limit = self._quota.try_acquire()
+        if not ok_quota:
+            _IDEMPOTENCY.clear(cache_key)
+            msg = (
+                f"{BIGAS_COMMENT_MARKER} Skipped Goal Engine: daily quota reached "
+                f"({used}/{limit} UTC). Try again tomorrow or raise BIGAS_JIRA_AI_DAILY_QUOTA."
+            )
+            try:
+                self._jira.add_comment(issue_key, msg)
+            except JiraError:
+                logger.warning("Failed to comment quota skip on %s", issue_key, exc_info=True)
+            self._notify_pm(
+                f"**Jira AI quota reached** ({used}/{limit})\n"
+                f"Skipped Goal Engine for {issue_discord_label(issue_key, summary)} — left in `{to_status}`."
+            )
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "daily_quota_exceeded",
+                "used": used,
+                "limit": limit,
+                "issue_key": issue_key,
+            }
+
+        notify_channel = "pm" if phase == "research" else "cto"
+        try:
+            engine = ProactiveGoalEngine(jira_client=self._jira)
+            engine_result = engine.run(
+                timeframe_days=7,
+                epic_key=issue_key,
+                status_hint=to_status,
+            )
+        except (ProactiveGoalEngineError, JiraError, Exception) as e:
+            logger.error("Goal Engine failed for %s", issue_key, exc_info=True)
+            return self._fail(
+                issue_key=issue_key,
+                to_status=to_status,
+                channel=notify_channel,
+                error=str(e),
+                cache_key=cache_key,
+                release_quota=True,
+                summary=summary,
+            )
+
+        row = (engine_result.get("results") or [{}])[0]
+        if not row.get("ok", True):
+            return self._fail(
+                issue_key=issue_key,
+                to_status=to_status,
+                channel=notify_channel,
+                error=str(row.get("error") or "Goal Engine evaluation failed"),
+                cache_key=cache_key,
+                release_quota=True,
+                summary=summary,
+            )
+
+        created = row.get("tasks_created") or []
+        created_txt = ", ".join(
+            str(item.get("key")) for item in created if item.get("key")
+        ) or "none"
+        comment = (
+            f"{BIGAS_COMMENT_MARKER} Goal Engine ({phase}): created {created_txt}. "
+            f"Left in `{to_status}`."
+        )
+        try:
+            self._jira.add_comment(issue_key, comment)
+        except JiraError:
+            logger.warning("Failed to comment Goal Engine result on %s", issue_key, exc_info=True)
+
+        label = issue_discord_label(issue_key, summary)
+        notify = self._notify_pm if notify_channel == "pm" else self._notify_cto
+        notify(
+            f"**Goal Engine** {label}\n"
+            f"Phase: **{phase}** — created {created_txt}.\n"
+            f"Left in **{to_status}** (Epic; not implemented as a Task)."
+        )
+        return {
+            "ok": True,
+            "handler": "goal_engine",
+            "issue_key": issue_key,
+            "issue_type": "Epic",
+            "phase": phase,
+            "left_in_status": to_status,
+            "goal_engine": row,
+            "quota_used": used,
+            "quota_limit": limit,
+            "from_status": from_status,
+            "to_status": to_status,
+            "sync": sync,
+        }
 
     def _fail(
         self,

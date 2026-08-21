@@ -38,7 +38,27 @@ from bigas.resources.product.progress_updates.github_commits import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GOAL_STATUSES = ("Research", "Plan", "In Progress")
+GOAL_PHASE_RESEARCH = "research"
+GOAL_PHASE_PLAN = "plan"
+GOAL_PHASE_IN_PROGRESS = "in_progress"
+
+DEFAULT_GOAL_STATUSES = (
+    "Research",
+    "Plan",
+    "In Progress",
+    "Research and describe (AI)",
+    "Design and plan (AI)",
+    "In Progress (AI)",
+)
+DEFAULT_IN_PROGRESS_TASK_STATUSES = ("In Progress", "In Progress (AI)")
+_EXPLICIT_STATUS_PHASES = {
+    "research": GOAL_PHASE_RESEARCH,
+    "research and describe (ai)": GOAL_PHASE_RESEARCH,
+    "plan": GOAL_PHASE_PLAN,
+    "design and plan (ai)": GOAL_PHASE_PLAN,
+    "in progress": GOAL_PHASE_IN_PROGRESS,
+    "in progress (ai)": GOAL_PHASE_IN_PROGRESS,
+}
 _EXPERT_AGENTS = (
     ("product", "Product management, Jira backlog, release cadence"),
     ("marketing", "GA4, ads, SEO, growth metrics"),
@@ -57,6 +77,41 @@ def goal_epic_statuses() -> Tuple[str, ...]:
         return DEFAULT_GOAL_STATUSES
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     return tuple(parts) if parts else DEFAULT_GOAL_STATUSES
+
+
+def goal_phase_for_status(status: str) -> Optional[str]:
+    """Map a Jira status name to research / plan / in_progress."""
+    key = (status or "").strip().lower()
+    if not key:
+        return None
+    if key in _EXPLICIT_STATUS_PHASES:
+        return _EXPLICIT_STATUS_PHASES[key]
+    if "research" in key:
+        return GOAL_PHASE_RESEARCH
+    if "plan" in key or "design" in key:
+        return GOAL_PHASE_PLAN
+    if "in progress" in key:
+        return GOAL_PHASE_IN_PROGRESS
+    return None
+
+
+def in_progress_task_statuses() -> Tuple[str, ...]:
+    raw = (os.environ.get("BIGAS_GOAL_IN_PROGRESS_TASK_STATUSES") or "").strip()
+    if not raw:
+        return DEFAULT_IN_PROGRESS_TASK_STATUSES
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    return tuple(parts) if parts else DEFAULT_IN_PROGRESS_TASK_STATUSES
+
+
+def in_progress_status_clause() -> str:
+    quoted = ", ".join(f'"{s}"' for s in in_progress_task_statuses())
+    return f"AND status in ({quoted})"
+
+
+def issue_is_epic(issue: Dict[str, Any]) -> bool:
+    fields = issue.get("fields") or {}
+    name = ((fields.get("issuetype") or {}).get("name") or "").strip()
+    return name.lower() == "epic"
 
 
 def chief_discord_webhook_url() -> Optional[str]:
@@ -285,7 +340,7 @@ def _create_tasks_from_proposals(
                 marketing=marketing,
                 parent_epic_key=epic_key,
             )
-            created.append(result)
+            created.append({**result, "summary": summary})
             open_issues = list(open_issues) + [{"summary": summary, "key": result.get("key", ""), "status": "To Do"}]
         except CreateJiraIssueError as e:
             logger.warning("Failed to create Jira task %r: %s", summary, e)
@@ -299,47 +354,79 @@ class ProactiveGoalEngine:
         self._jira = jira_client
         self._llm, self._model = get_llm_client(feature="proactive_goals")
 
-    def run(self, *, timeframe_days: int = 7) -> Dict[str, Any]:
+    def run(
+        self,
+        *,
+        timeframe_days: int = 7,
+        epic_key: Optional[str] = None,
+        status_hint: Optional[str] = None,
+    ) -> Dict[str, Any]:
         if timeframe_days < 1 or timeframe_days > 365:
             raise ProactiveGoalEngineError("timeframe_days must be between 1 and 365")
 
-        statuses = goal_epic_statuses()
-        try:
-            epics = self._jira.get_epics_by_statuses(statuses=statuses)
-        except JiraError as e:
-            raise ProactiveGoalEngineError(str(e)) from e
+        key = (epic_key or "").strip()
+        if key:
+            try:
+                epic = self._jira.get_issue(
+                    key,
+                    fields=["summary", "status", "description", "project", "issuetype"],
+                )
+            except JiraError as e:
+                raise ProactiveGoalEngineError(str(e)) from e
+            if not (epic.get("key") or "").strip():
+                epic["key"] = key
+            if not issue_is_epic(epic):
+                raise ProactiveGoalEngineError(f"{key} is not an Epic")
+            epics = [epic]
+        else:
+            statuses = goal_epic_statuses()
+            try:
+                epics = self._jira.get_epics_by_statuses(statuses=statuses)
+            except JiraError as e:
+                raise ProactiveGoalEngineError(str(e)) from e
 
         results: List[Dict[str, Any]] = []
         for epic in epics:
             status = _issue_status(epic)
-            epic_key = (epic.get("key") or "").strip()
-            if not epic_key:
+            if key:
+                status = (status_hint or "").strip() or status
+            row_key = (epic.get("key") or "").strip()
+            if not row_key:
                 continue
             try:
-                if status.lower() == "research":
-                    results.append(self._evaluate_research_epic(epic))
-                elif status.lower() == "plan":
-                    results.append(self._evaluate_plan_epic(epic))
-                elif status.lower() == "in progress":
-                    results.append(self._evaluate_in_progress_epic(epic, timeframe_days=timeframe_days))
-                else:
-                    results.append(
-                        {
-                            "epic_key": epic_key,
-                            "status": status,
-                            "skipped": True,
-                            "reason": f"Unhandled goal status {status!r}",
-                        }
-                    )
+                results.append(
+                    self._evaluate_one(epic, timeframe_days=timeframe_days, status=status)
+                )
             except Exception as e:
-                logger.exception("Epic evaluation failed for %s", epic_key)
-                results.append({"epic_key": epic_key, "status": status, "ok": False, "error": str(e)})
+                logger.exception("Epic evaluation failed for %s", row_key)
+                results.append({"epic_key": row_key, "status": status, "ok": False, "error": str(e)})
 
         return {
             "ok": True,
             "timeframe_days": timeframe_days,
             "epics_found": len(epics),
             "results": results,
+        }
+
+    def _evaluate_one(
+        self,
+        epic: Dict[str, Any],
+        *,
+        timeframe_days: int,
+        status: str,
+    ) -> Dict[str, Any]:
+        phase = goal_phase_for_status(status)
+        if phase == GOAL_PHASE_RESEARCH:
+            return self._evaluate_research_epic(epic)
+        if phase == GOAL_PHASE_PLAN:
+            return self._evaluate_plan_epic(epic)
+        if phase == GOAL_PHASE_IN_PROGRESS:
+            return self._evaluate_in_progress_epic(epic, timeframe_days=timeframe_days)
+        return {
+            "epic_key": (epic.get("key") or "").strip(),
+            "status": status,
+            "skipped": True,
+            "reason": f"Unhandled goal status {status!r}",
         }
 
     def _evaluate_research_epic(self, epic: Dict[str, Any]) -> Dict[str, Any]:
@@ -358,11 +445,19 @@ class ProactiveGoalEngine:
             proposals=parsed.get("tasks_to_create") or [],
             open_issues=open_issues,
         )
+        analysis = (parsed.get("analysis") or "").strip()
+        self._post_planning_update(
+            epic_key=epic_key,
+            phase=GOAL_PHASE_RESEARCH,
+            summary=analysis,
+            created=created,
+        )
         return {
             "epic_key": epic_key,
-            "status": "Research",
+            "status": _issue_status(epic) or "Research",
+            "phase": GOAL_PHASE_RESEARCH,
             "ok": True,
-            "analysis": parsed.get("analysis"),
+            "analysis": analysis,
             "tasks_created": created,
         }
 
@@ -382,11 +477,19 @@ class ProactiveGoalEngine:
             proposals=parsed.get("tasks_to_create") or [],
             open_issues=open_issues,
         )
+        plan_summary = (parsed.get("plan_summary") or "").strip()
+        self._post_planning_update(
+            epic_key=epic_key,
+            phase=GOAL_PHASE_PLAN,
+            summary=plan_summary,
+            created=created,
+        )
         return {
             "epic_key": epic_key,
-            "status": "Plan",
+            "status": _issue_status(epic) or "Plan",
+            "phase": GOAL_PHASE_PLAN,
             "ok": True,
-            "plan_summary": parsed.get("plan_summary"),
+            "plan_summary": plan_summary,
             "tasks_created": created,
         }
 
@@ -402,7 +505,7 @@ class ProactiveGoalEngine:
         )
         in_progress = self._jira.get_issues_for_epic(
             epic_key,
-            status_clause='AND status = "In Progress"',
+            status_clause=in_progress_status_clause(),
         )
         open_backlog = self._jira.get_issues_for_epic(
             epic_key,
@@ -471,7 +574,8 @@ class ProactiveGoalEngine:
 
         return {
             "epic_key": epic_key,
-            "status": "In Progress",
+            "status": _issue_status(epic) or "In Progress",
+            "phase": GOAL_PHASE_IN_PROGRESS,
             "ok": True,
             "progress_report_posted": bool(progress_report),
             "expert_notes": expert_notes,
@@ -547,9 +651,7 @@ class ProactiveGoalEngine:
             logger.warning("Expert delegation to %s failed: %s", agent_id, e)
             return f"(Delegation failed: {e})"
 
-    def _post_progress_report(self, report: str, *, epic_key: str) -> None:
-        header = f"🎯 **Goal progress — {epic_key}**\n\n"
-        message = header + report
+    def _post_to_chief(self, message: str, *, epic_key: str) -> None:
         webhook = chief_discord_webhook_url()
         if webhook:
             post_long_to_discord(webhook, message)
@@ -562,10 +664,50 @@ class ProactiveGoalEngine:
                 metadata={"source": "proactive_goal_engine", "epic_key": epic_key},
             )
         except Exception:
-            logger.exception("Failed to mirror goal progress to chief chat thread")
+            logger.exception("Failed to mirror goal update to chief chat thread")
+
+    def _post_progress_report(self, report: str, *, epic_key: str) -> None:
+        self._post_to_chief(
+            f"🎯 **Goal progress — {epic_key}**\n\n{report}",
+            epic_key=epic_key,
+        )
+
+    def _post_planning_update(
+        self,
+        *,
+        epic_key: str,
+        phase: str,
+        summary: str,
+        created: Sequence[Dict[str, Any]],
+    ) -> None:
+        lines = [f"🎯 **Goal {phase} — {epic_key}**", ""]
+        if summary:
+            lines.extend([summary.strip(), ""])
+        if created:
+            lines.append("Created tasks:")
+            for item in created:
+                key = (item.get("key") or "").strip()
+                url = (item.get("url") or "").strip()
+                title = (item.get("summary") or key).strip()
+                if url and key:
+                    lines.append(f"- [{key}]({url}): {title}")
+                elif key:
+                    lines.append(f"- {key}: {title}")
+        else:
+            lines.append("No new tasks (open backlog already covers this).")
+        self._post_to_chief("\n".join(lines).strip(), epic_key=epic_key)
 
 
-def run_evaluation_loop(*, timeframe_days: int = 7) -> Dict[str, Any]:
-    """Entry point for the scheduled evaluate-goals webhook."""
+def run_evaluation_loop(
+    *,
+    timeframe_days: int = 7,
+    epic_key: Optional[str] = None,
+    status_hint: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Entry point for the scheduled evaluate-goals webhook (or a single Epic)."""
     engine = ProactiveGoalEngine()
-    return engine.run(timeframe_days=timeframe_days)
+    return engine.run(
+        timeframe_days=timeframe_days,
+        epic_key=epic_key,
+        status_hint=status_hint,
+    )
