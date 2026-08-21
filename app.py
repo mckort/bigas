@@ -185,6 +185,8 @@ def create_app():
     public_paths = {"/health", "/mcp", "/mcp/manifest", "/mcp/providers", "/openapi.json", "/api/auth/config"}
 
     def _is_public_path(path: str) -> bool:
+        if path == "/api/agents/evaluate-goals":
+            return False
         return (
             path in public_paths
             or path == "/"

@@ -284,6 +284,86 @@ class JiraClient:
         url = f"{self._config.base_url}/rest/api/3/issue/{key}"
         return self._request_with_retry_429("GET", url, params=params)
 
+    def epic_jql_clause(self, epic_key: str) -> str:
+        """Build a JQL fragment linking child issues to an Epic."""
+        key = (epic_key or "").strip()
+        if not key:
+            raise JiraError("epic_key is required")
+        field = (os.environ.get("JIRA_EPIC_JQL_FIELD") or "parent").strip() or "parent"
+        if field.lower() == "parent":
+            return f'parent = "{key}"'
+        return f'"{field}" = "{key}"'
+
+    def _apply_epic_link(self, fields: Dict[str, Any], parent_epic_key: Optional[str]) -> None:
+        epic_key = (parent_epic_key or "").strip()
+        if not epic_key:
+            return
+        field = (os.environ.get("JIRA_EPIC_LINK_FIELD") or "parent").strip() or "parent"
+        if field.lower() == "parent":
+            fields["parent"] = {"key": epic_key}
+        else:
+            fields[field] = epic_key
+
+    def get_epics_by_statuses(
+        self,
+        *,
+        statuses: Sequence[str],
+        project_keys: Optional[Union[str, Sequence[str]]] = None,
+        fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch Epic issues whose workflow status is in ``statuses``."""
+        status_names = [str(s).strip() for s in (statuses or []) if str(s).strip()]
+        if not status_names:
+            return []
+        if fields is None:
+            fields = ["key", "summary", "status", "description", "project", "issuetype"]
+        keys = self._resolve_project_keys(project_keys)
+        quoted_statuses = ", ".join(f'"{s}"' for s in status_names)
+        jql = (
+            f'{project_jql_clause(keys)} '
+            f'AND issuetype = Epic '
+            f"AND status in ({quoted_statuses}) "
+            f"ORDER BY updated DESC, key ASC"
+        )
+        return self._search_jql(
+            jql=jql,
+            fields=fields,
+            max_results_per_page=50,
+            max_pages=20,
+        )
+
+    def get_issues_for_epic(
+        self,
+        epic_key: str,
+        *,
+        status_clause: str = "",
+        updated_since_days: Optional[int] = None,
+        fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch issues linked to an Epic via parent or Epic Link (see env JIRA_EPIC_JQL_FIELD).
+
+        status_clause: optional JQL fragment, e.g. 'AND status != Done'.
+        updated_since_days: when set, restrict to issues updated in the last N days.
+        """
+        if fields is None:
+            fields = ["key", "summary", "status", "issuetype", "resolutiondate", "updated"]
+        jql = self.epic_jql_clause(epic_key)
+        if (status_clause or "").strip():
+            jql = f"{jql} {(status_clause or '').strip()}"
+        if updated_since_days is not None:
+            days = int(updated_since_days)
+            if days < 1 or days > 365:
+                raise ValueError("updated_since_days must be between 1 and 365")
+            jql = f"{jql} AND updated >= -{days}d"
+        jql = f"{jql} ORDER BY updated DESC, key ASC"
+        return self._search_jql(
+            jql=jql,
+            fields=fields,
+            max_results_per_page=50,
+            max_pages=50,
+        )
+
     def create_issue(
         self,
         *,
@@ -292,6 +372,7 @@ class JiraClient:
         project_key: Optional[str] = None,
         issue_type: str = "Task",
         labels: Optional[List[str]] = None,
+        parent_epic_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a Jira issue and return key + browse URL."""
         title = (summary or "").strip()
@@ -310,6 +391,7 @@ class JiraClient:
         }
         if labels:
             fields["labels"] = [str(l).strip() for l in labels if str(l).strip()]
+        self._apply_epic_link(fields, parent_epic_key)
         payload = {
             "fields": fields,
         }
