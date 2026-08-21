@@ -45,7 +45,7 @@ It currently ships five specialists, reachable from the **[web chat](#chat-web-i
 | **Senior Marketing Analyst** | GA4 web analytics (per site via `BIGAS_GA4_PROPERTY_MAP`) + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis |
 | **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval |
 | **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord |
-| **DevOps** | Pre-flight deployment risk checks (migrations, config), trigger GitHub Actions deploy workflows (e.g. separate backend + web for vcfieldassistant), post-deploy HTTP health checks |
+| **DevOps** | Pre-flight deployment risk checks (migrations, config), trigger GitHub Actions deploy workflows (e.g. separate backend + web for vcfieldassistant), post-deploy HTTP health checks, **self-healing CI/CD** (failed workflow_run webhook → log analysis → hotfix PR on `bigas-hotfix/*`) |
 
 Two design decisions shape everything else in this document:
 
@@ -205,7 +205,10 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
-| `GITHUB_TOKEN` | GitHub token — PR review, Jira AI repo context, and DevOps workflow dispatch (needs Actions write) |
+| `GITHUB_TOKEN` | GitHub token — PR review, Jira AI repo context, DevOps workflow dispatch (needs Actions write), and self-healing CI PR creation |
+| `GITHUB_WEBHOOK_SECRET` | Shared secret for GitHub `workflow_run` webhooks (`X-Hub-Signature-256`). Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` if unset |
+| `ENABLE_SELF_HEALING_CI` | When `true` (default), process failed GitHub Actions runs and open hotfix PRs. Set `false` to disable |
+| `BIGAS_CI_LOG_ZIP_MAX_BYTES` | Max workflow run log zip size to download (default 52428800 = 50 MB). Larger zips fall back to per-job log API |
 | `BIGAS_DEPLOY_WORKFLOW_MAP` | Optional `PROJECT:file.yml,file.yml` map (pipe between projects), e.g. `VFA:deploy-backend.yml,deploy-web.yml`. Workflows are dispatched on the product repo unless `BIGAS_DEPLOY_REPO_MAP` overrides it. Unset = VFA default |
 | `BIGAS_DEPLOY_REPO_MAP` | Optional `KEY:owner/repo` CSV. When set, `trigger_deployment` dispatches workflows on that repo instead of `BIGAS_JIRA_PROJECT_REPO_MAP`. Risk checks still compare the product repo. Used for VM sites (`mckort/gcp-single-vm-webstack`). |
 | `X_ACCOUNTS` | Comma-separated X handles for weekly community posts (optional). Credentials via `X_CREDENTIALS_JSON` (recommended for Secret Manager) or `X_API_KEY` / `X_ACCESS_TOKEN_<ACCOUNT>` |
@@ -353,6 +356,25 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/check_website_health \
 ```
 
 Tool internals: **[docs/architecture.md](docs/architecture.md)** (DevOps). Product-repo wiring: that repo’s README (GitHub Actions deploy).
+
+### Walkthrough: self-healing CI/CD (failed GitHub Actions → hotfix PR)
+
+When a GitHub Actions workflow fails on a branch, Bigas can autonomously analyze the logs, map the failure to the triggering commit diff, and open a hotfix PR via the **DevOps** agent.
+
+1. **Configure a GitHub webhook** on each repo you want monitored:
+   - Payload URL: `https://your-bigas-url/mcp/tools/github_workflow_run`
+   - Content type: `application/json`
+   - Secret: same value as `GITHUB_WEBHOOK_SECRET` in Bigas (or reuse `JIRA_AUTOMATION_WEBHOOK_SECRET`)
+   - Events: **Workflow runs**
+2. **Set env vars** on Bigas:
+   - `GITHUB_TOKEN` — needs `actions:read`, repo contents read/write, and pull request write
+   - `GITHUB_WEBHOOK_SECRET` — shared secret for `X-Hub-Signature-256` verification
+   - `ENABLE_SELF_HEALING_CI=true` (default; set `false` to disable)
+   - Optional: `BIGAS_CI_LOG_ZIP_MAX_BYTES=52428800` (50 MB default) — skip large log zips and fall back to per-job logs
+3. **What happens on failure:** GitHub sends a `workflow_run` event with `conclusion: failure`. Bigas ignores successful/pending runs and branches named `bigas-hotfix/*` (infinite-loop prevention). A background job fetches failed job logs, loads the commit diff, and the DevOps agent calls `create_github_pr` on `bigas-hotfix/run-{run_id}`.
+4. **Human review:** PRs are never auto-merged. Review the proposed fix like any other PR.
+
+Poll async jobs with `POST /mcp/tools/self_healing_ci_job` and `{"job_id": "..."}` when the webhook returns `202`.
 
 ---
 
@@ -547,6 +569,19 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST fetch_ai_usage` | Historical AI usage from usage providers (Cursor API + LLM Cloud Logging); list-price estimates. Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md) |
 | `POST weekly_cto_ai_report` | Weekly Bigas AI cost summary → Discord (Cursor autofix + all LLM features from Cloud Logging) |
 | `POST website_monitor` | CTO tool: check configured websites (`MONITOR_URLS`) for availability and SSL certificate health. Alerts via Discord (`DISCORD_WEBHOOK_URL_CTO`) on failures. |
+
+### DevOps & self-healing CI
+
+| Endpoint | Description |
+|---|---|
+| `POST check_deployment_risk` | Compare git refs and flag migrations, lockfiles, deploy config before production deploy |
+| `POST trigger_deployment` | Dispatch GitHub Actions deploy workflow(s) via `workflow_dispatch` |
+| `POST get_deployment_status` | Poll a GitHub Actions workflow run by ID |
+| `POST check_website_health` | HTTP GET health check on a live site URL |
+| `POST fetch_github_action_logs` | Download and parse failed job logs from a workflow run (zip with size threshold, or per-job fallback) |
+| `POST create_github_pr` | Create a `bigas-hotfix/*` branch with file changes and open a pull request |
+| `POST github_workflow_run` | GitHub webhook for `workflow_run` failures → autonomous hotfix PR. See [self-healing walkthrough](#walkthrough-self-healing-cicd-failed-github-actions--hotfix-pr) |
+| `POST self_healing_ci_job` | Poll an async self-healing job by `job_id` |
 
 ---
 

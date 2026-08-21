@@ -135,6 +135,12 @@ class _FakeGitHubClient:
     def get_job_logs(self, owner, repo, job_id):
         return "error during build:\n    Tsconfig not found expo/tsconfig.base\n"
 
+    def get_run_logs_zip_size(self, owner, repo, run_id):
+        return None
+
+    def download_run_logs_zip(self, owner, repo, run_id, *, max_bytes, dest_path):
+        raise NotImplementedError("zip download not used in legacy fake client")
+
 
 def test_resolve_deploy_target_from_site():
     target = resolve_deploy_target(site_or_text="deploy vcfieldassistant.com")
@@ -313,6 +319,8 @@ def test_manifest_includes_devops_tools(client):
     assert "get_deployment_status" in names
     assert "check_website_health" in names
     assert "fix_failed_deployment" in names
+    assert "fetch_github_action_logs" in names
+    assert "create_github_pr" in names
 
 
 def test_list_agents_includes_devops(client):
