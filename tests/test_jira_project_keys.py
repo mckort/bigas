@@ -52,6 +52,14 @@ def test_is_invalid_parent_error():
         'Jira API error 400: {"errors":{"parent":"Please select valid parent issue."}}'
     )
     assert is_invalid_parent_error(err) is True
+    missing_parent = JiraError(
+        'Jira API error 400: {"errors":{"parent":"Issue does not exist or you do not have permission to see it."}}'
+    )
+    assert is_invalid_parent_error(missing_parent) is True
+    missing_epic_link = JiraError(
+        'Jira API error 400: {"errors":{"customfield_10014":"Issue does not exist or you do not have permission to see it."}}'
+    )
+    assert is_invalid_parent_error(missing_epic_link) is True
     assert is_invalid_parent_error(JiraError("Jira API error 404: missing")) is False
 
 

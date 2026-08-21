@@ -66,7 +66,11 @@ def normalize_parent_epic_key(
 
 def is_invalid_parent_error(exc: BaseException) -> bool:
     """True when Jira rejected the parent/Epic link on issue create."""
-    return "valid parent" in str(exc).lower()
+    err_str = str(exc).lower()
+    if "valid parent" in err_str:
+        return True
+    field = _epic_link_field_name().lower()
+    return field in err_str or "does not exist" in err_str
 
 
 def _epic_link_field_name() -> str:
