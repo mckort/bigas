@@ -6,6 +6,7 @@ from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
     JiraConfig,
     JiraError,
+    normalize_parent_epic_key,
     normalize_project_keys,
 )
 
@@ -70,13 +71,14 @@ class CreateJiraIssueService:
 
         try:
             client = JiraClient(JiraConfig.from_env())
+            epic = normalize_parent_epic_key(parent_epic_key, project_key=proj)
             result = client.create_issue(
                 project_key=proj,
                 summary=title,
                 description_markdown=body,
                 issue_type=itype,
                 labels=labels,
-                parent_epic_key=parent_epic_key,
+                parent_epic_key=epic,
             )
             out: Dict[str, Any] = {
                 "ok": True,
@@ -89,8 +91,8 @@ class CreateJiraIssueService:
                 out["labels"] = labels
             if result.get("parent_dropped"):
                 out["parent_dropped"] = True
-            elif result.get("parent_epic_key"):
-                out["parent_epic_key"] = result.get("parent_epic_key")
+            elif result.get("parent_epic_key") or epic:
+                out["parent_epic_key"] = result.get("parent_epic_key") or epic
             return out
         except JiraError as e:
             raise CreateJiraIssueError(_format_jira_error(e, project_key=proj)) from e
