@@ -197,7 +197,13 @@ def execute_proposal_action(
         task = str(params.get("task") or user_context).strip()
         if not agent_id or not task:
             return "Missing agent_id or task for delegation."
-        return run_specialist_task(agent_id, task, thread_id=thread_id, async_mode=True)
+        return run_specialist_task(
+            agent_id,
+            task,
+            thread_id=thread_id,
+            async_mode=True,
+            review_result=bool(params.get("review_result", True)),
+        )
 
     if kind == "tool":
         from bigas.agents.chief_of_staff import _enrich_tool_args, _mcp_client, _run_tool_call

@@ -485,6 +485,7 @@ def test_delegated_task_appears_in_specialist_thread(monkeypatch):
         "Track invoice follow-up",
         thread_id=chief["thread_id"],
         async_mode=True,
+        review_result=False,
     )
     assert "Delegated to product" in result
 
@@ -507,6 +508,93 @@ def test_delegated_task_appears_in_specialist_thread(monkeypatch):
     assert any("working" in (m.get("content") or "").lower() for m in chief_msgs)
     assert any("Invoice follow-up tracked" in (m.get("content") or "") for m in chief_msgs)
     assert not any(m.get("metadata", {}).get("type") == "handoff" for m in chief_msgs)
+
+
+def test_delegated_deploy_mirrors_pipeline_to_devops_thread(monkeypatch):
+    from bigas.agents.chief_of_staff import run_specialist_task
+    from bigas.chat.db import get_chat_store
+    from bigas.resources.devops.pipeline import poll_deploy_postcheck
+
+    monkeypatch.setenv("BIGAS_JIRA_PROJECT_REPO_MAP", "VFA:mckort/vcfieldassistant")
+    monkeypatch.setenv("BIGAS_DEPLOY_WORKFLOW_MAP", "VFA:deploy-backend.yml,deploy-web.yml")
+
+    store = get_chat_store()
+    store.upsert_user("deploy-delegate-user", "deploy-delegate@bigas.local")
+    chief = store.create_thread("deploy-delegate-user", "chief")
+    devops = store.get_or_create_agent_thread("deploy-delegate-user", "devops")
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_deployment_risk",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Compared prod → main. 2 file(s) changed.",
+            "risk_level": "low",
+            "findings": {},
+            "repo": "mckort/vcfieldassistant",
+            "site_urls": ["https://vcfieldassistant.com"],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Triggered 2 workflow(s) on mckort/vcfieldassistant @ main.",
+            "repo": "mckort/vcfieldassistant",
+            "triggered": [
+                {
+                    "workflow": "deploy-backend.yml",
+                    "run_id": 11,
+                    "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/11",
+                },
+                {
+                    "workflow": "deploy-web.yml",
+                    "run_id": 12,
+                    "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/12",
+                },
+            ],
+            "errors": [],
+            "site_urls": ["https://vcfieldassistant.com"],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/example/run",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} returned HTTP 200 in 40ms."},
+    )
+
+    result = run_specialist_task(
+        "devops",
+        "deploy vcfieldassistant",
+        thread_id=chief["thread_id"],
+        async_mode=False,
+        review_result=False,
+    )
+    assert "Triggered 2 workflow(s)" in result
+
+    devops_msgs = store.list_messages(devops["thread_id"])
+    assert any(m.get("metadata", {}).get("type") == "handoff" for m in devops_msgs)
+    devops_blob = "\n".join(m.get("content") or "" for m in devops_msgs)
+    assert "Pre-check" in devops_blob
+    assert "Triggered 2 workflow(s)" in devops_blob
+    assert "Post-check" in devops_blob
+    from bigas.chat.tasks import get_open_task_for_thread
+
+    task = get_open_task_for_thread(devops["thread_id"], kind="deploy")
+    assert task and (task.get("metadata") or {}).get("poll")
+
+    poll_deploy_postcheck(devops["thread_id"])
+    devops_after = "\n".join(m.get("content") or "" for m in store.list_messages(devops["thread_id"]))
+    chief_after = "\n".join(m.get("content") or "" for m in store.list_messages(chief["thread_id"]))
+    assert "**Post-check.**" in devops_after
+    assert "**Post-check.**" in chief_after
+    assert "HTTP 200" in devops_after
 
 
 def test_direct_specialist_chat_does_not_mirror_handoff(monkeypatch):
@@ -575,10 +663,11 @@ def test_chief_direct_tools_exclude_deploy_trigger():
                 {"name": "fetch_analytics_report", "description": "ga4"},
                 {"name": "check_website_health", "description": "ping"},
                 {"name": "create_jira_issue", "description": "file a ticket"},
+                {"name": "lookup_jira", "description": "look up a ticket"},
             ]
         )
     }
-    assert names == {"get_deployment_status", "check_website_health", "create_jira_issue"}
+    assert names == {"get_deployment_status", "check_website_health", "create_jira_issue", "lookup_jira"}
 
 
 def test_create_jira_issue_is_shared_across_agents():
@@ -589,12 +678,14 @@ def test_create_jira_issue_is_shared_across_agents():
         _filter_tools_for_agent,
     )
 
-    assert "create_jira_issue" in SHARED_AGENT_TOOLS
-    assert "create_jira_issue" in CHIEF_DIRECT_TOOL_NAMES
-    assert "create_jira_issue" not in MUST_DELEGATE_TOOLS
+    assert SHARED_AGENT_TOOLS == frozenset({"create_jira_issue", "lookup_jira"})
+    for name in SHARED_AGENT_TOOLS:
+        assert name in CHIEF_DIRECT_TOOL_NAMES
+        assert name not in MUST_DELEGATE_TOOLS
 
     catalog = [
         {"name": "fetch_analytics_report", "description": "ga4"},
+        {"name": "lookup_jira", "description": "look up a ticket"},
         {"name": "create_jira_issue", "description": "file a ticket"},
         {"name": "create_release_notes", "description": "notes"},
         {"name": "review_and_comment_pr", "description": "review"},
@@ -602,7 +693,8 @@ def test_create_jira_issue_is_shared_across_agents():
     ]
     for agent_id in ("marketing", "product", "cto", "devops"):
         names = [t["name"] for t in _filter_tools_for_agent(catalog, agent_id)]
-        assert names[0] == "create_jira_issue", agent_id
+        assert names[:2] == ["lookup_jira", "create_jira_issue"], agent_id
+        assert "lookup_jira" in names
         assert "create_jira_issue" in names
 
 

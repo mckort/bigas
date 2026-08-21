@@ -646,7 +646,7 @@ class ProactiveGoalEngine:
             agent = store.get_agent(agent_id) or {}
             if not (agent.get("system_prompt_goals") or "").strip():
                 return ""
-            return (run_specialist_task(agent_id, task, async_mode=False) or "").strip()
+            return (run_specialist_task(agent_id, task, async_mode=False, review_result=False) or "").strip()
         except Exception as e:
             logger.warning("Expert delegation to %s failed: %s", agent_id, e)
             return f"(Delegation failed: {e})"

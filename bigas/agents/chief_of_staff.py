@@ -14,6 +14,7 @@ from bigas.chat.jira_formatting import (
     JIRA_FORMATTING_RULES,
     humanize_jira_tool_result,
 )
+from bigas.chat.tasks import coerce_review_result
 from bigas.github_refs import is_owner_repo, parse_cursor_agent_id, resolve_repo_and_pr
 from bigas.llm.factory import get_llm_client
 from bigas.portfolio import (
@@ -142,6 +143,15 @@ DELEGATE_TOOL_DEFS = [
     },
 ]
 
+for _defn in DELEGATE_TOOL_DEFS:
+    _defn["function"]["parameters"]["properties"]["review_result"] = {
+        "type": "boolean",
+        "description": (
+            "True if you will analyze the specialist's final result and possibly take a next step. "
+            "False if you only need to know the work finished."
+        ),
+    }
+
 DELEGATE_MAP = {
     "delegate_to_marketing": "marketing",
     "delegate_to_product": "product",
@@ -158,12 +168,13 @@ SPECIALIST_CAPABILITIES = (
     "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, AI usage, monitoring.\n"
     "- devops: production deploy via GitHub Actions (including manual trigger_deployment), "
     "deploy status, site health, CI logs, hotfix PRs. vcfieldassistant/VFA is a DevOps deploy.\n"
-    "Every specialist and Chief of Staff can call create_jira_issue (Task/Bug). "
+    "Every specialist and Chief of Staff can call lookup_jira and create_jira_issue (Task/Bug). "
+    "Look up Epics when needed, then decide whether the new work belongs under one or should be standalone. "
     "Never tell the user to create the Jira issue themselves.\n"
 )
 
 # Shared with every specialist; COS may also call these without a handoff.
-SHARED_AGENT_TOOLS = frozenset({"create_jira_issue"})
+SHARED_AGENT_TOOLS = frozenset({"create_jira_issue", "lookup_jira"})
 
 # Read-only / quick lookups COS may run without a specialist handoff,
 # plus shared write tools such as create_jira_issue.
@@ -239,10 +250,13 @@ def _chief_routing_extra(tool_summary: str) -> str:
         "or offer to build a tool that already exists — emit JSON so the specialist actually "
         "receives the task and replies in this thread.\n"
         "You MAY call a tool yourself for a simple/quick lookup (live status, health, "
-        "a short analytics question) and to file a Jira Task/Bug with create_jira_issue. "
+        "a short analytics question, lookup_jira) and to file a Jira Task/Bug with create_jira_issue. "
         "Do NOT trigger deploys, autofix, weekly reports, or other specialist pipelines yourself.\n\n"
         "If you should delegate, respond with ONLY:\n"
-        '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>"}\n'
+        '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>",'
+        '"review_result":true}\n'
+        "Set review_result=true when you need to evaluate the specialist's final answer and "
+        "possibly continue. Set false when you only need the work to finish.\n"
         "If you should call a simple tool, respond with ONLY:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
         "Include project_key when the user named a product, site, or Jira key. "
@@ -262,7 +276,9 @@ def _specialist_json_extra(tool_summary: str) -> str:
         "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
         "(a github.com/.../pull/N link is enough). "
         "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL. "
-        "To file work in Jira, call create_jira_issue — do not ask the user to create the ticket.\n"
+        "To file work in Jira, call lookup_jira if you need Epic/parent context, then create_jira_issue. "
+        "Do not ask the user for an Epic key or to create the ticket. "
+        "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone.\n"
         "Otherwise respond with ONLY:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
         f"Available tools:\n{tool_summary}"
@@ -302,12 +318,22 @@ def _dispatch_chief_tool(
             )
     if target:
         base_task = tool_args.get("task") or user_message
-        extra = {k: v for k, v in tool_args.items() if k != "task"}
+        extra = {k: v for k, v in tool_args.items() if k not in ("task", "review_result")}
         if extra:
             task = f"{base_task}\n\nContext: {json.dumps(extra)}"
         else:
             task = base_task
-        return run_specialist_task(target, task, thread_id=thread_id, async_mode=True)
+        if "review_result" in tool_args:
+            review = coerce_review_result(tool_args.get("review_result"), default=True)
+        elif target == "devops" and (
+            (tool_name or "").lower() == "trigger_deployment" or is_deploy_start(str(task))
+        ):
+            review = False
+        else:
+            review = True
+        return run_specialist_task(
+            target, task, thread_id=thread_id, async_mode=True, review_result=review
+        )
     if tool_name.lower() not in {n.lower() for n in CHIEF_DIRECT_TOOL_NAMES}:
         return f"Tool {tool_name} is not allowed for Chief of Staff."
     if mcp_client:
@@ -570,7 +596,10 @@ def _select_tool_via_llm(
                 None,
                 None,
             )
-        return "", f"__delegate__:{target}", {"task": task}
+        return "", f"__delegate__:{target}", {
+            "task": task,
+            "review_result": coerce_review_result(action.get("review_result"), default=True),
+        }
 
     return raw.strip(), None, None
 
@@ -709,6 +738,7 @@ def _post_specialist_handoff(
     source_thread_id: Optional[str],
     source_agent_id: Optional[str],
     task: str,
+    task_id: Optional[str] = None,
 ) -> None:
     from_name = _agent_display_name(store, source_agent_id or "chief")
     store.add_message(
@@ -720,6 +750,7 @@ def _post_specialist_handoff(
             "from_agent_id": source_agent_id or "chief",
             "source_thread_id": source_thread_id,
             "agent_id": specialist_id,
+            "task_id": task_id,
         },
     )
 
@@ -730,29 +761,48 @@ def run_specialist_task(
     *,
     thread_id: Optional[str] = None,
     async_mode: bool = False,
+    review_result: Optional[bool] = None,
 ) -> str:
     """Run a task on a specialist agent, optionally writing results to a thread."""
+    from bigas.agents.task_runtime import ensure_task, finish_task
+    from bigas.chat.tasks import STATE_FAILED
+
     store = get_chat_store()
     agent_config = store.get_agent(agent_id) or {"agent_id": agent_id, "system_prompt_goals": ""}
     source_tid, specialist_tid, source_agent_id = _resolve_delegation_threads(
         store, source_thread_id=thread_id, specialist_id=agent_id
     )
     result_threads = [tid for tid in (source_tid, specialist_tid) if tid]
+    review = coerce_review_result(review_result, default=True)
+    kind = (
+        "deploy"
+        if agent_id == "devops" and should_run_deploy_pipeline(task, thread_id)
+        else "specialist"
+    )
+    agent_task = None
+    if result_threads:
+        agent_task = ensure_task(
+            thread_id=source_tid or specialist_tid,
+            to_agent_id=agent_id,
+            instruction=task,
+            from_agent_id=source_agent_id or "chief",
+            extra_thread_ids=[specialist_tid] if specialist_tid else None,
+            review_result=review,
+            kind=kind,
+        )
+    task_id = (agent_task or {}).get("task_id")
 
     def _work() -> str:
         if agent_id == "devops":
             clear_stale_pending_deploy(task, thread_id)
             if should_run_deploy_pipeline(task, thread_id):
-                result = run_chat_deploy_pipeline(thread_id=thread_id, user_message=task)
-                summary = result.get("summary") or "Done."
-                if specialist_tid:
-                    store.add_message(
-                        specialist_tid,
-                        role="assistant",
-                        content=summary,
-                        metadata={"agent_id": agent_id, "delegated": True},
-                    )
-                return summary
+                result = run_chat_deploy_pipeline(
+                    thread_id=thread_id,
+                    user_message=task,
+                    mirror_thread_ids=[specialist_tid] if specialist_tid else None,
+                    task_id=task_id,
+                )
+                return result.get("summary") or "Done."
         client = _mcp_client()
         tools = _filter_tools_for_agent(client.list_tools(), agent_id)
         _, tool_name, tool_args = _select_tool_via_llm(agent_id, agent_config, task, tools, [])
@@ -774,7 +824,9 @@ def run_specialist_task(
                 ],
                 temperature=0.4,
             )
-        if result_threads:
+        if task_id:
+            finish_task(task_id, result or "Done.")
+        elif result_threads:
             _add_message_to_threads(
                 store,
                 result_threads,
@@ -792,6 +844,7 @@ def run_specialist_task(
             source_thread_id=source_tid,
             source_agent_id=source_agent_id,
             task=task,
+            task_id=task_id,
         )
 
     if async_mode and thread_id:
@@ -800,14 +853,14 @@ def run_specialist_task(
                 source_tid,
                 role="system",
                 content=f"⏳ {_agent_display_name(store, agent_id)} is working on your request…",
-                metadata={"status": "in_progress", "agent_id": agent_id},
+                metadata={"status": "in_progress", "agent_id": agent_id, "task_id": task_id},
             )
         if specialist_tid:
             store.add_message(
                 specialist_tid,
                 role="system",
                 content="⏳ Working on this request…",
-                metadata={"status": "in_progress", "agent_id": agent_id},
+                metadata={"status": "in_progress", "agent_id": agent_id, "task_id": task_id},
             )
 
         def _bg():
@@ -815,13 +868,16 @@ def run_specialist_task(
                 _work()
             except Exception as e:
                 logger.exception("Async specialist task failed")
-                _add_message_to_threads(
-                    store,
-                    result_threads,
-                    role="assistant",
-                    content=f"Task failed: {e}",
-                    metadata={"agent_id": agent_id, "error": True},
-                )
+                if task_id:
+                    finish_task(task_id, f"Task failed: {e}", state=STATE_FAILED)
+                else:
+                    _add_message_to_threads(
+                        store,
+                        result_threads,
+                        role="assistant",
+                        content=f"Task failed: {e}",
+                        metadata={"agent_id": agent_id, "error": True},
+                    )
 
         threading.Thread(target=_bg, daemon=True).start()
         return f"Delegated to {agent_id} agent. Results will appear in this thread when ready."
@@ -857,6 +913,7 @@ def handle_chat_message(
                 user_message,
                 thread_id=thread_id,
                 async_mode=True,
+                review_result=False,
             )
             msg = store.add_message(
                 thread_id,
@@ -874,7 +931,7 @@ def handle_chat_message(
             "Never say a specialist cannot do something listed above. Never 'virtually' delegate — "
             "call the specialist so they receive the task and reply in this thread. "
             "You may run a simple lookup yourself (status, health, a short analytics question) "
-            "or file a Jira Task/Bug with create_jira_issue, "
+            "or look up Jira with lookup_jira / file a Task/Bug with create_jira_issue, "
             "but never trigger a production deploy — that is DevOps. "
             "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
         )
@@ -928,8 +985,9 @@ def handle_chat_message(
             all_msgs = store.list_messages(thread_id)
             if status == "in_progress":
                 payload = {"status": "in_progress", "messages": all_msgs}
-                if result.get("deploy_poll_active"):
+                if result.get("deploy_poll_active") or result.get("task_poll_active"):
                     payload["deploy_poll_active"] = True
+                    payload["task_poll_active"] = True
                 return payload
             last = store.list_messages(thread_id)
             assistant = next((m for m in reversed(last) if m.get("role") == "assistant"), None)
@@ -959,12 +1017,33 @@ def handle_chat_message(
     return {"status": "complete", "message": msg}
 
 
-def post_agent_callback(thread_id: str, content: str, *, agent_id: str = "system") -> Dict[str, Any]:
-    """Allow sub-agents to report completion to a thread."""
+def post_agent_callback(
+    thread_id: str,
+    content: str,
+    *,
+    agent_id: str = "system",
+    task_id: Optional[str] = None,
+    final: bool = False,
+) -> Dict[str, Any]:
+    """Allow sub-agents to report status or completion for a task/thread."""
+    from bigas.agents.task_runtime import finish_task, project_message
+    from bigas.chat.tasks import get_open_task_for_thread, get_task
+
     store = get_chat_store()
+    task = get_task(task_id) if task_id else get_open_task_for_thread(thread_id)
+    if task and final:
+        updated = finish_task(task["task_id"], content, project=True)
+        messages = store.list_messages(thread_id)
+        return messages[-1] if messages else {"content": content, "task_id": (updated or task).get("task_id")}
+    if task and not final:
+        project_message(task, content, extra_meta={"agent_id": agent_id, "callback": True})
+        messages = store.list_messages(thread_id)
+        return messages[-1] if messages else store.add_message(
+            thread_id, role="assistant", content=content, metadata={"agent_id": agent_id, "callback": True}
+        )
     return store.add_message(
         thread_id,
         role="assistant",
         content=content,
-        metadata={"agent_id": agent_id, "callback": True},
+        metadata={"agent_id": agent_id, "callback": True, "task_id": task_id},
     )

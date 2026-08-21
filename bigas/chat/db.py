@@ -119,6 +119,7 @@ class MemoryChatStore:
         self._agents: Dict[str, Dict[str, Any]] = {}
         self._threads: Dict[str, Dict[str, Any]] = {}
         self._messages: Dict[str, List[Dict[str, Any]]] = {}
+        self._tasks: Dict[str, Dict[str, Any]] = {}
         self._activity: List[Dict[str, Any]] = []
 
     def seed_agents(self) -> None:
@@ -325,6 +326,50 @@ class MemoryChatStore:
     def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
         return self.get_or_create_agent_thread(user_id, "chief")
 
+    def create_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(task)
+        task_id = payload.get("task_id") or str(uuid.uuid4())
+        payload["task_id"] = task_id
+        with self._lock:
+            self._tasks[task_id] = payload
+        return dict(payload)
+
+    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            found = self._tasks.get(task_id)
+            return dict(found) if found else None
+
+    def patch_task(self, task_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            found = self._tasks.get(task_id)
+            if not found:
+                return None
+            patch = dict(fields)
+            if "metadata" in patch and isinstance(patch["metadata"], dict):
+                found["metadata"] = {**(found.get("metadata") or {}), **patch["metadata"]}
+                patch = {k: v for k, v in patch.items() if k != "metadata"}
+            found.update(patch)
+            found["updated_at"] = _utcnow_iso()
+            return dict(found)
+
+    def list_tasks_for_thread(self, thread_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            return [
+                dict(item)
+                for item in self._tasks.values()
+                if thread_id in (item.get("thread_ids") or [])
+            ]
+
+    def list_open_tasks(self) -> List[Dict[str, Any]]:
+        from bigas.chat.tasks import OPEN_STATES
+
+        with self._lock:
+            return [
+                dict(item)
+                for item in self._tasks.values()
+                if (item.get("state") or "") in OPEN_STATES
+            ]
+
     def add_activity(self, *, type_: str, content: str, source: str = "system") -> Dict[str, Any]:
         event = {
             "id": str(uuid.uuid4()),
@@ -374,6 +419,7 @@ class FirestoreChatStore:
         self._agents = self._db.collection("agent_configs")
         self._threads = self._db.collection("threads")
         self._messages = self._db.collection("messages")
+        self._tasks = self._db.collection("chat_tasks")
         self._activity = self._db.collection("activity_feed")
         self._agent_thread_index = self._db.collection("agent_thread_index")
 
@@ -634,6 +680,47 @@ class FirestoreChatStore:
 
     def get_or_create_chief_thread(self, user_id: str) -> Dict[str, Any]:
         return self.get_or_create_agent_thread(user_id, "chief")
+
+    def create_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(task)
+        task_id = payload.get("task_id") or str(uuid.uuid4())
+        payload["task_id"] = task_id
+        self._tasks.document(task_id).set(payload)
+        return payload
+
+    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        snap = self._tasks.document(task_id).get()
+        return snap.to_dict() if snap.exists else None
+
+    def patch_task(self, task_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        ref = self._tasks.document(task_id)
+        snap = ref.get()
+        if not snap.exists:
+            return None
+        existing = snap.to_dict() or {}
+        payload = dict(fields)
+        if "metadata" in payload and isinstance(payload["metadata"], dict):
+            payload["metadata"] = {**(existing.get("metadata") or {}), **payload["metadata"]}
+        payload["updated_at"] = _utcnow_iso()
+        ref.update(payload)
+        updated = ref.get()
+        return updated.to_dict() if updated.exists else None
+
+    def list_tasks_for_thread(self, thread_id: str) -> List[Dict[str, Any]]:
+        return [
+            doc.to_dict()
+            for doc in self._tasks.where("thread_ids", "array_contains", thread_id).stream()
+            if doc.exists
+        ]
+
+    def list_open_tasks(self) -> List[Dict[str, Any]]:
+        from bigas.chat.tasks import OPEN_STATES
+
+        return [
+            doc.to_dict()
+            for doc in self._tasks.where("state", "in", list(OPEN_STATES)).stream()
+            if doc.exists
+        ]
 
     def add_activity(self, *, type_: str, content: str, source: str = "system") -> Dict[str, Any]:
         event_id = str(uuid.uuid4())

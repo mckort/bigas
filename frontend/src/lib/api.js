@@ -69,8 +69,12 @@ export async function sendMessage(threadId, content, clientId) {
   })
 }
 
+export async function pollThreadTasks(threadId) {
+  return apiFetch(`/api/chat/threads/${threadId}/tasks/tick`, { method: 'POST' })
+}
+
 export async function pollDeployPostcheck(threadId) {
-  return apiFetch(`/api/chat/threads/${threadId}/deploy-poll`, { method: 'POST' })
+  return pollThreadTasks(threadId)
 }
 
 export async function fetchFeed(since) {
