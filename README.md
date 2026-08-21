@@ -12,6 +12,8 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 ## Table of contents
 
+- [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
+- [Solo Founder Playbooks](#solo-founder-playbooks)
 - [What is Bigas?](#what-is-bigas)
 - [Why Google Cloud Run?](#why-google-cloud-run)
 - [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server)
@@ -24,7 +26,6 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [Chat web interface](#chat-web-interface)
 - [API reference](#api-reference)
 - [Automating reports with Cloud Scheduler](#automating-reports-with-cloud-scheduler)
-- [Modular architecture: providers](#modular-architecture-providers)
 - [Architecture](#architecture)
 - [Local development](#local-development)
 - [Security](#security)
@@ -32,6 +33,78 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [License](#license)
 
 ---
+
+## MVP Quickstart (under 5 minutes)
+
+Try Bigas locally with **only an LLM API key** — no Google Cloud, Firebase, or Discord required.
+
+```bash
+git clone https://github.com/mckort/bigas.git
+cd bigas
+python scripts/setup.py          # interactive wizard → writes .env
+docker compose up --build        # or: pip install -r requirements.txt && python run_core.py
+```
+
+Open **http://localhost:8080**, sign in with any email and dev token **`bigas-dev-token`**.
+
+The setup wizard configures:
+
+| Setting | Value | Why |
+|---|---|---|
+| `CHAT_STORAGE_MODE` | `memory` | No Firestore — chat history stays in-process |
+| `CHAT_AUTH_MODE` | `dev` | No Firebase — use the dev token above |
+| `CHAT_ENABLED` | `true` | Web chat UI at `/` |
+| LLM key | Gemini or OpenAI | Required — powers all agents |
+
+Optional integrations (GitHub, Jira, GA4, Discord) are offered during setup; skip them to explore the chat UI first. Re-run `python scripts/setup.py` anytime to add specialists.
+
+**Without Docker:** after `python scripts/setup.py`, build the frontend once (`cd frontend && npm install && npm run build && cd ..`), then `python run_core.py`.
+
+For production on Google Cloud Run, see [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server).
+
+---
+
+## Solo Founder Playbooks
+
+Concrete workflows for founders juggling dev, maintenance, and distribution across multiple projects.
+
+### Playbook 1: The Dev-Marketer
+
+**Stack:** Jira + GitHub + X  
+**Goal:** Ship features *and* tell people about them without context-switching.
+
+1. Drag a Jira card to **Done** → Bigas posts a team progress update (Product agent).
+2. Set a **Fix Version** on release issues → Bigas generates release notes and a blog/social draft.
+3. Ask in chat: *"Draft a tweet about this week's shipped work"* → edit and approve from the Product thread.
+4. Optional: weekly git activity → X draft with Discord approve/decline links.
+
+**Minimum env:** `JIRA_*`, `GITHUB_TOKEN`, LLM key. Add `X_*` credentials when ready to publish.
+
+### Playbook 2: The Agency Owner
+
+**Stack:** GA4 + Google/Meta/LinkedIn/Reddit Ads + Discord  
+**Goal:** One weekly view of traffic and ad spend across client sites.
+
+1. Schedule `weekly_analytics_report` and portfolio reports via Cloud Scheduler (or ask in chat).
+2. Ask: *"Run a cross-platform marketing analysis"* → budget comparison across ad platforms.
+3. Reports land in Discord **and** the Marketing Analyst chat thread for async review.
+
+**Minimum env:** `GA4_PROPERTY_ID`, `GOOGLE_PROJECT_ID`, ad platform tokens, `DISCORD_WEBHOOK_URL_MARKETING`.
+
+### Playbook 3: The Solo CTO
+
+**Stack:** GitHub + Cursor  
+**Goal:** Keep code quality up while you build the next feature.
+
+1. Open a PR → call `review_and_comment_pr` (or ask the CTO agent in chat).
+2. Bigas reads the diff, posts an architecture-focused review comment on the PR.
+3. Failed CI? Self-healing workflow opens a hotfix PR; optional Cursor autofix for deeper fixes.
+4. Ask: *"Summarize my open PRs and flag blockers"* from the CTO thread.
+
+**Minimum env:** `GITHUB_TOKEN`, LLM key. Add `CURSOR_API_KEY` for autonomous autofix.
+
+---
+
 
 ## What is Bigas?
 
@@ -405,15 +478,16 @@ Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend 
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
 | **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
 | **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
+| **Starter prompts** | Empty threads show clickable example questions (e.g. summarize PRs, draft a tweet, GA4 traffic) so you can try the team without reading the API reference |
 | **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
 
 ### Setup
 
 **Local**
 
-1. `CHAT_ENABLED=true`, `CHAT_AUTH_MODE=dev`, `CHAT_DEV_TOKEN=bigas-dev-token`, `CHAT_STORAGE_MODE=memory`.
+1. Run `python scripts/setup.py` (or set `CHAT_ENABLED=true`, `CHAT_AUTH_MODE=dev`, `CHAT_DEV_TOKEN=bigas-dev-token`, `CHAT_STORAGE_MODE=memory` manually).
 2. Build the UI: `cd frontend && npm install && npm run build` (the Dockerfile does this automatically on deploy).
-3. `python run_core.py` → http://localhost:8080 (any email + the dev token).
+3. `python run_core.py` or `docker compose up` → http://localhost:8080 (any email + the dev token).
 
 **Production (Firebase Auth + Firestore)**
 
@@ -701,57 +775,58 @@ gcloud scheduler jobs create http bigas-cleanup-chat-activity \
 
 ---
 
-## Modular architecture: providers
-
-Marketing, Product, and CTO are independent **resources** — you could delete any one of them and the others keep working. Within Marketing, data sources (Google Ads, Meta, LinkedIn, Reddit Ads, GA4, and future finance/support integrations) are **providers**: small classes that implement a domain base class (`AdsProvider`, `AnalyticsProvider`, `FinanceProvider`, `NotificationChannel`) and a `is_configured()` check.
-
-At startup, `bigas/registry.py` scans `bigas/providers/**`, instantiates every provider whose required env vars are set, and exposes the active set at:
-
-```bash
-curl https://your-service-url.a.run.app/mcp/providers
-```
-
-This is what makes the opinionated defaults optional in practice: don't set LinkedIn's env vars, and the LinkedIn provider simply doesn't load — no code path to disable, nothing to comment out. Adding a new provider (e.g. TikTok Ads, QuickBooks, a Slack notification channel) means adding one file under `bigas/providers/...`, not modifying existing services.
-
-Each resource (`bigas/resources/{marketing,product,cto,devops}/endpoints.py`) exposes its tools as normal Flask routes under `/mcp/tools/*` and lists them in a `get_manifest()` function; `app.py` combines all three into `GET /mcp/manifest`, and the same list is what `POST /mcp` serves for `tools/list`/`tools/call` — one manifest, both transports. `bigas/tools.py` additionally defines a `@register_tool` decorator for new provider tools to self-register into that manifest instead of hand-editing it, so adding a tool for a new provider doesn't mean touching `endpoints.py`.
-
-For the provider base classes and a worked example (adding QuickBooks as a finance provider), see **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[DESIGN_SPEC.md](DESIGN_SPEC.md)**.
-
----
-
 ## Architecture
 
-```
-                    ┌─────────────────────────────────────────┐
-                    │            Clients / Triggers            │
-                    │  Browser chat · MCP · Scheduler · Jira · curl │
-                    └─────────────────────────────────────────┘
-                                         │
-                                         ▼
-                    ┌─────────────────────────────────────────┐
-                    │      Flask app (e.g. Cloud Run)          │
-                    │  /  — chat SPA; /api/* — chat API        │
-                    │  /mcp — JSON-RPC; /mcp/tools/* — HTTP    │
-                    └────────────────┬────────────────────────┘
-                    ┌───────────────┼────────────────────────┐
-                    ▼               ▼                        ▼
-          Chief of Staff       Marketing            Product / CTO / DevOps
-          (web chat)        (GA4 + Paid Ads)     (Jira / PR Review / Actions)
-                    │
-          ┌─────────┼──────────┐
-          ▼         ▼          ▼
-      Firestore  Ads/GA4    OpenAI/Gemini
-                              │
-                    ┌─────────┴──────────┐
-                    ▼                    ▼
-              GCS Storage           Discord
+Bigas is a **modular monolith**: Marketing, Product, CTO, and DevOps are independent resource packages. Data sources (GA4, Google Ads, Jira, GitHub, Discord, …) are **providers** discovered at startup — set env vars to enable one, omit them to skip it entirely.
+
+```mermaid
+flowchart TB
+  subgraph clients [Clients]
+    Browser[Browser chat]
+    MCP[MCP clients]
+    Scheduler[Cloud Scheduler]
+    Webhooks[Jira / GitHub webhooks]
+  end
+
+  subgraph app [Flask app]
+    API["/api/* chat API"]
+    Tools["/mcp/tools/* HTTP tools"]
+    RPC["/mcp JSON-RPC"]
+    COS[Chief of Staff]
+    MKT[Marketing]
+    PM[Product]
+    CTO[CTO]
+    OPS[DevOps]
+  end
+
+  subgraph storage [Storage and integrations]
+    Mem["Firestore or in-memory"]
+    LLM[OpenAI / Gemini]
+    GCS[GCS reports]
+    Discord[Discord]
+  end
+
+  clients --> app
+  COS --> MKT & PM & CTO & OPS
+  app --> Mem & LLM
+  MKT --> GCS & Discord
+  PM --> Discord
+  CTO --> Discord
 ```
 
-GCS Storage, Discord, and Google Secret Manager are optional integrations (see `env.example`). For the full service breakdown, the paid-ads orchestrator, the MCP HTTP bridge internals, and the provider registry implementation, see **[docs/architecture.md](docs/architecture.md)**.
+- **Providers:** `bigas/registry.py` scans `bigas/providers/**` and exposes the active set at `GET /mcp/providers`.
+- **Tools:** each resource registers Flask routes under `/mcp/tools/*`; combined manifest at `GET /mcp/manifest`.
+- **Chat:** React SPA at `/`; dev mode uses in-memory storage (`CHAT_STORAGE_MODE=memory`).
+
+Deep dives (paid ads orchestrator, chat data flow, Secret Manager, email ingest): **[docs/architecture.md](docs/architecture.md)**. Adding providers: **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[DESIGN_SPEC.md](DESIGN_SPEC.md)**.
 
 ---
 
 ## Local development
+
+**Recommended:** use the [MVP Quickstart](#mvp-quickstart-under-5-minutes) (`python scripts/setup.py` + `docker compose up`).
+
+Manual setup:
 
 ```bash
 # Install dependencies
@@ -761,8 +836,9 @@ pip install -r requirements.txt
 # Chat UI (skip if you only need MCP/HTTP tools)
 cd frontend && npm install && npm run build && cd ..
 
-# Configure environment
-cp env.example .env
+# Configure environment (wizard or copy example)
+python scripts/setup.py
+# or: cp env.example .env   # then set GEMINI_API_KEY or OPENAI_API_KEY
 
 # Run locally
 python run_core.py

@@ -1,0 +1,26 @@
+# Local MVP — run Bigas without GCP or Firebase.
+#
+# Prerequisites:
+#   python scripts/setup.py   # creates .env with LLM key + local chat defaults
+#
+# Usage:
+#   docker compose up --build
+#   open http://localhost:8080
+#
+# Sign in with any email and dev token: bigas-dev-token
+
+services:
+  bigas:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+      SERVER_URL: "http://localhost:8080"
+      CHAT_STORAGE_MODE: memory
+      CHAT_AUTH_MODE: dev
+    restart: unless-stopped
