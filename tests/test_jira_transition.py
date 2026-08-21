@@ -98,6 +98,7 @@ def test_jira_formatting_rules_require_english():
     )
     assert "create_jira_issue" in prompt
     assert "Never tell the user to create the issue in Jira" in prompt
+    assert "without a parent is the default" in prompt
 
 
 def test_transition_issue_to_next_skips_backward(monkeypatch):

@@ -9,7 +9,8 @@ JIRA_FORMATTING_RULES = """
 Jira ticket formatting (mandatory):
 - Always respond in English. Never use Swedish or any other language.
 - When you should file work in Jira, call create_jira_issue yourself (Task or Bug only — never Epics). Never tell the user to create the issue in Jira.
-- Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true. Use parent_epic_key to link a Task/Bug to an existing goal Epic.
+- Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true.
+- Omit parent_epic_key unless the user named a known Epic key. Creating a Task/Bug without a parent is the default. Never invent a parent, and never use a Task or Bug as parent.
 - When creating or referencing a Jira ticket, include the ticket title and a clickable Markdown link: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`.
 - Never output raw JSON or HTML to the user.
 - When discussing a Jira ticket, always provide a button to move it to the next workflow column by outputting this exact markdown on its own line:

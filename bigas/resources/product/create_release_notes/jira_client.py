@@ -40,6 +40,39 @@ def parse_project_keys(raw: Optional[str]) -> List[str]:
     return keys
 
 
+_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+
+
+def normalize_parent_epic_key(
+    raw: Optional[str],
+    *,
+    project_key: Optional[str] = None,
+) -> Optional[str]:
+    """Return a Jira issue key suitable as an Epic parent, or None.
+
+    Standalone Tasks/Bugs omit parent. Project keys, empty values, and
+    non-issue tokens are dropped so agents can create tickets without a parent.
+    """
+    key = (raw or "").strip().upper()
+    if not key:
+        return None
+    proj = (project_key or "").strip().upper()
+    if proj and key == proj:
+        return None
+    if not _ISSUE_KEY_RE.match(key):
+        return None
+    return key
+
+
+def is_invalid_parent_error(exc: BaseException) -> bool:
+    """True when Jira rejected the parent/Epic link on issue create."""
+    return "valid parent" in str(exc).lower()
+
+
+def _epic_link_field_name() -> str:
+    return (os.environ.get("JIRA_EPIC_LINK_FIELD") or "parent").strip() or "parent"
+
+
 def normalize_project_keys(
     value: Optional[Union[str, Sequence[str]]],
 ) -> List[str]:
@@ -298,11 +331,18 @@ class JiraClient:
         epic_key = (parent_epic_key or "").strip()
         if not epic_key:
             return
-        field = (os.environ.get("JIRA_EPIC_LINK_FIELD") or "parent").strip() or "parent"
+        field = _epic_link_field_name()
         if field.lower() == "parent":
             fields["parent"] = {"key": epic_key}
         else:
             fields[field] = epic_key
+
+    def _drop_epic_link(self, fields: Dict[str, Any]) -> None:
+        field = _epic_link_field_name()
+        fields.pop("parent", None)
+        fields.pop("parentId", None)
+        if field.lower() != "parent":
+            fields.pop(field, None)
 
     def get_epics_by_statuses(
         self,
@@ -391,21 +431,38 @@ class JiraClient:
         }
         if labels:
             fields["labels"] = [str(l).strip() for l in labels if str(l).strip()]
-        self._apply_epic_link(fields, parent_epic_key)
+        epic_key = normalize_parent_epic_key(parent_epic_key, project_key=proj)
+        self._apply_epic_link(fields, epic_key)
         payload = {
             "fields": fields,
         }
-        data = self._request_with_retry_429("POST", url, json=payload)
+        parent_dropped = False
+        try:
+            data = self._request_with_retry_429("POST", url, json=payload)
+        except JiraError as e:
+            if not epic_key or not is_invalid_parent_error(e):
+                raise
+            logger.warning(
+                "Invalid Jira parent %s; creating issue without parent", epic_key
+            )
+            self._drop_epic_link(fields)
+            data = self._request_with_retry_429("POST", url, json={"fields": fields})
+            parent_dropped = True
         issue_key = (data.get("key") or "").strip()
         issue_id = (data.get("id") or "").strip()
         browse_url = f"{self._config.base_url}/browse/{issue_key}" if issue_key else ""
-        return {
+        out: Dict[str, Any] = {
             "ok": True,
             "key": issue_key,
             "id": issue_id,
             "url": browse_url,
             "self": data.get("self"),
         }
+        if epic_key and not parent_dropped:
+            out["parent_epic_key"] = epic_key
+        if parent_dropped:
+            out["parent_dropped"] = True
+        return out
 
     def add_comment(self, issue_key: str, body_text: str) -> Dict[str, Any]:
         """Add a plain-text comment (ADF doc with one paragraph)."""
