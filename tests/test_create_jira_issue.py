@@ -216,3 +216,99 @@ def test_create_jira_issue_endpoint_validation(client, monkeypatch):
     data = resp.get_json()
     assert data["ok"] is True
     assert data["key"] == "BIG-1"
+
+
+def test_create_jira_issue_requires_access_key_in_restricted_mode(client, monkeypatch):
+    def fake_create(**kwargs):
+        return {"ok": True, "key": "BIG-1", "url": "https://x/browse/BIG-1"}
+
+    monkeypatch.setattr(CreateJiraIssueService, "create", lambda self, **kw: fake_create(**kw))
+
+    client.application.config["BIGAS_ACCESS_MODE"] = "restricted"
+    client.application.config["BIGAS_ACCESS_KEYS"] = {"scheduler-key"}
+    client.application.config["BIGAS_ACCESS_HEADER"] = "X-Bigas-Access-Key"
+
+    payload = {
+        "project_key": "BIG",
+        "summary": "Title",
+        "description": "Body",
+    }
+    denied = client.post("/mcp/tools/create_jira_issue", json=payload)
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        "/mcp/tools/create_jira_issue",
+        json=payload,
+        headers={"X-Bigas-Access-Key": "scheduler-key"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_create_jira_issue_endpoint_rejects_invalid_issue_type(client):
+    resp = client.post(
+        "/mcp/tools/create_jira_issue",
+        json={
+            "project_key": "BIG",
+            "summary": "Title",
+            "description": "Body",
+            "issue_type": 123,
+        },
+    )
+    assert resp.status_code == 400
+    assert "issue_type" in resp.get_json()["error"]
+
+
+def test_create_jira_issue_endpoint_coerces_types(client, monkeypatch):
+    captured = {}
+
+    def fake_create(self, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "key": "BIG-2", "url": "https://x/browse/BIG-2"}
+
+    monkeypatch.setattr(CreateJiraIssueService, "create", fake_create)
+
+    resp = client.post(
+        "/mcp/tools/create_jira_issue",
+        json={
+            "project_key": "BIG",
+            "summary": "Title",
+            "description": "Body",
+            "issue_type": "task",
+            "marketing": "false",
+        },
+    )
+    assert resp.status_code == 200
+    assert captured["issue_type"] == "Task"
+    assert captured["marketing"] is False
+
+
+def test_create_jira_issue_accepts_case_insensitive_issue_type(monkeypatch):
+    captured = {}
+
+    def fake_create_issue(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "key": "BIG-3", "url": "https://x/browse/BIG-3"}
+
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        create_issue = staticmethod(lambda **kw: fake_create_issue(**kw))
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraConfig",
+        type("C", (), {"from_env": staticmethod(lambda: object())})(),
+    )
+
+    result = CreateJiraIssueService().create(
+        project_key="BIG",
+        summary="Title",
+        description="Body",
+        issue_type="bug",
+    )
+    assert result["issue_type"] == "Bug"
+    assert captured["issue_type"] == "Bug"

@@ -48,15 +48,15 @@ class CreateJiraIssueService:
             raise CreateJiraIssueError("project_key is required")
         proj = keys[0]
 
-        title = (summary or "").strip()
+        title = str(summary or "").strip()
         if not title:
             raise CreateJiraIssueError("summary is required")
 
-        body = (description or "").strip()
+        body = str(description or "").strip()
         if not body:
             raise CreateJiraIssueError("description is required")
 
-        itype = (issue_type or "Task").strip() or "Task"
+        itype = str(issue_type or "Task").strip().title() or "Task"
         if itype not in ALLOWED_ISSUE_TYPES:
             allowed = ", ".join(sorted(ALLOWED_ISSUE_TYPES))
             raise CreateJiraIssueError(

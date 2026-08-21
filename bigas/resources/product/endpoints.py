@@ -5,7 +5,12 @@ import threading
 import uuid
 import requests
 
-from bigas.resources.marketing.utils import sanitize_error_message, validate_request_data
+from bigas.access import require_bigas_access_key
+from bigas.resources.marketing.utils import (
+    request_flag,
+    sanitize_error_message,
+    validate_request_data,
+)
 from bigas.resources.product.create_jira_issue.service import (
     CreateJiraIssueError,
     CreateJiraIssueService,
@@ -317,6 +322,7 @@ def generate_weekly_x_post():
 
 
 @product_bp.route('/create_jira_issue', methods=['POST'])
+@require_bigas_access_key
 def create_jira_issue():
     """
     Create a Jira issue in the specified project.
@@ -341,8 +347,8 @@ def create_jira_issue():
     if not is_valid:
         return jsonify({"error": error_msg}), 400
 
-    issue_type = (data.get("issue_type") or "Task").strip() or "Task"
-    marketing = bool(data.get("marketing", False))
+    issue_type = str(data.get("issue_type") or "Task").strip().title() or "Task"
+    marketing = request_flag(data, "marketing", False)
 
     try:
         service = CreateJiraIssueService()
