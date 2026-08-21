@@ -145,7 +145,8 @@ Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_r
 ### Product
 
 - **`CreateReleaseNotesService`**: Fetches Jira issues by Fix Version and generates customer-facing release notes + comms pack (blog, social drafts).
-- **`CreateJiraIssueService`**: MCP tool `create_jira_issue` — creates Task/Bug issues via shared `JiraClient` (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`). Returns issue key + browse URL. Optional `marketing=true` adds the Jira label `marketing` for marketing-related work.
+- **`CreateJiraIssueService`**: MCP tool `create_jira_issue` — creates Task/Bug issues via shared `JiraClient` (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`). Returns issue key + browse URL. Optional `marketing=true` adds the Jira label `marketing` for marketing-related work. Optional `parent_epic_key` links the issue to a goal Epic (`JIRA_EPIC_LINK_FIELD`, default `parent`).
+- **`ProactiveGoalEngine` (BIG-12):** `POST /api/agents/evaluate-goals` — Cloud Scheduler webhook secured by `CRON_SECRET`. Reads Jira Epics in Research / Plan / In Progress (`BIGAS_GOAL_EPIC_STATUSES`), gathers Jira + GitHub + GA4 context for In Progress goals, posts a Chief of Staff progress report to Discord/chat, delegates to specialist agents, and creates backlog Tasks via `CreateJiraIssueService` (spam prevention via open-issue list). See README “Proactive Goal Engine”.
 - **`ProgressUpdatesService`**: Jira issues moved to Done in a window → team progress “coach” message (e.g. to Discord).
 - **`XPostsService`**: last N days of git activity → LLM-filtered X draft stored in GCS (`x_drafts/`) → Discord Approve/Decline. Publishing uses the X notification provider (`bigas/providers/notifications/x.py`).
 

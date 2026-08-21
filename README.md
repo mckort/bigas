@@ -602,8 +602,44 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Website monitoring | `0 8 * * *` | `.../website_monitor` |
 | Bigas AI usage | `0 9 * * 1` | `.../weekly_cto_ai_report` |
 | Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
+| Proactive goal evaluation | `0 7 * * 1` | `.../api/agents/evaluate-goals` |
 
 All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
+
+### Proactive Goal Engine (Cloud Scheduler)
+
+Bigas treats **Jira Epics** as high-level project goals. You create Epics manually and move them through your board:
+
+| Epic status | Agent behavior |
+|---|---|
+| **Research** | Chief of Staff suggests research/discovery Tasks linked to the Epic |
+| **Plan** | Chief of Staff breaks the Epic into Todo-ready Tasks |
+| **In Progress** | Weekly evaluation: progress report → Discord + Chief chat; delegates to Product, Marketing, CTO, and DevOps for next-cycle task suggestions; creates new Tasks (never Epics) |
+| **To Do** (Epic) | Ignored — not treated as an active goal |
+
+Set `CRON_SECRET` in Secret Manager (add to `SECRET_MANAGER_SECRET_NAMES`). The scheduler sends `Authorization: Bearer <CRON_SECRET>`.
+
+Optional env:
+
+- `BIGAS_GOAL_EPIC_STATUSES` — comma-separated Epic workflow statuses to evaluate (default: `Research,Plan,In Progress`)
+- `JIRA_EPIC_LINK_FIELD` / `JIRA_EPIC_JQL_FIELD` — `parent` for team-managed boards; `Epic Link` / your custom field ID for company-managed Jira
+- `DISCORD_WEBHOOK_URL_CHIEF` — progress reports (falls back to `DISCORD_WEBHOOK_URL_PRODUCT`)
+- `timeframe_days` in the scheduler body — lookback for closed Jira work, merged PRs, and GA4; tasks target the **next** same-length cycle
+
+```bash
+gcloud scheduler jobs create http bigas-evaluate-goals \
+  --location=europe-west1 \
+  --schedule="0 7 * * 1" \
+  --time-zone="Europe/Stockholm" \
+  --uri="https://YOUR-SERVICE-URL.a.run.app/api/agents/evaluate-goals" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,Authorization=Bearer YOUR_CRON_SECRET" \
+  --message-body='{"timeframe_days": 7}'
+```
+
+Returns **200 OK** with the full evaluation result. Runs synchronously so Cloud Run keeps CPU allocated for the duration (Cloud Scheduler supports timeouts up to 30 minutes).
+
+With `BIGAS_ACCESS_MODE=restricted`, this route is public to the global access-key middleware; auth is handled by `CRON_SECRET` in the route handler (not `X-Bigas-Access-Key`).
 
 ### Email ingest with Cloud Scheduler
 

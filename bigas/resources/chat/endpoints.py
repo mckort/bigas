@@ -4,11 +4,13 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 from flask import Blueprint, g, jsonify, request, send_from_directory
 
 from bigas.access import require_bigas_access_key
 from bigas.agents.chief_of_staff import handle_chat_message, post_agent_callback
+from bigas.agents.proactive_engine import ProactiveGoalEngineError, run_evaluation_loop
 from bigas.chat.auth import is_chat_admin, require_chat_auth, verify_callback_secret
 from bigas.chat.db import (
     DEFAULT_ACTIVITY_KEEP_DAYS,
@@ -16,6 +18,8 @@ from bigas.chat.db import (
     get_chat_store,
 )
 from bigas.resources.devops.pipeline import poll_deploy_postcheck
+
+from bigas.resources.product.jira_automation.service import verify_webhook_secret
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +209,57 @@ def activity_feed():
     limit = min(int(request.args.get("limit", 50)), 100)
     events = store.list_activity(since=since, limit=limit)
     return jsonify({"events": events})
+
+
+def _extract_cron_secret() -> str:
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return (request.headers.get("X-Cron-Secret") or "").strip()
+
+
+def _verify_cron_secret() -> Optional[str]:
+    """Return an error message when auth fails, else None."""
+    expected = (os.environ.get("CRON_SECRET") or "").strip()
+    if not expected:
+        return "CRON_SECRET is not configured on the server"
+    provided = _extract_cron_secret()
+    if not verify_webhook_secret(provided, expected):
+        return "Unauthorized"
+    return None
+
+
+@chat_bp.route("/api/agents/evaluate-goals", methods=["POST"])
+def evaluate_goals():
+    """
+    Proactive Goal Engine — scheduled Epic evaluation (Cloud Scheduler).
+
+    Auth: Authorization: Bearer <CRON_SECRET> or X-Cron-Secret header.
+
+    Body JSON:
+      { "timeframe_days": 7 }  — lookback for progress; tasks target the next N days.
+    """
+    auth_err = _verify_cron_secret()
+    if auth_err:
+        status = 401 if auth_err == "Unauthorized" else 503
+        return jsonify({"ok": False, "error": auth_err}), status
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    timeframe_days = _int_param(data, "timeframe_days", 7, minimum=1, maximum=365)
+
+    try:
+        job_result = run_evaluation_loop(timeframe_days=timeframe_days)
+    except ProactiveGoalEngineError as e:
+        logger.error("evaluate-goals failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception:
+        logger.exception("evaluate-goals unexpected failure")
+        return jsonify({"ok": False, "error": "Internal error"}), 500
+
+    status = 200 if job_result.get("ok") else 500
+    return jsonify(job_result), status
 
 
 def _int_param(data: dict, name: str, default: int, *, minimum: int, maximum: int) -> int:

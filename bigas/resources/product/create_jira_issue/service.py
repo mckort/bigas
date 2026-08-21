@@ -42,6 +42,7 @@ class CreateJiraIssueService:
         description: str,
         issue_type: str = "Task",
         marketing: bool = False,
+        parent_epic_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         keys = normalize_project_keys(project_key)
         if not keys:
@@ -75,18 +76,20 @@ class CreateJiraIssueService:
                 description_markdown=body,
                 issue_type=itype,
                 labels=labels,
+                parent_epic_key=(str(parent_epic_key).strip() or None),
             )
-            return {
+            out: Dict[str, Any] = {
                 "ok": True,
                 "key": result.get("key"),
                 "url": result.get("url"),
                 "issue_type": itype,
                 "project_key": proj,
-                **(
-                    {"labels": labels}
-                    if labels
-                    else {}
-                ),
             }
+            if labels:
+                out["labels"] = labels
+            epic = (str(parent_epic_key).strip() or None)
+            if epic:
+                out["parent_epic_key"] = epic
+            return out
         except JiraError as e:
             raise CreateJiraIssueError(_format_jira_error(e, project_key=proj)) from e

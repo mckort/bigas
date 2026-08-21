@@ -182,7 +182,16 @@ def create_app():
     # POST /mcp still checks the access key inside the handler.
     from bigas.resources.chat.endpoints import BRAND_ICON_FILES
 
-    public_paths = {"/health", "/mcp", "/mcp/manifest", "/mcp/providers", "/openapi.json", "/api/auth/config"}
+    public_paths = {
+        "/health",
+        "/mcp",
+        "/mcp/manifest",
+        "/mcp/providers",
+        "/openapi.json",
+        "/api/auth/config",
+        # Cloud Scheduler webhook; CRON_SECRET auth is enforced in the route handler.
+        "/api/agents/evaluate-goals",
+    }
 
     def _is_public_path(path: str) -> bool:
         return (

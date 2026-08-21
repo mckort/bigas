@@ -333,11 +333,13 @@ def create_jira_issue():
         "summary": "Ticket title",
         "description": "Task description (markdown supported)",
         "issue_type": "Task",
-        "marketing": false
+        "marketing": false,
+        "parent_epic_key": "BIG-10"
       }
 
     Returns { "ok": true, "key": "BIG-42", "url": "https://..." } on success.
     Set marketing=true for marketing-related tickets (adds the Jira label "marketing").
+    Optional parent_epic_key links the new Task/Bug to a goal Epic (never creates Epics).
     """
     data = request.json or {}
     is_valid, error_msg = validate_request_data(
@@ -349,6 +351,7 @@ def create_jira_issue():
 
     issue_type = str(data.get("issue_type") or "Task").strip().title() or "Task"
     marketing = request_flag(data, "marketing", False)
+    parent_epic_key = str(data.get("parent_epic_key") or "").strip() or None
 
     try:
         service = CreateJiraIssueService()
@@ -358,6 +361,7 @@ def create_jira_issue():
             description=data.get("description"),
             issue_type=issue_type,
             marketing=marketing,
+            parent_epic_key=parent_epic_key,
         )
         return jsonify(result)
     except CreateJiraIssueError as e:
@@ -648,6 +652,13 @@ def get_manifest():
                                 "(website, SEO, content, ads). Default false."
                             ),
                             "default": False,
+                        },
+                        "parent_epic_key": {
+                            "type": "string",
+                            "description": (
+                                "Optional Epic key to link this Task/Bug as a child of a goal Epic "
+                                "(uses JIRA_EPIC_LINK_FIELD, default parent)."
+                            ),
                         },
                     },
                     "required": ["project_key", "summary", "description"],

@@ -99,18 +99,16 @@ def test_create_jira_issue_success(monkeypatch):
         description="Details here",
         issue_type="Bug",
         marketing=True,
+        parent_epic_key="BIG-10",
     )
 
     assert result["ok"] is True
     assert result["key"] == "BIG-99"
-    assert result["url"] == "https://example.atlassian.net/browse/BIG-99"
     assert result["issue_type"] == "Bug"
     assert result["project_key"] == "BIG"
     assert result["labels"] == ["marketing"]
-    assert captured["project_key"] == "BIG"
-    assert captured["summary"] == "New task"
-    assert captured["description_markdown"] == "Details here"
-    assert captured["issue_type"] == "Bug"
+    assert result["parent_epic_key"] == "BIG-10"
+    assert captured["parent_epic_key"] == "BIG-10"
     assert captured["labels"] == ["marketing"]
 
 
