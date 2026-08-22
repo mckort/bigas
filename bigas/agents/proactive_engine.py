@@ -103,6 +103,16 @@ def in_progress_task_statuses() -> Tuple[str, ...]:
     return tuple(parts) if parts else DEFAULT_IN_PROGRESS_TASK_STATUSES
 
 
+def default_goal_timeframe_days() -> int:
+    """Default lookback when Jira drag-triggered evaluation has no scheduler body."""
+    raw = (os.environ.get("BIGAS_GOAL_DEFAULT_TIMEFRAME_DAYS") or "7").strip()
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 7
+    return max(1, min(365, value))
+
+
 def in_progress_status_clause() -> str:
     quoted = ", ".join(f'"{s}"' for s in in_progress_task_statuses())
     return f"AND status in ({quoted})"

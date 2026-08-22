@@ -396,6 +396,7 @@ class JiraAutomationService:
         from bigas.agents.proactive_engine import (
             ProactiveGoalEngine,
             ProactiveGoalEngineError,
+            default_goal_timeframe_days,
             goal_phase_for_status,
         )
 
@@ -449,7 +450,7 @@ class JiraAutomationService:
         try:
             engine = ProactiveGoalEngine(jira_client=self._jira)
             engine_result = engine.run(
-                timeframe_days=7,
+                timeframe_days=default_goal_timeframe_days(),
                 epic_key=issue_key,
                 status_hint=to_status,
             )

@@ -18,6 +18,7 @@ from bigas.agents.proactive_engine import (
     ProactiveGoalEngine,
     _is_duplicate_task,
     _parse_llm_json,
+    default_goal_timeframe_days,
     goal_epic_statuses,
     goal_phase_for_status,
     in_progress_status_clause,
@@ -120,6 +121,17 @@ def test_goal_epic_statuses_include_ai_columns(monkeypatch):
     assert 'status in ("In Progress", "In Progress (AI)")' in in_progress_status_clause()
 
 
+def test_default_goal_timeframe_days(monkeypatch):
+    monkeypatch.delenv("BIGAS_GOAL_DEFAULT_TIMEFRAME_DAYS", raising=False)
+    assert default_goal_timeframe_days() == 7
+    monkeypatch.setenv("BIGAS_GOAL_DEFAULT_TIMEFRAME_DAYS", "14")
+    assert default_goal_timeframe_days() == 14
+    monkeypatch.setenv("BIGAS_GOAL_DEFAULT_TIMEFRAME_DAYS", "999")
+    assert default_goal_timeframe_days() == 365
+    monkeypatch.setenv("BIGAS_GOAL_DEFAULT_TIMEFRAME_DAYS", "nope")
+    assert default_goal_timeframe_days() == 7
+
+
 def test_parse_llm_json_from_fence():
     text = 'Here you go:\n```json\n{"progress_report": "ok", "tasks_to_create": []}\n```'
     data = _parse_llm_json(text)
@@ -203,6 +215,42 @@ def test_research_ai_column_epic_creates_tasks(monkeypatch):
     result = engine.run(timeframe_days=7)
     assert result["results"][0]["phase"] == "research"
     assert result["results"][0]["tasks_created"][0]["key"] == "BIG-99"
+
+
+def test_plan_epic_creates_tasks(monkeypatch):
+    fake_jira = FakeJiraClient(
+        epics=[_epic("BIG-10", "Design and plan (AI)", "Launch feature X")],
+        epic_children={"BIG-10": []},
+    )
+    engine = ProactiveGoalEngine(jira_client=fake_jira)
+    engine._llm = FakeLLM(
+        {
+            "plan_summary": "Break into setup and launch tasks",
+            "tasks_to_create": [
+                {
+                    "summary": "Draft launch checklist",
+                    "description": "Todo-ready planning task",
+                    "issue_type": "Task",
+                }
+            ],
+        }
+    )
+    created = []
+
+    def fake_create(**kwargs):
+        created.append(kwargs)
+        return {"ok": True, "key": "BIG-98", "url": "https://x/browse/BIG-98"}
+
+    monkeypatch.setattr(
+        "bigas.agents.proactive_engine.CreateJiraIssueService.create",
+        lambda self, **kw: fake_create(**kw),
+    )
+    monkeypatch.setattr(engine, "_post_planning_update", lambda **kw: None)
+
+    result = engine.run(timeframe_days=7)
+    assert result["results"][0]["phase"] == "plan"
+    assert result["results"][0]["tasks_created"][0]["key"] == "BIG-98"
+    assert created[0]["parent_epic_key"] == "BIG-10"
 
 
 def test_run_single_epic_key(monkeypatch):
