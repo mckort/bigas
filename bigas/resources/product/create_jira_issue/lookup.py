@@ -17,7 +17,7 @@ MAX_LOOKUP_KEYS = 40
 
 _ISSUE_KEY_SEARCH_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b", re.IGNORECASE)
 _RANGE_RE = re.compile(
-    r"\b([A-Z][A-Z0-9]+)-(\d+)\s*(?:to|through|–|—|\.\.)\s*(?:([A-Z][A-Z0-9]+)-)?(\d+)\b",
+    r"\b([A-Z][A-Z0-9]+)-(\d+)\s*(?:to|through|–|—|-|\.\.)\s*(?:([A-Z][A-Z0-9]+)-)?(\d+)\b",
     re.IGNORECASE,
 )
 
@@ -146,18 +146,24 @@ class LookupJiraService:
         client: JiraClient,
         keys: Iterable[str],
     ) -> tuple[List[Dict[str, Any]], List[str]]:
+        key_list = [k for k in keys if normalize_issue_key(k)]
+        if not key_list:
+            return [], []
+
+        fields = issue_lookup_fields()
+        raw_issues = client.search_issues_by_keys(key_list, fields=fields)
+        by_key: Dict[str, Dict[str, Any]] = {}
+        for raw in raw_issues:
+            compact = compact_jira_issue(raw, base_url=client._config.base_url)
+            key = compact.get("key")
+            if key:
+                by_key[key] = compact
+
         issues: List[Dict[str, Any]] = []
         missing: List[str] = []
-        for key in keys:
-            try:
-                raw = client.get_issue(key, fields=issue_lookup_fields())
-            except JiraError as exc:
-                if "404" in str(exc) or "not found" in str(exc).lower():
-                    missing.append(key)
-                    continue
-                raise
-            compact = compact_jira_issue(raw, base_url=client._config.base_url)
-            if compact.get("key"):
+        for key in key_list:
+            compact = by_key.get(normalize_issue_key(key) or "")
+            if compact:
                 issues.append(compact)
             else:
                 missing.append(key)

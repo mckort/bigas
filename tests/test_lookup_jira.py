@@ -67,6 +67,8 @@ def test_compact_jira_issue_without_parent():
 
 def test_parse_issue_keys_expands_range_and_lists():
     assert parse_issue_keys("BIG-15 to BIG-18") == ["BIG-15", "BIG-16", "BIG-17", "BIG-18"]
+    assert parse_issue_keys("BIG-15 - BIG-18") == ["BIG-15", "BIG-16", "BIG-17", "BIG-18"]
+    assert parse_issue_keys("BIG-15-18") == ["BIG-15", "BIG-16", "BIG-17", "BIG-18"]
     assert parse_issue_keys("which of the BIG-15 to 18 have been done?") == [
         "BIG-15",
         "BIG-16",
@@ -91,24 +93,26 @@ def test_lookup_jira_issue_includes_parent_and_project_epics(monkeypatch):
         def __init__(self, config):
             self._config = config
 
-        def get_issue(self, issue_key, *, fields=None, expand=None):
-            assert issue_key == "GPWW-3"
-            return {
-                "key": "GPWW-3",
-                "fields": {
-                    "summary": "Implement tracking",
-                    "issuetype": {"name": "Task"},
-                    "status": {"name": "To Do"},
-                    "project": {"key": "GPWW"},
-                    "parent": {
-                        "key": "GPWW-2",
-                        "fields": {
-                            "summary": "10 paying customers",
-                            "issuetype": {"name": "Epic"},
+        def search_issues_by_keys(self, issue_keys, *, fields=None, max_results_per_page=50, max_pages=10):
+            assert list(issue_keys) == ["GPWW-3"]
+            return [
+                {
+                    "key": "GPWW-3",
+                    "fields": {
+                        "summary": "Implement tracking",
+                        "issuetype": {"name": "Task"},
+                        "status": {"name": "To Do"},
+                        "project": {"key": "GPWW"},
+                        "parent": {
+                            "key": "GPWW-2",
+                            "fields": {
+                                "summary": "10 paying customers",
+                                "issuetype": {"name": "Epic"},
+                            },
                         },
                     },
-                },
-            }
+                }
+            ]
 
         def list_open_epics(self, project_keys=None, *, max_results=20):
             assert project_keys == "GPWW"
@@ -174,24 +178,29 @@ def test_lookup_jira_range_returns_statuses_without_epics(monkeypatch):
         def __init__(self, config):
             self._config = config
 
-        def get_issue(self, issue_key, *, fields=None, expand=None):
+        def search_issues_by_keys(self, issue_keys, *, fields=None, max_results_per_page=50, max_pages=10):
             statuses = {
                 "BIG-15": "To Do",
                 "BIG-16": "Done",
                 "BIG-17": "In Progress",
                 "BIG-18": "Done",
             }
-            if issue_key not in statuses:
-                raise AssertionError(f"unexpected key {issue_key}")
-            return {
-                "key": issue_key,
-                "fields": {
-                    "summary": f"Task {issue_key}",
-                    "issuetype": {"name": "Task"},
-                    "status": {"name": statuses[issue_key]},
-                    "project": {"key": "BIG"},
-                },
-            }
+            issues = []
+            for issue_key in issue_keys:
+                if issue_key not in statuses:
+                    raise AssertionError(f"unexpected key {issue_key}")
+                issues.append(
+                    {
+                        "key": issue_key,
+                        "fields": {
+                            "summary": f"Task {issue_key}",
+                            "issuetype": {"name": "Task"},
+                            "status": {"name": statuses[issue_key]},
+                            "project": {"key": "BIG"},
+                        },
+                    }
+                )
+            return issues
 
         def list_open_epics(self, project_keys=None, *, max_results=20):
             raise AssertionError("multi-issue lookup should not list open Epics")
