@@ -116,7 +116,7 @@ It currently ships five specialists, reachable from the **[web chat](#chat-web-i
 |---|---|
 | **Chief of Staff** | Default chat agent across the whole Jira/GitHub portfolio: answers general questions, delegates to Marketing / Product / CTO / DevOps, can file Jira Task/Bug issues, and monitors progress |
 | **Senior Marketing Analyst** | GA4 web analytics (per site via `BIGAS_GA4_PROPERTY_MAP`) + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis; can file marketing Jira issues |
-| **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval; can create Jira Task/Bug issues |
+| **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval; product critique of a ticket (scope, risks, whether to advance) posted back on the issue; can create Jira Task/Bug issues |
 | **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord; can file Jira follow-ups |
 | **DevOps** | Pre-flight deployment risk checks (migrations, config), trigger GitHub Actions deploy workflows (e.g. separate backend + web for vcfieldassistant), post-deploy HTTP health checks, **self-healing CI/CD** (failed workflow_run webhook → log analysis → hotfix PR on `bigas-hotfix/*`); can file Jira follow-ups |
 
@@ -309,7 +309,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `BIGAS_EMAIL_SYNC_USER_EMAIL` | Chat user email that receives overnight email triage (defaults to first `CHAT_ADMIN_EMAILS`) |
 | `BIGAS_EMAIL_MAX_BODY_CHARS` | Max plain-text email body passed to the COS LLM (default `8000`) |
 
-Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_JIRA_RESEARCH_MODEL`, `BIGAS_CHAT_MODEL`. See `env.example` and `bigas/llm/README.md`.
+Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_JIRA_RESEARCH_MODEL`, `BIGAS_JIRA_PM_REVIEW_MODEL`, `BIGAS_CHAT_MODEL`. See `env.example` and `bigas/llm/README.md`.
 
 ---
 
@@ -340,7 +340,7 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 
 Every AI step lands in a column with **"(manual)"** in the name — cards do not advance without a human drag. Merging the PR stays manual unless you enable `BIGAS_CTO_AUTO_MERGE` (see [cto-autofix.md](docs/cto-autofix.md)).
 
-**From chat:** any specialist or Chief of Staff can look up Jira issues/Epics with `lookup_jira` and create a Task/Bug with `create_jira_issue` (Marketing sets `marketing=true`). Parent is optional: link an Epic only when the new work belongs under that goal; otherwise create a standalone ticket. When you ask about a ticket, the reply includes the ticket title as a Markdown link and a **Move to next column** button. Clicking it advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
+**From chat:** any specialist or Chief of Staff can look up Jira issues/Epics with `lookup_jira` (description + human comments + parent) and create a Task/Bug with `create_jira_issue` (Marketing sets `marketing=true`). Parent is optional: link an Epic only when the new work belongs under that goal; otherwise create a standalone ticket. Ask the Product Manager what they think of a ticket (or paste the browse URL) and they call `review_jira_issue`: a PM critique of Brief / Research / comments, posted back on the issue, with the ticket link and a **Move to next column** button as a footer. Clicking the button advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
 
 **Prompt workstream:** by default Bigas uses **product** Research/Design/Implement prompts. Add the Jira label `marketing` on website/SEO/content issues to switch to marketing-oriented prompts (audience, copy, SEO, site files in the repo).
 
@@ -638,7 +638,8 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | Endpoint | Description |
 |---|---|
 | `POST create_jira_issue` | Create a Jira Task or Bug in a project; returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket |
-| `POST lookup_jira` | Look up a Jira issue (including parent Epic) and/or list open Epics in a project. Shared by every chat agent. Does not decide whether a new ticket should use that parent |
+| `POST lookup_jira` | Look up a Jira issue (description, human comments, parent Epic) and/or list open Epics in a project. Shared by every chat agent. Does not decide whether a new ticket should use that parent |
+| `POST review_jira_issue` | Product Manager critique of a Jira issue (Brief, Research/Plan, human comments) → chat reply + one marked Jira comment. Product specialist (Chief of Staff delegates) |
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |

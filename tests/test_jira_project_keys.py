@@ -7,6 +7,7 @@ from bigas.resources.product.create_release_notes.jira_client import (
     JiraConfig,
     JiraError,
     is_invalid_parent_error,
+    normalize_issue_key,
     normalize_parent_epic_key,
     normalize_project_keys,
     parse_project_keys,
@@ -37,6 +38,13 @@ def test_project_jql_multi():
 def test_project_jql_empty_raises():
     with pytest.raises(JiraError):
         project_jql_clause([])
+
+
+def test_normalize_issue_key_extracts_from_browse_url():
+    assert normalize_issue_key("VFA-17") == "VFA-17"
+    assert normalize_issue_key("https://scaleupadvisor.atlassian.net/browse/VFA-17") == "VFA-17"
+    assert normalize_issue_key("comments on https://x.atlassian.net/browse/big-13") == "BIG-13"
+    assert normalize_issue_key("no ticket here") is None
 
 
 def test_normalize_parent_epic_key_allows_issue_keys_only():

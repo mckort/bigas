@@ -10,16 +10,19 @@ Jira ticket formatting (mandatory):
 - Always respond in English. Never use Swedish or any other language.
 - When you should file work in Jira, call create_jira_issue yourself (Task or Bug only — never Epics). Never tell the user to create the issue in Jira.
 - Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true.
-- Use lookup_jira when you need an issue's details or a project's open Epics. Do not ask the user for an Epic key if you can look it up.
+- Use lookup_jira when you need an issue's details (description, human comments, parent) or a project's open Epics. Do not ask the user for an Epic key if you can look it up.
 - A ticket you looked up does not mean the new work belongs under the same Epic. Set parent_epic_key only when the new Task/Bug clearly belongs under that Epic's goal. Otherwise omit parent_epic_key and create a standalone ticket — that is valid and often correct. Never invent a parent, and never use a Task or Bug as parent.
+- When the user asks what you think, for comments, or a product view on a ticket (including a Jira browse URL), call review_jira_issue if that tool is available. Do not answer with only a ticket link.
 - When creating or referencing a Jira ticket, include the ticket title and a clickable Markdown link: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`.
 - Never output raw JSON or HTML to the user.
-- When discussing a Jira ticket, always provide a button to move it to the next workflow column by outputting this exact markdown on its own line:
+- When discussing a Jira ticket, write a real answer first. Then provide a button to move it to the next workflow column by outputting this exact markdown on its own line:
   `[Move to next column](bigas://action/jira_transition?issue=TICKET-KEY)`
-  Replace TICKET-KEY with the actual issue key (e.g. BIG-13).
+  Replace TICKET-KEY with the actual issue key (e.g. BIG-13). Never reply with only the title link and that button.
 """.strip()
 
 JIRA_AWARE_AGENT_IDS = frozenset({"chief", "marketing", "product", "cto", "devops"})
+
+_LOOKUP_DESCRIPTION_PREVIEW = 4000
 
 
 def jira_transition_action_markdown(issue_key: str) -> str:
@@ -52,9 +55,12 @@ def format_jira_issue_markdown(
 
 
 def humanize_jira_tool_result(payload: Dict[str, Any]) -> Optional[str]:
-    """Turn create/lookup Jira tool JSON into user-facing markdown."""
+    """Turn create/lookup/review Jira tool JSON into user-facing markdown."""
     if not payload.get("ok"):
         return None
+    review = payload.get("review")
+    if isinstance(review, str) and review.strip():
+        return review.strip()
     issue = payload.get("issue")
     epics = payload.get("epics")
     if isinstance(issue, dict) or isinstance(epics, list):
@@ -65,6 +71,13 @@ def humanize_jira_tool_result(payload: Dict[str, Any]) -> Optional[str]:
     url = (payload.get("url") or "").strip()
     summary = (payload.get("summary") or payload.get("title") or key).strip()
     return format_jira_issue_markdown(key=key, url=url, summary=summary)
+
+
+def _preview(text: str, max_chars: int) -> str:
+    body = (text or "").strip()
+    if max_chars > 0 and len(body) > max_chars:
+        return body[: max_chars - 3].rstrip() + "..."
+    return body
 
 
 def _humanize_lookup_result(
@@ -80,8 +93,24 @@ def _humanize_lookup_result(
                 key=key,
                 url=str(issue.get("url") or "").strip(),
                 summary=str(issue.get("summary") or key).strip(),
+                include_transition_button=False,
             )
         )
+        meta = []
+        status = str(issue.get("status") or "").strip()
+        itype = str(issue.get("issue_type") or "").strip()
+        if status:
+            meta.append(status)
+        if itype:
+            meta.append(itype)
+        if meta:
+            lines.append(" · ".join(meta))
+        description = _preview(str(issue.get("description") or ""), _LOOKUP_DESCRIPTION_PREVIEW)
+        if description:
+            lines.append("Description:\n" + description)
+        comments = str(issue.get("human_comments") or "").strip()
+        if comments and comments != "(none)":
+            lines.append("Human comments:\n" + comments)
         parent = issue.get("parent") if isinstance(issue.get("parent"), dict) else payload.get("parent")
         if isinstance(parent, dict) and (parent.get("key") or "").strip():
             pkey = str(parent.get("key") or "").strip()
@@ -91,8 +120,11 @@ def _humanize_lookup_result(
                 summary=str(parent.get("summary") or pkey).strip(),
                 include_transition_button=False,
             )
-            itype = str(parent.get("issue_type") or "parent").strip() or "parent"
-            lines.append(f"Parent ({itype}): {parent_link}")
+            parent_type = str(parent.get("issue_type") or "parent").strip() or "parent"
+            lines.append(f"Parent ({parent_type}): {parent_link}")
+        button = jira_transition_action_markdown(key)
+        if button:
+            lines.append(button)
     if isinstance(epics, list):
         epic_lines = []
         for epic in epics:

@@ -76,6 +76,10 @@ def test_humanize_lookup_jira_includes_parent_and_epics():
             "issue": {
                 "key": "GPWW-3",
                 "summary": "Implement tracking",
+                "status": "To Do",
+                "issue_type": "Task",
+                "description": "## Brief\nTrack key events",
+                "human_comments": "- [2026-08-22 08:55] Marcus:\n  Focus on deal memo",
                 "url": "https://example.atlassian.net/browse/GPWW-3",
                 "parent": {
                     "key": "GPWW-2",
@@ -95,9 +99,32 @@ def test_humanize_lookup_jira_includes_parent_and_epics():
     )
     assert result is not None
     assert "[Implement tracking](https://example.atlassian.net/browse/GPWW-3)" in result
+    assert "To Do" in result
+    assert "Track key events" in result
+    assert "Focus on deal memo" in result
     assert "Parent (Epic): [10 paying customers](https://example.atlassian.net/browse/GPWW-2)" in result
     assert "Open Epics:" in result
     assert "[10 paying customers](https://example.atlassian.net/browse/GPWW-2)" in result
+    assert "bigas://action/jira_transition?issue=GPWW-3" in result
+
+
+def test_humanize_review_jira_issue_uses_review_field():
+    result = humanize_jira_tool_result(
+        {
+            "ok": True,
+            "key": "VFA-17",
+            "url": "https://example.atlassian.net/browse/VFA-17",
+            "summary": "Founder section",
+            "review": (
+                "### Recommendation\nDo not advance yet — privacy default is open.\n\n"
+                "[Founder section](https://example.atlassian.net/browse/VFA-17)\n\n"
+                "[Move to next column](bigas://action/jira_transition?issue=VFA-17)"
+            ),
+        }
+    )
+    assert result is not None
+    assert "Do not advance yet" in result
+    assert result.startswith("### Recommendation")
 
 
 def test_humanize_tool_result_prefers_jira_markdown():
@@ -131,6 +158,8 @@ def test_jira_formatting_rules_require_english():
     assert "Never tell the user to create the issue in Jira" in prompt
     assert "lookup_jira" in prompt
     assert "does not mean the new work belongs under the same Epic" in prompt
+    assert "review_jira_issue" in JIRA_FORMATTING_RULES
+    assert "Never reply with only the title link" in JIRA_FORMATTING_RULES
 
 
 def test_transition_issue_to_next_skips_backward(monkeypatch):

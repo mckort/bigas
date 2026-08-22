@@ -601,6 +601,7 @@ def test_create_jira_issue_is_shared_across_agents():
         {"name": "create_jira_issue", "description": "file a ticket"},
         {"name": "create_release_notes", "description": "notes"},
         {"name": "review_and_comment_pr", "description": "review"},
+        {"name": "review_jira_issue", "description": "pm view"},
         {"name": "trigger_deployment", "description": "deploy"},
     ]
     for agent_id in ("marketing", "product", "cto", "devops"):
@@ -608,6 +609,9 @@ def test_create_jira_issue_is_shared_across_agents():
         assert names[:2] == ["lookup_jira", "create_jira_issue"], agent_id
         assert "lookup_jira" in names
         assert "create_jira_issue" in names
+    product_names = [t["name"] for t in _filter_tools_for_agent(catalog, "product")]
+    assert "review_jira_issue" in product_names
+    assert MUST_DELEGATE_TOOLS["review_jira_issue"] == "product"
 
 
 def test_dispatch_chief_tool_allows_create_jira_issue():
@@ -657,6 +661,26 @@ def test_enrich_create_jira_issue_sets_marketing_for_marketing_agent():
         caller_agent_id="product",
     )
     assert "marketing" not in product_args
+
+
+def test_enrich_review_jira_issue_extracts_key_from_url():
+    from bigas.agents.chief_of_staff import _enrich_tool_args
+
+    args = _enrich_tool_args(
+        "review_jira_issue",
+        {},
+        "comments on this: https://scaleupadvisor.atlassian.net/browse/VFA-17",
+        caller_agent_id="product",
+    )
+    assert args["issue_key"] == "VFA-17"
+
+    lookup_args = _enrich_tool_args(
+        "lookup_jira",
+        {"issue_key": "https://example.atlassian.net/browse/BIG-13"},
+        "look this up",
+        caller_agent_id="chief",
+    )
+    assert lookup_args["issue_key"] == "BIG-13"
 
 
 def test_dispatch_chief_tool_rejects_unauthorized_tool():

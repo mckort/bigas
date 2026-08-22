@@ -25,7 +25,7 @@ def format_human_comments(
         body = adf_to_plain_text(c.get("body")).strip()
         if not body:
             continue
-        if BIGAS_COMMENT_MARKER in body:
+        if BIGAS_COMMENT_MARKER in body or "[bigas-" in body:
             continue
         author = ((c.get("author") or {}).get("displayName") or "Unknown").strip()
         created = (c.get("created") or "")[:19].replace("T", " ")

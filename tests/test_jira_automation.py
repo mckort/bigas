@@ -143,6 +143,43 @@ def test_format_human_comments_skips_bigas_marker():
     assert BIGAS_COMMENT_MARKER not in text
 
 
+def test_format_human_comments_skips_pm_review_marker():
+    from bigas.resources.product.review_jira_issue.prompts import PM_REVIEW_MARKER
+
+    comments = [
+        {
+            "created": "2026-08-22T09:00:00.000+0200",
+            "author": {"displayName": "Bigas"},
+            "body": {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": f"{PM_REVIEW_MARKER}\nDo not advance."}],
+                    }
+                ],
+            },
+        },
+        {
+            "created": "2026-08-22T09:01:00.000+0200",
+            "author": {"displayName": "Marcus"},
+            "body": {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "Abstract the personality test"}],
+                    }
+                ],
+            },
+        },
+    ]
+    text = format_human_comments(comments)
+    assert "Abstract the personality test" in text
+    assert PM_REVIEW_MARKER not in text
+    assert "Do not advance" not in text
+
+
 def test_issue_discord_label_includes_summary():
     assert issue_discord_label("VFA-14", "Brand reports") == "`VFA-14` — Brand reports"
     assert issue_discord_label("VFA-14", "") == "`VFA-14`"

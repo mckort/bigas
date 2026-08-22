@@ -23,6 +23,7 @@ from bigas.portfolio import (
     resolve_project,
     scrub_analytics_question,
 )
+from bigas.resources.product.create_release_notes.jira_client import normalize_issue_key
 from bigas.resources.devops.pipeline import (
     clear_stale_pending_deploy,
     is_deploy_start,
@@ -62,6 +63,7 @@ AGENT_TOOL_PREFIXES = {
         "progress_updates",
         "generate_weekly_x",
         "jira_status",
+        "review_jira",
     ),
     "cto": (
         "review_and_comment",
@@ -154,7 +156,8 @@ SPECIALIST_IDS = ("marketing", "product", "cto", "devops")
 SPECIALIST_CAPABILITIES = (
     "Specialists (always delegate domain work to them — they have the tools and will reply here):\n"
     "- marketing: GA4, ads (Google/Meta/LinkedIn/Reddit), trends, weekly/portfolio reports.\n"
-    "- product: Jira release notes, progress updates, social drafts, board automation.\n"
+    "- product: Jira release notes, progress updates, social drafts, board automation, "
+    "and a product view on a ticket (review_jira_issue).\n"
     "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, AI usage, monitoring.\n"
     "- devops: production deploy via GitHub Actions (including manual trigger_deployment), "
     "deploy status, site health, CI logs, hotfix PRs. vcfieldassistant/VFA is a DevOps deploy.\n"
@@ -196,6 +199,7 @@ MUST_DELEGATE_TOOLS = {
     "progress_updates": "product",
     "generate_weekly_x_post": "product",
     "jira_status_automation": "product",
+    "review_jira_issue": "product",
 }
 
 def _resolve_delegate_target(raw: Optional[str]) -> Optional[str]:
@@ -241,7 +245,8 @@ def _chief_routing_extra(tool_summary: str) -> str:
         "receives the task and replies in this thread.\n"
         "You MAY call a tool yourself for a simple/quick lookup (live status, health, "
         "a short analytics question, lookup_jira) and to file a Jira Task/Bug with create_jira_issue. "
-        "Do NOT trigger deploys, autofix, weekly reports, or other specialist pipelines yourself.\n\n"
+        "Do NOT trigger deploys, autofix, weekly reports, product issue reviews, or other "
+        "specialist pipelines yourself — delegate a product view to Product.\n\n"
         "If you should delegate, respond with ONLY:\n"
         '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>"}\n'
         "If you should call a simple tool, respond with ONLY:\n"
@@ -265,7 +270,9 @@ def _specialist_json_extra(tool_summary: str) -> str:
         "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL. "
         "To file work in Jira, call lookup_jira if you need Epic/parent context, then create_jira_issue. "
         "Do not ask the user for an Epic key or to create the ticket. "
-        "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone.\n"
+        "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone. "
+        "If your tools include review_jira_issue and the user wants a product view or comments on a "
+        "ticket (including a Jira URL), call review_jira_issue with issue_key — a browse URL is enough.\n"
         "Otherwise respond with ONLY:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
         f"Available tools:\n{tool_summary}"
@@ -496,6 +503,8 @@ def _enrich_tool_args(
             str(args.get("repo") or ""),
             str(args.get("agent_id") or ""),
             str(args.get("agent_url") or ""),
+            str(args.get("issue_key") or ""),
+            str(args.get("issue_url") or ""),
         ]
     )
     repo, pr_number = resolve_repo_and_pr(
@@ -529,6 +538,13 @@ def _enrich_tool_args(
         (caller_agent_id or "").strip().lower() == "marketing"
     ):
         args.setdefault("marketing", True)
+    if (tool_name or "").lower() in {"lookup_jira", "review_jira_issue"}:
+        raw_key = str(
+            args.get("issue_key") or args.get("issue") or args.get("key") or ""
+        ).strip()
+        extracted = normalize_issue_key(raw_key) or normalize_issue_key(haystack)
+        if extracted:
+            args["issue_key"] = extracted
     return args
 
 
@@ -877,8 +893,9 @@ def handle_chat_message(
             "Never say a specialist cannot do something listed above. Never 'virtually' delegate — "
             "call the specialist so they receive the task and reply in this thread. "
             "You may run a simple lookup yourself (status, health, a short analytics question) "
-            "or look up Jira with lookup_jira / file a Task/Bug with create_jira_issue, "
-            "but never trigger a production deploy — that is DevOps. "
+            "or look up Jira with lookup_jira / file a Task/Bug with create_jira_issue. "
+            "For a product view or comments on a ticket, delegate to Product (review_jira_issue). "
+            "Never trigger a production deploy — that is DevOps. "
             "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
         )
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]

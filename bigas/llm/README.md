@@ -30,6 +30,7 @@ Set `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey)
 | Feature                   | Env var                              |
 |---------------------------|--------------------------------------|
 | CTO PR review             | `BIGAS_CTO_PR_REVIEW_MODEL`          |
+| Jira PM review            | `BIGAS_JIRA_PM_REVIEW_MODEL`         |
 | Progress updates          | `BIGAS_PROGRESS_UPDATES_MODEL`       |
 | Release notes             | `BIGAS_RELEASE_NOTES_MODEL`          |
 | Weekly X posts            | `BIGAS_X_POSTS_MODEL`                |

@@ -50,6 +50,7 @@ def get_llm_client(
         "duplicate_recommendation": "BIGAS_DUPLICATE_RECOMMENDATION_MODEL",
         "jira_research": "BIGAS_JIRA_RESEARCH_MODEL",
         "jira_design": "BIGAS_JIRA_DESIGN_MODEL",
+        "jira_pm_review": "BIGAS_JIRA_PM_REVIEW_MODEL",
         "x_posts": "BIGAS_X_POSTS_MODEL",
         "qa_agent": "BIGAS_QA_AGENT_MODEL",
         "chat": "BIGAS_CHAT_MODEL",
