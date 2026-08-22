@@ -91,6 +91,22 @@ def test_cursor_agent_url_satisfies_agent_id(mock_discord, mock_service):
     mock_discord.assert_not_called()
 
 
+def test_post_to_discord_cto_chunks_skips_chat_thread(monkeypatch):
+    from bigas.resources.cto import endpoints as ep
+
+    calls = []
+
+    def fake_long(webhook_url, text, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(ep, "_cto_discord_webhook", lambda: "https://discord.example/cto")
+    monkeypatch.setattr(ep, "post_long_to_discord", fake_long)
+    ep._post_to_discord_cto_chunks("**CTO PR review done**\n### Blockers:\nNone.")
+    assert calls
+    assert calls[0].get("mirror_thread") is False
+    assert calls[0].get("chat_agent_id") == "cto"
+
+
 def test_discord_review_posted_message_puts_pr_on_first_chunk():
     msg = _discord_review_posted_message(
         done_label="**CTO PR review done**",
