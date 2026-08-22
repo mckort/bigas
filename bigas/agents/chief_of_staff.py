@@ -662,7 +662,7 @@ def _run_json_agent_loop(
             tools,
             history,
         )
-        if (text or "").strip() and not tool_name:
+        if (text or "").strip():
             return text.strip()
         if callable(fallback_complete):
             forced = fallback_complete()
