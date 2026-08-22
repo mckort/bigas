@@ -705,6 +705,7 @@ Optional env:
 - `JIRA_EPIC_LINK_FIELD` / `JIRA_EPIC_JQL_FIELD` — `parent` for team-managed boards; `Epic Link` / your custom field ID for company-managed Jira
 - `DISCORD_WEBHOOK_URL_CHIEF` — progress reports (falls back to `DISCORD_WEBHOOK_URL_PRODUCT`)
 - `timeframe_days` in the scheduler body — lookback for closed Jira work, merged PRs, and GA4; tasks target the **next** same-length cycle
+- `BIGAS_GOAL_DEFAULT_TIMEFRAME_DAYS` — same window when the Goal Engine runs from a Jira Epic drag (default `7`)
 
 ```bash
 gcloud scheduler jobs create http bigas-evaluate-goals \
