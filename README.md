@@ -78,7 +78,7 @@ Concrete workflows for founders juggling dev, maintenance, and distribution acro
 3. Ask in chat: *"Draft a tweet about this week's shipped work"* → edit and approve from the Product thread.
 4. Optional: weekly git activity → X draft with Discord approve/decline links.
 
-**Minimum env:** `JIRA_*`, `GITHUB_TOKEN`, LLM key. Add `X_*` credentials when ready to publish.
+**Minimum env:** LLM key and `GITHUB_TOKEN` for AI implement columns. The **native Kanban board** (no `JIRA_*` required) is the default when Jira is not configured; connect external Jira optionally for existing boards.
 
 ### Playbook 2: The Agency Owner
 
@@ -272,10 +272,11 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `DISCORD_WEBHOOK_URL_CTO` | Discord webhook for PR review / engineering notifications |
 | `STORAGE_BUCKET_NAME` | GCS bucket for report storage (default: `bigas-analytics-reports`) |
 | `TARGET_KEYWORDS` | Colon-separated keywords for SEO analysis (e.g. `sustainable_swag:eco_friendly_clothing`) |
-| `JIRA_BASE_URL` | Jira instance URL (required for release notes, progress updates, issue creation, and Jira AI automation) |
+| `JIRA_BASE_URL` | Jira instance URL (optional — omit to use the native Kanban board at `/board`) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
 | `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. |
+| `USE_INTERNAL_BOARD` | `true` (default when Jira is unset) uses the native board; set `false` to require external Jira |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
 | `GITHUB_TOKEN` | GitHub token — PR review, Jira AI repo context, DevOps workflow dispatch (needs Actions write), and self-healing CI PR creation |
@@ -483,6 +484,7 @@ Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend 
 | **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. PR review results and pipeline cards (Ready to merge, Final approval, auto-merge) stay in Activity and Discord — they are not posted into the CTO chat thread. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
 | **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
 | **Starter prompts** | Empty threads show clickable example questions (e.g. summarize PRs, draft a tweet, GA4 traffic) so you can try the team without reading the API reference |
+| **Kanban board** | Native task pipeline at `/board` — multiple boards per project plus a personal list. Project boards mirror Jira AI columns (research, design, implement); personal boards use a simple To Do → Done flow without agent automation |
 | **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
 
 ### Setup

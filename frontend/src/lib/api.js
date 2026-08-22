@@ -98,3 +98,40 @@ export async function transitionJiraIssue(issueKey) {
     body: JSON.stringify({ issue_key: issueKey }),
   })
 }
+
+export async function fetchBoards() {
+  return apiFetch('/api/boards')
+}
+
+export async function createBoard(payload) {
+  return apiFetch('/api/boards', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteBoard(boardId) {
+  return apiFetch(`/api/boards/${boardId}`, { method: 'DELETE' })
+}
+
+export async function fetchBoardTickets(boardId) {
+  return apiFetch(`/api/boards/${boardId}/tickets`)
+}
+
+export async function createTicket(boardId, payload) {
+  return apiFetch(`/api/boards/${boardId}/tickets`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateTicket(ticketId, payload) {
+  return apiFetch(`/api/tickets/${ticketId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteTicket(ticketId) {
+  return apiFetch(`/api/tickets/${ticketId}`, { method: 'DELETE' })
+}

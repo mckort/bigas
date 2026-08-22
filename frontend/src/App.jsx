@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react'
 import Login from './components/Login'
 import ChatLayout from './components/ChatLayout'
+import BoardLayout from './components/BoardLayout'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
+
+function initialView() {
+  const path = window.location.pathname || ''
+  if (path.startsWith('/board')) return 'board'
+  return 'chat'
+}
 
 export default function App() {
   const [ready, setReady] = useState(false)
   const [user, setUser] = useState(null)
+  const [view, setView] = useState(initialView)
+  const [discussContext, setDiscussContext] = useState(null)
 
   useEffect(() => {
     let unsub = () => {}
@@ -28,6 +37,25 @@ export default function App() {
     }
   }, [user])
 
+  const switchView = (next) => {
+    setView(next)
+    const path = next === 'board' ? '/board' : '/'
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, '', path)
+    }
+  }
+
+  useEffect(() => {
+    const onPop = () => setView(initialView())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  const handleDiscussTicket = (ticket) => {
+    setDiscussContext(ticket)
+    switchView('chat')
+  }
+
   if (!ready) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-surface text-muted">
@@ -41,5 +69,30 @@ export default function App() {
     return <Login onLoggedIn={() => setUser({ email: 'signed-in' })} />
   }
 
-  return <ChatLayout user={user} onLogout={() => setUser(null)} />
+  if (view === 'board') {
+    return (
+      <BoardLayout
+        user={user}
+        onLogout={() => {
+          logout()
+          setUser(null)
+        }}
+        onDiscussTicket={handleDiscussTicket}
+        onSwitchView={switchView}
+      />
+    )
+  }
+
+  return (
+    <ChatLayout
+      user={user}
+      onLogout={() => {
+        logout()
+        setUser(null)
+      }}
+      onSwitchView={switchView}
+      discussContext={discussContext}
+      onClearDiscussContext={() => setDiscussContext(null)}
+    />
+  )
 }

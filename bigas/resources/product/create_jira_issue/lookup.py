@@ -102,16 +102,36 @@ class LookupJiraService:
         if not keys and not projects:
             raise LookupJiraError("issue_key or project_key is required")
 
+        from bigas.tickets.config import use_internal_board
+
+        parent_guidance = (
+            "A referenced ticket's parent is context only. "
+            "Set parent_epic_key on create_jira_issue only if the new work "
+            "belongs under that Epic's goal; otherwise create a standalone Task/Bug."
+        )
+
+        if use_internal_board():
+            from bigas.tickets.service import TicketService
+
+            service = TicketService()
+            out: Dict[str, Any] = {"ok": True, "parent_guidance": parent_guidance}
+            if keys:
+                issues = service.lookup_tickets(keys)
+                if issues:
+                    out["issues"] = issues
+                    out["issue"] = issues[0]
+                missing = [k for k in keys if k not in {i["key"] for i in issues}]
+                if missing:
+                    out["missing"] = missing
+            if projects and (explicit_project or len(keys) <= 1):
+                proj = projects[0]
+                out["project_key"] = proj
+                out["epics"] = service.list_epics(proj)
+            return out
+
         try:
             client = JiraClient(JiraConfig.from_env())
-            out: Dict[str, Any] = {
-                "ok": True,
-                "parent_guidance": (
-                    "A referenced ticket's parent is context only. "
-                    "Set parent_epic_key on create_jira_issue only if the new work "
-                    "belongs under that Epic's goal; otherwise create a standalone Task/Bug."
-                ),
-            }
+            out = {"ok": True, "parent_guidance": parent_guidance}
             if keys:
                 issues, missing = self._load_issues(client, keys)
                 if issues:
