@@ -200,6 +200,7 @@ def mirror_discord_message(
     channel_hint: str = "",
     chat_agent_id: Optional[str] = None,
     chat_metadata: Optional[Dict[str, Any]] = None,
+    mirror_thread: bool = True,
 ) -> None:
     """Mirror a Discord-bound message to the activity feed and specialist thread."""
     text = (message or "").strip()
@@ -221,7 +222,7 @@ def mirror_discord_message(
         elif "QA" in webhook_url.upper():
             source = "qa"
     mirror_to_activity_feed(text, type_="discord", source=source)
-    if should_skip_discord_chat_mirror(text):
+    if not mirror_thread or should_skip_discord_chat_mirror(text):
         return
     if not agent_id:
         return

@@ -120,6 +120,73 @@ def test_maybe_auto_merge_success_posts_discord(
     assert "squash" in posted
     assert "https://github.com/acme/app/pull/12" in posted
     assert "draft" not in posted.lower()
+    assert mock_discord.call_args.kwargs.get("mirror_thread") is False
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_includes_jira_label(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "node_id": "PR_x",
+        "title": "Let chat agents use tools, then answer",
+    }
+    client.merge_pull_request.return_value = {
+        "merged": True,
+        "sha": "abc123def",
+        "message": "Pull Request successfully merged",
+    }
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+        issue_key="BIG-15",
+        issue_summary="Restructure README and add Solo Founder Playbooks",
+    )
+
+    assert result.get("ok") is True
+    posted = mock_discord.call_args[0][0]
+    assert "`BIG-15` — Restructure README and add Solo Founder Playbooks" in posted
+    assert "Let chat agents use tools, then answer" in posted
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_extracts_jira_key_from_pr_title(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "node_id": "PR_x",
+        "title": "BIG-15: Let chat agents use tools",
+        "body": "",
+        "head": {"ref": "feature"},
+    }
+    client.merge_pull_request.return_value = {
+        "merged": True,
+        "sha": "abc123def",
+    }
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+    )
+
+    assert result.get("ok") is True
+    posted = mock_discord.call_args[0][0]
+    assert "`BIG-15`" in posted
 
 
 @patch("bigas.resources.cto.endpoints._post_to_discord_cto")

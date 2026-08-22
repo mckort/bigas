@@ -1057,6 +1057,29 @@ def test_discord_mirror_posts_to_product_thread(monkeypatch):
     assert any("VFA-17" in (m.get("content") or "") for m in messages)
 
 
+def test_discord_mirror_thread_false_keeps_activity(monkeypatch):
+    from bigas.chat.activity import mirror_discord_message
+    from bigas.chat.db import get_chat_store
+
+    posted = []
+
+    def fake_thread(agent_id, content, **kwargs):
+        posted.append(content)
+        return {"thread_id": "t1"}
+
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", fake_thread)
+    store = get_chat_store()
+    before = len(store.list_activity())
+    mirror_discord_message(
+        "",
+        "**PR auto-merged** (squash) `BIG-15` — Restructure README",
+        chat_agent_id="cto",
+        mirror_thread=False,
+    )
+    assert posted == []
+    assert len(store.list_activity()) == before + 1
+
+
 def test_discord_mirror_skips_on_its_way_ping(monkeypatch):
     from bigas.chat.activity import mirror_discord_message
 
