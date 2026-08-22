@@ -100,6 +100,33 @@ def test_humanize_lookup_jira_includes_parent_and_epics():
     assert "[10 paying customers](https://example.atlassian.net/browse/GPWW-2)" in result
 
 
+def test_humanize_lookup_jira_lists_statuses_for_range():
+    result = humanize_jira_tool_result(
+        {
+            "ok": True,
+            "issues": [
+                {
+                    "key": "BIG-15",
+                    "summary": "One",
+                    "status": "To Do",
+                    "url": "https://example.atlassian.net/browse/BIG-15",
+                },
+                {
+                    "key": "BIG-16",
+                    "summary": "Two",
+                    "status": "Done",
+                    "url": "https://example.atlassian.net/browse/BIG-16",
+                },
+            ],
+        }
+    )
+    assert result is not None
+    assert "To Do" in result
+    assert "Done" in result
+    assert "[One](https://example.atlassian.net/browse/BIG-15)" in result
+    assert "bigas://" not in result
+
+
 def test_humanize_tool_result_prefers_jira_markdown():
     text = humanize_tool_result(
         {
@@ -131,6 +158,11 @@ def test_jira_formatting_rules_require_english():
     assert "Never tell the user to create the issue in Jira" in prompt
     assert "lookup_jira" in prompt
     assert "does not mean the new work belongs under the same Epic" in prompt
+    assert "Never reply with only ticket links" in JIRA_FORMATTING_RULES
+    from bigas.agents.chief_of_staff import COWORKER_RULES
+
+    assert "coworker" in COWORKER_RULES.lower()
+    assert "coworker" in prompt.lower()
 
 
 def test_transition_issue_to_next_skips_backward(monkeypatch):

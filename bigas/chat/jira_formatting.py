@@ -10,7 +10,8 @@ Jira ticket formatting (mandatory):
 - Always respond in English. Never use Swedish or any other language.
 - When you should file work in Jira, call create_jira_issue yourself (Task or Bug only — never Epics). Never tell the user to create the issue in Jira.
 - Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true.
-- Use lookup_jira when you need an issue's details or a project's open Epics. Do not ask the user for an Epic key if you can look it up.
+- Use lookup_jira when you need issue details or a project's open Epics. issue_key accepts several keys or a range (BIG-15 to BIG-18). Do not ask the user for an Epic key if you can look it up.
+- After lookup_jira (or any tool), answer the user's question in your own words. Never reply with only ticket links, Open Epics, or a Move button.
 - A ticket you looked up does not mean the new work belongs under the same Epic. Set parent_epic_key only when the new Task/Bug clearly belongs under that Epic's goal. Otherwise omit parent_epic_key and create a standalone ticket — that is valid and often correct. Never invent a parent, and never use a Task or Bug as parent.
 - When creating or referencing a Jira ticket, include the ticket title and a clickable Markdown link: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`.
 - Never output raw JSON or HTML to the user.
@@ -55,10 +56,16 @@ def humanize_jira_tool_result(payload: Dict[str, Any]) -> Optional[str]:
     """Turn create/lookup Jira tool JSON into user-facing markdown."""
     if not payload.get("ok"):
         return None
+    issues = payload.get("issues")
     issue = payload.get("issue")
     epics = payload.get("epics")
-    if isinstance(issue, dict) or isinstance(epics, list):
-        return _humanize_lookup_result(issue if isinstance(issue, dict) else None, epics, payload)
+    if isinstance(issues, list) or isinstance(issue, dict) or isinstance(epics, list):
+        return _humanize_lookup_result(
+            issue if isinstance(issue, dict) else None,
+            epics,
+            payload,
+            issues if isinstance(issues, list) else None,
+        )
     key = (payload.get("key") or payload.get("issue_key") or "").strip()
     if not key:
         return None
@@ -67,21 +74,46 @@ def humanize_jira_tool_result(payload: Dict[str, Any]) -> Optional[str]:
     return format_jira_issue_markdown(key=key, url=url, summary=summary)
 
 
+def _format_lookup_issue_line(
+    issue: Dict[str, Any],
+    *,
+    include_transition_button: bool,
+) -> str:
+    key = str(issue.get("key") or "").strip()
+    if not key:
+        return ""
+    status = str(issue.get("status") or "").strip()
+    link = format_jira_issue_markdown(
+        key=key,
+        url=str(issue.get("url") or "").strip(),
+        summary=str(issue.get("summary") or key).strip(),
+        include_transition_button=include_transition_button,
+    )
+    if status and not include_transition_button:
+        return f"{link} — {status}"
+    if status:
+        return f"{link}\nStatus: {status}"
+    return link
+
+
 def _humanize_lookup_result(
     issue: Optional[Dict[str, Any]],
     epics: Any,
     payload: Dict[str, Any],
+    issues: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[str]:
     lines: List[str] = []
-    if issue and (issue.get("key") or "").strip():
-        key = str(issue.get("key") or "").strip()
-        lines.append(
-            format_jira_issue_markdown(
-                key=key,
-                url=str(issue.get("url") or "").strip(),
-                summary=str(issue.get("summary") or key).strip(),
-            )
-        )
+    issue_rows = [row for row in (issues or []) if isinstance(row, dict) and (row.get("key") or "").strip()]
+    if len(issue_rows) > 1:
+        for row in issue_rows:
+            line = _format_lookup_issue_line(row, include_transition_button=False)
+            if line:
+                lines.append(f"- {line}")
+        missing = payload.get("missing")
+        if isinstance(missing, list) and missing:
+            lines.append("Missing: " + ", ".join(str(k) for k in missing if k))
+    elif issue and (issue.get("key") or "").strip():
+        lines.append(_format_lookup_issue_line(issue, include_transition_button=True))
         parent = issue.get("parent") if isinstance(issue.get("parent"), dict) else payload.get("parent")
         if isinstance(parent, dict) and (parent.get("key") or "").strip():
             pkey = str(parent.get("key") or "").strip()
