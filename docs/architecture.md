@@ -36,8 +36,10 @@ flowchart TB
   clients --> platform
   COS --> Marketing & Product & CTO & DevOps
   ChatAPI --> MemStore
+  BoardAPI["/api/boards /api/tickets"]
+  BoardAPI --> TicketStore["Firestore or in-memory tickets"]
   Marketing --> GA4 & GCS & Discord & LLM
-  Product --> JiraGH & Discord & LLM
+  Product --> JiraGH & TicketStore & Discord & LLM
   CTO --> JiraGH & Discord & LLM
   DevOps --> JiraGH & Discord & LLM
 ```

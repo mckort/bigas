@@ -147,7 +147,7 @@ def test_jira_formatting_rules_require_english():
     assert "Always respond in English" in JIRA_FORMATTING_RULES
     assert "Never output raw JSON or HTML" in JIRA_FORMATTING_RULES
     assert "create_jira_issue" in JIRA_FORMATTING_RULES
-    assert "Never tell the user to create the issue in Jira" in JIRA_FORMATTING_RULES
+    assert "Never tell the user to create the issue themselves" in JIRA_FORMATTING_RULES
     assert JIRA_AWARE_AGENT_IDS == frozenset(
         {"chief", "marketing", "product", "cto", "devops"}
     )
@@ -155,7 +155,7 @@ def test_jira_formatting_rules_require_english():
         {"agent_id": "marketing", "system_prompt_goals": "GA4 analyst."}
     )
     assert "create_jira_issue" in prompt
-    assert "Never tell the user to create the issue in Jira" in prompt
+    assert "Never tell the user to create the issue themselves" in prompt
     assert "lookup_jira" in prompt
     assert "does not mean the new work belongs under the same Epic" in prompt
     assert "Never reply with only ticket links" in JIRA_FORMATTING_RULES

@@ -543,7 +543,13 @@ function MobileAgentTabs({ agents, activeAgentId, onSelectAgent, unreadAgentIds 
   )
 }
 
-export default function ChatLayout({ user, onLogout }) {
+export default function ChatLayout({
+  user,
+  onLogout,
+  onSwitchView,
+  discussContext,
+  onClearDiscussContext,
+}) {
   const [agents, setAgents] = useState([])
   const [activeAgentId, setActiveAgentId] = useState('chief')
   const [threadId, setThreadId] = useState(null)
@@ -705,6 +711,17 @@ export default function ChatLayout({ user, onLogout }) {
   useEffect(() => {
     loadAgents()
   }, [loadAgents])
+
+  useEffect(() => {
+    if (!discussContext) return
+    const prefix = `Let's discuss ticket ${discussContext.key}: ${discussContext.title}\n\n`
+    setInput((prev) => {
+      if (prev.startsWith(prefix)) return prev
+      return prev.trim() ? `${prefix}${prev}` : prefix
+    })
+    setActiveAgentId('chief')
+    onClearDiscussContext?.()
+  }, [discussContext, onClearDiscussContext])
 
   useEffect(() => {
     let channel
@@ -1028,6 +1045,15 @@ export default function ChatLayout({ user, onLogout }) {
           >
             Activity
           </button>
+          {onSwitchView && (
+            <button
+              type="button"
+              onClick={() => onSwitchView('board')}
+              className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors hidden sm:block"
+            >
+              Board
+            </button>
+          )}
           <button
             type="button"
             onClick={handleLogout}

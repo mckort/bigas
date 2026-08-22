@@ -33,7 +33,7 @@ def _format_jira_error(exc: JiraError, *, project_key: str) -> str:
 
 
 class CreateJiraIssueService:
-    """Create Jira issues via the shared JiraClient."""
+    """Create Jira issues via the shared JiraClient, or internal board when Jira is off."""
 
     def create(
         self,
@@ -44,7 +44,10 @@ class CreateJiraIssueService:
         issue_type: str = "Task",
         marketing: bool = False,
         parent_epic_key: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from bigas.tickets.config import use_internal_board
+
         keys = normalize_project_keys(project_key)
         if not keys:
             raise CreateJiraIssueError("project_key is required")
@@ -65,6 +68,34 @@ class CreateJiraIssueService:
                 f"issue_type must be one of: {allowed} (got {issue_type!r})"
             )
 
+        if use_internal_board():
+            from bigas.tickets.service import TicketService
+
+            epic = normalize_parent_epic_key(parent_epic_key, project_key=proj)
+            ticket = TicketService().create_ticket_for_project(
+                proj,
+                title=title,
+                description=body,
+                issue_type=itype,
+                marketing=marketing,
+                parent_key=epic,
+                user_id=user_id,
+            )
+            out: Dict[str, Any] = {
+                "ok": True,
+                "key": ticket.get("key"),
+                "url": ticket.get("url"),
+                "summary": ticket.get("title") or title,
+                "issue_type": itype,
+                "project_key": proj,
+                "source": "internal_board",
+            }
+            if marketing:
+                out["labels"] = [_MARKETING_LABEL]
+            if epic:
+                out["parent_epic_key"] = epic
+            return out
+
         labels: Optional[List[str]] = None
         if marketing:
             labels = [_MARKETING_LABEL]
@@ -80,7 +111,7 @@ class CreateJiraIssueService:
                 labels=labels,
                 parent_epic_key=epic,
             )
-            out: Dict[str, Any] = {
+            out = {
                 "ok": True,
                 "key": result.get("key"),
                 "url": result.get("url"),

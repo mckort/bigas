@@ -160,6 +160,11 @@ def create_app():
             app.register_blueprint(chat_bp)
             logger.info("Registered chat blueprint.")
 
+            from bigas.resources.tickets.endpoints import tickets_bp
+
+            app.register_blueprint(tickets_bp)
+            logger.info("Registered tickets blueprint.")
+
         from bigas.resources.email.endpoints import email_bp
 
         app.register_blueprint(email_bp)

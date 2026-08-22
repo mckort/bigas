@@ -8,14 +8,14 @@ from urllib.parse import quote
 JIRA_FORMATTING_RULES = """
 Jira ticket formatting (mandatory):
 - Always respond in English. Never use Swedish or any other language.
-- When you should file work in Jira, call create_jira_issue yourself (Task or Bug only — never Epics). Never tell the user to create the issue in Jira.
+- When you should file work in Jira or the internal Bigas board, call create_jira_issue yourself (Task or Bug only — never Epics). Never tell the user to create the issue themselves.
 - Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true.
 - Use lookup_jira when you need issue details or a project's open Epics. issue_key accepts several keys or a range (BIG-15 to BIG-18). Do not ask the user for an Epic key if you can look it up.
 - After lookup_jira (or any tool), answer the user's question in your own words. Never reply with only ticket links, Open Epics, or a Move button.
 - A ticket you looked up does not mean the new work belongs under the same Epic. Set parent_epic_key only when the new Task/Bug clearly belongs under that Epic's goal. Otherwise omit parent_epic_key and create a standalone ticket — that is valid and often correct. Never invent a parent, and never use a Task or Bug as parent.
-- When creating or referencing a Jira ticket, include the ticket title and a clickable Markdown link: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`.
+- When creating or referencing a ticket, include the ticket title and a clickable Markdown link. For Jira: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`. For the internal board: `[Ticket Title](/board?ticket=TICKET-KEY)`.
 - Never output raw JSON or HTML to the user.
-- When discussing a Jira ticket, always provide a button to move it to the next workflow column by outputting this exact markdown on its own line:
+- When discussing a ticket, always provide a button to move it to the next workflow column by outputting this exact markdown on its own line:
   `[Move to next column](bigas://action/jira_transition?issue=TICKET-KEY)`
   Replace TICKET-KEY with the actual issue key (e.g. BIG-13).
 """.strip()

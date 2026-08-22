@@ -331,6 +331,7 @@ def create_jira_issue():
     issue_type = str(data.get("issue_type") or "Task").strip().title() or "Task"
     marketing = request_flag(data, "marketing", False)
     parent_epic_key = str(data.get("parent_epic_key") or "").strip() or None
+    user_id = str(data.get("user_id") or "").strip() or None
 
     try:
         service = CreateJiraIssueService()
@@ -341,6 +342,7 @@ def create_jira_issue():
             issue_type=issue_type,
             marketing=marketing,
             parent_epic_key=parent_epic_key,
+            user_id=user_id,
         )
         return jsonify(result)
     except CreateJiraIssueError as e:
