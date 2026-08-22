@@ -364,25 +364,29 @@ def create_jira_issue():
 @require_bigas_access_key
 def lookup_jira():
     """
-    Look up a Jira issue (including parent Epic) and/or open Epics in a project.
+    Look up one or more Jira issues (including parent Epic) and/or open Epics.
 
     Request JSON:
       {
-        "issue_key": "GPWW-3",
+        "issue_key": "BIG-15 to BIG-18",
+        "issue_keys": ["GPWW-3", "GPWW-4"],
         "project_key": "GPWW"
       }
 
-    At least one of issue_key or project_key is required.
+    At least one of issue_key / issue_keys or project_key is required.
+    issue_key accepts a browse URL, comma-separated keys, or a range.
     """
     data = request.json or {}
     issue_key = (
         str(data.get("issue_key") or data.get("issue") or data.get("key") or "").strip()
         or None
     )
+    issue_keys = data.get("issue_keys")
     project_key = str(data.get("project_key") or "").strip() or None
     try:
         result = LookupJiraService().lookup(
             issue_key=issue_key,
+            issue_keys=issue_keys,
             project_key=project_key,
         )
         return jsonify(result)
@@ -690,9 +694,12 @@ def get_manifest():
             {
                 "name": "lookup_jira",
                 "description": (
-                    "Look up a Jira issue (summary, type, status, parent Epic) and/or list "
-                    "open Epics in a project. Use this before create_jira_issue when you need "
-                    "context. A parent on a referenced ticket is not automatically the parent "
+                    "Look up Jira issues (summary, type, status, parent Epic) and/or list "
+                    "open Epics in a project. Accepts one key, several keys, or a range "
+                    "(e.g. BIG-15 to BIG-18). Use this to answer status questions, then write "
+                    "the answer yourself — do not paste this dump as the reply. "
+                    "Also use before create_jira_issue when you need Epic context. "
+                    "A parent on a referenced ticket is not automatically the parent "
                     "for a new ticket — only link parent_epic_key if the new work belongs under "
                     "that Epic; otherwise create a standalone Task/Bug."
                 ),
@@ -703,7 +710,15 @@ def get_manifest():
                     "properties": {
                         "issue_key": {
                             "type": "string",
-                            "description": "Issue to inspect, e.g. GPWW-3. Returns its parent Epic if any.",
+                            "description": (
+                                "Issue key, browse URL, comma-separated keys, or a range "
+                                "like BIG-15 to BIG-18."
+                            ),
+                        },
+                        "issue_keys": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional extra issue keys to look up together.",
                         },
                         "project_key": {
                             "type": "string",

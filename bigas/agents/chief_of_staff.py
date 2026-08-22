@@ -29,7 +29,18 @@ from bigas.resources.devops.pipeline import (
     run_chat_deploy_pipeline,
     should_run_deploy_pipeline,
 )
+from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
 from bigas.utils.mcp_client import MCPClient, MCPClientError
+
+MAX_AGENT_TOOL_ROUNDS = 5
+
+COWORKER_RULES = """
+You are a coworker, not a tool printer.
+- Read the user's ask. Decide what facts you need. Call tools to get them.
+- After you receive tool results, answer the question directly. Do not paste raw tool output as your reply.
+- You may call several tools, or the same tool again with different arguments, before answering.
+- lookup_jira accepts several issue keys or a range (BIG-15 to BIG-18). Use that for status questions, then say which are done.
+""".strip()
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +252,7 @@ def _chief_routing_extra(tool_summary: str) -> str:
         "receives the task and replies in this thread.\n"
         "You MAY call a tool yourself for a simple/quick lookup (live status, health, "
         "a short analytics question, lookup_jira) and to file a Jira Task/Bug with create_jira_issue. "
+        "After a lookup, answer the user yourself — do not stop at the tool dump. "
         "Do NOT trigger deploys, autofix, weekly reports, or other specialist pipelines yourself.\n\n"
         "If you should delegate, respond with ONLY:\n"
         '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>"}\n'
@@ -257,8 +269,10 @@ def _chief_routing_extra(tool_summary: str) -> str:
 def _specialist_json_extra(tool_summary: str) -> str:
     return (
         "You are responding in the Bigas chat interface. "
-        "If the user request requires calling a backend tool, respond with ONLY a JSON object:\n"
+        "If you need facts from a backend tool, respond with ONLY a JSON object:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
+        "You will see the tool result and then must answer (or call another tool). "
+        "Never use a raw lookup dump as the final reply. "
         "Include project_key when the user named a product, site, or Jira key. "
         "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
         "(a github.com/.../pull/N link is enough). "
@@ -475,6 +489,7 @@ def _agent_system_prompt(agent_config: Dict[str, Any], extra: str = "") -> str:
     agent_id = (agent_config.get("agent_id") or "").strip()
     if not agent_id or agent_id in JIRA_AWARE_AGENT_IDS:
         parts.append(JIRA_FORMATTING_RULES)
+    parts.append(COWORKER_RULES)
     parts.append(extra)
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
@@ -529,6 +544,13 @@ def _enrich_tool_args(
         (caller_agent_id or "").strip().lower() == "marketing"
     ):
         args.setdefault("marketing", True)
+    if (tool_name or "").lower() == "lookup_jira":
+        raw_key = str(
+            args.get("issue_key") or args.get("issue") or args.get("key") or ""
+        ).strip()
+        keys = parse_issue_keys(raw_key, args.get("issue_keys"), haystack)
+        if keys and not raw_key:
+            args["issue_key"] = ", ".join(keys)
     return args
 
 
@@ -576,6 +598,77 @@ def _select_tool_via_llm(
         return "", f"__delegate__:{target}", {"task": task}
 
     return raw.strip(), None, None
+
+
+def _is_terminal_handoff(tool_name: Optional[str]) -> bool:
+    name = (tool_name or "").strip()
+    if name.startswith("__delegate__"):
+        return True
+    return name.lower() in MUST_DELEGATE_TOOLS
+
+
+def _run_json_agent_loop(
+    *,
+    agent_id: str,
+    agent_config: Dict[str, Any],
+    user_message: str,
+    tools: List[Dict[str, Any]],
+    history: Optional[List[Dict[str, str]]],
+    run_tool,
+    fallback_complete=None,
+) -> str:
+    """Think → tool → observe → answer. User sees only the final answer."""
+    observations: List[str] = []
+    last_tool_text = ""
+    history = history or []
+
+    for _round in range(MAX_AGENT_TOOL_ROUNDS):
+        prompt_message = user_message
+        if observations:
+            prompt_message = (
+                f"{user_message}\n\n"
+                "Tool results (facts for you). Answer the user's question now, "
+                "or call another tool if you still need data. "
+                "Do not paste this dump as your reply.\n\n"
+                + "\n\n".join(observations)
+            )
+        text, tool_name, tool_args = _select_tool_via_llm(
+            agent_id, agent_config, prompt_message, tools, history
+        )
+        if tool_name and _is_terminal_handoff(tool_name):
+            return run_tool(tool_name, tool_args or {}) or (text or "").strip() or "Done."
+        if not tool_name:
+            if (text or "").strip():
+                return text.strip()
+            if observations:
+                break
+            if callable(fallback_complete):
+                return fallback_complete() or "I couldn't process that request."
+            return last_tool_text or "I couldn't process that request."
+        result = run_tool(tool_name, tool_args or {}) or "Done."
+        last_tool_text = result
+        observations.append(f"### {tool_name}\n{result}")
+
+    if observations:
+        text, tool_name, _tool_args = _select_tool_via_llm(
+            agent_id,
+            agent_config,
+            (
+                f"{user_message}\n\n"
+                "You must answer now (action=answer). Use these tool results. "
+                "Do not call another tool.\n\n"
+                + "\n\n".join(observations)
+            ),
+            tools,
+            history,
+        )
+        if (text or "").strip():
+            return text.strip()
+        if callable(fallback_complete):
+            forced = fallback_complete()
+            if (forced or "").strip():
+                return forced.strip()
+    return last_tool_text or "I couldn't process that request."
 
 
 def _run_openai_tool_loop(
@@ -758,25 +851,36 @@ def run_specialist_task(
                 return summary
         client = _mcp_client()
         tools = _filter_tools_for_agent(client.list_tools(), agent_id)
-        _, tool_name, tool_args = _select_tool_via_llm(agent_id, agent_config, task, tools, [])
-        if tool_name and tool_name.startswith("__delegate__"):
-            return "Specialist agents cannot delegate further."
-        if tool_name:
-            result = _run_tool_call(
+
+        def _run_specialist_tool(tool_name: str, tool_args: Dict[str, Any]) -> str:
+            if tool_name.startswith("__delegate__"):
+                return "Specialist agents cannot delegate further."
+            return _run_tool_call(
                 client,
                 tool_name,
                 _enrich_tool_args(tool_name, tool_args or {}, task, caller_agent_id=agent_id),
             )
-        else:
+
+        def _fallback_complete() -> str:
             llm, _ = get_llm_client(feature="chat")
             system = _agent_system_prompt(agent_config)
-            result = llm.complete(
+            return llm.complete(
                 [
                     {"role": "system", "content": system},
                     {"role": "user", "content": task},
                 ],
                 temperature=0.4,
             )
+
+        result = _run_json_agent_loop(
+            agent_id=agent_id,
+            agent_config=agent_config,
+            user_message=task,
+            tools=tools,
+            history=[],
+            run_tool=_run_specialist_tool,
+            fallback_complete=_fallback_complete,
+        )
         if result_threads:
             _add_message_to_threads(
                 store,
@@ -878,7 +982,7 @@ def handle_chat_message(
             "call the specialist so they receive the task and reply in this thread. "
             "You may run a simple lookup yourself (status, health, a short analytics question) "
             "or look up Jira with lookup_jira / file a Task/Bug with create_jira_issue, "
-            "but never trigger a production deploy — that is DevOps. "
+            "then answer the user yourself. Never trigger a production deploy — that is DevOps. "
             "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
         )
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
@@ -898,18 +1002,21 @@ def handle_chat_message(
                 user_message=user_message,
             )
         else:
-            response_text, tool_name, tool_args = _select_tool_via_llm(
-                "chief", agent_config, user_message, all_tools, history
-            )
-            dispatched = _dispatch_chief_tool(
-                tool_name,
-                tool_args,
+            response_text = _run_json_agent_loop(
+                agent_id="chief",
+                agent_config=agent_config,
                 user_message=user_message,
-                thread_id=thread_id,
-                mcp_client=mcp_client,
+                tools=all_tools,
+                history=history,
+                run_tool=lambda name, args: _dispatch_chief_tool(
+                    name,
+                    args,
+                    user_message=user_message,
+                    thread_id=thread_id,
+                    mcp_client=mcp_client,
+                )
+                or "Done.",
             )
-            if dispatched is not None:
-                response_text = dispatched
 
         if response_text:
             msg = store.add_message(
@@ -940,18 +1047,18 @@ def handle_chat_message(
 
     client = _mcp_client()
     tools = _filter_tools_for_agent(client.list_tools(), agent_id)
-    response_text, tool_name, tool_args = _select_tool_via_llm(
-        agent_id, agent_config, user_message, tools, history
-    )
-
-    if tool_name:
-        response_text = _run_tool_call(
+    response_text = _run_json_agent_loop(
+        agent_id=agent_id,
+        agent_config=agent_config,
+        user_message=user_message,
+        tools=tools,
+        history=history,
+        run_tool=lambda name, args: _run_tool_call(
             client,
-            tool_name,
-            _enrich_tool_args(
-                tool_name, tool_args or {}, user_message, caller_agent_id=agent_id
-            ),
-        )
+            name,
+            _enrich_tool_args(name, args or {}, user_message, caller_agent_id=agent_id),
+        ),
+    )
 
     msg = store.add_message(
         thread_id,

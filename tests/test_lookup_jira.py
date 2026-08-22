@@ -16,6 +16,7 @@ os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 from bigas.resources.product.create_jira_issue.lookup import (
     LookupJiraError,
     LookupJiraService,
+    parse_issue_keys,
 )
 from bigas.resources.product.create_release_notes.jira_client import compact_jira_issue
 
@@ -64,6 +65,24 @@ def test_compact_jira_issue_without_parent():
     assert "parent_epic_key" not in compact
 
 
+def test_parse_issue_keys_expands_range_and_lists():
+    assert parse_issue_keys("BIG-15 to BIG-18") == ["BIG-15", "BIG-16", "BIG-17", "BIG-18"]
+    assert parse_issue_keys("BIG-15 - BIG-18") == ["BIG-15", "BIG-16", "BIG-17", "BIG-18"]
+    assert parse_issue_keys("BIG-15-18") == ["BIG-15", "BIG-16", "BIG-17", "BIG-18"]
+    assert parse_issue_keys("which of the BIG-15 to 18 have been done?") == [
+        "BIG-15",
+        "BIG-16",
+        "BIG-17",
+        "BIG-18",
+    ]
+    assert parse_issue_keys("GPWW-3, GPWW-4") == ["GPWW-3", "GPWW-4"]
+    assert parse_issue_keys(["vfa-17", "https://x.atlassian.net/browse/VFA-18"]) == [
+        "VFA-17",
+        "VFA-18",
+    ]
+    assert parse_issue_keys("no tickets here") == []
+
+
 def test_lookup_jira_requires_issue_or_project():
     with pytest.raises(LookupJiraError, match="issue_key or project_key"):
         LookupJiraService().lookup()
@@ -74,24 +93,26 @@ def test_lookup_jira_issue_includes_parent_and_project_epics(monkeypatch):
         def __init__(self, config):
             self._config = config
 
-        def get_issue(self, issue_key, *, fields=None, expand=None):
-            assert issue_key == "GPWW-3"
-            return {
-                "key": "GPWW-3",
-                "fields": {
-                    "summary": "Implement tracking",
-                    "issuetype": {"name": "Task"},
-                    "status": {"name": "To Do"},
-                    "project": {"key": "GPWW"},
-                    "parent": {
-                        "key": "GPWW-2",
-                        "fields": {
-                            "summary": "10 paying customers",
-                            "issuetype": {"name": "Epic"},
+        def search_issues_by_keys(self, issue_keys, *, fields=None, max_results_per_page=50, max_pages=10):
+            assert list(issue_keys) == ["GPWW-3"]
+            return [
+                {
+                    "key": "GPWW-3",
+                    "fields": {
+                        "summary": "Implement tracking",
+                        "issuetype": {"name": "Task"},
+                        "status": {"name": "To Do"},
+                        "project": {"key": "GPWW"},
+                        "parent": {
+                            "key": "GPWW-2",
+                            "fields": {
+                                "summary": "10 paying customers",
+                                "issuetype": {"name": "Epic"},
+                            },
                         },
                     },
-                },
-            }
+                }
+            ]
 
         def list_open_epics(self, project_keys=None, *, max_results=20):
             assert project_keys == "GPWW"
@@ -150,3 +171,58 @@ def test_lookup_jira_project_lists_epics_only(monkeypatch):
     assert result["ok"] is True
     assert "issue" not in result
     assert result["epics"][0]["key"] == "GPWW-2"
+
+
+def test_lookup_jira_range_returns_statuses_without_epics(monkeypatch):
+    class FakeClient:
+        def __init__(self, config):
+            self._config = config
+
+        def search_issues_by_keys(self, issue_keys, *, fields=None, max_results_per_page=50, max_pages=10):
+            statuses = {
+                "BIG-15": "To Do",
+                "BIG-16": "Done",
+                "BIG-17": "In Progress",
+                "BIG-18": "Done",
+            }
+            issues = []
+            for issue_key in issue_keys:
+                if issue_key not in statuses:
+                    raise AssertionError(f"unexpected key {issue_key}")
+                issues.append(
+                    {
+                        "key": issue_key,
+                        "fields": {
+                            "summary": f"Task {issue_key}",
+                            "issuetype": {"name": "Task"},
+                            "status": {"name": statuses[issue_key]},
+                            "project": {"key": "BIG"},
+                        },
+                    }
+                )
+            return issues
+
+        def list_open_epics(self, project_keys=None, *, max_results=20):
+            raise AssertionError("multi-issue lookup should not list open Epics")
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.lookup.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.lookup.JiraConfig",
+        type(
+            "C",
+            (),
+            {
+                "from_env": staticmethod(
+                    lambda: type("Cfg", (), {"base_url": "https://example.atlassian.net"})()
+                )
+            },
+        )(),
+    )
+
+    result = LookupJiraService().lookup(issue_key="BIG-15 to BIG-18")
+    assert [issue["key"] for issue in result["issues"]] == ["BIG-15", "BIG-16", "BIG-17", "BIG-18"]
+    assert result["issues"][1]["status"] == "Done"
+    assert "epics" not in result

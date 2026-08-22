@@ -639,6 +639,18 @@ def test_dispatch_chief_tool_allows_create_jira_issue():
     assert "GPWW-9" in (result or "")
 
 
+def test_enrich_lookup_jira_extracts_range_from_message():
+    from bigas.agents.chief_of_staff import _enrich_tool_args
+
+    args = _enrich_tool_args(
+        "lookup_jira",
+        {},
+        "which of the BIG-15 to BIG-18 have already been done?",
+        caller_agent_id="product",
+    )
+    assert args["issue_key"] == "BIG-15, BIG-16, BIG-17, BIG-18"
+
+
 def test_enrich_create_jira_issue_sets_marketing_for_marketing_agent():
     from bigas.agents.chief_of_staff import _enrich_tool_args
 
@@ -907,6 +919,68 @@ def test_chief_trigger_deployment_tool_is_rewritten_to_handoff(monkeypatch):
     )
     assert called["agent_id"] == "devops"
     assert "production rollout" in called["task"]
+
+
+def test_specialist_loop_answers_after_lookup(monkeypatch):
+    from bigas.agents.chief_of_staff import handle_chat_message
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    store.upsert_user("pm-loop-user", "pm@bigas.local")
+    thread = store.create_thread("pm-loop-user", "product")
+    calls = {"n": 0}
+
+    def fake_select(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "", "lookup_jira", {"issue_key": "BIG-15 to BIG-18"}
+        return (
+            "BIG-16 and BIG-18 are Done. BIG-15 is To Do. BIG-17 is In Progress.",
+            None,
+            None,
+        )
+
+    class FakeClient:
+        def list_tools(self):
+            return [{"name": "lookup_jira", "description": "look up tickets"}]
+
+        def call_tool(self, name, args):
+            assert name == "lookup_jira"
+            assert "BIG-15" in str(args.get("issue_key") or "")
+            return {
+                "is_error": False,
+                "text": "",
+                "structured": {
+                    "ok": True,
+                    "issues": [
+                        {
+                            "key": "BIG-15",
+                            "summary": "One",
+                            "status": "To Do",
+                            "url": "https://example.atlassian.net/browse/BIG-15",
+                        },
+                        {
+                            "key": "BIG-16",
+                            "summary": "Two",
+                            "status": "Done",
+                            "url": "https://example.atlassian.net/browse/BIG-16",
+                        },
+                    ],
+                },
+            }
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff._mcp_client", lambda: FakeClient())
+    monkeypatch.setattr("bigas.agents.chief_of_staff._select_tool_via_llm", fake_select)
+
+    result = handle_chat_message(
+        thread_id=thread["thread_id"],
+        user_id="pm-loop-user",
+        user_message="which of the BIG-15 to BIG-18 have already been done?",
+    )
+    content = (result.get("message") or {}).get("content") or ""
+    assert "BIG-16 and BIG-18 are Done" in content
+    assert "Open Epics" not in content
+    assert calls["n"] == 2
 
 
 def test_humanize_tool_result_unwraps_answer_json():

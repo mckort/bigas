@@ -189,6 +189,8 @@ def test_manifest_includes_create_jira_issue():
     assert lookup["path"] == "/mcp/tools/lookup_jira"
     assert "parent" in lookup["description"].lower()
     assert "standalone" in lookup["description"].lower()
+    assert "range" in lookup["description"].lower()
+    assert "issue_keys" in lookup["parameters"]["properties"]
 
 
 @pytest.fixture
