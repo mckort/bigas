@@ -552,22 +552,20 @@ def _cto_discord_webhook() -> str:
 
 
 def _post_to_discord_cto(message: str) -> None:
-    """Post to CTO Discord channel if DISCORD_WEBHOOK_URL_CTO is set (e.g. from Secret Manager).
+    """Post to CTO Discord and the CTO chat thread.
     Callers must pass only sanitized messages (use sanitize_error_message for errors) to avoid leaking tokens.
     """
     webhook = _cto_discord_webhook()
     if not webhook:
         logger.info("DISCORD_WEBHOOK_URL_CTO not set or placeholder, skipping Discord post")
-        return
-    post_to_discord(webhook, message)
+    post_to_discord(webhook, message, chat_agent_id="cto")
 
 
 def _post_to_discord_cto_chunks(message: str) -> None:
     """Post long CTO content via the shared Discord long-message helper."""
-    webhook = _cto_discord_webhook()
-    if not webhook or not (message or "").strip():
+    if not (message or "").strip():
         return
-    post_long_to_discord(webhook, message.strip())
+    post_long_to_discord(_cto_discord_webhook(), message.strip(), chat_agent_id="cto")
 
 
 @cto_bp.route("/review_and_comment_pr", methods=["POST"])

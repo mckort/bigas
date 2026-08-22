@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -13,21 +13,64 @@ logger = logging.getLogger(__name__)
 DISCORD_HTTP_TIMEOUT = int(os.environ.get("DISCORD_HTTP_TIMEOUT", "10"))
 
 
-def post_to_discord(webhook_url: Optional[str], message: str) -> bool:
+def _mirror_to_chat(
+    webhook_url: Optional[str],
+    message: str,
+    *,
+    chat_agent_id: Optional[str] = None,
+    chat_metadata: Optional[Dict[str, Any]] = None,
+    channel_hint: str = "",
+) -> None:
+    try:
+        from bigas.chat.activity import mirror_discord_message
+
+        mirror_discord_message(
+            webhook_url,
+            message,
+            channel_hint=channel_hint,
+            chat_agent_id=chat_agent_id,
+            chat_metadata=chat_metadata,
+        )
+    except Exception:
+        logger.debug("Discord chat mirror skipped", exc_info=True)
+
+
+def _discord_url_ready(webhook_url: Optional[str]) -> bool:
+    url = (webhook_url or "").strip()
+    return bool(url) and not url.lower().startswith("placeholder")
+
+
+def post_to_discord(
+    webhook_url: Optional[str],
+    message: str,
+    *,
+    chat_agent_id: Optional[str] = None,
+    chat_metadata: Optional[Dict[str, Any]] = None,
+    mirror_chat: bool = True,
+    channel_hint: str = "",
+) -> bool:
     """
     Post a single message to Discord, truncating hard at 2000 characters.
     Returns True if the request succeeded (HTTP 204), False otherwise.
+
+    When chat is enabled, the same text is mirrored to the matching specialist
+    thread (and the activity feed), even if the Discord webhook is unset.
 
     Retries briefly on HTTP 429 so multi-part posts from post_long_to_discord
     are less likely to drop continuation chunks.
 
     NOTE: For longer, multi-part messages use post_long_to_discord instead.
     """
-    if (
-        not webhook_url
-        or webhook_url.strip() == ""
-        or webhook_url.strip().lower().startswith("placeholder")
-    ):
+    if mirror_chat and (message or "").strip():
+        _mirror_to_chat(
+            webhook_url,
+            message,
+            chat_agent_id=chat_agent_id,
+            chat_metadata=chat_metadata,
+            channel_hint=channel_hint,
+        )
+
+    if not _discord_url_ready(webhook_url):
         logger.info("Discord webhook URL not provided or is placeholder, skipping Discord notification")
         return False
 
@@ -43,12 +86,6 @@ def post_to_discord(webhook_url: Optional[str], message: str) -> bool:
             )
             if response.status_code == 204:
                 logger.info("Successfully posted to Discord")
-                try:
-                    from bigas.chat.activity import mirror_discord_message
-
-                    mirror_discord_message(webhook_url, message)
-                except Exception:
-                    pass
                 return True
             if response.status_code == 429:
                 retry_after = 1.0
@@ -67,19 +104,39 @@ def post_to_discord(webhook_url: Optional[str], message: str) -> bool:
     return False
 
 
-def post_long_to_discord(webhook_url: Optional[str], text: str, chunk_size: int = 1900) -> None:
+def post_long_to_discord(
+    webhook_url: Optional[str],
+    text: str,
+    chunk_size: int = 1900,
+    *,
+    chat_agent_id: Optional[str] = None,
+    chat_metadata: Optional[Dict[str, Any]] = None,
+    mirror_chat: bool = True,
+    channel_hint: str = "",
+) -> None:
     """
     Post a long markdown-like text to Discord, splitting it into multiple
     messages that respect Discord's 2000 character limit.
 
     Splits on newline boundaries where possible to keep sections readable.
     Paces posts slightly to stay under Discord webhook rate limits.
+    Chat receives the full text once (not one message per Discord chunk).
     """
-    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placeholder"):
+    body = text or ""
+    if mirror_chat and body.strip():
+        _mirror_to_chat(
+            webhook_url,
+            body,
+            chat_agent_id=chat_agent_id,
+            chat_metadata=chat_metadata,
+            channel_hint=channel_hint,
+        )
+
+    if not _discord_url_ready(webhook_url):
         logger.info("Discord webhook URL not provided or is placeholder, skipping Discord notification")
         return
 
-    lines = text.split("\n")
+    lines = body.split("\n")
     parts = []
     current_lines = []
     current_len = 0
@@ -99,6 +156,6 @@ def post_long_to_discord(webhook_url: Optional[str], text: str, chunk_size: int 
         parts.append("\n".join(current_lines))
 
     for i, part in enumerate(parts):
-        post_to_discord(webhook_url, part)
+        post_to_discord(webhook_url, part, mirror_chat=False)
         if i + 1 < len(parts):
             time.sleep(0.45)

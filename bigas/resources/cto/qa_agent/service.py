@@ -349,10 +349,9 @@ class QAAgentService:
         if pr_url:
             msg += f"\nPR: {pr_url}"
         webhook = _webhook("DISCORD_WEBHOOK_URL_PRODUCT")
-        if webhook:
-            post_to_discord(webhook, msg)
-            if proposal:
-                post_long_to_discord(webhook, proposal)
+        post_to_discord(webhook, msg, chat_agent_id="product")
+        if proposal:
+            post_long_to_discord(webhook, proposal, chat_agent_id="product")
         return {
             "action": "jira_pm",
             "status": "new_feature",
@@ -391,11 +390,10 @@ class QAAgentService:
         link = review_url(proposal_id, base_url=base, token=token) if base else ""
         msg = format_cto_discord_message(payload, review_url=link)
         webhook = _webhook("DISCORD_WEBHOOK_URL_CTO")
-        if webhook:
-            post_to_discord(webhook, msg)
-            proposal_text = (evaluation.get("proposal") or "").strip()
-            if proposal_text:
-                post_long_to_discord(webhook, proposal_text)
+        post_to_discord(webhook, msg, chat_agent_id="cto")
+        proposal_text = (evaluation.get("proposal") or "").strip()
+        if proposal_text:
+            post_long_to_discord(webhook, proposal_text, chat_agent_id="cto")
         return {
             "action": "discord_cto",
             "status": "improvement",
@@ -452,8 +450,6 @@ class QAAgentService:
 
     def _notify_qa_channel(self, summary: Dict[str, Any], *, pr_url: str) -> None:
         webhook = _webhook("DISCORD_WEBHOOK_URL_QA")
-        if not webhook:
-            return
         total = summary.get("total") or 0
         excellent = summary.get("excellent") or 0
         if total == 0:
@@ -472,7 +468,7 @@ class QAAgentService:
             )
         if pr_url:
             msg += f"\nPR: {pr_url}"
-        post_to_discord(webhook, msg)
+        post_to_discord(webhook, msg, chat_agent_id="cto")
 
     def load_proposal(self, proposal_id: str) -> Dict[str, Any]:
         payload = self._store_or_default().load(proposal_id)
@@ -518,8 +514,7 @@ class QAAgentService:
         if pr_url:
             msg += f"\nPR: {pr_url}"
         webhook = _webhook("DISCORD_WEBHOOK_URL_CTO")
-        if webhook:
-            post_to_discord(webhook, msg)
+        post_to_discord(webhook, msg, chat_agent_id="cto")
         return {
             "ok": True,
             "approved": True,
@@ -542,8 +537,7 @@ class QAAgentService:
         if pr_url:
             msg += f"\nPR: {pr_url}"
         webhook = _webhook("DISCORD_WEBHOOK_URL_CTO")
-        if webhook:
-            post_to_discord(webhook, msg)
+        post_to_discord(webhook, msg, chat_agent_id="cto")
         return {"ok": True, "declined": True, "proposal_id": proposal_id}
 
 

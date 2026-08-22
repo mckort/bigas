@@ -663,18 +663,12 @@ class ProactiveGoalEngine:
 
     def _post_to_chief(self, message: str, *, epic_key: str) -> None:
         webhook = chief_discord_webhook_url()
-        if webhook:
-            post_long_to_discord(webhook, message)
-        try:
-            from bigas.chat.activity import post_to_agent_thread
-
-            post_to_agent_thread(
-                "chief",
-                message,
-                metadata={"source": "proactive_goal_engine", "epic_key": epic_key},
-            )
-        except Exception:
-            logger.exception("Failed to mirror goal update to chief chat thread")
+        post_long_to_discord(
+            webhook,
+            message,
+            chat_agent_id="chief",
+            chat_metadata={"source": "proactive_goal_engine", "epic_key": epic_key},
+        )
 
     def _post_progress_report(self, report: str, *, epic_key: str) -> None:
         self._post_to_chief(

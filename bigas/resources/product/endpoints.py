@@ -3,9 +3,9 @@ import logging
 import os
 import threading
 import uuid
-import requests
 
 from bigas.access import require_bigas_access_key
+from bigas.discord_webhook import post_long_to_discord, post_to_discord as post_discord_message
 from bigas.resources.marketing.utils import (
     request_flag,
     sanitize_error_message,
@@ -57,19 +57,7 @@ _JIRA_AI_JOBS_LOCK = threading.Lock()
 
 
 def _post_to_discord(webhook_url: str, message: str) -> None:
-    if not webhook_url or webhook_url.strip() == "" or webhook_url.startswith("placeholder") or webhook_url == "placeholder":
-        return
-
-    if len(message) > 2000:
-        message = message[:1997] + "..."
-
-    try:
-        resp = requests.post(webhook_url, json={"content": message}, timeout=20)
-        # Discord returns 204 No Content on success
-        if resp.status_code != 204:
-            logger.error(f"Failed to post to Discord: {resp.status_code} {resp.text[:300]}")
-    except Exception:
-        logger.error("Failed to post to Discord", exc_info=True)
+    post_discord_message(webhook_url, message, chat_agent_id="product")
 
 
 def _post_to_discord_in_chunks(webhook_url: str, message: str, *, chunk_size: int = 1900) -> None:
@@ -79,20 +67,7 @@ def _post_to_discord_in_chunks(webhook_url: str, message: str, *, chunk_size: in
     """
     if not message:
         return
-    msg = message.strip()
-    if len(msg) <= 2000:
-        _post_to_discord(webhook_url, msg)
-        return
-
-    start = 0
-    while start < len(msg):
-        end = min(start + chunk_size, len(msg))
-        # try to split on a newline boundary for readability
-        nl = msg.rfind("\n", start, end)
-        if nl > start + 200:
-            end = nl
-        _post_to_discord(webhook_url, msg[start:end].strip())
-        start = end
+    post_long_to_discord(webhook_url, message, chunk_size=chunk_size, chat_agent_id="product")
 
 
 @product_bp.route('/product_resource_placeholder', methods=['POST'])

@@ -7,16 +7,16 @@ Endpoint: `POST /mcp/tools/jira_status_automation`
 ## Phases shipped
 
 ### Phase 1 — Research and describe (AI)
-Enrich description (keep human Brief) → **Description approval (manual)** → Discord **bigas-pm**.
+Enrich description (keep human Brief) → **Description approval (manual)** → Discord **bigas-pm** and the Product Manager chat thread.
 
 ### Phase 2 — Design and plan (AI)
-Write **AI Plan (Bigas)** → **Design approval (manual)** → Discord **bigas-cto**.
+Write **AI Plan (Bigas)** → **Design approval (manual)** → Discord **bigas-cto** and the CTO chat thread.
 
 ### Phase 3 — In Progress (AI)
-Launch Cursor cloud agent on the mapped GitHub repo (`autoCreatePR=true`) → comment agent URL on the issue → leave in **In Progress (AI)** → Discord **bigas-cto**.
+Launch Cursor cloud agent on the mapped GitHub repo (`autoCreatePR=true`) → comment agent URL on the issue → leave in **In Progress (AI)** → Discord **bigas-cto** and the CTO chat thread.
 
 ### Phase 4 — Ready to merge → Final approval
-When `autofix_followup` reports **ready to merge**, Bigas finds the Jira key on the PR (`VFA-14:` title / `Jira: VFA-14` body) and moves the issue to **Final approval (manual)** → Discord **bigas-cto**.
+When `autofix_followup` reports **ready to merge**, Bigas finds the Jira key on the PR (`VFA-14:` title / `Jira: VFA-14` body) and moves the issue to **Final approval (manual)** → Discord **bigas-cto** and the CTO chat thread.
 
 ### Epics — Goal Engine (not implement)
 If the issue is an **Epic**, Phases 1–3 above are skipped. The same webhook runs the Proactive Goal Engine for that Epic and leaves it in the column it was dragged to:

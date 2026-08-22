@@ -85,7 +85,7 @@ def test_qa_agent_routes_excellent_to_qa_channel_only(monkeypatch):
 
     discord_calls = []
 
-    def fake_post(webhook, message):
+    def fake_post(webhook, message, **_kwargs):
         discord_calls.append((webhook, message))
         return True
 
@@ -129,7 +129,7 @@ def test_qa_agent_routes_improvement_to_cto_with_proposal(monkeypatch):
 
     posted = []
 
-    def fake_post(webhook, message):
+    def fake_post(webhook, message, **_kwargs):
         posted.append((webhook, message))
         return True
 

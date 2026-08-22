@@ -706,3 +706,50 @@ def test_handle_event_task_still_uses_research_handler(monkeypatch):
     )
     assert result["ok"] is True
     assert result.get("handler") != "goal_engine"
+
+
+def test_research_complete_mirrors_to_product_chat(monkeypatch):
+    jira_automation_service._IDEMPOTENCY = IdempotencyCache(ttl_s=60)
+    jira_automation_service._QUOTA = DailyQuota(5)
+
+    jira = MagicMock()
+    jira.get_issue.return_value = {
+        "key": "VFA-17",
+        "fields": {
+            "summary": "Founder section in term sheet",
+            "issuetype": {"name": "Task"},
+            "status": {"name": "Research and describe (AI)"},
+            "project": {"key": "VFA"},
+        },
+    }
+
+    class OkHandler:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, **kwargs):
+            return {"ok": True, "summary": "Founder section in term sheet", "model": "test"}
+
+    posted = []
+
+    def fake_discord(url, message, **kwargs):
+        posted.append({"message": message, "agent": kwargs.get("chat_agent_id")})
+        return False
+
+    monkeypatch.setattr(jira_automation_service, "ResearchDescribeHandler", OkHandler)
+    monkeypatch.setattr(jira_automation_service, "post_to_discord", fake_discord)
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL_PRODUCT", "")
+
+    svc = JiraAutomationService(config=_automation_cfg(), jira=jira)
+    result = svc.handle_event(
+        issue_key="VFA-17",
+        to_status="Research and describe (AI)",
+        from_status="To Do",
+        project_key="VFA",
+        idempotency_key="task-chat-1",
+    )
+    assert result["ok"] is True
+    assert posted
+    assert posted[0]["agent"] == "product"
+    assert "Research complete" in posted[0]["message"]
+    assert "VFA-17" in posted[0]["message"]

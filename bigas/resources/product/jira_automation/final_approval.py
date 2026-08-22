@@ -40,9 +40,7 @@ def extract_jira_issue_key(*texts: str) -> Optional[str]:
 
 def _post_discord(message: str) -> None:
     url = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
-    if not url or url.startswith("placeholder"):
-        return
-    post_to_discord(url, (message or "").strip())
+    post_to_discord(url, (message or "").strip(), chat_agent_id="cto")
 
 
 def transition_issue_to_final_approval_for_pr(

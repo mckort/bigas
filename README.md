@@ -331,9 +331,9 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 
 **Tasks / Bugs / Stories** use this implement-a-PR loop:
 
-1. **`Research and describe (AI)`** — Bigas reads the Brief, researches the codebase/context, and writes an **AI Research** section onto the issue (your Brief is left untouched). The card moves itself to **Description approval (manual)** and posts to your `bigas-pm` Discord channel. You read the research, edit if needed, and drag the card forward yourself.
-2. **`Design and plan (AI)`** — Bigas reads Brief + Research + repo context and writes an **AI Plan**: the concrete implementation approach. Moves to **Design approval (manual)**, posts to `bigas-cto`. Again, a human reviews and approves by dragging the card.
-3. **`In Progress (AI)`** — Bigas launches a Cursor cloud agent against the repo mapped to this Jira project, which implements the plan and opens a pull request. The PR link is commented on the issue; you get pinged in `bigas-cto`.
+1. **`Research and describe (AI)`** — Bigas reads the Brief, researches the codebase/context, and writes an **AI Research** section onto the issue (your Brief is left untouched). The card moves itself to **Description approval (manual)** and posts to your `bigas-pm` Discord channel and the Product Manager chat. You read the research, edit if needed, and drag the card forward yourself.
+2. **`Design and plan (AI)`** — Bigas reads Brief + Research + repo context and writes an **AI Plan**: the concrete implementation approach. Moves to **Design approval (manual)**, posts to `bigas-cto` and the CTO chat. Again, a human reviews and approves by dragging the card.
+3. **`In Progress (AI)`** — Bigas launches a Cursor cloud agent against the repo mapped to this Jira project, which implements the plan and opens a pull request. The PR link is commented on the issue; you get pinged in `bigas-cto` and the CTO chat.
 4. Once the CTO specialist's autofix loop reports the PR is **ready to merge**, Bigas finds the Jira key from the PR title/body and moves the card to **Final approval (manual)** automatically — your signal to review the PR and merge (unless `BIGAS_CTO_AUTO_MERGE=true`, in which case Bigas also squash-merges and posts to Discord). How that review/autofix loop works: [from PR to ready to merge](#walkthrough-from-pr-to-ready-to-merge).
 
 **Epics** take a different path (Goal Engine). Dragging an Epic into those same AI columns does **not** launch a Cursor implement agent. Instead Bigas creates child Tasks linked to the Epic, then (once the Epic is In Progress) posts a weekly progress report. Details: [Proactive Goal Engine](#proactive-goal-engine-cloud-scheduler).
@@ -556,7 +556,7 @@ Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_i
 
 All endpoint names below are **relative to `/mcp/tools/`**. For example, `POST weekly_analytics_report` means `POST /mcp/tools/weekly_analytics_report`.
 
-When chat is enabled, scheduled marketing reports that post to Discord also land in the Marketing Analyst thread. `progress_updates` and weekly X drafts go to the Product Manager thread. `CHAT_ENABLED=false` skips those chat posts.
+When chat is enabled, Discord notifications are mirrored to the matching specialist thread: marketing reports → Marketing Analyst, Jira research / release notes / progress updates / X drafts → Product Manager, PR review / implement / QA / site alerts → CTO, CI self-heal → DevOps, Goal Engine → Chief of Staff. Short “on its way…” pings stay Discord-only. `CHAT_ENABLED=false` skips those chat posts.
 
 Find your service URL with:
 ```bash
