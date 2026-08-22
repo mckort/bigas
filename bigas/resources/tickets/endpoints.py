@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from flask import Blueprint, g, jsonify, request
 
 from bigas.chat.auth import require_chat_auth
 from bigas.tickets.constants import columns_for_board
-from bigas.tickets.service import TicketService
+from bigas.tickets.service import TicketService, run_ticket_status_automation
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,71 @@ def board_tickets(board_id: str):
         return jsonify({"ticket": ticket}), 201
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@tickets_bp.route("/api/tickets/by-key/<key>", methods=["GET"])
+@require_chat_auth
+def ticket_by_key(key: str):
+    user_id = g.chat_user["uid"]
+    service = TicketService()
+    ticket = service.lookup_ticket(key)
+    if not ticket:
+        return jsonify({"error": "Ticket not found"}), 404
+    from bigas.tickets.store import get_ticket_store
+
+    board = get_ticket_store().get_board(ticket.get("board_id") or "")
+    if board and board.get("user_id") != user_id:
+        return jsonify({"error": "Forbidden"}), 403
+    return jsonify({"ticket": ticket})
+
+
+@tickets_bp.route("/api/tickets/automation-worker", methods=["POST"])
+def ticket_automation_worker():
+    """
+    Internal worker endpoint for ticket status automation.
+
+    Dispatched via HTTP from TicketService so Cloud Run allocates CPU for AI
+    handlers instead of relying on background threads after the response is sent.
+    """
+    from bigas.resources.devops.self_healing import webhook_secret
+    from bigas.resources.product.jira_automation.service import (
+        extract_webhook_secret_from_headers,
+        verify_webhook_secret,
+    )
+
+    header_secret = extract_webhook_secret_from_headers(request.headers)
+    secret = webhook_secret()
+    if secret and verify_webhook_secret(header_secret, secret):
+        pass
+    else:
+        keys = [k.strip() for k in (os.environ.get("BIGAS_ACCESS_KEYS") or "").split(",") if k.strip()]
+        provided = (request.headers.get("X-Bigas-Access-Key") or "").strip()
+        if not keys or provided not in keys:
+            return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    ticket_id = (data.get("ticket_id") or "").strip()
+    issue_key = (data.get("issue_key") or "").strip()
+    new_status = (data.get("new_status") or "").strip()
+    old_status = (data.get("old_status") or "").strip()
+    project_key = (data.get("project_key") or "").strip()
+    if not ticket_id or not new_status:
+        return jsonify({"error": "ticket_id and new_status are required"}), 400
+
+    from bigas.tickets.store import get_ticket_store
+
+    store = get_ticket_store()
+    ticket = store.get_ticket(ticket_id)
+    if not ticket:
+        return jsonify({"error": "Ticket not found"}), 404
+
+    run_ticket_status_automation(
+        ticket,
+        old_status=old_status,
+        new_status=new_status,
+        project_key=project_key or (issue_key.split("-", 1)[0] if "-" in issue_key else ""),
+    )
+    return jsonify({"ok": True, "issue_key": issue_key or ticket.get("key")})
 
 
 @tickets_bp.route("/api/tickets/<ticket_id>", methods=["GET", "PUT", "DELETE"])

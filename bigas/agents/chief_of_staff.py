@@ -302,6 +302,7 @@ def _dispatch_chief_tool(
     user_message: str,
     thread_id: str,
     mcp_client: Optional[MCPClient],
+    user_id: Optional[str] = None,
 ) -> Optional[str]:
     """Run a COS tool call, rewriting specialist pipelines into a real handoff."""
     if not tool_name:
@@ -331,7 +332,13 @@ def _dispatch_chief_tool(
         return _run_tool_call(
             mcp_client,
             tool_name,
-            _enrich_tool_args(tool_name, tool_args, user_message, caller_agent_id="chief"),
+            _enrich_tool_args(
+                tool_name,
+                tool_args,
+                user_message,
+                caller_agent_id="chief",
+                user_id=user_id,
+            ),
         )
     return f"I couldn't run {tool_name} (tools unavailable)."
 
@@ -500,6 +507,7 @@ def _enrich_tool_args(
     user_message: str,
     *,
     caller_agent_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     args = dict(arguments or {})
     haystack = " ".join(
@@ -544,6 +552,8 @@ def _enrich_tool_args(
         (caller_agent_id or "").strip().lower() == "marketing"
     ):
         args.setdefault("marketing", True)
+    if (tool_name or "").lower() == "create_jira_issue" and user_id:
+        args.setdefault("user_id", user_id)
     if (tool_name or "").lower() == "lookup_jira":
         raw_key = str(
             args.get("issue_key") or args.get("issue") or args.get("key") or ""
@@ -679,6 +689,7 @@ def _run_openai_tool_loop(
     mcp_client: Optional[MCPClient] = None,
     extra_tools: Optional[List[Dict[str, Any]]] = None,
     user_message: str = "",
+    user_id: Optional[str] = None,
 ) -> str:
     """OpenAI function-calling loop for chief of staff."""
     if not hasattr(llm, "_client"):
@@ -727,6 +738,7 @@ def _run_openai_tool_loop(
                     user_message=user_message,
                     thread_id=thread_id,
                     mcp_client=mcp_client,
+                    user_id=user_id,
                 ) or "Unknown tool."
                 messages.append(
                     {
@@ -834,6 +846,10 @@ def run_specialist_task(
         store, source_thread_id=thread_id, specialist_id=agent_id
     )
     result_threads = [tid for tid in (source_tid, specialist_tid) if tid]
+    chat_user_id = None
+    if thread_id:
+        source_thread = store.get_thread(thread_id)
+        chat_user_id = (source_thread or {}).get("user_id")
 
     def _work() -> str:
         if agent_id == "devops":
@@ -858,7 +874,13 @@ def run_specialist_task(
             return _run_tool_call(
                 client,
                 tool_name,
-                _enrich_tool_args(tool_name, tool_args or {}, task, caller_agent_id=agent_id),
+                _enrich_tool_args(
+                    tool_name,
+                    tool_args or {},
+                    task,
+                    caller_agent_id=agent_id,
+                    user_id=chat_user_id,
+                ),
             )
 
         def _fallback_complete() -> str:
@@ -1000,6 +1022,7 @@ def handle_chat_message(
                 mcp_client=mcp_client,
                 extra_tools=extra_openai,
                 user_message=user_message,
+                user_id=user_id,
             )
         else:
             response_text = _run_json_agent_loop(
@@ -1014,6 +1037,7 @@ def handle_chat_message(
                     user_message=user_message,
                     thread_id=thread_id,
                     mcp_client=mcp_client,
+                    user_id=user_id,
                 )
                 or "Done.",
             )
@@ -1056,7 +1080,13 @@ def handle_chat_message(
         run_tool=lambda name, args: _run_tool_call(
             client,
             name,
-            _enrich_tool_args(name, args or {}, user_message, caller_agent_id=agent_id),
+            _enrich_tool_args(
+                name,
+                args or {},
+                user_message,
+                caller_agent_id=agent_id,
+                user_id=user_id,
+            ),
         ),
     )
 

@@ -571,6 +571,7 @@ class FirestoreTicketStore:
             "parent_key",
             "done_processed",
         }
+        updates: Dict[str, Any] = {}
         for key, value in fields.items():
             if key not in allowed:
                 continue
@@ -578,29 +579,33 @@ class FirestoreTicketStore:
                 st = (value or "").strip()
                 if not is_valid_status(st, project_key=proj):
                     continue
-                ticket["status"] = st
+                updates["status"] = st
             elif key == "title":
                 title = (value or "").strip()
                 if title:
-                    ticket["title"] = title
+                    updates["title"] = title
             elif key == "description":
-                ticket["description"] = str(value or "")
+                updates["description"] = str(value or "")
             elif key == "assignee":
-                ticket["assignee"] = (value or "").strip() or None
+                updates["assignee"] = (value or "").strip() or None
             elif key == "fix_version":
-                ticket["fix_version"] = (value or "").strip() or None
+                updates["fix_version"] = (value or "").strip() or None
             elif key == "thread_id":
-                ticket["thread_id"] = (value or "").strip() or None
+                updates["thread_id"] = (value or "").strip() or None
             elif key == "marketing":
-                ticket["marketing"] = bool(value)
+                updates["marketing"] = bool(value)
             elif key == "parent_key":
                 pk = (value or "").strip().upper() or None
-                ticket["parent_key"] = pk if pk and _ISSUE_KEY_RE.match(pk) else None
+                updates["parent_key"] = pk if pk and _ISSUE_KEY_RE.match(pk) else None
             elif key == "done_processed":
-                ticket["done_processed"] = bool(value)
-        ticket["updated_at"] = _utcnow_iso()
-        ref.set(ticket)
-        return ticket
+                updates["done_processed"] = bool(value)
+        if not updates:
+            return ticket
+        updates["updated_at"] = _utcnow_iso()
+        ref.update(updates)
+        merged = dict(ticket)
+        merged.update(updates)
+        return merged
 
     def delete_ticket(self, ticket_id: str, *, user_id: Optional[str] = None) -> bool:
         ref = self._tickets.document(ticket_id)
@@ -615,6 +620,8 @@ class FirestoreTicketStore:
         return True
 
     def add_comment(self, ticket_id: str, body: str) -> Optional[Dict[str, Any]]:
+        from google.cloud.firestore import ArrayUnion
+
         text = (body or "").strip()
         if not text:
             return None
@@ -622,17 +629,13 @@ class FirestoreTicketStore:
         snap = ref.get()
         if not snap.exists:
             return None
-        ticket = snap.to_dict() or {}
+        now = _utcnow_iso()
         comment = {
             "id": str(uuid.uuid4()),
             "body": text,
-            "created_at": _utcnow_iso(),
+            "created_at": now,
         }
-        comments = list(ticket.get("comments") or [])
-        comments.append(comment)
-        ticket["comments"] = comments
-        ticket["updated_at"] = _utcnow_iso()
-        ref.set(ticket)
+        ref.update({"comments": ArrayUnion([comment]), "updated_at": now})
         return comment
 
     def list_comments(self, ticket_id: str) -> List[Dict[str, Any]]:

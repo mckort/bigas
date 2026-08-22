@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 from typing import Any, Dict, List, Optional
+
+import requests
 
 from bigas.tickets.constants import AI_TRIGGER_STATUSES, columns_for_board, next_column
 from bigas.tickets.store import get_ticket_store
@@ -32,6 +33,105 @@ def _sync_user_id() -> str:
 
 def ticket_url(key: str) -> str:
     return f"/board?ticket={key}"
+
+
+def _ticket_automation_worker_url() -> str:
+    base = (os.environ.get("SERVER_URL") or "").strip().rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/api/tickets/automation-worker"
+
+
+def _ticket_automation_dispatch_headers() -> Dict[str, str]:
+    from bigas.resources.devops.self_healing import webhook_secret
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "bigas-core/1.0 (ticket-automation-worker)",
+    }
+    secret = webhook_secret()
+    if secret:
+        headers["X-Bigas-Webhook-Secret"] = secret
+    keys = (os.environ.get("BIGAS_ACCESS_KEYS") or "").split(",")
+    if keys and keys[0].strip():
+        headers["X-Bigas-Access-Key"] = keys[0].strip()
+    return headers
+
+
+def run_ticket_status_automation(
+    ticket: Dict[str, Any],
+    *,
+    old_status: str,
+    new_status: str,
+    project_key: str,
+) -> None:
+    """Run AI automation and Done-side effects for a status change."""
+    service = TicketService()
+    try:
+        if new_status in AI_TRIGGER_STATUSES:
+            from bigas.tickets.automation import InternalTicketAutomation
+
+            InternalTicketAutomation().handle_status_change(
+                issue_key=ticket.get("key") or "",
+                to_status=new_status,
+                from_status=old_status,
+                project_key=project_key,
+            )
+        elif new_status == "Done" and not ticket.get("done_processed"):
+            service._handle_done(ticket, project_key=project_key)
+    except Exception:
+        logger.exception(
+            "Ticket automation failed for %s → %s",
+            ticket.get("key"),
+            new_status,
+        )
+
+
+def dispatch_ticket_status_automation(
+    ticket: Dict[str, Any],
+    *,
+    old_status: str,
+    new_status: str,
+    project_key: str,
+) -> None:
+    """Dispatch status automation via HTTP so Cloud Run allocates CPU for a new request."""
+    url = _ticket_automation_worker_url()
+    payload = {
+        "ticket_id": ticket.get("ticket_id") or "",
+        "issue_key": ticket.get("key") or "",
+        "old_status": old_status,
+        "new_status": new_status,
+        "project_key": project_key,
+        "done_processed": bool(ticket.get("done_processed")),
+    }
+    if not url:
+        logger.warning(
+            "SERVER_URL not set; running ticket automation inline for %s (dev only)",
+            ticket.get("key"),
+        )
+        run_ticket_status_automation(
+            ticket,
+            old_status=old_status,
+            new_status=new_status,
+            project_key=project_key,
+        )
+        return
+
+    try:
+        requests.post(
+            url,
+            json=payload,
+            headers=_ticket_automation_dispatch_headers(),
+            timeout=(10, 1),
+        )
+    except requests.exceptions.ReadTimeout:
+        return
+    except requests.exceptions.RequestException as e:
+        logger.warning(
+            "Ticket automation worker dispatch failed for %s: %s",
+            ticket.get("key"),
+            e,
+        )
 
 
 def ticket_to_api(ticket: Dict[str, Any]) -> Dict[str, Any]:
@@ -186,27 +286,12 @@ class TicketService:
 
         project_key = board.get("project_key") or ""
 
-        def _run() -> None:
-            try:
-                if new_status in AI_TRIGGER_STATUSES:
-                    from bigas.tickets.automation import InternalTicketAutomation
-
-                    InternalTicketAutomation().handle_status_change(
-                        issue_key=ticket.get("key") or "",
-                        to_status=new_status,
-                        from_status=old_status,
-                        project_key=project_key,
-                    )
-                elif new_status == "Done" and not ticket.get("done_processed"):
-                    self._handle_done(ticket, project_key=project_key)
-            except Exception:
-                logger.exception(
-                    "Ticket automation failed for %s → %s",
-                    ticket.get("key"),
-                    new_status,
-                )
-
-        threading.Thread(target=_run, daemon=True).start()
+        dispatch_ticket_status_automation(
+            ticket,
+            old_status=old_status or "",
+            new_status=new_status,
+            project_key=project_key,
+        )
 
     def _handle_done(self, ticket: Dict[str, Any], *, project_key: str) -> None:
         from bigas.chat.activity import mirror_to_activity_feed, post_to_agent_thread

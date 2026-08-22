@@ -44,6 +44,7 @@ class CreateJiraIssueService:
         issue_type: str = "Task",
         marketing: bool = False,
         parent_epic_key: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         from bigas.tickets.config import use_internal_board
 
@@ -78,6 +79,7 @@ class CreateJiraIssueService:
                 issue_type=itype,
                 marketing=marketing,
                 parent_key=epic,
+                user_id=user_id,
             )
             out: Dict[str, Any] = {
                 "ok": True,
