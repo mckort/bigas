@@ -582,7 +582,7 @@ def _cto_discord_webhook() -> str:
 def _post_to_discord_cto(message: str, *, mirror_thread: bool = True) -> None:
     """Post to CTO Discord and the CTO chat thread.
     Callers must pass only sanitized messages (use sanitize_error_message for errors) to avoid leaking tokens.
-    Set mirror_thread=False for pipeline status cards (Activity + Discord only).
+    Set mirror_thread=False for review results and pipeline status cards (Activity + Discord only).
     """
     webhook = _cto_discord_webhook()
     if not webhook:
@@ -593,15 +593,20 @@ def _post_to_discord_cto(message: str, *, mirror_thread: bool = True) -> None:
 
 
 def _post_cto_status(message: str) -> None:
-    """PR pipeline cards: Discord + Activity, not the CTO chat thread."""
+    """PR review/pipeline cards: Discord + Activity, not the CTO chat thread."""
     _post_to_discord_cto(message, mirror_thread=False)
 
 
 def _post_to_discord_cto_chunks(message: str) -> None:
-    """Post long CTO content via the shared Discord long-message helper."""
+    """Post long CTO review content: Discord + Activity, not the CTO thread."""
     if not (message or "").strip():
         return
-    post_long_to_discord(_cto_discord_webhook(), message.strip(), chat_agent_id="cto")
+    post_long_to_discord(
+        _cto_discord_webhook(),
+        message.strip(),
+        chat_agent_id="cto",
+        mirror_thread=False,
+    )
 
 
 @cto_bp.route("/review_and_comment_pr", methods=["POST"])
@@ -732,7 +737,7 @@ def review_and_comment_pr():
         review_body = review_result.text
     except PRReviewError as e:
         logger.warning("PR review failed: %s", e)
-        _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
+        _post_cto_status(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
         return _json_summary({"error": sanitize_error_message(str(e))}, summarize_review_result, 500)
 
     if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
@@ -759,7 +764,7 @@ def review_and_comment_pr():
     except GitHubPRCommentError as e:
         logger.warning("GitHub PR comment failed: %s", e)
         err_msg = sanitize_error_message(str(e))
-        _post_to_discord_cto(f"**CTO PR review done**\nNo comment posted.\nReason: {err_msg}")
+        _post_cto_status(f"**CTO PR review done**\nNo comment posted.\nReason: {err_msg}")
         if "401" in str(e) or "invalid" in str(e).lower() or "expired" in str(e).lower():
             return _json_summary({"error": err_msg}, summarize_review_result, 401)
         if "403" in str(e):
@@ -788,7 +793,7 @@ def review_and_comment_pr():
             )
         )
     else:
-        _post_to_discord_cto(
+        _post_cto_status(
             f"{done_label}\nNo comment posted. (No URL returned from GitHub.)"
             f"{cost_suffix}\n{pr_ref}"
         )
@@ -1210,7 +1215,7 @@ def autofix_followup():
         diff = service.fetch_pr_diff(repo=repo, pr_number=pr_number)
     except AutofixError as e:
         err = sanitize_error_message(str(e))
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
         )
         return _json_summary(
@@ -1241,7 +1246,7 @@ def autofix_followup():
         review_body = review_result.text
     except PRReviewError as e:
         err = sanitize_error_message(str(e))
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
         )
         return _json_summary(
@@ -1269,7 +1274,7 @@ def autofix_followup():
         comment_url = posted.get("html_url") or ""
     except GitHubPRCommentError as e:
         err = sanitize_error_message(str(e))
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
         )
         return _json_summary(

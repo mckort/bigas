@@ -26,7 +26,7 @@ Optional autofix (Cursor cloud agent): set repository variable `BIGAS_AUTO_FIX=t
 
 The workflow **skips** runs whose PR head commit **subject** contains `[bigas-autofix]` (a separate `gate` job), so autofix pushes do not cancel the in-flight review/autofix job or start a duplicate “CTO PR review started” cycle. Server-side, Bigas also no-ops quietly when the PR is already merged, and skips the Final-approval Discord ping when the Jira issue is already in that status.
 
-Optional auto-merge: set Bigas env `BIGAS_CTO_AUTO_MERGE=true` to squash-merge when the review has no Blockers/Important (Discord/Activity **PR auto-merged**, or **PR auto-merge enabled** if checks are still pending). The card includes the Jira issue label when the PR is linked (`BIG-15` — summary). Draft PRs are marked ready for review first. Default is off. Repo must allow auto-merge. Ready to merge / Final approval / auto-merge cards go to Discord and the chat Activity feed, not the CTO thread.
+Optional auto-merge: set Bigas env `BIGAS_CTO_AUTO_MERGE=true` to squash-merge when the review has no Blockers/Important (Discord/Activity **PR auto-merged**, or **PR auto-merge enabled** if checks are still pending). The card includes the Jira issue label when the PR is linked (`BIG-15` — summary). Draft PRs are marked ready for review first. Default is off. Repo must allow auto-merge. Review results and Ready to merge / Final approval / auto-merge cards go to Discord and the chat Activity feed, not the CTO thread.
 
 ## Server-side configuration (Bigas)
 
