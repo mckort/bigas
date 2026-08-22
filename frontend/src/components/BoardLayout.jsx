@@ -6,6 +6,7 @@ import {
   deleteTicket,
   fetchBoards,
   fetchBoardTickets,
+  fetchTicketByKey,
   updateTicket,
 } from '../lib/api'
 
@@ -30,7 +31,10 @@ function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, draggi
   return (
     <div
       draggable
-      onDragStart={(e) => onDragStart(e, ticket)}
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', ticket.ticket_id || ticket.key || '')
+        onDragStart(e, ticket)
+      }}
       onDragEnd={onDragEnd}
       className={`bg-white border border-border rounded-xl p-3 shadow-soft cursor-grab active:cursor-grabbing ${
         dragging ? 'opacity-50' : ''
@@ -108,6 +112,18 @@ function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
             />
           </label>
           <label className="block text-sm">
+            <span className="text-muted text-xs">Issue type</span>
+            <select
+              value={form.issue_type}
+              onChange={(e) => setForm({ ...form, issue_type: e.target.value })}
+              className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+            >
+              <option value="Task">Task</option>
+              <option value="Bug">Bug</option>
+              <option value="Epic">Epic</option>
+            </select>
+          </label>
+          <label className="block text-sm">
             <span className="text-muted text-xs">Status</span>
             <select
               value={form.status}
@@ -145,7 +161,10 @@ function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
           {!isNew && (
             <button
               type="button"
-              onClick={() => onDelete(ticket)}
+              onClick={() => {
+                if (!window.confirm(`Delete ticket ${ticket.key}?`)) return
+                onDelete(ticket)
+              }}
               className="text-red-600 text-sm px-4 py-2 min-h-[44px] order-3 sm:order-1 sm:mr-auto"
             >
               Delete
@@ -285,6 +304,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [modalTicket, setModalTicket] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [dragTicket, setDragTicket] = useState(null)
+  const [pendingTicketKey, setPendingTicketKey] = useState(null)
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
   const columns = activeBoard?.columns || ['To Do', 'In Progress', 'Review', 'Done']
@@ -315,12 +335,42 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const ticketKey = params.get('ticket')
-    if (ticketKey && tickets.length) {
-      const found = tickets.find((t) => t.key === ticketKey)
-      if (found) setModalTicket(found)
+    const ticketKey = (params.get('ticket') || '').trim().toUpperCase()
+    if (ticketKey) setPendingTicketKey(ticketKey)
+  }, [])
+
+  useEffect(() => {
+    if (!pendingTicketKey) return
+
+    let cancelled = false
+
+    async function openTicketFromUrl() {
+      const found = tickets.find((t) => t.key === pendingTicketKey)
+      if (found) {
+        setModalTicket(found)
+        setPendingTicketKey(null)
+        return
+      }
+
+      try {
+        const data = await fetchTicketByKey(pendingTicketKey)
+        if (cancelled || !data.ticket) return
+        if (data.ticket.board_id && data.ticket.board_id !== activeBoardId) {
+          setActiveBoardId(data.ticket.board_id)
+          return
+        }
+        setModalTicket(data.ticket)
+        setPendingTicketKey(null)
+      } catch {
+        /* ticket not found or forbidden */
+      }
     }
-  }, [tickets])
+
+    openTicketFromUrl()
+    return () => {
+      cancelled = true
+    }
+  }, [pendingTicketKey, tickets, activeBoardId])
 
   const handleStatusChange = async (ticket, status) => {
     await updateTicket(ticket.ticket_id, { status })

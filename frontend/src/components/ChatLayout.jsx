@@ -715,7 +715,10 @@ export default function ChatLayout({
   useEffect(() => {
     if (!discussContext) return
     const prefix = `Let's discuss ticket ${discussContext.key}: ${discussContext.title}\n\n`
-    setInput((prev) => (prev.startsWith(prefix) ? prev : prefix))
+    setInput((prev) => {
+      if (prev.startsWith(prefix)) return prev
+      return prev.trim() ? `${prefix}${prev}` : prefix
+    })
     setActiveAgentId('chief')
     onClearDiscussContext?.()
   }, [discussContext, onClearDiscussContext])

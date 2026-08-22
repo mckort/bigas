@@ -125,6 +125,10 @@ export async function createTicket(boardId, payload) {
   })
 }
 
+export async function fetchTicketByKey(key) {
+  return apiFetch(`/api/tickets/by-key/${encodeURIComponent(key)}`)
+}
+
 export async function updateTicket(ticketId, payload) {
   return apiFetch(`/api/tickets/${ticketId}`, {
     method: 'PUT',
