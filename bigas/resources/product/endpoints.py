@@ -19,6 +19,10 @@ from bigas.resources.product.create_jira_issue.lookup import (
     LookupJiraError,
     LookupJiraService,
 )
+from bigas.resources.product.review_jira_issue.service import (
+    ReviewJiraIssueError,
+    ReviewJiraIssueService,
+)
 from bigas.resources.product.create_release_notes.jira_client import normalize_project_keys
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
 from bigas.resources.product.jira_automation.service import (
@@ -364,7 +368,8 @@ def create_jira_issue():
 @require_bigas_access_key
 def lookup_jira():
     """
-    Look up a Jira issue (including parent Epic) and/or open Epics in a project.
+    Look up a Jira issue (description, human comments, parent Epic)
+    and/or open Epics in a project.
 
     Request JSON:
       {
@@ -373,6 +378,7 @@ def lookup_jira():
       }
 
     At least one of issue_key or project_key is required.
+    issue_key may be a browse URL.
     """
     data = request.json or {}
     issue_key = (
@@ -399,6 +405,54 @@ def lookup_jira():
         return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
     except Exception as e:
         logger.error("Error in lookup_jira", exc_info=True)
+        return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
+
+
+@product_bp.route('/review_jira_issue', methods=['POST'])
+@require_bigas_access_key
+def review_jira_issue():
+    """
+    Product-manager critique of a Jira issue (Brief, Research/Plan, human comments).
+
+    Request JSON:
+      {
+        "issue_key": "VFA-17",
+        "instructions": "optional extra context",
+        "post_comment": true
+      }
+
+    issue_key may be a browse URL. Default post_comment=true updates one marked
+    Jira comment. Returns review markdown for chat.
+    """
+    data = request.json or {}
+    issue_key = (
+        str(data.get("issue_key") or data.get("issue") or data.get("key") or "").strip()
+        or None
+    )
+    instructions = str(data.get("instructions") or "").strip() or None
+    post_comment = request_flag(data, "post_comment", True)
+    llm_model = str(data.get("llm_model") or "").strip() or None
+    try:
+        result = ReviewJiraIssueService().review(
+            issue_key=issue_key,
+            instructions=instructions,
+            post_comment=post_comment,
+            llm_model=llm_model,
+        )
+        return jsonify(result)
+    except ReviewJiraIssueError as e:
+        msg = str(e)
+        status = 400 if any(
+            s in msg.lower()
+            for s in [
+                "required",
+                "not found",
+                "not accessible",
+            ]
+        ) else 500
+        return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
+    except Exception as e:
+        logger.error("Error in review_jira_issue", exc_info=True)
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
@@ -690,9 +744,10 @@ def get_manifest():
             {
                 "name": "lookup_jira",
                 "description": (
-                    "Look up a Jira issue (summary, type, status, parent Epic) and/or list "
-                    "open Epics in a project. Use this before create_jira_issue when you need "
-                    "context. A parent on a referenced ticket is not automatically the parent "
+                    "Look up a Jira issue (summary, status, description, human comments, "
+                    "parent Epic) and/or list open Epics in a project. Use this before "
+                    "create_jira_issue when you need context, not for a product critique. "
+                    "A parent on a referenced ticket is not automatically the parent "
                     "for a new ticket — only link parent_epic_key if the new work belongs under "
                     "that Epic; otherwise create a standalone Task/Bug."
                 ),
@@ -703,13 +758,46 @@ def get_manifest():
                     "properties": {
                         "issue_key": {
                             "type": "string",
-                            "description": "Issue to inspect, e.g. GPWW-3. Returns its parent Epic if any.",
+                            "description": (
+                                "Issue to inspect, e.g. GPWW-3 or a browse URL. "
+                                "Returns description, human comments, and parent Epic if any."
+                            ),
                         },
                         "project_key": {
                             "type": "string",
                             "description": "Project whose open Epics should be listed, e.g. GPWW.",
                         },
                     },
+                },
+            },
+            {
+                "name": "review_jira_issue",
+                "description": (
+                    "Product Manager critique of a Jira issue: Brief, AI Research/Plan, "
+                    "and human comments. Use when the user asks what you think, for comments, "
+                    "or a product view on a ticket. Posts or updates one marked Jira comment "
+                    "by default and returns the review for chat."
+                ),
+                "path": "/mcp/tools/review_jira_issue",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_key": {
+                            "type": "string",
+                            "description": "Issue key or browse URL, e.g. VFA-17.",
+                        },
+                        "instructions": {
+                            "type": "string",
+                            "description": "Optional extra context from the user (e.g. focus on their latest comment).",
+                        },
+                        "post_comment": {
+                            "type": "boolean",
+                            "description": "Post or update the PM review comment on the issue. Default true.",
+                            "default": True,
+                        },
+                    },
+                    "required": ["issue_key"],
                 },
             },
             {

@@ -41,6 +41,7 @@ def parse_project_keys(raw: Optional[str]) -> List[str]:
 
 
 _ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+_ISSUE_KEY_SEARCH_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b", re.IGNORECASE)
 
 
 def normalize_parent_epic_key(
@@ -72,11 +73,20 @@ def is_invalid_parent_error(exc: BaseException) -> bool:
 
 
 def normalize_issue_key(raw: Optional[str]) -> Optional[str]:
-    """Return a canonical Jira issue key (e.g. GPWW-3) or None."""
-    key = (raw or "").strip().upper()
-    if not key or not _ISSUE_KEY_RE.match(key):
+    """Return a canonical Jira issue key (e.g. GPWW-3) or None.
+
+    Accepts a bare key or a browse URL / sentence that contains one.
+    """
+    text = (raw or "").strip()
+    if not text:
         return None
-    return key
+    key = text.upper()
+    if _ISSUE_KEY_RE.match(key):
+        return key
+    match = _ISSUE_KEY_SEARCH_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).upper()
 
 
 def _epic_link_field_name() -> str:
@@ -170,7 +180,7 @@ def compact_jira_issue(
 
 
 def issue_lookup_fields() -> List[str]:
-    fields = ["summary", "status", "issuetype", "parent", "project"]
+    fields = ["summary", "status", "issuetype", "parent", "project", "description"]
     extra = _epic_link_field_name()
     if extra.lower() != "parent" and extra not in fields:
         fields.append(extra)
@@ -603,6 +613,47 @@ class JiraClient:
         url = f"{self._config.base_url}/rest/api/3/issue/{key}/comment"
         payload = {"body": _text_to_adf(text)}
         return self._request_with_retry_429("POST", url, json=payload)
+
+    def add_or_update_marked_comment(
+        self,
+        issue_key: str,
+        body_text: str,
+        *,
+        marker: str,
+    ) -> Dict[str, Any]:
+        """Post a markdown comment, or update the existing one that contains marker."""
+        key = (issue_key or "").strip()
+        text = (body_text or "").strip()
+        mark = (marker or "").strip()
+        if not key:
+            raise JiraError("issue_key is required")
+        if not text:
+            raise JiraError("comment body is required")
+        if not mark:
+            raise JiraError("marker is required")
+        if mark not in text:
+            text = f"{mark}\n\n{text}"
+        comments = self.list_comments(key, max_results=100)
+        existing_id = ""
+        for comment in comments:
+            body = adf_to_plain_text(comment.get("body"))
+            if mark in body:
+                existing_id = str(comment.get("id") or "").strip()
+                break
+        payload = {"body": markdown_to_adf(text)}
+        if existing_id:
+            url = f"{self._config.base_url}/rest/api/3/issue/{key}/comment/{existing_id}"
+            data = self._request_with_retry_429("PUT", url, json=payload)
+            if isinstance(data, dict):
+                data["updated"] = True
+                return data
+            return {"updated": True, "id": existing_id}
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}/comment"
+        data = self._request_with_retry_429("POST", url, json=payload)
+        if isinstance(data, dict):
+            data["updated"] = False
+            return data
+        return {"updated": False}
 
     def list_comments(
         self,

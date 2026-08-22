@@ -83,6 +83,15 @@ def test_lookup_jira_issue_includes_parent_and_project_epics(monkeypatch):
                     "issuetype": {"name": "Task"},
                     "status": {"name": "To Do"},
                     "project": {"key": "GPWW"},
+                    "description": {
+                        "type": "doc",
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [{"type": "text", "text": "## Brief\nTrack key events"}],
+                            }
+                        ],
+                    },
                     "parent": {
                         "key": "GPWW-2",
                         "fields": {
@@ -92,6 +101,24 @@ def test_lookup_jira_issue_includes_parent_and_project_epics(monkeypatch):
                     },
                 },
             }
+
+        def list_comments(self, issue_key, *, max_results=50):
+            assert issue_key == "GPWW-3"
+            return [
+                {
+                    "created": "2026-08-22T08:55:03.753+0200",
+                    "author": {"displayName": "Marcus"},
+                    "body": {
+                        "type": "doc",
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [{"type": "text", "text": "Focus on deal memo not term sheet"}],
+                            }
+                        ],
+                    },
+                }
+            ]
 
         def list_open_epics(self, project_keys=None, *, max_results=20):
             assert project_keys == "GPWW"
@@ -124,9 +151,60 @@ def test_lookup_jira_issue_includes_parent_and_project_epics(monkeypatch):
     result = LookupJiraService().lookup(issue_key="gpww-3")
     assert result["ok"] is True
     assert result["issue"]["key"] == "GPWW-3"
+    assert "Brief" in result["issue"]["description"]
+    assert "deal memo" in result["issue"]["human_comments"]
     assert result["parent"]["key"] == "GPWW-2"
     assert result["epics"][0]["key"] == "GPWW-2"
     assert "standalone" in result["parent_guidance"].lower()
+
+
+def test_lookup_jira_accepts_browse_url(monkeypatch):
+    class FakeClient:
+        def __init__(self, config):
+            self._config = config
+
+        def get_issue(self, issue_key, *, fields=None, expand=None):
+            assert issue_key == "VFA-17"
+            return {
+                "key": "VFA-17",
+                "fields": {
+                    "summary": "Founder section",
+                    "issuetype": {"name": "Task"},
+                    "status": {"name": "Description approval (Manual)"},
+                    "project": {"key": "VFA"},
+                    "description": "Deal memo founder section",
+                },
+            }
+
+        def list_comments(self, issue_key, *, max_results=50):
+            return []
+
+        def list_open_epics(self, project_keys=None, *, max_results=20):
+            return []
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.lookup.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.lookup.JiraConfig",
+        type(
+            "C",
+            (),
+            {
+                "from_env": staticmethod(
+                    lambda: type("Cfg", (), {"base_url": "https://example.atlassian.net"})()
+                )
+            },
+        )(),
+    )
+
+    result = LookupJiraService().lookup(
+        issue_key="https://scaleupadvisor.atlassian.net/browse/VFA-17"
+    )
+    assert result["issue"]["key"] == "VFA-17"
+    assert result["issue"]["description"] == "Deal memo founder section"
+    assert result["issue"]["human_comments"] == "(none)"
 
 
 def test_lookup_jira_project_lists_epics_only(monkeypatch):
@@ -136,6 +214,9 @@ def test_lookup_jira_project_lists_epics_only(monkeypatch):
 
         def list_open_epics(self, project_keys=None, *, max_results=20):
             return [{"key": "GPWW-2", "summary": "10 paying customers", "issue_type": "Epic"}]
+
+        def list_comments(self, issue_key, *, max_results=50):
+            return []
 
     monkeypatch.setattr(
         "bigas.resources.product.create_jira_issue.lookup.JiraClient",
