@@ -236,6 +236,15 @@ def _pr_title_of(pr: dict | None) -> str:
     return ((pr or {}).get("title") or "").strip()
 
 
+def _jira_issue_heading(issue_key: str = "", issue_summary: str = "") -> str:
+    from bigas.resources.product.jira_automation.comments import issue_discord_label
+
+    key = (issue_key or "").strip()
+    if not key:
+        return ""
+    return f" {issue_discord_label(key, issue_summary)}"
+
+
 def _pr_already_merged(
     *,
     owner: str,
@@ -260,6 +269,8 @@ def _maybe_auto_merge_pr(
     pr_number: int,
     pr_url: str,
     github_token: str,
+    issue_key: str = "",
+    issue_summary: str = "",
 ) -> dict:
     """
     Squash-merge the PR when BIGAS_CTO_AUTO_MERGE is enabled.
@@ -270,18 +281,21 @@ def _maybe_auto_merge_pr(
 
     Best-effort: returns skipped/ok/error payload; posts Discord on success or failure.
     """
+    issue_bit = _jira_issue_heading(issue_key, issue_summary)
     if not auto_merge_enabled():
         return {"skipped": True, "reason": "BIGAS_CTO_AUTO_MERGE not enabled"}
     if not (github_token or "").strip():
         err = "GITHUB_TOKEN missing"
-        _post_to_discord_cto(
-            f"**PR auto-merge failed**\n{format_pr_discord_line(pr_url)}\nReason: {err}"
+        _post_cto_status(
+            f"**PR auto-merge failed**{issue_bit}\n"
+            f"{format_pr_discord_line(pr_url)}\nReason: {err}"
         )
         return {"ok": False, "merged": False, "error": err}
     if "/" not in repo or repo.count("/") != 1:
         err = "repo must be owner/repo"
-        _post_to_discord_cto(
-            f"**PR auto-merge failed**\n{format_pr_discord_line(pr_url)}\nReason: {err}"
+        _post_cto_status(
+            f"**PR auto-merge failed**{issue_bit}\n"
+            f"{format_pr_discord_line(pr_url)}\nReason: {err}"
         )
         return {"ok": False, "merged": False, "error": err}
 
@@ -303,6 +317,20 @@ def _maybe_auto_merge_pr(
         )
     pr_title = _pr_title_of(pr)
     pr_ref = format_pr_discord_line(pr_url, pr_title)
+    if not (issue_key or "").strip():
+        from bigas.resources.product.jira_automation.final_approval import (
+            extract_jira_issue_key,
+        )
+
+        issue_key = (
+            extract_jira_issue_key(
+                pr_title,
+                (pr.get("body") or ""),
+                ((pr.get("head") or {}).get("ref") or ""),
+            )
+            or ""
+        )
+        issue_bit = _jira_issue_heading(issue_key, issue_summary)
 
     # Quiet skip when a parallel review already merged (no Discord spam).
     if pr.get("merged"):
@@ -336,8 +364,8 @@ def _maybe_auto_merge_pr(
                 pr_number,
                 err,
             )
-            _post_to_discord_cto(
-                f"**PR auto-merge failed**\n{pr_ref}\n"
+            _post_cto_status(
+                f"**PR auto-merge failed**{issue_bit}\n{pr_ref}\n"
                 f"PR is still a draft; could not mark ready for review.\n"
                 f"Reason: {err}"
             )
@@ -397,8 +425,8 @@ def _maybe_auto_merge_pr(
                 pr_number,
                 err,
             )
-            _post_to_discord_cto(
-                f"**PR auto-merge failed**\n{pr_ref}\n"
+            _post_cto_status(
+                f"**PR auto-merge failed**{issue_bit}\n{pr_ref}\n"
                 f"Immediate merge blocked: {sync_err}\n"
                 f"Enable auto-merge failed: {err}"
             )
@@ -418,8 +446,8 @@ def _maybe_auto_merge_pr(
                 pr_number,
                 exc_info=True,
             )
-            _post_to_discord_cto(
-                f"**PR auto-merge failed**\n{pr_ref}\nReason: {err}"
+            _post_cto_status(
+                f"**PR auto-merge failed**{issue_bit}\n{pr_ref}\nReason: {err}"
             )
             return {
                 "ok": False,
@@ -431,8 +459,8 @@ def _maybe_auto_merge_pr(
             }
 
         method = (enabled.get("merge_method") or "squash").lower()
-        _post_to_discord_cto(
-            f"**PR auto-merge enabled** ({method}){draft_line}\n"
+        _post_cto_status(
+            f"**PR auto-merge enabled** ({method}){issue_bit}{draft_line}\n"
             f"Waiting for required checks, then GitHub will squash-merge.\n"
             f"{pr_ref}"
         )
@@ -448,8 +476,8 @@ def _maybe_auto_merge_pr(
     except GitHubPRCommentError as e:
         err = sanitize_error_message(str(e))
         logger.warning("Auto-merge failed for %s#%s: %s", repo, pr_number, err)
-        _post_to_discord_cto(
-            f"**PR auto-merge failed**\n{pr_ref}\nReason: {err}"
+        _post_cto_status(
+            f"**PR auto-merge failed**{issue_bit}\n{pr_ref}\nReason: {err}"
         )
         return {
             "ok": False,
@@ -460,8 +488,8 @@ def _maybe_auto_merge_pr(
     except Exception as e:
         err = sanitize_error_message(str(e))
         logger.warning("Auto-merge unexpected error for %s#%s", repo, pr_number, exc_info=True)
-        _post_to_discord_cto(
-            f"**PR auto-merge failed**\n{pr_ref}\nReason: {err}"
+        _post_cto_status(
+            f"**PR auto-merge failed**{issue_bit}\n{pr_ref}\nReason: {err}"
         )
         return {
             "ok": False,
@@ -472,8 +500,8 @@ def _maybe_auto_merge_pr(
 
     sha = (result.get("sha") or "").strip()
     sha_line = f"\nSHA: `{sha}`" if sha else ""
-    _post_to_discord_cto(
-        f"**PR auto-merged** (squash){draft_line}\n{pr_ref}{sha_line}"
+    _post_cto_status(
+        f"**PR auto-merged** (squash){issue_bit}{draft_line}\n{pr_ref}{sha_line}"
     )
     return {
         "ok": True,
@@ -551,14 +579,22 @@ def _cto_discord_webhook() -> str:
     return webhook
 
 
-def _post_to_discord_cto(message: str) -> None:
+def _post_to_discord_cto(message: str, *, mirror_thread: bool = True) -> None:
     """Post to CTO Discord and the CTO chat thread.
     Callers must pass only sanitized messages (use sanitize_error_message for errors) to avoid leaking tokens.
+    Set mirror_thread=False for pipeline status cards (Activity + Discord only).
     """
     webhook = _cto_discord_webhook()
     if not webhook:
         logger.info("DISCORD_WEBHOOK_URL_CTO not set or placeholder, skipping Discord post")
-    post_to_discord(webhook, message, chat_agent_id="cto")
+    post_to_discord(
+        webhook, message, chat_agent_id="cto", mirror_thread=mirror_thread
+    )
+
+
+def _post_cto_status(message: str) -> None:
+    """PR pipeline cards: Discord + Activity, not the CTO chat thread."""
+    _post_to_discord_cto(message, mirror_thread=False)
 
 
 def _post_to_discord_cto_chunks(message: str) -> None:
@@ -759,7 +795,7 @@ def review_and_comment_pr():
 
     auto_merge: dict = {"skipped": True, "reason": "not_ready"}
     if ready:
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**Ready to merge**\n{pr_ref}\n"
             + (f"Comment: {comment_url}" if comment_url else "")
         )
@@ -774,6 +810,8 @@ def review_and_comment_pr():
             pr_number=pr_number,
             pr_url=pr_url,
             github_token=github_token,
+            issue_key=jira_final.get("issue_key") or "",
+            issue_summary=jira_final.get("summary") or "",
         )
     else:
         jira_final = {"skipped": True, "reason": "not_ready"}
@@ -1264,7 +1302,7 @@ def autofix_followup():
     jira_final = {"skipped": True, "reason": "not_ready"}
     auto_merge: dict = {"skipped": True, "reason": "not_ready"}
     if ready:
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**Ready to merge**\n{pr_ref}\nComment: {comment_url}"
         )
         jira_final = _jira_final_approval_for_pr(
@@ -1278,6 +1316,8 @@ def autofix_followup():
             pr_number=pr_number,
             pr_url=pr_url,
             github_token=gh_token,
+            issue_key=jira_final.get("issue_key") or "",
+            issue_summary=jira_final.get("summary") or "",
         )
     elif autofix_count >= max_iters:
         _notify_autofix_loop_protection(

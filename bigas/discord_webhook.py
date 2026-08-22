@@ -20,6 +20,7 @@ def _mirror_to_chat(
     chat_agent_id: Optional[str] = None,
     chat_metadata: Optional[Dict[str, Any]] = None,
     channel_hint: str = "",
+    mirror_thread: bool = True,
 ) -> None:
     try:
         from bigas.chat.activity import mirror_discord_message
@@ -30,6 +31,7 @@ def _mirror_to_chat(
             channel_hint=channel_hint,
             chat_agent_id=chat_agent_id,
             chat_metadata=chat_metadata,
+            mirror_thread=mirror_thread,
         )
     except Exception:
         logger.debug("Discord chat mirror skipped", exc_info=True)
@@ -47,6 +49,7 @@ def post_to_discord(
     chat_agent_id: Optional[str] = None,
     chat_metadata: Optional[Dict[str, Any]] = None,
     mirror_chat: bool = True,
+    mirror_thread: bool = True,
     channel_hint: str = "",
 ) -> bool:
     """
@@ -55,6 +58,8 @@ def post_to_discord(
 
     When chat is enabled, the same text is mirrored to the matching specialist
     thread (and the activity feed), even if the Discord webhook is unset.
+    Set mirror_thread=False to keep the activity-feed card without posting
+    into the specialist thread (pipeline status cards).
 
     Retries briefly on HTTP 429 so multi-part posts from post_long_to_discord
     are less likely to drop continuation chunks.
@@ -68,6 +73,7 @@ def post_to_discord(
             chat_agent_id=chat_agent_id,
             chat_metadata=chat_metadata,
             channel_hint=channel_hint,
+            mirror_thread=mirror_thread,
         )
 
     if not _discord_url_ready(webhook_url):
@@ -112,6 +118,7 @@ def post_long_to_discord(
     chat_agent_id: Optional[str] = None,
     chat_metadata: Optional[Dict[str, Any]] = None,
     mirror_chat: bool = True,
+    mirror_thread: bool = True,
     channel_hint: str = "",
 ) -> None:
     """
@@ -130,6 +137,7 @@ def post_long_to_discord(
             chat_agent_id=chat_agent_id,
             chat_metadata=chat_metadata,
             channel_hint=channel_hint,
+            mirror_thread=mirror_thread,
         )
 
     if not _discord_url_ready(webhook_url):

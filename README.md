@@ -480,7 +480,7 @@ Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend 
 | **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; can file Jira Task/Bug issues; delegates domain tasks to specialists |
 | **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows |
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
-| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
+| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. PR pipeline cards (Ready to merge, Final approval, auto-merge) stay in Activity and Discord — they are not posted into the CTO chat thread. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
 | **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
 | **Starter prompts** | Empty threads show clickable example questions (e.g. summarize PRs, draft a tweet, GA4 traffic) so you can try the team without reading the API reference |
 | **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
