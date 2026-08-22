@@ -6492,20 +6492,12 @@ from bigas.discord_webhook import (  # noqa: E402
 
 
 def post_to_discord(webhook_url, message, *args, **kwargs):
-    text = (message or "").strip()
-    if text:
-        from bigas.chat.activity import post_marketing_report_to_chat
-
-        post_marketing_report_to_chat(text, skip_status_pings=True)
+    kwargs.setdefault("chat_agent_id", "marketing")
     return _post_to_discord(webhook_url, message, *args, **kwargs)
 
 
 def post_long_to_discord(webhook_url, text, chunk_size=1900, *args, **kwargs):
-    body = (text or "").strip()
-    if body:
-        from bigas.chat.activity import post_marketing_report_to_chat
-
-        post_marketing_report_to_chat(body)
+    kwargs.setdefault("chat_agent_id", "marketing")
     return _post_long_to_discord(webhook_url, text, chunk_size, *args, **kwargs)
 
 @marketing_bp.route('/openapi.json', methods=['GET'])

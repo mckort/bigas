@@ -962,6 +962,108 @@ def test_discord_mirror_activity():
     assert after == before + 1
 
 
+def test_discord_mirror_posts_to_product_thread(monkeypatch):
+    from bigas.chat.activity import mirror_discord_message
+    from bigas.chat.db import get_chat_store
+
+    monkeypatch.setenv("CHAT_ENABLED", "true")
+    monkeypatch.setenv("CHAT_AUTH_MODE", "dev")
+    monkeypatch.delenv("BIGAS_EMAIL_SYNC_USER_UID", raising=False)
+    monkeypatch.delenv("BIGAS_EMAIL_SYNC_USER_EMAIL", raising=False)
+    monkeypatch.delenv("CHAT_ADMIN_EMAILS", raising=False)
+
+    store = get_chat_store()
+    mirror_discord_message(
+        "",
+        "**Research complete** `VFA-17` — Founder section",
+        chat_agent_id="product",
+    )
+    thread = store.get_or_create_agent_thread("dev-user", "product")
+    messages = store.list_messages(thread["thread_id"])
+    assert any("VFA-17" in (m.get("content") or "") for m in messages)
+
+
+def test_discord_mirror_skips_on_its_way_ping(monkeypatch):
+    from bigas.chat.activity import mirror_discord_message
+
+    posted = []
+
+    def fake_thread(agent_id, content, **kwargs):
+        posted.append(content)
+        return {"thread_id": "t1"}
+
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", fake_thread)
+    mirror_discord_message(
+        "https://discord.example/marketing",
+        "# 📊 Weekly Analytics Report on its way...",
+        chat_agent_id="marketing",
+    )
+    assert posted == []
+
+
+def test_resolve_discord_chat_agent_from_webhook_env(monkeypatch):
+    from bigas.chat.activity import resolve_discord_chat_agent
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL_PRODUCT", "https://discord.example/pm")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL_CTO", "https://discord.example/cto")
+    assert resolve_discord_chat_agent("https://discord.example/pm") == "product"
+    assert resolve_discord_chat_agent("https://discord.example/cto") == "cto"
+    assert resolve_discord_chat_agent("", chat_agent_id="devops") == "devops"
+
+
+def test_post_to_discord_mirrors_chat_without_webhook(monkeypatch):
+    from bigas.chat.activity import post_to_agent_thread
+    from bigas.chat.db import get_chat_store
+    from bigas.discord_webhook import post_to_discord
+
+    monkeypatch.setenv("CHAT_ENABLED", "true")
+    monkeypatch.setenv("CHAT_AUTH_MODE", "dev")
+    monkeypatch.delenv("BIGAS_EMAIL_SYNC_USER_UID", raising=False)
+    monkeypatch.delenv("BIGAS_EMAIL_SYNC_USER_EMAIL", raising=False)
+    monkeypatch.delenv("CHAT_ADMIN_EMAILS", raising=False)
+
+    posted = post_to_discord("", "Site down: example.com", chat_agent_id="cto")
+    assert posted is False
+    store = get_chat_store()
+    thread = store.get_or_create_agent_thread("dev-user", "cto")
+    messages = store.list_messages(thread["thread_id"])
+    assert any("Site down" in (m.get("content") or "") for m in messages)
+    # Dedup: identical follow-up must not add a second message.
+    before = len(messages)
+    post_to_agent_thread("cto", "Site down: example.com")
+    assert len(store.list_messages(thread["thread_id"])) == before
+
+
+def test_post_long_to_discord_mirrors_full_text_once(monkeypatch):
+    from bigas.discord_webhook import post_long_to_discord
+
+    chat_calls = []
+    discord_calls = []
+
+    def fake_thread(agent_id, content, **kwargs):
+        chat_calls.append({"agent_id": agent_id, "content": content})
+        return {"thread_id": "marketing-thread"}
+
+    def fake_short(webhook_url, message, **kwargs):
+        discord_calls.append(message)
+        return True
+
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", fake_thread)
+    monkeypatch.setattr("bigas.discord_webhook.post_to_discord", fake_short)
+
+    body = "A" * 2000 + "\n" + "B" * 200
+    post_long_to_discord(
+        "https://discord.example/marketing",
+        body,
+        chunk_size=1900,
+        chat_agent_id="marketing",
+    )
+    assert len(chat_calls) == 1
+    assert chat_calls[0]["agent_id"] == "marketing"
+    assert chat_calls[0]["content"] == body
+    assert len(discord_calls) >= 2
+
+
 def test_post_to_agent_thread_writes_product_message(monkeypatch):
     from bigas.chat.activity import post_to_agent_thread
     from bigas.chat.db import get_chat_store

@@ -188,12 +188,11 @@ def _send_alert(message: str) -> bool:
         or os.environ.get("DISCORD_WEBHOOK_URL_MARKETING")
     )
 
-    if not webhook_url or webhook_url.strip().lower().startswith("placeholder"):
+    posted = bool(webhook_url) and not webhook_url.strip().lower().startswith("placeholder")
+    if not posted:
         logger.warning("No Discord webhook configured for monitoring alerts")
-        return False
-
-    post_long_to_discord(webhook_url, message)
-    return True
+    post_long_to_discord(webhook_url, message, chat_agent_id="cto")
+    return posted
 
 
 def run_monitoring_checks() -> MonitoringResult:

@@ -35,13 +35,11 @@ def _cursor_model() -> Optional[str]:
 
 def _post_discord_cto(message: str) -> None:
     url = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
-    if not url or url.lower().startswith("placeholder"):
-        return
     msg = (message or "").strip()
     if len(msg) > 1900:
         msg = msg[:1897] + "..."
     try:
-        post_to_discord(url, msg)
+        post_to_discord(url, msg, chat_agent_id="cto")
     except Exception:
         logger.warning("Discord CTO notify failed for deploy hotfix", exc_info=True)
 

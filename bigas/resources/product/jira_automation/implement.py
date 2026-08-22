@@ -197,9 +197,7 @@ def evaluate_implementation_outcome(status: Dict[str, Any], *, repo: str) -> Dic
 
 def _post_discord_cto(message: str) -> None:
     url = (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
-    if not url or url.startswith("placeholder"):
-        return
-    post_to_discord(url, (message or "").strip())
+    post_to_discord(url, (message or "").strip(), chat_agent_id="cto")
 
 
 class ImplementHandler:

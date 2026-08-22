@@ -7,8 +7,7 @@ import os
 import secrets
 from typing import Any, Dict, Optional
 
-import requests
-
+from bigas.discord_webhook import post_to_discord
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
     JiraConfig,
@@ -146,26 +145,6 @@ def parse_automation_payload(data: Optional[Dict[str, Any]]) -> Dict[str, str]:
         "project_key": project_key,
         "idempotency_key": idem,
     }
-
-
-def _post_discord(webhook_url: Optional[str], message: str) -> bool:
-    url = (webhook_url or "").strip()
-    if not url or url.startswith("placeholder"):
-        return False
-    msg = (message or "").strip()
-    if not msg:
-        return False
-    if len(msg) > 1900:
-        msg = msg[:1897] + "..."
-    try:
-        resp = requests.post(url, json={"content": msg}, timeout=20)
-        if resp.status_code not in (200, 204):
-            logger.error("Discord post failed: %s %s", resp.status_code, resp.text[:200])
-            return False
-        return True
-    except Exception:
-        logger.error("Discord post failed", exc_info=True)
-        return False
 
 
 class JiraAutomationService:
@@ -556,8 +535,8 @@ class JiraAutomationService:
 
     def _notify_pm(self, message: str) -> None:
         url = os.environ.get(self._config.discord_pm_env)
-        _post_discord(url, message)
+        post_to_discord(url, message, chat_agent_id="product")
 
     def _notify_cto(self, message: str) -> None:
         url = os.environ.get(self._config.discord_cto_env)
-        _post_discord(url, message)
+        post_to_discord(url, message, chat_agent_id="cto")

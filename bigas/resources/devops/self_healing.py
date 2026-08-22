@@ -160,13 +160,11 @@ def _post_discord_devops(message: str) -> None:
         (os.environ.get("DISCORD_WEBHOOK_URL_DEVOPS") or "").strip()
         or (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
     )
-    if not url or url.lower().startswith("placeholder"):
-        return
     msg = (message or "").strip()
     if len(msg) > 1900:
         msg = msg[:1897] + "..."
     try:
-        post_to_discord(url, msg)
+        post_to_discord(url, msg, chat_agent_id="devops")
     except Exception:
         logger.warning("Discord notify failed for self-healing CI", exc_info=True)
 
