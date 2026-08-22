@@ -421,6 +421,27 @@ class JiraClient:
         url = f"{self._config.base_url}/rest/api/3/issue/{key}"
         return self._request_with_retry_429("GET", url, params=params)
 
+    def search_issues_by_keys(
+        self,
+        issue_keys: Sequence[str],
+        *,
+        fields: Optional[List[str]] = None,
+        max_results_per_page: int = 50,
+        max_pages: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Fetch multiple issues in one JQL search."""
+        keys = [k for k in (normalize_issue_key(key) for key in issue_keys) if k]
+        if not keys:
+            return []
+        quoted = ", ".join(f'"{key}"' for key in keys)
+        jql = f"issueKey in ({quoted}) ORDER BY key ASC"
+        return self._search_jql(
+            jql=jql,
+            fields=fields or issue_lookup_fields(),
+            max_results_per_page=max_results_per_page,
+            max_pages=max_pages,
+        )
+
     def epic_jql_clause(self, epic_key: str) -> str:
         """Build a JQL fragment linking child issues to an Epic."""
         key = (epic_key or "").strip()
