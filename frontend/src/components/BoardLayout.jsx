@@ -438,6 +438,8 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
   })
   const isNew = !ticket?.ticket_id
   const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -535,6 +537,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             onChange={(labels) => setForm({ ...form, labels })}
           />
           {!isNew && <TicketComments ticketId={ticket.ticket_id} />}
+          {saveError && <p className="text-xs text-red-600">{saveError}</p>}
         </div>
         <div className="p-4 border-t border-border flex flex-col sm:flex-row gap-2">
           {!isNew && (
@@ -558,18 +561,27 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
           </button>
           <button
             type="button"
-            onClick={() => {
+            onClick={async () => {
+              if (saving) return
               const labels = labelEditorRef.current?.flushDraft?.() ?? form.labels
-              onSave({
-                ...form,
-                labels,
-                parent_key: form.issue_type === 'Epic' ? '' : form.parent_key,
-              })
+              setSaving(true)
+              setSaveError('')
+              try {
+                await onSave({
+                  ...form,
+                  labels,
+                  parent_key: form.issue_type === 'Epic' ? '' : form.parent_key,
+                })
+              } catch (err) {
+                setSaveError(err.message || 'Could not save ticket')
+              } finally {
+                setSaving(false)
+              }
             }}
-            disabled={!form.title.trim()}
+            disabled={!form.title.trim() || saving}
             className="flex-1 bg-bigas-blue text-bigas-black font-medium rounded-xl py-2 min-h-[44px] order-2 sm:order-3 disabled:opacity-50"
           >
-            {isNew ? 'Create' : 'Save'}
+            {saving ? 'Saving…' : isNew ? 'Create' : 'Save'}
           </button>
         </div>
       </div>
