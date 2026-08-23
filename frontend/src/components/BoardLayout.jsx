@@ -10,6 +10,25 @@ import {
   updateTicket,
 } from '../lib/api'
 
+const AI_WORKING_STATUSES = new Set([
+  'Research and describe (AI)',
+  'Design and plan (AI)',
+  'In Progress (AI)',
+])
+
+function TicketAiMark({ status }) {
+  const active = AI_WORKING_STATUSES.has(status)
+  return (
+    <img
+      src="/favicon.png"
+      alt=""
+      title={active ? 'Bigas is working' : 'Bigas'}
+      className={`w-4 h-4 rounded-sm flex-shrink-0 ${active ? 'ticket-ai-active' : 'ticket-ai-idle'}`}
+      aria-hidden="true"
+    />
+  )
+}
+
 function StatusSelect({ value, columns, onChange, className = '' }) {
   return (
     <select
@@ -41,7 +60,10 @@ function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, draggi
       }`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
-        <span className="text-[11px] font-mono text-muted">{ticket.key}</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <TicketAiMark status={ticket.status} />
+          <span className="text-[11px] font-mono text-muted truncate">{ticket.key}</span>
+        </div>
         <StatusSelect
           value={ticket.status}
           columns={columns}

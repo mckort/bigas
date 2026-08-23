@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from flask import Blueprint, g, jsonify, request
 
@@ -114,29 +113,15 @@ def ticket_by_key(key: str):
 
 
 @tickets_bp.route("/api/tickets/automation-worker", methods=["POST"])
+@require_chat_auth
 def ticket_automation_worker():
     """
-    Internal worker endpoint for ticket status automation.
+    Loopback worker for ticket status automation after an authenticated drag.
 
-    Dispatched via HTTP from TicketService so Cloud Run allocates CPU for AI
-    handlers instead of relying on background threads after the response is sent.
+    Dispatched to 127.0.0.1 so Cloud Run allocates CPU for AI handlers.
+    Requires the same chat login as the board — not a public webhook.
     """
-    from bigas.resources.devops.self_healing import webhook_secret
-    from bigas.resources.product.jira_automation.service import (
-        extract_webhook_secret_from_headers,
-        verify_webhook_secret,
-    )
-
-    header_secret = extract_webhook_secret_from_headers(request.headers)
-    secret = webhook_secret()
-    if secret and verify_webhook_secret(header_secret, secret):
-        pass
-    else:
-        keys = [k.strip() for k in (os.environ.get("BIGAS_ACCESS_KEYS") or "").split(",") if k.strip()]
-        provided = (request.headers.get("X-Bigas-Access-Key") or "").strip()
-        if not keys or provided not in keys:
-            return jsonify({"error": "unauthorized"}), 401
-
+    user_id = g.chat_user["uid"]
     data = request.get_json(silent=True) or {}
     ticket_id = (data.get("ticket_id") or "").strip()
     issue_key = (data.get("issue_key") or "").strip()
@@ -152,6 +137,9 @@ def ticket_automation_worker():
     ticket = store.get_ticket(ticket_id)
     if not ticket:
         return jsonify({"error": "Ticket not found"}), 404
+    board = store.get_board(ticket.get("board_id") or "")
+    if not board or board.get("user_id") != user_id:
+        return jsonify({"error": "Forbidden"}), 403
 
     run_ticket_status_automation(
         ticket,
