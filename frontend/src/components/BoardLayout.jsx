@@ -89,6 +89,65 @@ function ticketLabels(ticket) {
   return labels
 }
 
+function isEpic(ticket) {
+  return String(ticket?.issue_type || '').trim().toLowerCase() === 'epic'
+}
+
+function ticketParentKey(ticket) {
+  return String(ticket?.parent_key || '').trim().toUpperCase()
+}
+
+function epicOptionsFromTickets(tickets) {
+  const byKey = new Map()
+  for (const ticket of tickets) {
+    if (!isEpic(ticket) || !ticket.key) continue
+    byKey.set(ticket.key, ticket)
+  }
+  for (const ticket of tickets) {
+    const parent = ticketParentKey(ticket)
+    if (parent && !byKey.has(parent)) {
+      byKey.set(parent, { key: parent, title: parent, issue_type: 'Epic' })
+    }
+  }
+  return [...byKey.values()].sort((a, b) =>
+    String(a.title || a.key || '').localeCompare(String(b.title || b.key || '')),
+  )
+}
+
+function ticketMatchesEpicFilter(ticket, filter) {
+  if (!filter) return true
+  const parent = ticketParentKey(ticket)
+  if (filter === '__none__') return !parent && !isEpic(ticket)
+  return ticket.key === filter || parent === filter
+}
+
+function epicChipLabel(epic) {
+  if (!epic) return ''
+  const title = String(epic.title || '').trim()
+  if (title && title !== epic.key) return `${epic.key} · ${title}`
+  return epic.key || title
+}
+
+function EpicChip({ epic, onClick, className = '' }) {
+  if (!epic) return null
+  const label = epicChipLabel(epic)
+  const classes = `inline-flex items-center max-w-full text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-bigas-blue/20 border border-black/10 text-bigas-black ${className}`
+  if (!onClick) {
+    return <span className={classes}><span className="truncate">{label}</span></span>
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseDown={(e) => e.stopPropagation()}
+      className={`${classes} hover:bg-bigas-blue/40`}
+      title={`Show tickets in ${epic.key}`}
+    >
+      <span className="truncate">{label}</span>
+    </button>
+  )
+}
+
 function LabelChips({ labels, onRemove, className = '' }) {
   if (!labels?.length) return null
   return (
@@ -180,7 +239,7 @@ function LabelEditor({ labels, onChange }, ref) {
 
 const LabelEditorWithRef = forwardRef(LabelEditor)
 
-function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, dragging, onDragStart, onDragEnd }) {
+function TicketCard({ ticket, parentEpic, columns, onEdit, onStatusChange, onDiscuss, onFilterEpic, dragging, onDragStart, onDragEnd }) {
   return (
     <div
       draggable
@@ -197,6 +256,11 @@ function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, draggi
         <div className="flex items-center gap-1.5 min-w-0">
           <TicketAiMark status={ticket.status} />
           <span className="text-[11px] font-mono text-muted truncate">{ticket.key}</span>
+          {isEpic(ticket) && (
+            <span className="text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted flex-shrink-0">
+              Epic
+            </span>
+          )}
         </div>
         <StatusSelect
           value={ticket.status}
@@ -212,6 +276,13 @@ function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, draggi
       >
         {ticket.title}
       </button>
+      {parentEpic && (
+        <EpicChip
+          epic={parentEpic}
+          onClick={() => onFilterEpic?.(parentEpic.key)}
+          className="mt-2"
+        />
+      )}
       <LabelChips labels={ticketLabels(ticket)} className="mt-2" />
       {ticket.assignee && (
         <p className="text-xs text-muted mt-2 truncate">{ticket.assignee}</p>
@@ -353,7 +424,7 @@ function TicketComments({ ticketId }) {
   )
 }
 
-function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, onDelete }) {
+function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, epics, onClose, onSave, onDelete }) {
   const labelEditorRef = useRef(null)
   const [form, setForm] = useState({
     title: ticket?.title || '',
@@ -363,8 +434,10 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
     fix_version: ticket?.fix_version || '',
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
+    parent_key: ticket ? ticketParentKey(ticket) : (initialParentKey || ''),
   })
   const isNew = !ticket?.ticket_id
+  const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -406,6 +479,23 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
               <option value="Epic">Epic</option>
             </select>
           </label>
+          {form.issue_type !== 'Epic' && (
+            <label className="block text-sm">
+              <span className="text-muted text-xs">Epic</span>
+              <select
+                value={form.parent_key || ''}
+                onChange={(e) => setForm({ ...form, parent_key: e.target.value })}
+                className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+              >
+                <option value="">None</option>
+                {selectableEpics.map((epic) => (
+                  <option key={epic.key} value={epic.key}>
+                    {epicChipLabel(epic)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="block text-sm">
             <span className="text-muted text-xs">Status</span>
             <select
@@ -470,7 +560,11 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
             type="button"
             onClick={() => {
               const labels = labelEditorRef.current?.flushDraft?.() ?? form.labels
-              onSave({ ...form, labels })
+              onSave({
+                ...form,
+                labels,
+                parent_key: form.issue_type === 'Epic' ? '' : form.parent_key,
+              })
             }}
             disabled={!form.title.trim()}
             className="flex-1 bg-bigas-blue text-bigas-black font-medium rounded-xl py-2 min-h-[44px] order-2 sm:order-3 disabled:opacity-50"
@@ -601,9 +695,14 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [jiraImportAvailable, setJiraImportAvailable] = useState(false)
   const [syncingJira, setSyncingJira] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
+  const [epicFilter, setEpicFilter] = useState('')
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
   const columns = activeBoard?.columns || ['To Do', 'In Progress', 'Review', 'Done']
+  const epicOptions = epicOptionsFromTickets(tickets)
+  const epicsByKey = Object.fromEntries(epicOptions.map((epic) => [epic.key, epic]))
+  const visibleTickets = tickets.filter((ticket) => ticketMatchesEpicFilter(ticket, epicFilter))
+  const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
   const loadBoards = useCallback(async () => {
     const data = await fetchBoards()
@@ -629,6 +728,10 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     const id = setInterval(loadTickets, 5000)
     return () => clearInterval(id)
   }, [loadTickets])
+
+  useEffect(() => {
+    setEpicFilter('')
+  }, [activeBoardId])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -836,6 +939,22 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
               </p>
             )}
           </div>
+          {showEpicFilter && (
+            <select
+              value={epicFilter}
+              onChange={(e) => setEpicFilter(e.target.value)}
+              className="text-sm px-2 py-2 rounded-xl border border-border min-h-[44px] max-w-[160px] sm:max-w-[220px] bg-white"
+              aria-label="Filter by epic"
+            >
+              <option value="">All tickets</option>
+              <option value="__none__">No epic</option>
+              {epicOptions.map((epic) => (
+                <option key={epic.key} value={epic.key}>
+                  {epicChipLabel(epic)}
+                </option>
+              ))}
+            </select>
+          )}
           {jiraImportAvailable && activeBoard?.workflow_enabled && (
             <button
               type="button"
@@ -868,7 +987,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         {/* Mobile: stacked columns */}
         <div className="flex-1 overflow-y-auto lg:hidden p-3 space-y-4">
           {columns.map((col) => {
-            const colTickets = tickets.filter((t) => t.status === col)
+            const colTickets = visibleTickets.filter((t) => t.status === col)
             return (
               <section key={col} className="border border-border rounded-xl bg-surface/50">
                 <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between">
@@ -880,10 +999,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                     <TicketCard
                       key={ticket.ticket_id}
                       ticket={ticket}
+                      parentEpic={epicsByKey[ticketParentKey(ticket)]}
                       columns={columns}
                       onEdit={setModalTicket}
                       onStatusChange={handleStatusChange}
                       onDiscuss={onDiscussTicket}
+                      onFilterEpic={setEpicFilter}
                       dragging={dragTicket?.ticket_id === ticket.ticket_id}
                       onDragStart={(_, t) => setDragTicket(t)}
                       onDragEnd={() => setDragTicket(null)}
@@ -901,7 +1022,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         {/* Desktop: horizontal kanban */}
         <div className="hidden lg:flex flex-1 overflow-x-auto p-4 gap-3">
           {columns.map((col) => {
-            const colTickets = tickets.filter((t) => t.status === col)
+            const colTickets = visibleTickets.filter((t) => t.status === col)
             return (
               <section
                 key={col}
@@ -918,10 +1039,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                     <TicketCard
                       key={ticket.ticket_id}
                       ticket={ticket}
+                      parentEpic={epicsByKey[ticketParentKey(ticket)]}
                       columns={columns}
                       onEdit={setModalTicket}
                       onStatusChange={handleStatusChange}
                       onDiscuss={onDiscussTicket}
+                      onFilterEpic={setEpicFilter}
                       dragging={dragTicket?.ticket_id === ticket.ticket_id}
                       onDragStart={(_, t) => setDragTicket(t)}
                       onDragEnd={() => setDragTicket(null)}
@@ -943,6 +1066,8 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           columns={columns}
           board={activeBoard}
           initialStatus={createStatus}
+          initialParentKey={epicFilter && epicFilter !== '__none__' ? epicFilter : ''}
+          epics={epicOptions}
           onClose={closeModal}
           onSave={handleSave}
           onDelete={handleDeleteTicket}
