@@ -7,8 +7,9 @@ After Bigas posts a PR review comment, you can optionally launch a **Cursor clou
 ```text
 PR opened/push
   → review_and_comment_pr → GitHub comment + Discord
-       → if LGTM: Discord "Ready to merge" + Jira Final approval (if issue key on PR)
+       → if LGTM: Discord "Ready to merge"
          → if BIGAS_CTO_AUTO_MERGE=true: squash-merge PR (or enable GitHub auto-merge if checks pending) + Discord
+         → when the PR is actually merged (auto-merge or someone else merges): move ticket to Final approval
   → if repo var BIGAS_AUTO_FIX=true (Actions loop, up to 5 rounds):
       → autofix_pr
           → skip if review is LGTM / nits-only
@@ -18,13 +19,14 @@ PR opened/push
       → poll autofix_followup until agent terminal
           → Discord: autofix completed / failed / without commits
           → re-review updated diff
-          → if LGTM: Discord "Ready to merge" + Jira Final approval
+          → if LGTM: Discord "Ready to merge"
             → if BIGAS_CTO_AUTO_MERGE=true: squash-merge or enable GitHub auto-merge + Discord
+            → when the PR is actually merged: move ticket to Final approval
           → else if under 5 rounds: next autofix round with updated review
           → else: Discord + Jira comment — loop protection, manual handling
 ```
 
-Optional auto-merge is off by default (`BIGAS_CTO_AUTO_MERGE=false`). When enabled, Bigas tries an immediate squash-merge once the review has no Blockers/Important; if the PR is still a draft, it is marked ready for review first. If required checks block the merge, Bigas enables GitHub native auto-merge instead. Jira still moves to Final approval.
+Optional auto-merge is off by default (`BIGAS_CTO_AUTO_MERGE=false`). When enabled, Bigas tries an immediate squash-merge once the review has no Blockers/Important; if the PR is still a draft, it is marked ready for review first. If required checks block the merge, Bigas enables GitHub native auto-merge instead. The linked ticket moves to Final approval only after the PR is merged (including a later GitHub auto-merge or a human merge).
 
 After each autofix round finalizes, Discord includes Cursor token usage + a list-price estimate when available. For weekly rollups across Cursor autofix and LLM review logs, see [cto-ai-usage.md](./cto-ai-usage.md).
 
@@ -39,7 +41,7 @@ Optional:
 - `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Prefer `composer-2.5` (standard tier; much cheaper than `composer-2.5-fast`). Omit to use Cursor’s default (often fast).
 - `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection.
 - `BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS` (default `120`) — skip launching another autofix while the PR head is still a fresh `[bigas-autofix]` commit (reduces overlapping agents). Cooldown is **skipped** when a newer Bigas review comment already exists after that head commit (typical after an autofix push cancels/restarts Actions). The Actions loop waits/retries in short slices until the window expires instead of stopping early. Bigas also posts/updates a visible PR comment (`<!-- bigas-autofix-cooldown-marker -->`) so cooldown is not mistaken for a hang.
-- `BIGAS_CTO_AUTO_MERGE` (default `false`) — when `true`, squash-merge the PR after a clean review (no Blockers/Important) and post **PR auto-merged** to Discord and the Activity feed (not the CTO chat thread). The card includes the Jira issue label when known. Draft PRs are marked ready for review first (Cursor `autoCreatePR` sometimes opens drafts, which GitHub will not merge). If required checks block an immediate merge, Bigas enables GitHub native auto-merge and posts **PR auto-merge enabled** instead. Requires `GITHUB_TOKEN` with merge permission and repo setting **Allow auto-merge**. Jira Final approval still runs.
+- `BIGAS_CTO_AUTO_MERGE` (default `false`) — when `true`, squash-merge the PR after a clean review (no Blockers/Important) and post **PR auto-merged** to Discord and the Activity feed (not the CTO chat thread). The card includes the Jira issue label when known. Draft PRs are marked ready for review first (Cursor `autoCreatePR` sometimes opens drafts, which GitHub will not merge). If required checks block an immediate merge, Bigas enables GitHub native auto-merge and posts **PR auto-merge enabled** instead. Requires `GITHUB_TOKEN` with merge permission and repo setting **Allow auto-merge**. The linked ticket moves to **Final approval (manual)** only after the merge lands (same hook if someone else merges).
 
 ## Repo config
 

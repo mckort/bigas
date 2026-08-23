@@ -500,3 +500,37 @@ def test_mark_pull_request_ready_for_review_graphql_error_still_draft_raises(
         client.mark_pull_request_ready_for_review(
             owner="acme", repo="app", pr_number=3, node_id="PR_x"
         )
+
+
+def test_final_approval_after_merge_skips_until_merged(monkeypatch):
+    from bigas.resources.cto.endpoints import _final_approval_after_merge
+
+    called = []
+
+    def fake_hook(**kwargs):
+        called.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.endpoints._jira_final_approval_for_pr",
+        fake_hook,
+    )
+    skipped = _final_approval_after_merge(
+        repo="acme/app",
+        pr_number=1,
+        pr_url="https://github.com/acme/app/pull/1",
+        github_token="tok",
+        merged=False,
+    )
+    assert skipped.get("reason") == "pr_not_merged"
+    assert called == []
+
+    moved = _final_approval_after_merge(
+        repo="acme/app",
+        pr_number=1,
+        pr_url="https://github.com/acme/app/pull/1",
+        github_token="tok",
+        merged=True,
+    )
+    assert moved.get("ok") is True
+    assert called and called[0].get("assume_merged") is True

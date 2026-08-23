@@ -300,7 +300,7 @@ class ImplementHandler:
             f"Repo: `{repo}` (base `{base_branch}`)\n"
             f"Agent: {agent_url or agent_id}\n"
             f"agent_id={agent_id} run_id={run_id}\n"
-            f"Left in In Progress (AI) until the PR is ready to merge."
+            f"Left in In Progress (AI) until the PR is merged."
         )
         try:
             self._jira.add_comment(issue_key, comment)
@@ -484,7 +484,7 @@ class ImplementHandler:
                 f"{BIGAS_COMMENT_MARKER} Implementation agent opened a PR.\n"
                 f"PR: {pr_url}\n"
                 f"Agent: {agent_url or agent_id}\n"
-                f"Left in In Progress (AI) until the PR is ready to merge."
+                f"Left in In Progress (AI) until the PR is merged."
             )
             try:
                 self._jira.add_comment(issue_key, comment)

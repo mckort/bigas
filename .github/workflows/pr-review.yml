@@ -12,12 +12,55 @@ name: Bigas PR review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
 
 jobs:
+  # Human merge, delayed GitHub auto-merge, or any other merge path.
+  notify_merged:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require BIGAS_URL
+        run: |
+          if [ -z "$BIGAS_URL" ]; then
+            echo "::error::BIGAS_URL is not set. Add it in Settings → Secrets and variables → Actions → Variables (repository variable)."
+            exit 1
+          fi
+        env:
+          BIGAS_URL: ${{ vars.BIGAS_URL }}
+
+      - name: Move linked ticket to Final approval
+        env:
+          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
+          GH_PAT: ${{ secrets.GH_PAT_FOR_BIGAS }}
+        run: |
+          python3 -c "
+          import json, os
+          payload = {
+              'repo': os.environ['GITHUB_REPOSITORY'],
+              'pr_number': ${{ github.event.pull_request.number }},
+              'github_token': os.environ.get('GH_PAT', '')
+          }
+          with open('payload.json', 'w') as f:
+              json.dump(payload, f)
+          "
+          HTTP_CODE=$(curl -sS -w "%{http_code}" -o response_body.txt -X POST "$BIGAS_URL/mcp/tools/notify_pr_merged" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $BIGAS_API_KEY" \
+            -d @payload.json)
+          echo "HTTP $HTTP_CODE"
+          cat response_body.txt || true
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Bigas notify_pr_merged returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
   # Gate runs without concurrency so an autofix push does not cancel the
   # in-flight review/autofix job that owns re-review + merge.
   gate:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     outputs:
       continue: ${{ steps.gate.outputs.continue }}

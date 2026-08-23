@@ -190,6 +190,7 @@ def test_final_approval_skips_when_already_in_status(monkeypatch):
                 "title": "FYDA-1: Optimize website",
                 "body": "Jira: FYDA-1",
                 "head": {"ref": "feature"},
+                "merged": True,
             }
 
     monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: FakeCfg()))
@@ -211,6 +212,91 @@ def test_final_approval_skips_when_already_in_status(monkeypatch):
     assert result.get("skipped") is True
     assert result.get("reason") == "already_in_final_approval"
     assert posted == []
+
+
+def test_final_approval_skips_when_pr_not_merged(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+
+    class FakeResp:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {
+                "title": "FYDA-1: Optimize website",
+                "body": "Jira: FYDA-1",
+                "merged": False,
+            }
+
+    monkeypatch.setattr(fa.requests, "get", lambda *a, **k: FakeResp())
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+
+    result = fa.transition_issue_to_final_approval_for_pr(
+        repo="mckort/fulfillyourdreamadventure",
+        pr_number=2,
+        pr_url="https://github.com/mckort/fulfillyourdreamadventure/pull/2",
+        github_token="tok",
+    )
+    assert result.get("skipped") is True
+    assert result.get("reason") == "pr_not_merged"
+
+
+def test_final_approval_moves_internal_board_ticket_when_merged(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.store import get_ticket_store
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+
+    store = get_ticket_store()
+    board = store.create_board("user-1", name="FYDA Board", project_key="FYDA")
+    ticket = store.create_ticket(
+        board["board_id"],
+        title="Optimize website",
+        status="In Progress (AI)",
+    )
+    key = ticket["key"]
+
+    class FakeCfg:
+        status_final_approval = "Final approval (manual)"
+
+        def is_project_allowed(self, project_key: str) -> bool:
+            return project_key == "FYDA"
+
+    class FakeResp:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {
+                "title": f"{key}: Optimize website",
+                "body": f"Jira: {key}",
+                "head": {"ref": "feature"},
+                "merged": True,
+            }
+
+    posted: list[str] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: FakeCfg()))
+    monkeypatch.setattr(fa.requests, "get", lambda *a, **k: FakeResp())
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: posted.append(msg))
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+
+    result = fa.transition_issue_to_final_approval_for_pr(
+        repo="mckort/fulfillyourdreamadventure",
+        pr_number=2,
+        pr_url="https://github.com/mckort/fulfillyourdreamadventure/pull/2",
+        github_token="tok",
+    )
+    updated = store.get_ticket_by_key(key)
+    assert result.get("ok") is True
+    assert result.get("moved_to") == "Final approval (manual)"
+    assert updated is not None
+    assert updated.get("status") == "Final approval (manual)"
+    assert posted and "PR merged" in posted[0]
+    ticket_store_module._store = None
 
 
 def test_linked_issue_entries_include_relation_type():
