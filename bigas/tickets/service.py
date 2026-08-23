@@ -176,6 +176,7 @@ def comment_author_name(user: Optional[Dict[str, Any]]) -> str:
 def ticket_to_api(ticket: Dict[str, Any], *, include_comments: bool = True) -> Dict[str, Any]:
     key = ticket.get("key") or ""
     comments = list(ticket.get("comments") or [])
+    attachments = list(ticket.get("attachments") or [])
     labels = resolve_ticket_labels(ticket)
     payload = {
         **ticket,
@@ -186,9 +187,12 @@ def ticket_to_api(ticket: Dict[str, Any], *, include_comments: bool = True) -> D
     }
     if include_comments:
         payload["comments"] = comments
+        payload["attachments"] = attachments
     else:
         payload.pop("comments", None)
+        payload.pop("attachments", None)
         payload["comment_count"] = len(comments)
+        payload["attachment_count"] = len(attachments)
     return payload
 
 
@@ -242,6 +246,87 @@ class TicketService:
             author_name=author_name,
             author_id=author_id,
         )
+
+    def add_attachment(
+        self,
+        ticket_id: str,
+        *,
+        filename: str,
+        content_type: Optional[str],
+        data: bytes,
+        uploaded_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from bigas.tickets.attachments import (
+            AttachmentError,
+            attachment_blob_name,
+            build_attachment_record,
+            extract_attachment_text,
+            get_attachment_blob_store,
+            validate_upload,
+        )
+
+        ticket = self._store.get_ticket(ticket_id)
+        if not ticket:
+            raise AttachmentError("Ticket not found")
+        existing = list(ticket.get("attachments") or [])
+        safe_name, mime = validate_upload(
+            filename=filename,
+            content_type=content_type,
+            size_bytes=len(data or b""),
+            existing_count=len(existing),
+        )
+        extracted = extract_attachment_text(
+            data=data,
+            filename=safe_name,
+            content_type=mime,
+        )
+        record = build_attachment_record(
+            filename=safe_name,
+            content_type=mime,
+            size_bytes=len(data),
+            storage_path="",
+            extracted_text=extracted,
+            uploaded_by=uploaded_by,
+        )
+        path = attachment_blob_name(ticket_id, record["id"], safe_name)
+        record["storage_path"] = path
+        blobs = get_attachment_blob_store()
+        blobs.put(path, data, mime)
+        saved = self._store.add_attachment(ticket_id, record)
+        if not saved:
+            blobs.delete(path)
+            raise AttachmentError("Could not save attachment")
+        return saved
+
+    def delete_attachment(self, ticket_id: str, attachment_id: str) -> Optional[Dict[str, Any]]:
+        from bigas.tickets.attachments import get_attachment_blob_store
+
+        removed = self._store.remove_attachment(ticket_id, attachment_id)
+        if not removed:
+            return None
+        path = (removed.get("storage_path") or "").strip()
+        if path:
+            get_attachment_blob_store().delete(path)
+        return removed
+
+    def get_attachment_bytes(
+        self,
+        ticket_id: str,
+        attachment_id: str,
+    ) -> Optional[tuple]:
+        from bigas.tickets.attachments import get_attachment_blob_store
+
+        items = self._store.list_attachments(ticket_id)
+        record = next((a for a in items if (a.get("id") or "") == attachment_id), None)
+        if not record:
+            return None
+        path = (record.get("storage_path") or "").strip()
+        if not path:
+            return None
+        data = get_attachment_blob_store().get(path)
+        if data is None:
+            return None
+        return record, data
 
     def create_ticket(
         self,

@@ -8,6 +8,7 @@ from flask import Blueprint, g, jsonify, request
 from bigas.chat.auth import require_chat_auth
 from bigas.tickets.config import jira_configured
 from bigas.tickets.constants import columns_for_board
+from bigas.tickets.attachments import AttachmentError
 from bigas.tickets.service import (
     TicketService,
     comment_author_name,
@@ -281,6 +282,77 @@ def ticket_detail(ticket_id: str):
     if not ticket:
         return jsonify({"error": "Ticket not found"}), 404
     return jsonify({"ticket": ticket})
+
+
+@tickets_bp.route("/api/tickets/<ticket_id>/attachments", methods=["POST"])
+@require_chat_auth
+def ticket_attachments(ticket_id: str):
+    user_id = g.chat_user["uid"]
+    from bigas.tickets.store import get_ticket_store
+
+    store = get_ticket_store()
+    ticket = store.get_ticket(ticket_id)
+    if not ticket:
+        return jsonify({"error": "Ticket not found"}), 404
+    board = store.get_board(ticket.get("board_id") or "")
+    if board and board.get("user_id") != user_id:
+        return jsonify({"error": "Forbidden"}), 403
+
+    uploaded = request.files.get("file")
+    if uploaded is None or not (uploaded.filename or "").strip():
+        return jsonify({"error": "file is required"}), 400
+    data = uploaded.read()
+    try:
+        attachment = TicketService().add_attachment(
+            ticket_id,
+            filename=uploaded.filename or "attachment",
+            content_type=uploaded.mimetype,
+            data=data,
+            uploaded_by=user_id,
+        )
+    except AttachmentError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"attachment": attachment}), 201
+
+
+@tickets_bp.route(
+    "/api/tickets/<ticket_id>/attachments/<attachment_id>",
+    methods=["GET", "DELETE"],
+)
+@require_chat_auth
+def ticket_attachment_detail(ticket_id: str, attachment_id: str):
+    user_id = g.chat_user["uid"]
+    from io import BytesIO
+
+    from flask import send_file
+
+    from bigas.tickets.store import get_ticket_store
+
+    store = get_ticket_store()
+    ticket = store.get_ticket(ticket_id)
+    if not ticket:
+        return jsonify({"error": "Ticket not found"}), 404
+    board = store.get_board(ticket.get("board_id") or "")
+    if board and board.get("user_id") != user_id:
+        return jsonify({"error": "Forbidden"}), 403
+
+    service = TicketService()
+    if request.method == "DELETE":
+        removed = service.delete_attachment(ticket_id, attachment_id)
+        if not removed:
+            return jsonify({"error": "Attachment not found"}), 404
+        return jsonify({"ok": True, "attachment": removed})
+
+    loaded = service.get_attachment_bytes(ticket_id, attachment_id)
+    if not loaded:
+        return jsonify({"error": "Attachment not found"}), 404
+    record, data = loaded
+    return send_file(
+        BytesIO(data),
+        mimetype=record.get("content_type") or "application/octet-stream",
+        as_attachment=False,
+        download_name=record.get("filename") or "attachment",
+    )
 
 
 @tickets_bp.route("/api/tickets/<ticket_id>/comments", methods=["POST"])

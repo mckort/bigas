@@ -140,6 +140,42 @@ export async function addTicketComment(ticketId, body) {
   })
 }
 
+export async function uploadTicketAttachment(ticketId, file) {
+  const token = getToken()
+  const headers = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`/api/tickets/${ticketId}/attachments`, {
+    method: 'POST',
+    headers,
+    body: form,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error || `Request failed (${res.status})`)
+  }
+  return data
+}
+
+export async function deleteTicketAttachment(ticketId, attachmentId) {
+  return apiFetch(`/api/tickets/${ticketId}/attachments/${attachmentId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function fetchTicketAttachmentBlob(ticketId, attachmentId) {
+  const token = getToken()
+  const headers = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(`/api/tickets/${ticketId}/attachments/${attachmentId}`, { headers })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `Request failed (${res.status})`)
+  }
+  return res.blob()
+}
+
 export async function updateTicket(ticketId, payload) {
   return apiFetch(`/api/tickets/${ticketId}`, {
     method: 'PUT',

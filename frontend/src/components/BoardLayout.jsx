@@ -5,13 +5,16 @@ import {
   createTicket,
   deleteBoard,
   deleteTicket,
+  deleteTicketAttachment,
   fetchBoardJiraSyncStatus,
   fetchBoards,
   fetchBoardTickets,
   fetchTicket,
+  fetchTicketAttachmentBlob,
   fetchTicketByKey,
   syncBoardFromJira,
   updateTicket,
+  uploadTicketAttachment,
 } from '../lib/api'
 
 const SYSTEM_COMMENT_MARKER = '[bigas-jira-ai]'
@@ -87,6 +90,65 @@ function ticketLabels(ticket) {
   const labels = fromList.map(normalizeLabel).filter(Boolean)
   if (ticket?.marketing && !labels.includes('marketing')) labels.push('marketing')
   return labels
+}
+
+function isEpic(ticket) {
+  return String(ticket?.issue_type || '').trim().toLowerCase() === 'epic'
+}
+
+function ticketParentKey(ticket) {
+  return String(ticket?.parent_key || '').trim().toUpperCase()
+}
+
+function epicOptionsFromTickets(tickets) {
+  const byKey = new Map()
+  for (const ticket of tickets) {
+    if (!isEpic(ticket) || !ticket.key) continue
+    byKey.set(ticket.key, ticket)
+  }
+  for (const ticket of tickets) {
+    const parent = ticketParentKey(ticket)
+    if (parent && !byKey.has(parent)) {
+      byKey.set(parent, { key: parent, title: parent, issue_type: 'Epic' })
+    }
+  }
+  return [...byKey.values()].sort((a, b) =>
+    String(a.title || a.key || '').localeCompare(String(b.title || b.key || '')),
+  )
+}
+
+function ticketMatchesEpicFilter(ticket, filter) {
+  if (!filter) return true
+  const parent = ticketParentKey(ticket)
+  if (filter === '__none__') return !parent && !isEpic(ticket)
+  return ticket.key === filter || parent === filter
+}
+
+function epicChipLabel(epic) {
+  if (!epic) return ''
+  const title = String(epic.title || '').trim()
+  if (title && title !== epic.key) return `${epic.key} · ${title}`
+  return epic.key || title
+}
+
+function EpicChip({ epic, onClick, className = '' }) {
+  if (!epic) return null
+  const label = epicChipLabel(epic)
+  const classes = `inline-flex items-center max-w-full text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-bigas-blue/20 border border-black/10 text-bigas-black ${className}`
+  if (!onClick) {
+    return <span className={classes}><span className="truncate">{label}</span></span>
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseDown={(e) => e.stopPropagation()}
+      className={`${classes} hover:bg-bigas-blue/40`}
+      title={`Show tickets in ${epic.key}`}
+    >
+      <span className="truncate">{label}</span>
+    </button>
+  )
 }
 
 function LabelChips({ labels, onRemove, className = '' }) {
@@ -180,7 +242,7 @@ function LabelEditor({ labels, onChange }, ref) {
 
 const LabelEditorWithRef = forwardRef(LabelEditor)
 
-function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, dragging, onDragStart, onDragEnd }) {
+function TicketCard({ ticket, parentEpic, columns, onEdit, onStatusChange, onDiscuss, onFilterEpic, dragging, onDragStart, onDragEnd }) {
   return (
     <div
       draggable
@@ -197,6 +259,11 @@ function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, draggi
         <div className="flex items-center gap-1.5 min-w-0">
           <TicketAiMark status={ticket.status} />
           <span className="text-[11px] font-mono text-muted truncate">{ticket.key}</span>
+          {isEpic(ticket) && (
+            <span className="text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted flex-shrink-0">
+              Epic
+            </span>
+          )}
         </div>
         <StatusSelect
           value={ticket.status}
@@ -212,7 +279,19 @@ function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, draggi
       >
         {ticket.title}
       </button>
+      {parentEpic && (
+        <EpicChip
+          epic={parentEpic}
+          onClick={() => onFilterEpic?.(parentEpic.key)}
+          className="mt-2"
+        />
+      )}
       <LabelChips labels={ticketLabels(ticket)} className="mt-2" />
+      {ticket.attachment_count > 0 && (
+        <p className="text-[11px] text-muted mt-2">
+          {ticket.attachment_count} attachment{ticket.attachment_count === 1 ? '' : 's'}
+        </p>
+      )}
       {ticket.assignee && (
         <p className="text-xs text-muted mt-2 truncate">{ticket.assignee}</p>
       )}
@@ -249,6 +328,260 @@ function formatCommentTime(iso) {
 
 function commentBody(comment) {
   return (comment?.body || '').replace(SYSTEM_COMMENT_MARKER, '').trim()
+}
+
+function formatAttachmentSize(bytes) {
+  const size = Number(bytes) || 0
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function isImageAttachment(attachment) {
+  return String(attachment?.content_type || '').startsWith('image/')
+}
+
+const ATTACHMENT_ACCEPT =
+  'image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.md'
+const MAX_TICKET_ATTACHMENTS = 10
+
+function pendingFileKey(file) {
+  return `${file.name}:${file.size}:${file.lastModified}`
+}
+
+function LocalImagePreview({ file }) {
+  const [url, setUrl] = useState('')
+
+  useEffect(() => {
+    if (!file?.type?.startsWith('image/')) return undefined
+    const objectUrl = URL.createObjectURL(file)
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [file])
+
+  if (!url) return null
+  return (
+    <img
+      src={url}
+      alt={file.name}
+      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-white border border-border"
+    />
+  )
+}
+
+function AttachmentPreview({ ticketId, attachment }) {
+  const [url, setUrl] = useState('')
+
+  useEffect(() => {
+    if (!isImageAttachment(attachment)) return undefined
+    let objectUrl = ''
+    let cancelled = false
+    fetchTicketAttachmentBlob(ticketId, attachment.id)
+      .then((blob) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setUrl('')
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [ticketId, attachment.id, attachment.content_type])
+
+  if (!url) return null
+  return (
+    <img
+      src={url}
+      alt={attachment.filename}
+      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-white border border-border"
+    />
+  )
+}
+
+function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
+  const [attachments, setAttachments] = useState([])
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
+  const inputRef = useRef(null)
+  const isPending = !ticketId
+  const pending = pendingFiles || []
+
+  useEffect(() => {
+    if (!ticketId) return undefined
+    let cancelled = false
+    fetchTicket(ticketId)
+      .then((data) => {
+        if (!cancelled) setAttachments(data.ticket?.attachments || [])
+      })
+      .catch(() => {
+        if (!cancelled) setError('Could not load attachments')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [ticketId])
+
+  const addPendingFiles = (files) => {
+    const incoming = Array.from(files || []).filter(Boolean)
+    if (!incoming.length) return
+    const existingKeys = new Set(pending.map(pendingFileKey))
+    const next = [...pending]
+    for (const file of incoming) {
+      const key = pendingFileKey(file)
+      if (existingKeys.has(key)) continue
+      if (next.length >= MAX_TICKET_ATTACHMENTS) {
+        setError(`At most ${MAX_TICKET_ATTACHMENTS} attachments per ticket`)
+        break
+      }
+      existingKeys.add(key)
+      next.push(file)
+    }
+    onPendingFilesChange?.(next)
+  }
+
+  const uploadFiles = async (files) => {
+    const list = Array.from(files || []).filter(Boolean)
+    if (!list.length) return
+    if (isPending) {
+      setError('')
+      addPendingFiles(list)
+      if (inputRef.current) inputRef.current.value = ''
+      return
+    }
+    if (uploading) return
+    setUploading(true)
+    setError('')
+    try {
+      for (const file of list) {
+        const data = await uploadTicketAttachment(ticketId, file)
+        if (data.attachment) {
+          setAttachments((prev) => [...prev, data.attachment])
+        }
+      }
+    } catch (err) {
+      setError(err.message || 'Could not upload attachment')
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  const handleRemove = async (attachment) => {
+    if (!attachment?.id) return
+    setError('')
+    try {
+      await deleteTicketAttachment(ticketId, attachment.id)
+      setAttachments((prev) => prev.filter((item) => item.id !== attachment.id))
+    } catch (err) {
+      setError(err.message || 'Could not delete attachment')
+    }
+  }
+
+  const currentCount = isPending ? pending.length : attachments.length
+  const dropLabel = uploading
+    ? 'Interpreting and uploading…'
+    : isPending
+      ? 'Drop files or click to attach'
+      : 'Drop files or click to attach'
+
+  return (
+    <div className="pt-3 border-t border-border space-y-3">
+      <div>
+        <p className="text-muted text-xs">Attachments</p>
+        <p className="text-[11px] text-muted mt-0.5">
+          {isPending
+            ? 'Screenshots are interpreted when you create the ticket. The next AI step reads them.'
+            : 'The next AI step reads these files. Screenshots are interpreted automatically.'}
+        </p>
+      </div>
+      <div className="space-y-2">
+        {currentCount === 0 && (
+          <p className="text-xs text-muted">No attachments yet.</p>
+        )}
+        {isPending &&
+          pending.map((file) => (
+            <div key={pendingFileKey(file)} className="rounded-xl px-3 py-2 bg-surface border border-border">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{file.name}</p>
+                  <p className="text-[11px] text-muted">{formatAttachmentSize(file.size)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onPendingFilesChange?.(pending.filter((item) => pendingFileKey(item) !== pendingFileKey(file)))
+                  }
+                  className="text-xs text-muted hover:text-red-600 min-h-[32px] px-2"
+                >
+                  Remove
+                </button>
+              </div>
+              <LocalImagePreview file={file} />
+            </div>
+          ))}
+        {!isPending &&
+          attachments.map((attachment) => (
+            <div key={attachment.id} className="rounded-xl px-3 py-2 bg-surface border border-border">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{attachment.filename}</p>
+                  <p className="text-[11px] text-muted">
+                    {formatAttachmentSize(attachment.size_bytes)}
+                    {isImageAttachment(attachment) ? ' · screenshot interpreted for AI' : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRemove(attachment)}
+                  className="text-xs text-muted hover:text-red-600 min-h-[32px] px-2"
+                >
+                  Remove
+                </button>
+              </div>
+              <AttachmentPreview ticketId={ticketId} attachment={attachment} />
+              {attachment.extracted_text && (
+                <details className="mt-2">
+                  <summary className="text-[11px] text-muted cursor-pointer">What AI sees</summary>
+                  <p className="mt-1 text-xs whitespace-pre-wrap break-words text-text leading-snug">
+                    {attachment.extracted_text}
+                  </p>
+                </details>
+              )}
+            </div>
+          ))}
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <label
+        className={`block w-full border border-dashed rounded-xl px-3 py-4 text-center text-sm min-h-[44px] cursor-pointer ${
+          dragOver ? 'border-bigas-blue bg-white' : 'border-border hover:bg-white'
+        }`}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragOver(true)
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragOver(false)
+          uploadFiles(e.dataTransfer.files)
+        }}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept={ATTACHMENT_ACCEPT}
+          className="sr-only"
+          onChange={(e) => uploadFiles(e.target.files)}
+        />
+        {dropLabel}
+      </label>
+    </div>
+  )
 }
 
 function TicketComments({ ticketId }) {
@@ -353,7 +686,7 @@ function TicketComments({ ticketId }) {
   )
 }
 
-function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, onDelete }) {
+function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, epics, onClose, onSave, onDelete }) {
   const labelEditorRef = useRef(null)
   const [form, setForm] = useState({
     title: ticket?.title || '',
@@ -363,8 +696,13 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
     fix_version: ticket?.fix_version || '',
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
+    parent_key: ticketParentKey(ticket) || initialParentKey || '',
   })
   const isNew = !ticket?.ticket_id
+  const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
+  const [pendingFiles, setPendingFiles] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -398,7 +736,14 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
             <span className="text-muted text-xs">Issue type</span>
             <select
               value={form.issue_type}
-              onChange={(e) => setForm({ ...form, issue_type: e.target.value })}
+              onChange={(e) => {
+                const issue_type = e.target.value
+                setForm({
+                  ...form,
+                  issue_type,
+                  parent_key: issue_type === 'Epic' ? '' : form.parent_key,
+                })
+              }}
               className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
             >
               <option value="Task">Task</option>
@@ -406,6 +751,23 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
               <option value="Epic">Epic</option>
             </select>
           </label>
+          {form.issue_type !== 'Epic' && (
+            <label className="block text-sm">
+              <span className="text-muted text-xs">Epic</span>
+              <select
+                value={form.parent_key || ''}
+                onChange={(e) => setForm({ ...form, parent_key: e.target.value })}
+                className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+              >
+                <option value="">None</option>
+                {selectableEpics.map((epic) => (
+                  <option key={epic.key} value={epic.key}>
+                    {epicChipLabel(epic)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="block text-sm">
             <span className="text-muted text-xs">Status</span>
             <select
@@ -444,7 +806,13 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
             labels={form.labels}
             onChange={(labels) => setForm({ ...form, labels })}
           />
+          <TicketAttachments
+            ticketId={isNew ? null : ticket.ticket_id}
+            pendingFiles={pendingFiles}
+            onPendingFilesChange={setPendingFiles}
+          />
           {!isNew && <TicketComments ticketId={ticket.ticket_id} />}
+          {saveError && <p className="text-xs text-red-600">{saveError}</p>}
         </div>
         <div className="p-4 border-t border-border flex flex-col sm:flex-row gap-2">
           {!isNew && (
@@ -468,14 +836,34 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
           </button>
           <button
             type="button"
-            onClick={() => {
+            onClick={async () => {
+              if (saving) return
               const labels = labelEditorRef.current?.flushDraft?.() ?? form.labels
-              onSave({ ...form, labels })
+              setSaving(true)
+              setSaveError('')
+              try {
+                await onSave({
+                  ...form,
+                  labels,
+                  parent_key: form.issue_type === 'Epic' ? '' : form.parent_key,
+                  files: pendingFiles,
+                })
+              } catch (err) {
+                setSaveError(err.message || 'Could not save ticket')
+              } finally {
+                setSaving(false)
+              }
             }}
-            disabled={!form.title.trim()}
+            disabled={!form.title.trim() || saving}
             className="flex-1 bg-bigas-blue text-bigas-black font-medium rounded-xl py-2 min-h-[44px] order-2 sm:order-3 disabled:opacity-50"
           >
-            {isNew ? 'Create' : 'Save'}
+            {saving
+              ? isNew && pendingFiles.length
+                ? 'Creating and interpreting…'
+                : 'Saving…'
+              : isNew
+                ? 'Create'
+                : 'Save'}
           </button>
         </div>
       </div>
@@ -601,9 +989,14 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [jiraImportAvailable, setJiraImportAvailable] = useState(false)
   const [syncingJira, setSyncingJira] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
+  const [epicFilter, setEpicFilter] = useState('')
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
   const columns = activeBoard?.columns || ['To Do', 'In Progress', 'Review', 'Done']
+  const epicOptions = epicOptionsFromTickets(tickets)
+  const epicsByKey = Object.fromEntries(epicOptions.map((epic) => [epic.key, epic]))
+  const visibleTickets = tickets.filter((ticket) => ticketMatchesEpicFilter(ticket, epicFilter))
+  const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
   const loadBoards = useCallback(async () => {
     const data = await fetchBoards()
@@ -629,6 +1022,10 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     const id = setInterval(loadTickets, 5000)
     return () => clearInterval(id)
   }, [loadTickets])
+
+  useEffect(() => {
+    setEpicFilter('')
+  }, [activeBoardId])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -684,10 +1081,27 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }
 
   const handleSave = async (form) => {
+    const files = Array.from(form.files || []).filter(Boolean)
+    const payload = { ...form }
+    delete payload.files
     if (modalTicket?.ticket_id) {
-      await updateTicket(modalTicket.ticket_id, form)
+      await updateTicket(modalTicket.ticket_id, payload)
     } else {
-      await createTicket(activeBoardId, form)
+      const data = await createTicket(activeBoardId, payload)
+      const created = data.ticket
+      try {
+        if (created?.ticket_id) {
+          for (const file of files) {
+            await uploadTicketAttachment(created.ticket_id, file)
+          }
+        }
+      } catch (err) {
+        setShowCreate(false)
+        setCreateStatus(null)
+        setModalTicket(created)
+        await loadTickets()
+        throw err
+      }
     }
     setModalTicket(null)
     setShowCreate(false)
@@ -836,6 +1250,22 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
               </p>
             )}
           </div>
+          {showEpicFilter && (
+            <select
+              value={epicFilter}
+              onChange={(e) => setEpicFilter(e.target.value)}
+              className="text-sm px-2 py-2 rounded-xl border border-border min-h-[44px] max-w-[160px] sm:max-w-[220px] bg-white"
+              aria-label="Filter by epic"
+            >
+              <option value="">All tickets</option>
+              <option value="__none__">No epic</option>
+              {epicOptions.map((epic) => (
+                <option key={epic.key} value={epic.key}>
+                  {epicChipLabel(epic)}
+                </option>
+              ))}
+            </select>
+          )}
           {jiraImportAvailable && activeBoard?.workflow_enabled && (
             <button
               type="button"
@@ -868,7 +1298,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         {/* Mobile: stacked columns */}
         <div className="flex-1 overflow-y-auto lg:hidden p-3 space-y-4">
           {columns.map((col) => {
-            const colTickets = tickets.filter((t) => t.status === col)
+            const colTickets = visibleTickets.filter((t) => t.status === col)
             return (
               <section key={col} className="border border-border rounded-xl bg-surface/50">
                 <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between">
@@ -880,10 +1310,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                     <TicketCard
                       key={ticket.ticket_id}
                       ticket={ticket}
+                      parentEpic={epicsByKey[ticketParentKey(ticket)]}
                       columns={columns}
                       onEdit={setModalTicket}
                       onStatusChange={handleStatusChange}
                       onDiscuss={onDiscussTicket}
+                      onFilterEpic={setEpicFilter}
                       dragging={dragTicket?.ticket_id === ticket.ticket_id}
                       onDragStart={(_, t) => setDragTicket(t)}
                       onDragEnd={() => setDragTicket(null)}
@@ -901,7 +1333,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         {/* Desktop: horizontal kanban */}
         <div className="hidden lg:flex flex-1 overflow-x-auto p-4 gap-3">
           {columns.map((col) => {
-            const colTickets = tickets.filter((t) => t.status === col)
+            const colTickets = visibleTickets.filter((t) => t.status === col)
             return (
               <section
                 key={col}
@@ -918,10 +1350,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                     <TicketCard
                       key={ticket.ticket_id}
                       ticket={ticket}
+                      parentEpic={epicsByKey[ticketParentKey(ticket)]}
                       columns={columns}
                       onEdit={setModalTicket}
                       onStatusChange={handleStatusChange}
                       onDiscuss={onDiscussTicket}
+                      onFilterEpic={setEpicFilter}
                       dragging={dragTicket?.ticket_id === ticket.ticket_id}
                       onDragStart={(_, t) => setDragTicket(t)}
                       onDragEnd={() => setDragTicket(null)}
@@ -943,6 +1377,8 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           columns={columns}
           board={activeBoard}
           initialStatus={createStatus}
+          initialParentKey={epicFilter && epicFilter !== '__none__' ? epicFilter : ''}
+          epics={epicOptions}
           onClose={closeModal}
           onSave={handleSave}
           onDelete={handleDeleteTicket}

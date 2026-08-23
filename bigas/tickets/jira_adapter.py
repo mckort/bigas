@@ -97,6 +97,12 @@ class TicketJiraAdapter:
             )
         return out
 
+    def list_attachments(self, issue_key: str) -> List[Dict[str, Any]]:
+        ticket = self._ticket(issue_key)
+        if not ticket:
+            return []
+        return list(ticket.get("attachments") or self._store.list_attachments(ticket["ticket_id"]))
+
     def get_epics_by_statuses(
         self,
         *,

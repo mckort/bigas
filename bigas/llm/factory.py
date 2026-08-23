@@ -54,6 +54,7 @@ def get_llm_client(
         "qa_agent": "BIGAS_QA_AGENT_MODEL",
         "chat": "BIGAS_CHAT_MODEL",
         "proactive_goals": "BIGAS_PROACTIVE_GOALS_MODEL",
+        "ticket_attachments": "BIGAS_TICKET_ATTACHMENTS_MODEL",
     }
     feature_env = feature_env_map.get(feature)
 
