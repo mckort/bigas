@@ -19,7 +19,10 @@ from bigas.resources.product.endpoints import get_manifest
 from bigas.tickets import store as ticket_store_module
 from bigas.tickets.config import jira_configured, use_internal_board
 from bigas.tickets.constants import columns_for_board
-from bigas.tickets.service import dispatch_ticket_status_automation
+from bigas.resources.product.jira_automation.comments import format_human_comments
+from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
+from bigas.tickets.jira_adapter import TicketJiraAdapter
+from bigas.tickets.service import comment_author_name, dispatch_ticket_status_automation
 from bigas.tickets.store import get_ticket_store
 
 _JIRA_ENV_KEYS = (
@@ -152,6 +155,74 @@ def test_create_and_delete_board(client):
 
     del_resp = client.delete(f"/api/boards/{board_id}", headers=_auth_headers())
     assert del_resp.status_code == 200
+
+
+def test_ticket_comments_api(client):
+    boards = client.get("/api/boards", headers=_auth_headers()).get_json()["boards"]
+    personal = next((b for b in boards if not b.get("project_key")), boards[0])
+    created = client.post(
+        f"/api/boards/{personal['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps({"title": "Need feedback", "description": "Brief"}),
+    ).get_json()["ticket"]
+    ticket_id = created["ticket_id"]
+
+    empty = client.post(
+        f"/api/tickets/{ticket_id}/comments",
+        headers=_auth_headers(),
+        data=json.dumps({"body": "   "}),
+    )
+    assert empty.status_code == 400
+
+    posted = client.post(
+        f"/api/tickets/{ticket_id}/comments",
+        headers=_auth_headers(),
+        data=json.dumps({"body": "Skip Redis, use Firestore"}),
+    )
+    assert posted.status_code == 201
+    comment = posted.get_json()["comment"]
+    assert comment["body"] == "Skip Redis, use Firestore"
+    assert comment["author_name"] == "dev"
+    assert comment["author_id"] == "dev-user"
+
+    listed = client.get(f"/api/boards/{personal['board_id']}/tickets", headers=_auth_headers())
+    card = next(t for t in listed.get_json()["tickets"] if t["ticket_id"] == ticket_id)
+    assert "comments" not in card
+    assert card["comment_count"] == 1
+
+    detail = client.get(f"/api/tickets/{ticket_id}", headers=_auth_headers())
+    comments = detail.get_json()["ticket"]["comments"]
+    assert len(comments) == 1
+    assert comments[0]["body"] == "Skip Redis, use Firestore"
+
+
+def test_human_comments_reach_ai_adapter():
+    store = get_ticket_store()
+    boards = store.ensure_default_boards("test-user")
+    board = boards[0]
+    ticket = store.create_ticket(board["board_id"], title="Plan this", user_id="test-user")
+    store.add_comment(
+        ticket["ticket_id"],
+        "Keep the mobile layout as-is",
+        author_name="Marcus",
+        author_id="u1",
+    )
+    store.add_comment(
+        ticket["ticket_id"],
+        f"{BIGAS_COMMENT_MARKER} Research complete.",
+        author_name="Bigas",
+    )
+
+    raw = TicketJiraAdapter().list_comments(ticket["key"])
+    text = format_human_comments(raw)
+    assert "Keep the mobile layout as-is" in text
+    assert "Marcus" in text
+    assert BIGAS_COMMENT_MARKER not in text
+
+
+def test_comment_author_name_from_email():
+    assert comment_author_name({"email": "marcus@bigas.me", "uid": "abc"}) == "marcus"
+    assert comment_author_name({"uid": "abc"}) == "abc"
 
 
 def test_ticket_persistence_in_memory_store():

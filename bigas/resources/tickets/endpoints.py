@@ -7,7 +7,12 @@ from flask import Blueprint, g, jsonify, request
 
 from bigas.chat.auth import require_chat_auth
 from bigas.tickets.constants import columns_for_board
-from bigas.tickets.service import TicketService, run_ticket_status_automation
+from bigas.tickets.service import (
+    TicketService,
+    comment_author_name,
+    run_ticket_status_automation,
+    ticket_to_api,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +171,6 @@ def ticket_detail(ticket_id: str):
         board = store.get_board(ticket.get("board_id") or "")
         if board and board.get("user_id") != user_id:
             return jsonify({"error": "Forbidden"}), 403
-        from bigas.tickets.service import ticket_to_api
-
         return jsonify({"ticket": ticket_to_api(ticket)})
 
     if request.method == "DELETE":
@@ -201,6 +204,36 @@ def ticket_detail(ticket_id: str):
     if not ticket:
         return jsonify({"error": "Ticket not found"}), 404
     return jsonify({"ticket": ticket})
+
+
+@tickets_bp.route("/api/tickets/<ticket_id>/comments", methods=["POST"])
+@require_chat_auth
+def ticket_comments(ticket_id: str):
+    user_id = g.chat_user["uid"]
+    body = request.get_json(silent=True) or {}
+    text = (body.get("body") or "").strip()
+    if not text:
+        return jsonify({"error": "body is required"}), 400
+
+    from bigas.tickets.store import get_ticket_store
+
+    store = get_ticket_store()
+    ticket = store.get_ticket(ticket_id)
+    if not ticket:
+        return jsonify({"error": "Ticket not found"}), 404
+    board = store.get_board(ticket.get("board_id") or "")
+    if board and board.get("user_id") != user_id:
+        return jsonify({"error": "Forbidden"}), 403
+
+    comment = TicketService().add_comment(
+        ticket_id,
+        body=text,
+        author_name=comment_author_name(g.chat_user),
+        author_id=user_id,
+    )
+    if not comment:
+        return jsonify({"error": "Could not add comment"}), 400
+    return jsonify({"comment": comment}), 201
 
 
 @tickets_bp.route("/api/tickets/<ticket_id>/transition", methods=["POST"])
