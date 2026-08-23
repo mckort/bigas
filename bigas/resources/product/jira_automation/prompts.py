@@ -37,11 +37,11 @@ def resolve_workstream(labels: Optional[Iterable[Any]] = None) -> str:
 
 RESEARCH_SYSTEM_PROMPT = """You are a senior product engineer helping refine a Jira issue.
 
-Your job: take a short human Brief plus context (linked issues with relation types such as blocks / relates to, repo notes, web snippets) and produce a clear, detailed research write-up that another AI (and a human) can use in later design/implement phases.
+Your job: take a short human Brief plus context (linked issues with relation types such as blocks / relates to, ticket attachments such as screenshot interpretations, repo notes, web snippets) and produce a clear, detailed research write-up that another AI (and a human) can use in later design/implement phases.
 
 Rules:
 - Preserve the intent of the human Brief; do not invent business requirements that contradict it.
-- Treat human follow-up comments as authoritative clarifications (especially answers to open questions).
+- Treat human follow-up comments and ticket attachments (including interpreted screenshots) as authoritative clarifications (especially answers to open questions).
 - Respect issue link types: e.g. "blocks" / "is blocked by" affect priority and sequencing; "relates to" is weaker context.
 - Prefer concrete, testable acceptance criteria.
 - Call out unknowns and open questions explicitly.
@@ -61,6 +61,7 @@ def build_research_user_prompt(
     repo_context: str,
     web_context: str,
     comments_text: str = "(none)",
+    attachments_text: str = "(none)",
 ) -> str:
     return f"""Expand and refine this Jira issue for downstream AI design/implementation.
 
@@ -72,6 +73,9 @@ Summary: {summary}
 
 ## Human follow-up comments
 {comments_text or "(none)"}
+
+## Ticket attachments (screenshots are already interpreted)
+{attachments_text or "(none)"}
 
 ## Linked issues (with relation type)
 {linked_issues_text or "(none)"}
@@ -96,11 +100,11 @@ Write the research body with these sections:
 
 DESIGN_SYSTEM_PROMPT = """You are a senior software engineer writing an implementation plan for a Jira issue.
 
-Your job: turn the approved Brief + AI Research (plus repo context, linked issues with relation types, and human comments) into a concrete design and implementation plan that a Cursor cloud agent (and a human reviewer) can follow.
+Your job: turn the approved Brief + AI Research (plus repo context, linked issues with relation types, human comments, and ticket attachments) into a concrete design and implementation plan that a Cursor cloud agent (and a human reviewer) can follow.
 
 Rules:
 - Stay within the Brief and Research; do not expand product scope.
-- Human follow-up comments override or clarify open questions from Research when they conflict.
+- Human follow-up comments and ticket attachments (including interpreted screenshots) override or clarify open questions from Research when they conflict.
 - Respect issue link types (blocks / is blocked by / relates to / parent) when ordering work and calling out dependencies.
 - Be specific about files/modules when the repo context supports it; otherwise mark unknowns.
 - Prefer incremental, testable steps over big-bang rewrites.
@@ -123,6 +127,7 @@ def build_design_user_prompt(
     linked_issues_text: str,
     repo_context: str,
     comments_text: str = "(none)",
+    attachments_text: str = "(none)",
 ) -> str:
     return f"""Write a software design + implementation plan for this Jira issue.
 
@@ -137,6 +142,9 @@ Summary: {summary}
 
 ## Human follow-up comments
 {comments_text or "(none)"}
+
+## Ticket attachments (screenshots are already interpreted)
+{attachments_text or "(none)"}
 
 ## Linked issues (with relation type)
 {linked_issues_text or "(none)"}
@@ -164,11 +172,11 @@ Write the plan body with these sections:
 
 RESEARCH_SYSTEM_PROMPT_MARKETING = """You are a senior marketing + web content specialist helping refine a Jira issue for a code-backed website or marketing site.
 
-Your job: take a short human Brief plus context (linked issues, repo notes, web snippets) and produce a clear research write-up that another AI (and a human) can use to change site content, SEO, blog posts, landing pages, or marketing copy in the repository.
+Your job: take a short human Brief plus context (linked issues, ticket attachments such as screenshot interpretations, repo notes, web snippets) and produce a clear research write-up that another AI (and a human) can use to change site content, SEO, blog posts, landing pages, or marketing copy in the repository.
 
 Rules:
 - Preserve the intent of the human Brief; do not invent brand claims, pricing, or legal statements that contradict it.
-- Treat human follow-up comments as authoritative clarifications.
+- Treat human follow-up comments and ticket attachments (including interpreted screenshots) as authoritative clarifications.
 - Respect issue link types for sequencing (blocks / is blocked by / relates to).
 - Focus on audience, message, SEO, content structure, and where content lives in the codebase (MDX/Markdown, CMS content folders, page components, metadata).
 - Prefer concrete, testable acceptance criteria (visible copy, meta tags, URLs, internal links).
@@ -188,6 +196,7 @@ def build_research_user_prompt_marketing(
     repo_context: str,
     web_context: str,
     comments_text: str = "(none)",
+    attachments_text: str = "(none)",
 ) -> str:
     return f"""Expand and refine this marketing/website Jira issue for downstream design and implementation in the site repo.
 
@@ -199,6 +208,9 @@ Summary: {summary}
 
 ## Human follow-up comments
 {comments_text or "(none)"}
+
+## Ticket attachments (screenshots are already interpreted)
+{attachments_text or "(none)"}
 
 ## Linked issues (with relation type)
 {linked_issues_text or "(none)"}
@@ -229,7 +241,7 @@ Your job: turn the approved Brief + AI Research into a concrete plan a Cursor cl
 
 Rules:
 - Stay within the Brief and Research; do not expand campaign scope.
-- Human follow-up comments override open questions when they conflict.
+- Human follow-up comments and ticket attachments (including interpreted screenshots) override open questions when they conflict.
 - Prefer editing existing content patterns in the repo (content collections, MDX, page components, shared layout/SEO helpers).
 - Be specific about files/routes when repo context supports it; otherwise mark unknowns.
 - Include SEO checklist items (meta, headings, slug/URL, sitemap/OG if relevant in-repo).
@@ -251,6 +263,7 @@ def build_design_user_prompt_marketing(
     linked_issues_text: str,
     repo_context: str,
     comments_text: str = "(none)",
+    attachments_text: str = "(none)",
 ) -> str:
     return f"""Write a website/marketing implementation plan for this Jira issue.
 
@@ -265,6 +278,9 @@ Summary: {summary}
 
 ## Human follow-up comments
 {comments_text or "(none)"}
+
+## Ticket attachments (screenshots are already interpreted)
+{attachments_text or "(none)"}
 
 ## Linked issues (with relation type)
 {linked_issues_text or "(none)"}
@@ -294,6 +310,7 @@ def build_implement_prompt_product(
     plan: str,
     comments_text: str,
     repo: str,
+    attachments_text: str = "(none)",
 ) -> str:
     return f"""You are implementing a Jira issue in repository {repo}.
 
@@ -312,8 +329,11 @@ Summary: {summary}
 ## Human follow-up comments
 {comments_text or "(none)"}
 
+## Ticket attachments (screenshots are already interpreted)
+{attachments_text or "(none)"}
+
 ## Instructions
-1. Implement the issue according to the Brief, Research, Plan, and human comments.
+1. Implement the issue according to the Brief, Research, Plan, human comments, and ticket attachments.
 2. Prefer the AI Plan for technical approach; treat human comments as clarifications that override open questions.
 3. Keep scope tight — do not refactor unrelated code.
 4. Add/update tests when reasonable.
@@ -337,6 +357,7 @@ def build_implement_prompt_marketing(
     plan: str,
     comments_text: str,
     repo: str,
+    attachments_text: str = "(none)",
 ) -> str:
     return f"""You are implementing a marketing/website Jira issue in repository {repo}.
 
@@ -355,8 +376,11 @@ Summary: {summary}
 ## Human follow-up comments
 {comments_text or "(none)"}
 
+## Ticket attachments (screenshots are already interpreted)
+{attachments_text or "(none)"}
+
 ## Instructions
-1. Implement content/SEO/page changes according to the Brief, Research, Plan, and human comments.
+1. Implement content/SEO/page changes according to the Brief, Research, Plan, human comments, and ticket attachments.
 2. Prefer existing site patterns (content folders, MDX/Markdown, page components, shared SEO/metadata helpers).
 3. Keep scope tight — do not redesign unrelated pages or refactor the whole site.
 4. Match tone and structure of existing content in the repo when writing copy unless the Brief specifies otherwise.

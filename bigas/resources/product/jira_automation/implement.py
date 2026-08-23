@@ -26,6 +26,7 @@ from bigas.resources.product.jira_automation.comments import (
     format_human_comments,
     issue_discord_label,
 )
+from bigas.tickets.attachments import attachments_text_for_issue
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 from bigas.resources.product.jira_automation.description import (
     PLAN_HEADING,
@@ -261,6 +262,7 @@ class ImplementHandler:
             logger.warning("Failed to load comments for %s", issue_key, exc_info=True)
             raw_comments = []
         comments_text = format_human_comments(raw_comments)
+        attachments_text = attachments_text_for_issue(self._jira, issue_key)
 
         if not plan.strip() and not research.strip():
             raise ImplementHandlerError(
@@ -275,6 +277,7 @@ class ImplementHandler:
             plan=plan,
             comments_text=comments_text,
             repo=repo,
+            attachments_text=attachments_text,
         )
         repo_url = f"https://github.com/{repo}"
         agent_name = f"Bigas implement {issue_key} {_slugify(summary)}"[:100]

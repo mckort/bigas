@@ -80,6 +80,7 @@ def _compose_ticket(
         "parent_key": parent_key,
         "thread_id": thread_id,
         "comments": [],
+        "attachments": [],
         "done_processed": False,
         "project_key": project_key,
         "created_at": now,
@@ -463,6 +464,82 @@ class MemoryTicketStore:
         if not ticket:
             return []
         return list(ticket.get("comments") or [])
+
+    def add_attachment(
+        self,
+        ticket_id: str,
+        attachment: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not attachment or not attachment.get("id"):
+            return None
+        with self._lock:
+            ticket = self._tickets.get(ticket_id)
+            if not ticket:
+                return None
+            items = list(ticket.get("attachments") or [])
+            items.append(attachment)
+            ticket["attachments"] = items
+            ticket["updated_at"] = _utcnow_iso()
+            return dict(attachment)
+
+    def remove_attachment(
+        self,
+        ticket_id: str,
+        attachment_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        aid = (attachment_id or "").strip()
+        if not aid:
+            return None
+        with self._lock:
+            ticket = self._tickets.get(ticket_id)
+            if not ticket:
+                return None
+            items = list(ticket.get("attachments") or [])
+            kept = []
+            removed = None
+            for item in items:
+                if not removed and (item.get("id") or "") == aid:
+                    removed = item
+                    continue
+                kept.append(item)
+            if removed is None:
+                return None
+            ticket["attachments"] = kept
+            ticket["updated_at"] = _utcnow_iso()
+            return dict(removed)
+
+    def update_attachment(
+        self,
+        ticket_id: str,
+        attachment_id: str,
+        **fields: Any,
+    ) -> Optional[Dict[str, Any]]:
+        aid = (attachment_id or "").strip()
+        if not aid or not fields:
+            return None
+        with self._lock:
+            ticket = self._tickets.get(ticket_id)
+            if not ticket:
+                return None
+            items = list(ticket.get("attachments") or [])
+            updated_item = None
+            for index, item in enumerate(items):
+                if (item.get("id") or "") != aid:
+                    continue
+                items[index] = {**item, **fields}
+                updated_item = items[index]
+                break
+            if updated_item is None:
+                return None
+            ticket["attachments"] = items
+            ticket["updated_at"] = _utcnow_iso()
+            return dict(updated_item)
+
+    def list_attachments(self, ticket_id: str) -> List[Dict[str, Any]]:
+        ticket = self.get_ticket(ticket_id)
+        if not ticket:
+            return []
+        return list(ticket.get("attachments") or [])
 
     def list_tickets_by_project(
         self,
@@ -887,6 +964,96 @@ class FirestoreTicketStore:
         if not ticket:
             return []
         return list(ticket.get("comments") or [])
+
+    def add_attachment(
+        self,
+        ticket_id: str,
+        attachment: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        from google.cloud.firestore import ArrayUnion
+
+        if not attachment or not attachment.get("id"):
+            return None
+        ref = self._tickets.document(ticket_id)
+        snap = ref.get()
+        if not snap.exists:
+            return None
+        now = _utcnow_iso()
+        ref.update({"attachments": ArrayUnion([attachment]), "updated_at": now})
+        return dict(attachment)
+
+    def remove_attachment(
+        self,
+        ticket_id: str,
+        attachment_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        from google.cloud.firestore import ArrayRemove
+
+        aid = (attachment_id or "").strip()
+        if not aid:
+            return None
+        ref = self._tickets.document(ticket_id)
+        snap = ref.get()
+        if not snap.exists:
+            return None
+        ticket = snap.to_dict() or {}
+        removed = next(
+            (item for item in (ticket.get("attachments") or []) if (item.get("id") or "") == aid),
+            None,
+        )
+        if removed is None:
+            return None
+        ref.update(
+            {
+                "attachments": ArrayRemove([removed]),
+                "updated_at": _utcnow_iso(),
+            }
+        )
+        return dict(removed)
+
+    def update_attachment(
+        self,
+        ticket_id: str,
+        attachment_id: str,
+        **fields: Any,
+    ) -> Optional[Dict[str, Any]]:
+        from google.cloud import firestore
+
+        aid = (attachment_id or "").strip()
+        if not aid or not fields:
+            return None
+        ref = self._tickets.document(ticket_id)
+
+        @firestore.transactional
+        def _update(transaction):
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return None
+            ticket = snap.to_dict() or {}
+            items = list(ticket.get("attachments") or [])
+            updated_item = None
+            for index, item in enumerate(items):
+                if (item.get("id") or "") != aid:
+                    continue
+                items[index] = {**item, **fields}
+                updated_item = items[index]
+                break
+            if updated_item is None:
+                return None
+            transaction.update(
+                ref,
+                {"attachments": items, "updated_at": _utcnow_iso()},
+            )
+            return dict(updated_item)
+
+        transaction = self._db.transaction()
+        return _update(transaction)
+
+    def list_attachments(self, ticket_id: str) -> List[Dict[str, Any]]:
+        ticket = self.get_ticket(ticket_id)
+        if not ticket:
+            return []
+        return list(ticket.get("attachments") or [])
 
     def list_tickets_by_project(
         self,

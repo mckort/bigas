@@ -395,8 +395,11 @@ def test_build_implement_prompt_forbids_confirmation():
         plan="plan",
         comments_text="(none)",
         repo="mckort/vcfieldassistant",
+        attachments_text="### bug.png (image/png)\nRed error: Card declined",
     )
     assert "Do NOT ask for confirmation" in prompt
+    assert "Ticket attachments" in prompt
+    assert "Card declined" in prompt
     assert "implement immediately" in prompt
     assert "Update the repository README" in prompt
     assert "Update in-app support/help content" in prompt

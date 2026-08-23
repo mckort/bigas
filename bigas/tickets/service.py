@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -30,6 +31,18 @@ def _sync_user_id() -> str:
     if user:
         return user["uid"]
     return "dev-user"
+
+
+def _should_run_interpretation_inline() -> bool:
+    """Run screenshot interpretation inline in tests."""
+    try:
+        from flask import current_app, has_app_context
+
+        if has_app_context() and current_app.config.get("TESTING"):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def ticket_url(key: str) -> str:
@@ -176,6 +189,7 @@ def comment_author_name(user: Optional[Dict[str, Any]]) -> str:
 def ticket_to_api(ticket: Dict[str, Any], *, include_comments: bool = True) -> Dict[str, Any]:
     key = ticket.get("key") or ""
     comments = list(ticket.get("comments") or [])
+    attachments = list(ticket.get("attachments") or [])
     labels = resolve_ticket_labels(ticket)
     payload = {
         **ticket,
@@ -186,9 +200,12 @@ def ticket_to_api(ticket: Dict[str, Any], *, include_comments: bool = True) -> D
     }
     if include_comments:
         payload["comments"] = comments
+        payload["attachments"] = attachments
     else:
         payload.pop("comments", None)
+        payload.pop("attachments", None)
         payload["comment_count"] = len(comments)
+        payload["attachment_count"] = len(attachments)
     return payload
 
 
@@ -222,7 +239,29 @@ class TicketService:
         }
 
     def delete_board(self, board_id: str, *, user_id: str) -> bool:
-        return self._store.delete_board(board_id, user_id=user_id)
+        tickets = self._store.list_tickets(board_id, user_id=user_id)
+        if not self._store.delete_board(board_id, user_id=user_id):
+            return False
+        for ticket in tickets:
+            self._delete_ticket_attachment_blobs(ticket)
+        return True
+
+    def delete_ticket(self, ticket_id: str, *, user_id: str) -> bool:
+        ticket = self._store.get_ticket(ticket_id)
+        if not ticket:
+            return False
+        board = self._store.get_board(ticket.get("board_id") or "")
+        if board and board.get("user_id") != user_id:
+            return False
+        if not self._store.delete_ticket(ticket_id, user_id=user_id):
+            return False
+        self._delete_ticket_attachment_blobs(ticket)
+        return True
+
+    def _delete_ticket_attachment_blobs(self, ticket: Dict[str, Any]) -> None:
+        from bigas.tickets.attachments import delete_attachment_blobs
+
+        delete_attachment_blobs(list(ticket.get("attachments") or []))
 
     def list_tickets(self, board_id: str, *, user_id: str) -> List[Dict[str, Any]]:
         tickets = self._store.list_tickets(board_id, user_id=user_id)
@@ -242,6 +281,164 @@ class TicketService:
             author_name=author_name,
             author_id=author_id,
         )
+
+    def add_attachment(
+        self,
+        ticket_id: str,
+        *,
+        filename: str,
+        content_type: Optional[str],
+        data: bytes,
+        uploaded_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from bigas.tickets.attachments import (
+            AttachmentError,
+            IMAGE_MIME_TYPES,
+            attachment_blob_name,
+            build_attachment_record,
+            extract_attachment_text,
+            get_attachment_blob_store,
+            validate_upload,
+        )
+
+        ticket = self._store.get_ticket(ticket_id)
+        if not ticket:
+            raise AttachmentError("Ticket not found")
+        existing = list(ticket.get("attachments") or [])
+        safe_name, mime = validate_upload(
+            filename=filename,
+            content_type=content_type,
+            size_bytes=len(data or b""),
+            existing_count=len(existing),
+        )
+        defer_image_llm = mime in IMAGE_MIME_TYPES and not _should_run_interpretation_inline()
+        extracted = extract_attachment_text(
+            data=data,
+            filename=safe_name,
+            content_type=mime,
+            defer_image_llm=defer_image_llm,
+        )
+        record = build_attachment_record(
+            filename=safe_name,
+            content_type=mime,
+            size_bytes=len(data),
+            storage_path="",
+            extracted_text=extracted,
+            uploaded_by=uploaded_by,
+        )
+        path = attachment_blob_name(ticket_id, record["id"], safe_name)
+        record["storage_path"] = path
+        blobs = get_attachment_blob_store()
+        blobs.put(path, data, mime)
+        saved = self._store.add_attachment(ticket_id, record)
+        if not saved:
+            blobs.delete(path)
+            raise AttachmentError("Could not save attachment")
+        if defer_image_llm:
+            self._dispatch_attachment_interpretation(
+                ticket_id=ticket_id,
+                attachment_id=record["id"],
+                data=data,
+                filename=safe_name,
+                content_type=mime,
+            )
+        return saved
+
+    def _dispatch_attachment_interpretation(
+        self,
+        *,
+        ticket_id: str,
+        attachment_id: str,
+        data: bytes,
+        filename: str,
+        content_type: str,
+    ) -> None:
+        thread = threading.Thread(
+            target=self._interpret_attachment_background,
+            kwargs={
+                "ticket_id": ticket_id,
+                "attachment_id": attachment_id,
+                "data": data,
+                "filename": filename,
+                "content_type": content_type,
+            },
+            daemon=True,
+        )
+        thread.start()
+
+    def _interpret_attachment_background(
+        self,
+        *,
+        ticket_id: str,
+        attachment_id: str,
+        data: bytes,
+        filename: str,
+        content_type: str,
+    ) -> None:
+        from bigas.tickets.attachments import clip_extracted_text, describe_image, _image_fallback
+
+        try:
+            extracted = clip_extracted_text(
+                describe_image(data, content_type, filename),
+            )
+            self._store.update_attachment(
+                ticket_id,
+                attachment_id,
+                extracted_text=extracted,
+            )
+        except Exception:
+            logger.warning(
+                "Background screenshot interpretation failed for ticket %s attachment %s",
+                ticket_id,
+                attachment_id,
+                exc_info=True,
+            )
+            try:
+                failure_text = clip_extracted_text(
+                    _image_fallback(filename, "interpretation failed"),
+                )
+                self._store.update_attachment(
+                    ticket_id,
+                    attachment_id,
+                    extracted_text=failure_text,
+                )
+            except Exception:
+                logger.warning(
+                    "Could not mark attachment interpretation failure for ticket %s attachment %s",
+                    ticket_id,
+                    attachment_id,
+                    exc_info=True,
+                )
+
+    def delete_attachment(self, ticket_id: str, attachment_id: str) -> Optional[Dict[str, Any]]:
+        from bigas.tickets.attachments import get_attachment_blob_store
+
+        removed = self._store.remove_attachment(ticket_id, attachment_id)
+        if not removed:
+            return None
+        path = (removed.get("storage_path") or "").strip()
+        if path:
+            get_attachment_blob_store().delete(path)
+        return removed
+
+    def get_attachment_bytes(
+        self,
+        ticket_id: str,
+        attachment_id: str,
+    ) -> Optional[tuple]:
+        from bigas.tickets.attachments import get_attachment_blob_store
+
+        items = self._store.list_attachments(ticket_id)
+        record = next((a for a in items if (a.get("id") or "") == attachment_id), None)
+        if not record:
+            return None
+        path = (record.get("storage_path") or "").strip()
+        if not path:
+            return None
+        data = get_attachment_blob_store().get(path)
+        if data is None:
+            return None
+        return record, data
 
     def create_ticket(
         self,

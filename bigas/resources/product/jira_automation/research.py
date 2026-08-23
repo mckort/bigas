@@ -12,6 +12,7 @@ from bigas.resources.product.create_release_notes.jira_client import (
     adf_to_plain_text,
 )
 from bigas.resources.product.jira_automation.comments import format_human_comments
+from bigas.tickets.attachments import attachments_text_for_issue
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 from bigas.resources.product.jira_automation.description import (
     extract_brief,
@@ -170,6 +171,7 @@ class ResearchDescribeHandler:
             logger.warning("Failed to load comments for %s", issue_key, exc_info=True)
             raw_comments = []
         comments_text = format_human_comments(raw_comments)
+        attachments_text = attachments_text_for_issue(self._jira, issue_key)
 
         hints = [summary]
         labels = fields.get("labels") or []
@@ -189,6 +191,7 @@ class ResearchDescribeHandler:
             repo_context=repo_context,
             web_context=web_context,
             comments_text=comments_text,
+            attachments_text=attachments_text,
         )
         try:
             research_body = self._llm.complete(
