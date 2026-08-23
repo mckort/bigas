@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  addTicketComment,
   createBoard,
   createTicket,
   deleteBoard,
   deleteTicket,
   fetchBoards,
   fetchBoardTickets,
+  fetchTicket,
   fetchTicketByKey,
   updateTicket,
 } from '../lib/api'
+
+const SYSTEM_COMMENT_MARKER = '[bigas-jira-ai]'
 
 const AI_WORKING_STATUSES = new Set([
   'Research and describe (AI)',
@@ -90,6 +94,130 @@ function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, draggi
           Discuss
         </button>
       </div>
+    </div>
+  )
+}
+
+function isSystemComment(comment) {
+  return (comment?.body || '').includes(SYSTEM_COMMENT_MARKER)
+}
+
+function formatCommentTime(iso) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) {
+    return String(iso).slice(0, 16).replace('T', ' ')
+  }
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function commentBody(comment) {
+  return (comment?.body || '').replace(SYSTEM_COMMENT_MARKER, '').trim()
+}
+
+function TicketComments({ ticketId }) {
+  const [comments, setComments] = useState([])
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [showSystem, setShowSystem] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetchTicket(ticketId)
+      .then((data) => {
+        if (!cancelled) setComments(data.ticket?.comments || [])
+      })
+      .catch(() => {
+        if (!cancelled) setError('Could not load comments')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [ticketId])
+
+  const human = comments.filter((c) => !isSystemComment(c))
+  const system = comments.filter((c) => isSystemComment(c))
+  const visible = showSystem ? comments : human
+
+  const handlePost = async () => {
+    const body = draft.trim()
+    if (!body || sending) return
+    setSending(true)
+    setError('')
+    try {
+      const data = await addTicketComment(ticketId, body)
+      if (data.comment) setComments((prev) => [...prev, data.comment])
+      setDraft('')
+    } catch (err) {
+      setError(err.message || 'Could not post comment')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="pt-3 border-t border-border space-y-3">
+      <div>
+        <p className="text-muted text-xs">Comments</p>
+        <p className="text-[11px] text-muted mt-0.5">The next AI step reads these comments.</p>
+      </div>
+      <div className="space-y-2">
+        {visible.length === 0 && (
+          <p className="text-xs text-muted">No comments yet.</p>
+        )}
+        {visible.map((comment) => {
+          const fromSystem = isSystemComment(comment)
+          return (
+            <div
+              key={comment.id}
+              className={`rounded-xl px-3 py-2 text-sm ${
+                fromSystem ? 'bg-surface text-muted' : 'bg-surface border border-border'
+              }`}
+            >
+              <div className="flex items-baseline justify-between gap-2 mb-1">
+                <span className="text-xs font-medium truncate">
+                  {fromSystem ? 'Bigas' : comment.author_name || 'Someone'}
+                </span>
+                <span className="text-[10px] text-muted flex-shrink-0">
+                  {formatCommentTime(comment.created_at)}
+                </span>
+              </div>
+              <p className="whitespace-pre-wrap break-words text-sm leading-snug">{commentBody(comment)}</p>
+            </div>
+          )
+        })}
+      </div>
+      {system.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowSystem((v) => !v)}
+          className="text-xs text-muted hover:text-text min-h-[32px]"
+        >
+          {showSystem ? 'Hide system notes' : `Show system notes (${system.length})`}
+        </button>
+      )}
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        rows={3}
+        placeholder="Feedback for the next AI step…"
+        className="w-full border border-border rounded-xl px-3 py-2 text-sm"
+      />
+      <button
+        type="button"
+        onClick={handlePost}
+        disabled={!draft.trim() || sending}
+        className="w-full border border-border rounded-xl py-2 min-h-[44px] text-sm font-medium disabled:opacity-50 hover:bg-surface"
+      >
+        {sending ? 'Posting…' : 'Comment'}
+      </button>
     </div>
   )
 }
@@ -178,6 +306,7 @@ function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
               />
             </label>
           )}
+          {!isNew && <TicketComments ticketId={ticket.ticket_id} />}
         </div>
         <div className="p-4 border-t border-border flex flex-col sm:flex-row gap-2">
           {!isNew && (

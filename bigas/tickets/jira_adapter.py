@@ -72,12 +72,13 @@ class TicketJiraAdapter:
         comments = self._store.list_comments(ticket["ticket_id"])
         out = []
         for c in comments[:max_results]:
+            name = (c.get("author_name") or "").strip() or "Bigas"
             out.append(
                 {
                     "id": c.get("id"),
                     "body": c.get("body"),
                     "created": c.get("created_at"),
-                    "author": {"displayName": "Bigas"},
+                    "author": {"displayName": name},
                 }
             )
         return out
@@ -86,7 +87,11 @@ class TicketJiraAdapter:
         ticket = self._ticket(issue_key)
         if not ticket:
             raise RuntimeError(f"Ticket {issue_key} not found")
-        comment = self._store.add_comment(ticket["ticket_id"], body_text)
+        comment = self._store.add_comment(
+            ticket["ticket_id"],
+            body_text,
+            author_name="Bigas",
+        )
         return comment or {}
 
     def update_description(self, issue_key: str, description_markdown: str) -> None:

@@ -129,6 +129,17 @@ export async function fetchTicketByKey(key) {
   return apiFetch(`/api/tickets/by-key/${encodeURIComponent(key)}`)
 }
 
+export async function fetchTicket(ticketId) {
+  return apiFetch(`/api/tickets/${ticketId}`)
+}
+
+export async function addTicketComment(ticketId, body) {
+  return apiFetch(`/api/tickets/${ticketId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body }),
+  })
+}
+
 export async function updateTicket(ticketId, payload) {
   return apiFetch(`/api/tickets/${ticketId}`, {
     method: 'PUT',

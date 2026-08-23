@@ -161,13 +161,31 @@ def dispatch_ticket_status_automation(
         )
 
 
-def ticket_to_api(ticket: Dict[str, Any]) -> Dict[str, Any]:
+def comment_author_name(user: Optional[Dict[str, Any]]) -> str:
+    if not user:
+        return "Someone"
+    email = (user.get("email") or "").strip()
+    if "@" in email:
+        return email.split("@", 1)[0]
+    if email:
+        return email
+    return (user.get("uid") or "Someone").strip() or "Someone"
+
+
+def ticket_to_api(ticket: Dict[str, Any], *, include_comments: bool = True) -> Dict[str, Any]:
     key = ticket.get("key") or ""
-    return {
+    comments = list(ticket.get("comments") or [])
+    payload = {
         **ticket,
         "url": ticket_url(key),
         "summary": ticket.get("title") or key,
     }
+    if include_comments:
+        payload["comments"] = comments
+    else:
+        payload.pop("comments", None)
+        payload["comment_count"] = len(comments)
+    return payload
 
 
 class TicketService:
@@ -204,7 +222,22 @@ class TicketService:
 
     def list_tickets(self, board_id: str, *, user_id: str) -> List[Dict[str, Any]]:
         tickets = self._store.list_tickets(board_id, user_id=user_id)
-        return [ticket_to_api(t) for t in tickets]
+        return [ticket_to_api(t, include_comments=False) for t in tickets]
+
+    def add_comment(
+        self,
+        ticket_id: str,
+        *,
+        body: str,
+        author_name: Optional[str] = None,
+        author_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._store.add_comment(
+            ticket_id,
+            body,
+            author_name=author_name,
+            author_id=author_id,
+        )
 
     def create_ticket(
         self,

@@ -23,6 +23,29 @@ def _board_prefix(project_key: Optional[str]) -> str:
     return "PERS"
 
 
+def _make_comment(
+    body: str,
+    *,
+    author_name: Optional[str] = None,
+    author_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    text = (body or "").strip()
+    if not text:
+        return None
+    comment: Dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "body": text,
+        "created_at": _utcnow_iso(),
+    }
+    name = (author_name or "").strip()
+    if name:
+        comment["author_name"] = name
+    uid = (author_id or "").strip()
+    if uid:
+        comment["author_id"] = uid
+    return comment
+
+
 class MemoryTicketStore:
     """Thread-safe in-memory store for boards and tickets."""
 
@@ -289,19 +312,21 @@ class MemoryTicketStore:
             del self._tickets[ticket_id]
         return True
 
-    def add_comment(self, ticket_id: str, body: str) -> Optional[Dict[str, Any]]:
-        text = (body or "").strip()
-        if not text:
+    def add_comment(
+        self,
+        ticket_id: str,
+        body: str,
+        *,
+        author_name: Optional[str] = None,
+        author_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        comment = _make_comment(body, author_name=author_name, author_id=author_id)
+        if not comment:
             return None
         with self._lock:
             ticket = self._tickets.get(ticket_id)
             if not ticket:
                 return None
-            comment = {
-                "id": str(uuid.uuid4()),
-                "body": text,
-                "created_at": _utcnow_iso(),
-            }
             comments = list(ticket.get("comments") or [])
             comments.append(comment)
             ticket["comments"] = comments
@@ -619,23 +644,24 @@ class FirestoreTicketStore:
         ref.delete()
         return True
 
-    def add_comment(self, ticket_id: str, body: str) -> Optional[Dict[str, Any]]:
+    def add_comment(
+        self,
+        ticket_id: str,
+        body: str,
+        *,
+        author_name: Optional[str] = None,
+        author_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         from google.cloud.firestore import ArrayUnion
 
-        text = (body or "").strip()
-        if not text:
+        comment = _make_comment(body, author_name=author_name, author_id=author_id)
+        if not comment:
             return None
         ref = self._tickets.document(ticket_id)
         snap = ref.get()
         if not snap.exists:
             return None
-        now = _utcnow_iso()
-        comment = {
-            "id": str(uuid.uuid4()),
-            "body": text,
-            "created_at": now,
-        }
-        ref.update({"comments": ArrayUnion([comment]), "updated_at": now})
+        ref.update({"comments": ArrayUnion([comment]), "updated_at": comment["created_at"]})
         return comment
 
     def list_comments(self, ticket_id: str) -> List[Dict[str, Any]]:
