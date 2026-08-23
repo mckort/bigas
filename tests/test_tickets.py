@@ -534,3 +534,16 @@ def test_allocate_key_auto_increment_is_reserved(client):
         user_id="dev-user",
     )
     assert ticket["key"] != first_key
+
+
+def test_allocate_key_skips_occupied_auto_keys(client):
+    boards = client.get("/api/boards", headers=_auth_headers()).get_json()["boards"]
+    personal = next(b for b in boards if not b.get("project_key"))
+    store = get_ticket_store()
+    store._key_index["PERS-1"] = "reserved"
+    ticket = store.create_ticket(
+        personal["board_id"],
+        title="Skip occupied auto key",
+        user_id="dev-user",
+    )
+    assert ticket["key"] == "PERS-2"

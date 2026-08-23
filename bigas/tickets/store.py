@@ -226,8 +226,11 @@ class MemoryTicketStore:
                 self._key_index[display] = ""
                 return display
             seq = self._counters.get(prefix, 0) + 1
-            self._counters[prefix] = seq
             display = f"{prefix}-{seq}"
+            while display in self._key_index:
+                seq += 1
+                display = f"{prefix}-{seq}"
+            self._counters[prefix] = seq
             self._key_index[display] = ""
             return display
 
@@ -590,6 +593,7 @@ class FirestoreTicketStore:
 
         @firestore.transactional
         def _allocate(transaction):
+            # Do not call twice in the same transaction: reads must precede all writes.
             if display:
                 if not _ISSUE_KEY_RE.match(display):
                     raise ValueError(f"invalid key {requested!r}")
@@ -622,6 +626,7 @@ class FirestoreTicketStore:
                 transaction.set(lock_ref, {"prefix": prefix, "key": display})
                 return display
 
+            # All reads must happen before writes in a Firestore transaction.
             counter_snap = counter_ref.get(transaction=transaction)
             current = (
                 int((counter_snap.to_dict() or {}).get("seq") or 0)
@@ -629,12 +634,26 @@ class FirestoreTicketStore:
                 else 0
             )
             seq = current + 1
-            transaction.set(counter_ref, {"seq": seq, "prefix": prefix}, merge=True)
             auto_display = f"{prefix}-{seq}"
             lock_ref = self._key_locks.document(auto_display)
-            lock_snap = lock_ref.get(transaction=transaction)
-            if lock_snap.exists:
-                raise ValueError(f"key {auto_display} already exists")
+            # Firestore transactions cap at 500 document reads (~2 reads/iteration here).
+            for _ in range(200):
+                lock_snap = lock_ref.get(transaction=transaction)
+                if not lock_snap.exists:
+                    existing = list(
+                        self._tickets.where("key", "==", auto_display)
+                        .limit(1)
+                        .stream(transaction=transaction)
+                    )
+                    if not existing:
+                        break
+                seq += 1
+                auto_display = f"{prefix}-{seq}"
+                lock_ref = self._key_locks.document(auto_display)
+            else:
+                raise ValueError(f"could not allocate a free key for {prefix}")
+
+            transaction.set(counter_ref, {"seq": seq, "prefix": prefix}, merge=True)
             transaction.set(lock_ref, {"prefix": prefix, "key": auto_display})
             return auto_display
 
