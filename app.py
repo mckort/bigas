@@ -203,10 +203,14 @@ def create_app():
         return (
             path in public_paths
             or path == "/"
+            or path == "/board"
+            or path.startswith("/board/")
             or path.startswith("/api/x-posts")
             or path.startswith("/api/qa-proposals")
             or path.startswith("/api/chat/")
             or path.startswith("/api/v1/chat/")
+            or path.startswith("/api/boards")
+            or path.startswith("/api/tickets")
             or path.startswith("/api/agents")
             or path.startswith("/api/feed")
             or path.startswith("/api/auth/")

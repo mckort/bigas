@@ -56,6 +56,23 @@ def _auth_headers():
     return {"Authorization": "Bearer test-dev-token", "Content-Type": "application/json"}
 
 
+def test_board_spa_and_api_bypass_access_key(client):
+    client.application.config["BIGAS_ACCESS_MODE"] = "restricted"
+    client.application.config["BIGAS_ACCESS_KEYS"] = {"secret-key"}
+    client.application.config["BIGAS_ACCESS_HEADER"] = "X-Bigas-Access-Key"
+
+    page = client.get("/board")
+    assert page.status_code != 401
+    assert page.get_json() is None or "access key" not in str(page.get_json()).lower()
+
+    unauth_api = client.get("/api/boards")
+    assert unauth_api.status_code == 401
+    assert "access key" not in (unauth_api.get_json() or {}).get("detail", "").lower()
+
+    allowed = client.get("/api/boards", headers=_auth_headers())
+    assert allowed.status_code == 200
+
+
 def test_internal_board_default_without_jira():
     assert not jira_configured()
     assert use_internal_board()
