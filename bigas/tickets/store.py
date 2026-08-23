@@ -140,6 +140,7 @@ def _apply_ticket_field_updates(
         "title",
         "description",
         "status",
+        "issue_type",
         "assignee",
         "fix_version",
         "thread_id",
@@ -173,14 +174,20 @@ def _apply_ticket_field_updates(
             updates["parent_key"] = pk if pk and _ISSUE_KEY_RE.match(pk) else None
         elif key == "done_processed":
             updates["done_processed"] = bool(value)
+        elif key == "issue_type":
+            itype = (value or "Task").strip().title() or "Task"
+            if itype in ("Task", "Bug", "Epic"):
+                updates["issue_type"] = itype
     if "labels" in fields or "marketing" in fields:
         current = fields["labels"] if "labels" in fields else resolve_ticket_labels(ticket)
         marketing_flag = bool(fields["marketing"]) if "marketing" in fields else has_marketing(current)
         labels = normalize_labels(current, marketing=marketing_flag)
         if "marketing" in fields and not fields["marketing"]:
             labels = [item for item in labels if item != "marketing"]
-        updates["labels"] = labels
-        updates["marketing"] = has_marketing(labels)
+        existing_labels = resolve_ticket_labels(ticket)
+        if labels != existing_labels:
+            updates["labels"] = labels
+            updates["marketing"] = has_marketing(labels)
     return updates
 
 
@@ -217,12 +224,12 @@ class MemoryTicketStore:
             return self._next_key(board)
         if not _ISSUE_KEY_RE.match(display):
             raise ValueError(f"invalid key {requested!r}")
-        if display in self._key_index:
-            raise ValueError(f"key {display} already exists")
         prefix = _board_prefix(board.get("project_key"))
         number = _key_number(display, prefix)
-        if number is not None:
-            with self._lock:
+        with self._lock:
+            if display in self._key_index:
+                raise ValueError(f"key {display} already exists")
+            if number is not None:
                 self._counters[prefix] = max(self._counters.get(prefix, 0), number)
         return display
 
@@ -527,6 +534,7 @@ class FirestoreTicketStore:
         self._boards = self._db.collection("ticket_boards")
         self._tickets = self._db.collection("tickets")
         self._counters = self._db.collection("ticket_counters")
+        self._key_locks = self._db.collection("ticket_key_locks")
 
     def _next_key(self, board: Dict[str, Any]) -> str:
         from google.cloud import firestore
@@ -546,22 +554,49 @@ class FirestoreTicketStore:
         return _increment(transaction)
 
     def _allocate_key(self, board: Dict[str, Any], requested: Optional[str] = None) -> str:
+        from google.cloud import firestore
+
         display = (requested or "").strip().upper()
         if not display:
             return self._next_key(board)
         if not _ISSUE_KEY_RE.match(display):
             raise ValueError(f"invalid key {requested!r}")
-        if self.get_ticket_by_key(display):
-            raise ValueError(f"key {display} already exists")
+
         prefix = _board_prefix(board.get("project_key"))
         number = _key_number(display, prefix)
-        if number is not None:
-            counter_ref = self._counters.document(prefix)
-            snap = counter_ref.get()
-            current = int((snap.to_dict() or {}).get("seq") or 0) if snap.exists else 0
-            if number > current:
-                counter_ref.set({"seq": number, "prefix": prefix}, merge=True)
-        return display
+        counter_ref = self._counters.document(prefix)
+        lock_ref = self._key_locks.document(display)
+        tickets_query = self._tickets.where("key", "==", display).limit(1)
+
+        @firestore.transactional
+        def _allocate(transaction):
+            existing = list(tickets_query.stream(transaction=transaction))
+            if existing:
+                raise ValueError(f"key {display} already exists")
+            lock_snap = lock_ref.get(transaction=transaction)
+            if lock_snap.exists:
+                raise ValueError(f"key {display} already exists")
+
+            counter_snap = counter_ref.get(transaction=transaction)
+            current = (
+                int((counter_snap.to_dict() or {}).get("seq") or 0)
+                if counter_snap.exists
+                else 0
+            )
+            if number is not None:
+                next_seq = max(current, number)
+                if next_seq != current:
+                    transaction.set(
+                        counter_ref,
+                        {"seq": next_seq, "prefix": prefix},
+                        merge=True,
+                    )
+
+            transaction.set(lock_ref, {"prefix": prefix, "key": display})
+            return display
+
+        transaction = self._db.transaction()
+        return _allocate(transaction)
 
     def list_boards(self, user_id: str) -> List[Dict[str, Any]]:
         docs = self._boards.where("user_id", "==", user_id).stream()
@@ -716,6 +751,11 @@ class FirestoreTicketStore:
             **values,
         )
         self._tickets.document(ticket_id).set(ticket)
+        if display_key:
+            self._key_locks.document(display_key).set(
+                {"prefix": _board_prefix(board.get("project_key")), "key": display_key, "ticket_id": ticket_id},
+                merge=True,
+            )
         return ticket
 
     def update_ticket(
@@ -752,7 +792,10 @@ class FirestoreTicketStore:
         board = self.get_board(ticket.get("board_id") or "")
         if user_id and board and board.get("user_id") != user_id:
             return False
+        key = (ticket.get("key") or "").strip().upper()
         ref.delete()
+        if key:
+            self._key_locks.document(key).delete()
         return True
 
     def add_comment(

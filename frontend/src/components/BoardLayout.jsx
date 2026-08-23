@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import {
   addTicketComment,
   createBoard,
@@ -95,18 +95,30 @@ function LabelChips({ labels, onRemove, className = '' }) {
   )
 }
 
-function LabelEditor({ labels, onChange }) {
+function LabelEditor({ labels, onChange }, ref) {
   const [draft, setDraft] = useState('')
 
   const addDraft = () => {
     const next = normalizeLabel(draft)
     if (!next) {
       setDraft('')
-      return
+      return labels
     }
-    if (!labels.includes(next)) onChange([...labels, next])
+    if (labels.includes(next)) {
+      setDraft('')
+      return labels
+    }
+    const merged = [...labels, next]
+    onChange(merged)
     setDraft('')
+    return merged
   }
+
+  useImperativeHandle(ref, () => ({
+    flushDraft() {
+      return addDraft()
+    },
+  }))
 
   return (
     <div className="block text-sm">
@@ -132,6 +144,8 @@ function LabelEditor({ labels, onChange }) {
     </div>
   )
 }
+
+const LabelEditorWithRef = forwardRef(LabelEditor)
 
 function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, dragging, onDragStart, onDragEnd }) {
   return (
@@ -307,6 +321,7 @@ function TicketComments({ ticketId }) {
 }
 
 function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
+  const labelEditorRef = useRef(null)
   const [form, setForm] = useState({
     title: ticket?.title || '',
     description: ticket?.description || '',
@@ -391,7 +406,8 @@ function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
               />
             </label>
           )}
-          <LabelEditor
+          <LabelEditorWithRef
+            ref={labelEditorRef}
             labels={form.labels}
             onChange={(labels) => setForm({ ...form, labels })}
           />
@@ -419,7 +435,10 @@ function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
           </button>
           <button
             type="button"
-            onClick={() => onSave(form)}
+            onClick={() => {
+              const labels = labelEditorRef.current?.flushDraft?.() ?? form.labels
+              onSave({ ...form, labels })
+            }}
             disabled={!form.title.trim()}
             className="flex-1 bg-bigas-blue text-bigas-black font-medium rounded-xl py-2 min-h-[44px] order-2 sm:order-3 disabled:opacity-50"
           >
@@ -666,11 +685,18 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     setSyncMessage('')
     try {
       const data = await syncBoardFromJira(activeBoardId)
-      setSyncMessage(
-        `Jira sync: ${data.created || 0} new, ${data.updated || 0} updated` +
-          (data.skipped ? `, ${data.skipped} skipped` : ''),
-      )
-      await loadTickets()
+      if (data.status === 'started') {
+        setSyncMessage('Jira sync running in background…')
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+        await loadTickets()
+        setSyncMessage('Jira sync started — tickets refreshed')
+      } else {
+        setSyncMessage(
+          `Jira sync: ${data.created || 0} new, ${data.updated || 0} updated` +
+            (data.skipped ? `, ${data.skipped} skipped` : ''),
+        )
+        await loadTickets()
+      }
     } catch (err) {
       setSyncMessage(err.message || 'Jira sync failed')
     } finally {

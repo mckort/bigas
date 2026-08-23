@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
+
+import requests
 
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
@@ -33,6 +36,79 @@ _IMPORT_FIELDS = [
 
 class JiraImportError(RuntimeError):
     pass
+
+
+def _jira_sync_worker_url(board_id: str) -> str:
+    port = (os.environ.get("PORT") or "8080").strip() or "8080"
+    return f"http://127.0.0.1:{port}/api/boards/{board_id}/sync-jira-worker"
+
+
+def _request_authorization() -> str:
+    try:
+        from flask import has_request_context, request
+
+        if has_request_context():
+            return (request.headers.get("Authorization") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _jira_sync_dispatch_headers() -> Dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "bigas-core/1.0 (jira-sync-worker)",
+    }
+    auth = _request_authorization()
+    if auth:
+        headers["Authorization"] = auth
+    return headers
+
+
+def _should_run_jira_sync_inline() -> bool:
+    try:
+        from flask import current_app, has_app_context
+
+        if has_app_context() and current_app.config.get("TESTING"):
+            return True
+    except Exception:
+        pass
+    return not _request_authorization()
+
+
+def dispatch_jira_board_sync(*, user_id: str, board_id: str) -> Dict[str, Any]:
+    """Start Jira board sync via loopback worker so the HTTP request returns quickly."""
+    if _should_run_jira_sync_inline():
+        return sync_jira_board(user_id=user_id, board_id=board_id)
+
+    try:
+        requests.post(
+            _jira_sync_worker_url(board_id),
+            json={},
+            headers=_jira_sync_dispatch_headers(),
+            timeout=(10, 1),
+        )
+    except requests.exceptions.ReadTimeout:
+        return {"ok": True, "status": "started"}
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ConnectTimeout,
+    ) as exc:
+        logger.warning(
+            "Jira sync worker dispatch failed for board %s; running inline: %s",
+            board_id,
+            exc,
+        )
+        return sync_jira_board(user_id=user_id, board_id=board_id)
+    except requests.exceptions.RequestException as exc:
+        logger.warning(
+            "Jira sync worker dispatch failed for board %s: %s",
+            board_id,
+            exc,
+        )
+        raise JiraImportError("Could not start Jira sync") from exc
+
+    return {"ok": True, "status": "started"}
 
 
 def _map_issue_type(name: str) -> str:
@@ -118,7 +194,11 @@ def sync_jira_board(
             if existing.get("board_id") != board_id:
                 skipped += 1
                 continue
+            # Existing tickets: label-only sync. Title, status, and description
+            # stay as edited on the board unless the ticket is newly imported.
             merged = merge_labels(resolve_ticket_labels(existing), labels)
+            if merged == resolve_ticket_labels(existing):
+                continue
             service.update_ticket(
                 existing["ticket_id"],
                 user_id=user_id,

@@ -111,10 +111,31 @@ def board_tickets(board_id: str):
 @tickets_bp.route("/api/boards/<board_id>/sync-jira", methods=["POST"])
 @require_chat_auth
 def board_sync_jira(board_id: str):
-    from bigas.tickets.jira_import import JiraImportError, sync_jira_board
+    from bigas.tickets.jira_import import JiraImportError, dispatch_jira_board_sync
 
     try:
-        result = sync_jira_board(user_id=g.chat_user["uid"], board_id=board_id)
+        result = dispatch_jira_board_sync(user_id=g.chat_user["uid"], board_id=board_id)
+    except JiraImportError as exc:
+        return jsonify({"error": str(exc)}), 400
+    status_code = 202 if result.get("status") == "started" else 200
+    return jsonify(result), status_code
+
+
+@tickets_bp.route("/api/boards/<board_id>/sync-jira-worker", methods=["POST"])
+@require_chat_auth
+def board_sync_jira_worker(board_id: str):
+    """Loopback worker for long-running Jira imports."""
+    from bigas.tickets.jira_import import JiraImportError, sync_jira_board
+
+    user_id = g.chat_user["uid"]
+    from bigas.tickets.store import get_ticket_store
+
+    board = get_ticket_store().get_board(board_id)
+    if not board or board.get("user_id") != user_id:
+        return jsonify({"error": "Board not found"}), 404
+
+    try:
+        result = sync_jira_board(user_id=user_id, board_id=board_id)
     except JiraImportError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(result)
@@ -206,6 +227,7 @@ def ticket_detail(ticket_id: str):
         "title",
         "description",
         "status",
+        "issue_type",
         "assignee",
         "fix_version",
         "thread_id",
