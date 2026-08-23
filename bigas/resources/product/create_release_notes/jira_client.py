@@ -17,8 +17,7 @@ _BACKWARD_TRANSITION_KEYWORDS = frozenset(
 )
 
 
-class JiraError(RuntimeError):
-    pass
+from bigas.jira_exceptions import JiraError
 
 
 def parse_project_keys(raw: Optional[str]) -> List[str]:

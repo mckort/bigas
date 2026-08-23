@@ -689,7 +689,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales
 
 ### Proactive Goal Engine (Cloud Scheduler)
 
-Bigas treats **Jira Epics** as high-level project goals. You create Epics manually and drag them through the same board columns as Tasks — but Epics never go through Research-write / Design-write / Cursor implement. The same `jira_status_automation` webhook detects `issuetype = Epic` and runs the Goal Engine immediately; Cloud Scheduler repeats the evaluation weekly for Epics still in those columns.
+Bigas treats **Epics** as high-level project goals. You create them on the native `/board` (or in Jira when `USE_INTERNAL_BOARD=false`) and drag them through the same columns as Tasks — but Epics never go through Research-write / Design-write / Cursor implement. With the internal board, `evaluate-goals` reads those Epics from the ticket store. With Jira as the driver, `jira_status_automation` still runs the Goal Engine on Epic status changes. Cloud Scheduler repeats the evaluation weekly for Epics still in those columns.
 
 | Epic status | Agent behavior |
 |---|---|

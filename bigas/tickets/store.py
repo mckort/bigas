@@ -367,6 +367,31 @@ class MemoryTicketStore:
             if t.get("status") != "Done"
         ]
 
+    def list_all_epics(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            tickets = [
+                dict(t)
+                for t in self._tickets.values()
+                if (t.get("issue_type") or "").strip().title() == "Epic"
+                and t.get("status") != "Done"
+            ]
+        out: List[Dict[str, Any]] = []
+        for ticket in tickets:
+            board = self.get_board(ticket.get("board_id") or "")
+            if board and board.get("project_key"):
+                out.append(ticket)
+        return sorted(out, key=lambda t: t.get("key", ""))
+
+    def list_tickets_for_parent(self, parent_key: str) -> List[Dict[str, Any]]:
+        key = (parent_key or "").strip().upper()
+        if not key:
+            return []
+        with self._lock:
+            tickets = [
+                dict(t) for t in self._tickets.values() if (t.get("parent_key") or "").upper() == key
+            ]
+        return sorted(tickets, key=lambda t: t.get("key", ""))
+
     def find_board_for_project(self, project_key: str, user_id: str) -> Optional[Dict[str, Any]]:
         proj = (project_key or "").strip().upper()
         for board in self.list_boards(user_id):
@@ -697,6 +722,32 @@ class FirestoreTicketStore:
             for t in self.list_tickets_by_project(project_key, issue_type="Epic")
             if t.get("status") != "Done"
         ]
+
+    def list_all_epics(self) -> List[Dict[str, Any]]:
+        tickets = []
+        board_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+        for doc in self._tickets.where("issue_type", "==", "Epic").stream():
+            if not doc.exists:
+                continue
+            ticket = doc.to_dict() or {}
+            if ticket.get("status") == "Done":
+                continue
+            board_id = ticket.get("board_id") or ""
+            if board_id not in board_cache:
+                board_cache[board_id] = self.get_board(board_id) if board_id else None
+            board = board_cache[board_id]
+            proj = ticket.get("project_key") or (board or {}).get("project_key")
+            if proj:
+                tickets.append(ticket)
+        return sorted(tickets, key=lambda t: t.get("key", ""))
+
+    def list_tickets_for_parent(self, parent_key: str) -> List[Dict[str, Any]]:
+        key = (parent_key or "").strip().upper()
+        if not key:
+            return []
+        docs = self._tickets.where("parent_key", "==", key).stream()
+        tickets = [doc.to_dict() for doc in docs if doc.exists]
+        return sorted(tickets, key=lambda t: t.get("key", ""))
 
     def find_board_for_project(self, project_key: str, user_id: str) -> Optional[Dict[str, Any]]:
         proj = (project_key or "").strip().upper()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 
 import pytest
 
@@ -429,6 +430,75 @@ def test_evaluate_goals_requires_webhook_secret_configuration(client, monkeypatc
 
     resp = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 7})
     assert resp.status_code == 503
+
+
+def test_ticket_updated_at_accepts_datetime():
+    from bigas.tickets.jira_adapter import _ticket_updated_at
+
+    stamp = datetime(2026, 8, 23, 7, 0, tzinfo=timezone.utc)
+    assert _ticket_updated_at({"updated_at": stamp}) == stamp
+    assert _ticket_updated_at({"updated_at": "2026-08-23T07:00:00+00:00"}) == stamp
+    assert _ticket_updated_at({"updated_at": None, "created_at": ""}) is None
+
+
+def test_engine_reads_internal_epics_when_board_enabled(monkeypatch):
+    monkeypatch.setenv("USE_INTERNAL_BOARD", "true")
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.jira_adapter import TicketJiraAdapter
+    from bigas.tickets.store import get_ticket_store
+
+    ticket_store_module._store = None
+    store = get_ticket_store()
+    board = store.create_board("user-1", name="BIG Board", project_key="BIG")
+    epic = store.create_ticket(
+        board["board_id"],
+        title="Launch feature X",
+        description="Ship it",
+        status="Research and describe (AI)",
+        issue_type="Epic",
+    )
+    store.create_ticket(
+        board["board_id"],
+        title="Existing discovery",
+        description="Already filed",
+        status="To Do",
+        issue_type="Task",
+        parent_key=epic["key"],
+    )
+
+    engine = ProactiveGoalEngine()
+    assert isinstance(engine._jira, TicketJiraAdapter)
+    engine._llm = FakeLLM(
+        {
+            "analysis": "Need user interviews",
+            "tasks_to_create": [
+                {
+                    "summary": "Interview 5 users",
+                    "description": "Run discovery calls",
+                    "issue_type": "Task",
+                }
+            ],
+        }
+    )
+    created = []
+
+    def fake_create(**kwargs):
+        created.append(kwargs)
+        return {"ok": True, "key": "BIG-99", "url": "/board?ticket=BIG-99"}
+
+    monkeypatch.setattr(
+        "bigas.agents.proactive_engine.CreateJiraIssueService.create",
+        lambda self, **kw: fake_create(**kw),
+    )
+    monkeypatch.setattr(engine, "_post_planning_update", lambda **kw: None)
+
+    result = engine.run(timeframe_days=7)
+    assert result["ok"] is True
+    assert result["epics_found"] == 1
+    assert result["results"][0]["epic_key"] == epic["key"]
+    assert created[0]["parent_epic_key"] == epic["key"]
+    ticket_store_module._store = None
 
 
 def test_run_evaluation_loop_entrypoint(monkeypatch):

@@ -360,7 +360,14 @@ def _create_tasks_from_proposals(
 class ProactiveGoalEngine:
     def __init__(self, *, jira_client: Optional[JiraClient] = None):
         if jira_client is None:
-            jira_client = JiraClient(JiraConfig.from_env())
+            from bigas.tickets.config import use_internal_board
+
+            if use_internal_board():
+                from bigas.tickets.jira_adapter import TicketJiraAdapter
+
+                jira_client = TicketJiraAdapter()
+            else:
+                jira_client = JiraClient(JiraConfig.from_env())
         self._jira = jira_client
         self._llm, self._model = get_llm_client(feature="proactive_goals")
 
