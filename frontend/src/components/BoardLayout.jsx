@@ -5,6 +5,7 @@ import {
   createTicket,
   deleteBoard,
   deleteTicket,
+  fetchBoardJiraSyncStatus,
   fetchBoards,
   fetchBoardTickets,
   fetchTicket,
@@ -155,6 +156,19 @@ function LabelEditor({ labels, onChange }, ref) {
             e.preventDefault()
             addDraft()
           }
+        }}
+        onPaste={(e) => {
+          const text = e.clipboardData.getData('text')
+          if (!text.includes(',')) return
+          e.preventDefault()
+          const parts = text.split(',').map((part) => normalizeLabel(part)).filter(Boolean)
+          if (!parts.length) return
+          const merged = [...labels]
+          for (const part of parts) {
+            if (!merged.includes(part)) merged.push(part)
+          }
+          onChange(merged)
+          setDraft('')
         }}
         onBlur={addDraft}
         placeholder="customer-request, then Enter"
@@ -712,22 +726,69 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     await loadBoards()
   }
 
+  const formatSyncResult = (result) =>
+    `Jira sync: ${result?.created || 0} new, ${result?.updated || 0} updated` +
+    (result?.skipped ? `, ${result.skipped} skipped` : '') +
+    (result?.errors ? `, ${result.errors} errors` : '')
+
+  const pollJiraSyncUntilDone = useCallback(async (boardId) => {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      const data = await fetchBoardJiraSyncStatus(boardId)
+      const status = data.jira_sync?.status
+      if (status === 'running') continue
+      if (status === 'completed') {
+        return { message: formatSyncResult(data.jira_sync?.result) }
+      }
+      if (status === 'failed') {
+        throw new Error(data.jira_sync?.error || 'Jira sync failed')
+      }
+      return { message: 'Jira sync finished' }
+    }
+    throw new Error('Jira sync timed out')
+  }, [])
+
+  useEffect(() => {
+    if (!activeBoardId || activeBoard?.jira_sync?.status !== 'running') return
+
+    let cancelled = false
+    setSyncingJira(true)
+    setSyncMessage('Jira sync running in background…')
+
+    pollJiraSyncUntilDone(activeBoardId)
+      .then(async ({ message }) => {
+        if (cancelled) return
+        setSyncMessage(message)
+        await loadTickets()
+        await loadBoards()
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setSyncMessage(err.message || 'Jira sync failed')
+      })
+      .finally(() => {
+        if (!cancelled) setSyncingJira(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeBoardId, activeBoard?.jira_sync?.status, loadBoards, loadTickets, pollJiraSyncUntilDone])
+
   const handleSyncJira = async () => {
     if (!activeBoardId || syncingJira) return
     setSyncingJira(true)
     setSyncMessage('')
     try {
       const data = await syncBoardFromJira(activeBoardId)
-      if (data.status === 'started') {
+      if (data.status === 'started' || data.status === 'running') {
         setSyncMessage('Jira sync running in background…')
-        await new Promise((resolve) => setTimeout(resolve, 3000))
+        const { message } = await pollJiraSyncUntilDone(activeBoardId)
+        setSyncMessage(message)
         await loadTickets()
-        setSyncMessage('Jira sync started — tickets refreshed')
+        await loadBoards()
       } else {
-        setSyncMessage(
-          `Jira sync: ${data.created || 0} new, ${data.updated || 0} updated` +
-            (data.skipped ? `, ${data.skipped} skipped` : ''),
-        )
+        setSyncMessage(formatSyncResult(data))
         await loadTickets()
       }
     } catch (err) {
