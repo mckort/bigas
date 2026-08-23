@@ -263,6 +263,36 @@ def _pr_title_of(pr: dict | None) -> str:
     return ((pr or {}).get("title") or "").strip()
 
 
+def _jira_issue_context_from_pr(pr: dict) -> tuple[str, str]:
+    """Best-effort Jira issue key and summary from a PR dict (no status change)."""
+    from bigas.resources.product.jira_automation.final_approval import (
+        _resolve_issue_client,
+        extract_jira_issue_key,
+    )
+
+    issue_key = (
+        extract_jira_issue_key(
+            (pr.get("title") or ""),
+            (pr.get("body") or ""),
+            ((pr.get("head") or {}).get("ref") or ""),
+        )
+        or ""
+    )
+    if not issue_key:
+        return "", ""
+    try:
+        issue = _resolve_issue_client(issue_key).get_issue(
+            issue_key, fields=["summary"]
+        )
+        summary = ((issue.get("fields") or {}).get("summary") or "").strip()
+        return issue_key, summary
+    except Exception:
+        logger.debug(
+            "Could not fetch Jira summary for %s", issue_key, exc_info=True
+        )
+        return issue_key, ""
+
+
 def _jira_issue_heading(issue_key: str = "", issue_summary: str = "") -> str:
     from bigas.resources.product.jira_automation.comments import issue_discord_label
 
@@ -839,11 +869,14 @@ def review_and_comment_pr():
             f"**Ready to merge**\n{pr_ref}\n"
             + (f"Comment: {comment_url}" if comment_url else "")
         )
+        issue_key, issue_summary = _jira_issue_context_from_pr(pr)
         auto_merge = _maybe_auto_merge_pr(
             repo=repo,
             pr_number=pr_number,
             pr_url=pr_url,
             github_token=github_token,
+            issue_key=issue_key,
+            issue_summary=issue_summary,
         )
         jira_final = _final_approval_after_merge(
             repo=repo,
@@ -1413,11 +1446,14 @@ def autofix_followup():
         _post_cto_status(
             f"**Ready to merge**\n{pr_ref}\nComment: {comment_url}"
         )
+        issue_key, issue_summary = _jira_issue_context_from_pr(pr)
         auto_merge = _maybe_auto_merge_pr(
             repo=repo,
             pr_number=pr_number,
             pr_url=pr_url,
             github_token=gh_token,
+            issue_key=issue_key,
+            issue_summary=issue_summary,
         )
         jira_final = _final_approval_after_merge(
             repo=repo,
