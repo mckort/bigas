@@ -36,26 +36,43 @@ def ticket_url(key: str) -> str:
 
 
 def _ticket_automation_worker_url() -> str:
-    base = (os.environ.get("SERVER_URL") or "").strip().rstrip("/")
-    if not base:
-        return ""
-    return f"{base}/api/tickets/automation-worker"
+    """Loopback only — do not use public SERVER_URL (e.g. https://bigas.me)."""
+    port = (os.environ.get("PORT") or "8080").strip() or "8080"
+    return f"http://127.0.0.1:{port}/api/tickets/automation-worker"
+
+
+def _request_authorization() -> str:
+    try:
+        from flask import has_request_context, request
+
+        if has_request_context():
+            return (request.headers.get("Authorization") or "").strip()
+    except Exception:
+        pass
+    return ""
 
 
 def _ticket_automation_dispatch_headers() -> Dict[str, str]:
-    from bigas.resources.devops.self_healing import webhook_secret
-
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "bigas-core/1.0 (ticket-automation-worker)",
     }
-    secret = webhook_secret()
-    if secret:
-        headers["X-Bigas-Webhook-Secret"] = secret
-    keys = (os.environ.get("BIGAS_ACCESS_KEYS") or "").split(",")
-    if keys and keys[0].strip():
-        headers["X-Bigas-Access-Key"] = keys[0].strip()
+    auth = _request_authorization()
+    if auth:
+        headers["Authorization"] = auth
     return headers
+
+
+def _should_run_automation_inline() -> bool:
+    """Skip HTTP dispatch in tests, or when there is no logged-in request to forward."""
+    try:
+        from flask import current_app, has_app_context
+
+        if has_app_context() and current_app.config.get("TESTING"):
+            return True
+    except Exception:
+        pass
+    return not _request_authorization()
 
 
 def run_ticket_status_automation(
@@ -94,8 +111,7 @@ def dispatch_ticket_status_automation(
     new_status: str,
     project_key: str,
 ) -> None:
-    """Dispatch status automation via HTTP so Cloud Run allocates CPU for a new request."""
-    url = _ticket_automation_worker_url()
+    """Dispatch status automation via loopback HTTP so Cloud Run allocates CPU."""
     payload = {
         "ticket_id": ticket.get("ticket_id") or "",
         "issue_key": ticket.get("key") or "",
@@ -104,11 +120,7 @@ def dispatch_ticket_status_automation(
         "project_key": project_key,
         "done_processed": bool(ticket.get("done_processed")),
     }
-    if not url:
-        logger.warning(
-            "SERVER_URL not set; running ticket automation inline for %s (dev only)",
-            ticket.get("key"),
-        )
+    if _should_run_automation_inline():
         run_ticket_status_automation(
             ticket,
             old_status=old_status,
@@ -119,7 +131,7 @@ def dispatch_ticket_status_automation(
 
     try:
         requests.post(
-            url,
+            _ticket_automation_worker_url(),
             json=payload,
             headers=_ticket_automation_dispatch_headers(),
             timeout=(10, 1),
@@ -128,9 +140,15 @@ def dispatch_ticket_status_automation(
         return
     except requests.exceptions.RequestException as e:
         logger.warning(
-            "Ticket automation worker dispatch failed for %s: %s",
+            "Ticket automation worker dispatch failed for %s; running inline: %s",
             ticket.get("key"),
             e,
+        )
+        run_ticket_status_automation(
+            ticket,
+            old_status=old_status,
+            new_status=new_status,
+            project_key=project_key,
         )
 
 

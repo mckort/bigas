@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,9 +15,11 @@ os.environ.setdefault("CHAT_AUTH_MODE", "dev")
 os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 
 from app import create_app
+from bigas.resources.product.endpoints import get_manifest
 from bigas.tickets import store as ticket_store_module
 from bigas.tickets.config import jira_configured, use_internal_board
 from bigas.tickets.constants import columns_for_board
+from bigas.tickets.service import dispatch_ticket_status_automation
 from bigas.tickets.store import get_ticket_store
 
 _JIRA_ENV_KEYS = (
@@ -159,3 +162,137 @@ def test_ticket_persistence_in_memory_store():
     fetched = store.get_ticket_by_key(ticket["key"])
     assert fetched is not None
     assert fetched["title"] == "Persist me"
+
+
+def test_automation_worker_requires_chat_auth(client):
+    resp = client.post(
+        "/api/tickets/automation-worker",
+        data=json.dumps({"ticket_id": "missing", "new_status": "Research and describe (AI)"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 401
+
+
+def test_automation_worker_runs_with_chat_auth(client, monkeypatch):
+    boards = client.get("/api/boards", headers=_auth_headers()).get_json()["boards"]
+    vfa = next(b for b in boards if b.get("project_key") == "VFA")
+    created = client.post(
+        f"/api/boards/{vfa['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps({"title": "Research this", "description": "Brief"}),
+    ).get_json()["ticket"]
+
+    called = {}
+
+    def fake_run(ticket, **kwargs):
+        called["ticket"] = ticket
+        called.update(kwargs)
+
+    monkeypatch.setattr(
+        "bigas.resources.tickets.endpoints.run_ticket_status_automation",
+        fake_run,
+    )
+    resp = client.post(
+        "/api/tickets/automation-worker",
+        headers=_auth_headers(),
+        data=json.dumps(
+            {
+                "ticket_id": created["ticket_id"],
+                "new_status": "Research and describe (AI)",
+                "old_status": "To Do",
+                "project_key": "VFA",
+            }
+        ),
+    )
+    assert resp.status_code == 200
+    assert called["new_status"] == "Research and describe (AI)"
+    assert called["ticket"]["ticket_id"] == created["ticket_id"]
+
+
+def test_dispatch_uses_loopback_and_chat_auth(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return MagicMock(status_code=200)
+
+    monkeypatch.setattr("bigas.tickets.service.requests.post", fake_post)
+    monkeypatch.setenv("PORT", "8080")
+
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.config["TESTING"] = False
+    with app.test_request_context("/", headers={"Authorization": "Bearer test-dev-token"}):
+        dispatch_ticket_status_automation(
+            {"ticket_id": "t1", "key": "VFA-1"},
+            old_status="To Do",
+            new_status="Research and describe (AI)",
+            project_key="VFA",
+        )
+
+    assert captured["url"] == "http://127.0.0.1:8080/api/tickets/automation-worker"
+    assert captured["headers"]["Authorization"] == "Bearer test-dev-token"
+    assert "X-Bigas-Webhook-Secret" not in captured["headers"]
+    assert "X-Bigas-Access-Key" not in captured["headers"]
+
+
+def test_jira_webhook_disabled_without_jira(client):
+    resp = client.post(
+        "/mcp/tools/jira_status_automation",
+        data=json.dumps(
+            {
+                "issue_key": "VFA-1",
+                "to_status": "Research and describe (AI)",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 404
+    assert resp.get_json()["error"] == "Jira webhook disabled"
+
+    names = [t["name"] for t in get_manifest()["tools"]]
+    assert "jira_status_automation" not in names
+
+
+def test_jira_webhook_requires_secret_when_configured(client, monkeypatch):
+    monkeypatch.setenv("JIRA_BASE_URL", "https://example.atlassian.net")
+    monkeypatch.setenv("JIRA_EMAIL", "dev@example.com")
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA")
+    monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
+
+    denied = client.post(
+        "/mcp/tools/jira_status_automation",
+        data=json.dumps(
+            {
+                "issue_key": "VFA-1",
+                "to_status": "Research and describe (AI)",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert denied.status_code == 401
+
+    monkeypatch.setattr(
+        "bigas.resources.product.endpoints.JiraAutomationService.handle_event",
+        lambda self, **kwargs: {"ok": True, "handler": "research_describe"},
+    )
+    ok = client.post(
+        "/mcp/tools/jira_status_automation",
+        headers={"X-Bigas-Webhook-Secret": "abc", "Content-Type": "application/json"},
+        data=json.dumps(
+            {
+                "issue_key": "VFA-1",
+                "to_status": "Research and describe (AI)",
+                "sync": True,
+            }
+        ),
+    )
+    assert ok.status_code == 200
+    assert ok.get_json()["ok"] is True
+
+    names = [t["name"] for t in get_manifest()["tools"]]
+    assert "jira_status_automation" in names

@@ -56,6 +56,20 @@ _JIRA_AI_JOBS: dict = {}
 _JIRA_AI_JOBS_LOCK = threading.Lock()
 
 
+def _jira_webhook_disabled_response():
+    """404 the Jira Automation webhook unless Jira credentials are configured."""
+    from bigas.tickets.config import jira_configured
+
+    if jira_configured():
+        return None
+    return jsonify(
+        {
+            "error": "Jira webhook disabled",
+            "reason": "Jira is not configured",
+        }
+    ), 404
+
+
 def _post_to_discord(webhook_url: str, message: str) -> None:
     post_discord_message(webhook_url, message, chat_agent_id="product")
 
@@ -454,7 +468,14 @@ def jira_status_automation():
 
     Prefer "sync": true on Cloud Run (background threads are best-effort).
     Without sync, response is 202 + job_id; poll jira_status_automation_job.
+
+    Disabled (404) when Jira is not configured — internal board drags use
+    the authenticated loopback worker instead.
     """
+    disabled = _jira_webhook_disabled_response()
+    if disabled:
+        return disabled
+
     data = request.json or {}
     try:
         service_cfg = JiraAutomationService().config
@@ -529,7 +550,12 @@ def jira_status_automation_job():
     """
     Poll a background jira_status_automation job: { "job_id": "..." }.
     Requires the same X-Bigas-Webhook-Secret as the webhook endpoint.
+    Disabled (404) when Jira is not configured.
     """
+    disabled = _jira_webhook_disabled_response()
+    if disabled:
+        return disabled
+
     data = request.json or {}
     try:
         service_cfg = JiraAutomationService().config
@@ -559,7 +585,7 @@ def jira_status_automation_job():
 
 def get_manifest():
     """Returns the manifest for the product tools."""
-    return {
+    manifest = {
         "name": "Product Tools",
         "description": "Tools for product management.",
         "tools": [
@@ -729,35 +755,47 @@ def get_manifest():
                     },
                 },
             },
-            {
-                "name": "jira_status_automation",
-                "description": "Jira Automation webhook for AI columns. Research and describe → Description approval + Discord PM; Design and plan → Design approval + Discord CTO. Auth via X-Bigas-Webhook-Secret.",
-                "path": "/mcp/tools/jira_status_automation",
-                "method": "POST",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "issue_key": {"type": "string", "description": "Jira issue key, e.g. VFA-1"},
-                        "to_status": {"type": "string", "description": "Status the issue was moved into"},
-                        "from_status": {"type": "string"},
-                        "idempotency_key": {"type": "string"},
-                        "sync": {"type": "boolean", "description": "If true, run inline and return result (recommended on Cloud Run). Default true. Set false for 202 + job_id (best-effort).", "default": True}
-                    },
-                    "required": ["issue_key", "to_status"]
-                }
-            },
-            {
-                "name": "jira_status_automation_job",
-                "description": "Poll status/result for a jira_status_automation background job.",
-                "path": "/mcp/tools/jira_status_automation_job",
-                "method": "POST",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "job_id": {"type": "string"}
-                    },
-                    "required": ["job_id"]
-                }
-            }
         ]
     }
+    from bigas.tickets.config import jira_configured
+
+    if jira_configured():
+        manifest["tools"].extend(
+            [
+                {
+                    "name": "jira_status_automation",
+                    "description": "Jira Automation webhook for AI columns. Research and describe → Description approval + Discord PM; Design and plan → Design approval + Discord CTO. Auth via X-Bigas-Webhook-Secret.",
+                    "path": "/mcp/tools/jira_status_automation",
+                    "method": "POST",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {"type": "string", "description": "Jira issue key, e.g. VFA-1"},
+                            "to_status": {"type": "string", "description": "Status the issue was moved into"},
+                            "from_status": {"type": "string"},
+                            "idempotency_key": {"type": "string"},
+                            "sync": {
+                                "type": "boolean",
+                                "description": "If true, run inline and return result (recommended on Cloud Run). Default true. Set false for 202 + job_id (best-effort).",
+                                "default": True,
+                            },
+                        },
+                        "required": ["issue_key", "to_status"],
+                    },
+                },
+                {
+                    "name": "jira_status_automation_job",
+                    "description": "Poll status/result for a jira_status_automation background job.",
+                    "path": "/mcp/tools/jira_status_automation_job",
+                    "method": "POST",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "job_id": {"type": "string"},
+                        },
+                        "required": ["job_id"],
+                    },
+                },
+            ]
+        )
+    return manifest
