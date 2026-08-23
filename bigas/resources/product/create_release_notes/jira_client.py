@@ -320,6 +320,36 @@ class JiraClient:
             max_pages=max_pages,
         )
 
+    def search_issues_for_projects(
+        self,
+        project_keys: Optional[Union[str, Sequence[str]]] = None,
+        *,
+        fields: Optional[List[str]] = None,
+        max_results_per_page: int = 100,
+        max_pages: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Fetch all issues in one or more Jira projects."""
+        keys = normalize_project_keys(project_keys) or list(self._config.project_keys)
+        if not keys:
+            raise JiraError("At least one Jira project key is required.")
+        return self._search_jql(
+            jql=f"{project_jql_clause(keys)} ORDER BY key ASC",
+            fields=fields
+            or [
+                "summary",
+                "description",
+                "status",
+                "issuetype",
+                "labels",
+                "parent",
+                "project",
+                "assignee",
+                "fixVersions",
+            ],
+            max_results_per_page=max_results_per_page,
+            max_pages=max_pages,
+        )
+
     def search_issues_done_in_last_n_days(
         self,
         *,

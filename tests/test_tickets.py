@@ -22,6 +22,8 @@ from bigas.tickets.constants import columns_for_board
 from bigas.resources.product.jira_automation.comments import format_human_comments
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 from bigas.tickets.jira_adapter import TicketJiraAdapter
+from bigas.tickets.jira_import import sync_jira_board
+from bigas.tickets.labels import normalize_label, normalize_labels
 from bigas.tickets.service import comment_author_name, dispatch_ticket_status_automation
 from bigas.tickets.store import get_ticket_store
 
@@ -386,3 +388,114 @@ def test_jira_webhook_requires_secret_when_configured(client, monkeypatch):
 
     names = [t["name"] for t in get_manifest()["tools"]]
     assert "jira_status_automation" in names
+
+
+def test_normalize_labels_like_jira():
+    assert normalize_label("Customer Request") == "customer-request"
+    assert normalize_label("Acme Corp") == "acme-corp"
+    assert normalize_labels(["customer request", "Acme Corp", "acme-corp"]) == [
+        "customer-request",
+        "acme-corp",
+    ]
+    assert normalize_labels(["seo"], marketing=True) == ["seo", "marketing"]
+
+
+def test_ticket_labels_api(client):
+    boards = client.get("/api/boards", headers=_auth_headers()).get_json()
+    assert boards["jira_import_available"] is False
+    vfa = next(b for b in boards["boards"] if b.get("project_key") == "VFA")
+    created = client.post(
+        f"/api/boards/{vfa['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps(
+            {
+                "title": "Export CSV",
+                "description": "Customer asked",
+                "labels": ["Customer Request", "Green Promo Wear"],
+            }
+        ),
+    ).get_json()["ticket"]
+    assert created["labels"] == ["customer-request", "green-promo-wear"]
+    assert created["marketing"] is False
+
+    updated = client.put(
+        f"/api/tickets/{created['ticket_id']}",
+        headers=_auth_headers(),
+        data=json.dumps({"labels": ["customer-request", "green-promo-wear", "marketing"]}),
+    ).get_json()["ticket"]
+    assert "marketing" in updated["labels"]
+    assert updated["marketing"] is True
+
+    issue = TicketJiraAdapter().get_issue(created["key"])
+    assert "customer-request" in issue["fields"]["labels"]
+    assert "marketing" in issue["fields"]["labels"]
+
+
+def test_sync_jira_creates_and_merges_labels(client):
+    boards = client.get("/api/boards", headers=_auth_headers()).get_json()["boards"]
+    vfa = next(b for b in boards if b.get("project_key") == "VFA")
+    store = get_ticket_store()
+    reserved = store.create_ticket(
+        vfa["board_id"],
+        title="Existing Jira key",
+        description="Local brief",
+        labels=["internal-note"],
+        user_id="dev-user",
+        key="VFA-42",
+    )
+    assert reserved["key"] == "VFA-42"
+
+    class FakeJira:
+        def search_issues_for_projects(self, keys, fields=None):
+            assert keys == ["VFA"]
+            return [
+                {
+                    "key": "VFA-42",
+                    "fields": {
+                        "summary": "Customer asked for export",
+                        "description": "Please add CSV export",
+                        "status": {"name": "To Do"},
+                        "issuetype": {"name": "Task"},
+                        "labels": ["customer-request", "Acme Corp"],
+                        "parent": None,
+                        "assignee": {"displayName": "Marcus"},
+                        "fixVersions": [],
+                    },
+                },
+                {
+                    "key": "VFA-99",
+                    "fields": {
+                        "summary": "New from Jira",
+                        "description": "Brand new",
+                        "status": {"name": "To Do"},
+                        "issuetype": {"name": "Story"},
+                        "labels": ["customer-request"],
+                        "parent": {"key": "VFA-1"},
+                        "assignee": None,
+                        "fixVersions": [{"name": "v2.0"}],
+                    },
+                },
+            ]
+
+    result = sync_jira_board(user_id="dev-user", board_id=vfa["board_id"], jira=FakeJira())
+    assert result["created"] == 1
+    assert result["updated"] == 1
+    merged = store.get_ticket_by_key("VFA-42")
+    assert merged["description"] == "Local brief"
+    assert set(merged["labels"]) == {"internal-note", "customer-request", "acme-corp"}
+    created = store.get_ticket_by_key("VFA-99")
+    assert created["title"] == "New from Jira"
+    assert created["labels"] == ["customer-request"]
+    assert created["issue_type"] == "Task"
+    assert created["fix_version"] == "v2.0"
+
+
+def test_sync_jira_requires_project_board(client):
+    boards = client.get("/api/boards", headers=_auth_headers()).get_json()["boards"]
+    personal = next(b for b in boards if not b.get("project_key"))
+    denied = client.post(
+        f"/api/boards/{personal['board_id']}/sync-jira",
+        headers=_auth_headers(),
+    )
+    assert denied.status_code == 400
+    assert "Jira" in denied.get_json()["error"] or "Personal" in denied.get_json()["error"]

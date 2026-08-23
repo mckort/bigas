@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from bigas.tickets.constants import columns_for_board, is_valid_status
+from bigas.tickets.labels import has_marketing, normalize_labels, resolve_ticket_labels
 
 _ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
@@ -46,6 +47,153 @@ def _make_comment(
     return comment
 
 
+def _compose_ticket(
+    *,
+    ticket_id: str,
+    board_id: str,
+    key: str,
+    title: str,
+    description: str,
+    status: str,
+    issue_type: str,
+    assignee: Optional[str],
+    fix_version: Optional[str],
+    labels: List[str],
+    parent_key: Optional[str],
+    thread_id: Optional[str],
+    project_key: Optional[str],
+    now: str,
+) -> Dict[str, Any]:
+    normalized = normalize_labels(labels)
+    return {
+        "ticket_id": ticket_id,
+        "board_id": board_id,
+        "key": key,
+        "title": title,
+        "description": description,
+        "status": status,
+        "issue_type": issue_type,
+        "assignee": assignee,
+        "fix_version": fix_version,
+        "labels": normalized,
+        "marketing": has_marketing(normalized),
+        "parent_key": parent_key,
+        "thread_id": thread_id,
+        "comments": [],
+        "done_processed": False,
+        "project_key": project_key,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _prepare_ticket_values(
+    board: Dict[str, Any],
+    *,
+    title: str,
+    description: str = "",
+    status: str = "To Do",
+    issue_type: str = "Task",
+    assignee: Optional[str] = None,
+    fix_version: Optional[str] = None,
+    marketing: bool = False,
+    labels: Optional[List[Any]] = None,
+    parent_key: Optional[str] = None,
+    thread_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    proj = board.get("project_key")
+    cols = columns_for_board(project_key=proj)
+    st = (status or cols[0]).strip()
+    if st not in cols:
+        st = cols[0]
+    summary = (title or "").strip()
+    if not summary:
+        raise ValueError("title is required")
+    itype = (issue_type or "Task").strip().title() or "Task"
+    if itype not in ("Task", "Bug", "Epic"):
+        itype = "Task"
+    parent = (parent_key or "").strip().upper() or None
+    if parent and not _ISSUE_KEY_RE.match(parent):
+        parent = None
+    return {
+        "title": summary,
+        "description": (description or "").strip(),
+        "status": st,
+        "issue_type": itype,
+        "assignee": (assignee or "").strip() or None,
+        "fix_version": (fix_version or "").strip() or None,
+        "labels": normalize_labels(labels, marketing=bool(marketing)),
+        "parent_key": parent,
+        "thread_id": (thread_id or "").strip() or None,
+        "project_key": proj,
+    }
+
+
+def _apply_ticket_field_updates(
+    ticket: Dict[str, Any],
+    fields: Dict[str, Any],
+    *,
+    project_key: Optional[str],
+) -> Dict[str, Any]:
+    updates: Dict[str, Any] = {}
+    allowed = {
+        "title",
+        "description",
+        "status",
+        "assignee",
+        "fix_version",
+        "thread_id",
+        "marketing",
+        "labels",
+        "parent_key",
+        "done_processed",
+    }
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key == "status":
+            st = (value or "").strip()
+            if not is_valid_status(st, project_key=project_key):
+                continue
+            updates["status"] = st
+        elif key == "title":
+            title = (value or "").strip()
+            if title:
+                updates["title"] = title
+        elif key == "description":
+            updates["description"] = str(value or "")
+        elif key == "assignee":
+            updates["assignee"] = (value or "").strip() or None
+        elif key == "fix_version":
+            updates["fix_version"] = (value or "").strip() or None
+        elif key == "thread_id":
+            updates["thread_id"] = (value or "").strip() or None
+        elif key == "parent_key":
+            pk = (value or "").strip().upper() or None
+            updates["parent_key"] = pk if pk and _ISSUE_KEY_RE.match(pk) else None
+        elif key == "done_processed":
+            updates["done_processed"] = bool(value)
+    if "labels" in fields or "marketing" in fields:
+        current = fields["labels"] if "labels" in fields else resolve_ticket_labels(ticket)
+        marketing_flag = bool(fields["marketing"]) if "marketing" in fields else has_marketing(current)
+        labels = normalize_labels(current, marketing=marketing_flag)
+        if "marketing" in fields and not fields["marketing"]:
+            labels = [item for item in labels if item != "marketing"]
+        updates["labels"] = labels
+        updates["marketing"] = has_marketing(labels)
+    return updates
+
+
+def _key_number(key: str, prefix: str) -> Optional[int]:
+    display = (key or "").strip().upper()
+    if not display.startswith(f"{prefix}-"):
+        return None
+    try:
+        return int(display.split("-", 1)[1])
+    except (IndexError, ValueError):
+        return None
+
+
 class MemoryTicketStore:
     """Thread-safe in-memory store for boards and tickets."""
 
@@ -62,6 +210,21 @@ class MemoryTicketStore:
             seq = self._counters.get(prefix, 0) + 1
             self._counters[prefix] = seq
         return f"{prefix}-{seq}"
+
+    def _allocate_key(self, board: Dict[str, Any], requested: Optional[str] = None) -> str:
+        display = (requested or "").strip().upper()
+        if not display:
+            return self._next_key(board)
+        if not _ISSUE_KEY_RE.match(display):
+            raise ValueError(f"invalid key {requested!r}")
+        if display in self._key_index:
+            raise ValueError(f"key {display} already exists")
+        prefix = _board_prefix(board.get("project_key"))
+        number = _key_number(display, prefix)
+        if number is not None:
+            with self._lock:
+                self._counters[prefix] = max(self._counters.get(prefix, 0), number)
+        return display
 
     def list_boards(self, user_id: str) -> List[Dict[str, Any]]:
         with self._lock:
@@ -191,52 +354,41 @@ class MemoryTicketStore:
         assignee: Optional[str] = None,
         fix_version: Optional[str] = None,
         marketing: bool = False,
+        labels: Optional[List[Any]] = None,
         parent_key: Optional[str] = None,
         thread_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        key: Optional[str] = None,
     ) -> Dict[str, Any]:
         board = self.get_board(board_id)
         if not board:
             raise ValueError("board not found")
         if user_id and board.get("user_id") != user_id:
             raise ValueError("forbidden")
-        proj = board.get("project_key")
-        cols = columns_for_board(project_key=proj)
-        st = (status or cols[0]).strip()
-        if st not in cols:
-            st = cols[0]
-        summary = (title or "").strip()
-        if not summary:
-            raise ValueError("title is required")
-        itype = (issue_type or "Task").strip().title() or "Task"
-        if itype not in ("Task", "Bug", "Epic"):
-            itype = "Task"
-        parent = (parent_key or "").strip().upper() or None
-        if parent and not _ISSUE_KEY_RE.match(parent):
-            parent = None
+        values = _prepare_ticket_values(
+            board,
+            title=title,
+            description=description,
+            status=status,
+            issue_type=issue_type,
+            assignee=assignee,
+            fix_version=fix_version,
+            marketing=marketing,
+            labels=labels,
+            parent_key=parent_key,
+            thread_id=thread_id,
+        )
 
         ticket_id = str(uuid.uuid4())
-        display_key = self._next_key(board)
+        display_key = self._allocate_key(board, key)
         now = _utcnow_iso()
-        ticket = {
-            "ticket_id": ticket_id,
-            "board_id": board_id,
-            "key": display_key,
-            "title": summary,
-            "description": (description or "").strip(),
-            "status": st,
-            "issue_type": itype,
-            "assignee": (assignee or "").strip() or None,
-            "fix_version": (fix_version or "").strip() or None,
-            "marketing": bool(marketing),
-            "parent_key": parent,
-            "thread_id": (thread_id or "").strip() or None,
-            "comments": [],
-            "done_processed": False,
-            "project_key": proj,
-            "created_at": now,
-            "updated_at": now,
-        }
+        ticket = _compose_ticket(
+            ticket_id=ticket_id,
+            board_id=board_id,
+            key=display_key,
+            now=now,
+            **values,
+        )
         with self._lock:
             self._tickets[ticket_id] = ticket
             self._key_index[display_key] = ticket_id
@@ -257,44 +409,9 @@ class MemoryTicketStore:
             if user_id and board and board.get("user_id") != user_id:
                 return None
             proj = board.get("project_key") if board else ticket.get("project_key")
-            allowed = {
-                "title",
-                "description",
-                "status",
-                "assignee",
-                "fix_version",
-                "thread_id",
-                "marketing",
-                "parent_key",
-                "done_processed",
-            }
-            for key, value in fields.items():
-                if key not in allowed:
-                    continue
-                if key == "status":
-                    st = (value or "").strip()
-                    if not is_valid_status(st, project_key=proj):
-                        continue
-                    ticket["status"] = st
-                elif key == "title":
-                    title = (value or "").strip()
-                    if title:
-                        ticket["title"] = title
-                elif key == "description":
-                    ticket["description"] = str(value or "")
-                elif key == "assignee":
-                    ticket["assignee"] = (value or "").strip() or None
-                elif key == "fix_version":
-                    ticket["fix_version"] = (value or "").strip() or None
-                elif key == "thread_id":
-                    ticket["thread_id"] = (value or "").strip() or None
-                elif key == "marketing":
-                    ticket["marketing"] = bool(value)
-                elif key == "parent_key":
-                    pk = (value or "").strip().upper() or None
-                    ticket["parent_key"] = pk if pk and _ISSUE_KEY_RE.match(pk) else None
-                elif key == "done_processed":
-                    ticket["done_processed"] = bool(value)
+            updates = _apply_ticket_field_updates(ticket, fields, project_key=proj)
+            if updates:
+                ticket.update(updates)
             ticket["updated_at"] = _utcnow_iso()
             return dict(ticket)
 
@@ -428,6 +545,24 @@ class FirestoreTicketStore:
         transaction = self._db.transaction()
         return _increment(transaction)
 
+    def _allocate_key(self, board: Dict[str, Any], requested: Optional[str] = None) -> str:
+        display = (requested or "").strip().upper()
+        if not display:
+            return self._next_key(board)
+        if not _ISSUE_KEY_RE.match(display):
+            raise ValueError(f"invalid key {requested!r}")
+        if self.get_ticket_by_key(display):
+            raise ValueError(f"key {display} already exists")
+        prefix = _board_prefix(board.get("project_key"))
+        number = _key_number(display, prefix)
+        if number is not None:
+            counter_ref = self._counters.document(prefix)
+            snap = counter_ref.get()
+            current = int((snap.to_dict() or {}).get("seq") or 0) if snap.exists else 0
+            if number > current:
+                counter_ref.set({"seq": number, "prefix": prefix}, merge=True)
+        return display
+
     def list_boards(self, user_id: str) -> List[Dict[str, Any]]:
         docs = self._boards.where("user_id", "==", user_id).stream()
         boards = [doc.to_dict() for doc in docs if doc.exists]
@@ -545,52 +680,41 @@ class FirestoreTicketStore:
         assignee: Optional[str] = None,
         fix_version: Optional[str] = None,
         marketing: bool = False,
+        labels: Optional[List[Any]] = None,
         parent_key: Optional[str] = None,
         thread_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        key: Optional[str] = None,
     ) -> Dict[str, Any]:
         board = self.get_board(board_id)
         if not board:
             raise ValueError("board not found")
         if user_id and board.get("user_id") != user_id:
             raise ValueError("forbidden")
-        proj = board.get("project_key")
-        cols = columns_for_board(project_key=proj)
-        st = (status or cols[0]).strip()
-        if st not in cols:
-            st = cols[0]
-        summary = (title or "").strip()
-        if not summary:
-            raise ValueError("title is required")
-        itype = (issue_type or "Task").strip().title() or "Task"
-        if itype not in ("Task", "Bug", "Epic"):
-            itype = "Task"
-        parent = (parent_key or "").strip().upper() or None
-        if parent and not _ISSUE_KEY_RE.match(parent):
-            parent = None
+        values = _prepare_ticket_values(
+            board,
+            title=title,
+            description=description,
+            status=status,
+            issue_type=issue_type,
+            assignee=assignee,
+            fix_version=fix_version,
+            marketing=marketing,
+            labels=labels,
+            parent_key=parent_key,
+            thread_id=thread_id,
+        )
 
         ticket_id = str(uuid.uuid4())
-        display_key = self._next_key(board)
+        display_key = self._allocate_key(board, key)
         now = _utcnow_iso()
-        ticket = {
-            "ticket_id": ticket_id,
-            "board_id": board_id,
-            "key": display_key,
-            "title": summary,
-            "description": (description or "").strip(),
-            "status": st,
-            "issue_type": itype,
-            "assignee": (assignee or "").strip() or None,
-            "fix_version": (fix_version or "").strip() or None,
-            "marketing": bool(marketing),
-            "parent_key": parent,
-            "thread_id": (thread_id or "").strip() or None,
-            "comments": [],
-            "done_processed": False,
-            "project_key": proj,
-            "created_at": now,
-            "updated_at": now,
-        }
+        ticket = _compose_ticket(
+            ticket_id=ticket_id,
+            board_id=board_id,
+            key=display_key,
+            now=now,
+            **values,
+        )
         self._tickets.document(ticket_id).set(ticket)
         return ticket
 
@@ -610,45 +734,7 @@ class FirestoreTicketStore:
         if user_id and board and board.get("user_id") != user_id:
             return None
         proj = board.get("project_key") if board else ticket.get("project_key")
-        allowed = {
-            "title",
-            "description",
-            "status",
-            "assignee",
-            "fix_version",
-            "thread_id",
-            "marketing",
-            "parent_key",
-            "done_processed",
-        }
-        updates: Dict[str, Any] = {}
-        for key, value in fields.items():
-            if key not in allowed:
-                continue
-            if key == "status":
-                st = (value or "").strip()
-                if not is_valid_status(st, project_key=proj):
-                    continue
-                updates["status"] = st
-            elif key == "title":
-                title = (value or "").strip()
-                if title:
-                    updates["title"] = title
-            elif key == "description":
-                updates["description"] = str(value or "")
-            elif key == "assignee":
-                updates["assignee"] = (value or "").strip() or None
-            elif key == "fix_version":
-                updates["fix_version"] = (value or "").strip() or None
-            elif key == "thread_id":
-                updates["thread_id"] = (value or "").strip() or None
-            elif key == "marketing":
-                updates["marketing"] = bool(value)
-            elif key == "parent_key":
-                pk = (value or "").strip().upper() or None
-                updates["parent_key"] = pk if pk and _ISSUE_KEY_RE.match(pk) else None
-            elif key == "done_processed":
-                updates["done_processed"] = bool(value)
+        updates = _apply_ticket_field_updates(ticket, fields, project_key=proj)
         if not updates:
             return ticket
         updates["updated_at"] = _utcnow_iso()

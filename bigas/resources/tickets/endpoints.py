@@ -6,6 +6,7 @@ import logging
 from flask import Blueprint, g, jsonify, request
 
 from bigas.chat.auth import require_chat_auth
+from bigas.tickets.config import jira_configured
 from bigas.tickets.constants import columns_for_board
 from bigas.tickets.service import (
     TicketService,
@@ -25,7 +26,12 @@ def boards():
     user_id = g.chat_user["uid"]
     service = TicketService()
     if request.method == "GET":
-        return jsonify({"boards": service.list_boards(user_id)})
+        return jsonify(
+            {
+                "boards": service.list_boards(user_id),
+                "jira_import_available": jira_configured(),
+            }
+        )
 
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()
@@ -92,6 +98,7 @@ def board_tickets(board_id: str):
             assignee=(body.get("assignee") or "").strip() or None,
             fix_version=(body.get("fix_version") or "").strip() or None,
             marketing=bool(body.get("marketing")),
+            labels=body.get("labels"),
             parent_key=(body.get("parent_key") or body.get("parent_epic_key") or "").strip()
             or None,
             thread_id=(body.get("thread_id") or "").strip() or None,
@@ -99,6 +106,18 @@ def board_tickets(board_id: str):
         return jsonify({"ticket": ticket}), 201
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@tickets_bp.route("/api/boards/<board_id>/sync-jira", methods=["POST"])
+@require_chat_auth
+def board_sync_jira(board_id: str):
+    from bigas.tickets.jira_import import JiraImportError, sync_jira_board
+
+    try:
+        result = sync_jira_board(user_id=g.chat_user["uid"], board_id=board_id)
+    except JiraImportError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result)
 
 
 @tickets_bp.route("/api/tickets/by-key/<key>", methods=["GET"])
@@ -191,6 +210,7 @@ def ticket_detail(ticket_id: str):
         "fix_version",
         "thread_id",
         "marketing",
+        "labels",
         "parent_key",
     ):
         if key in body:

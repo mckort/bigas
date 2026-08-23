@@ -45,9 +45,9 @@ class TicketJiraAdapter:
                     "key": parent_key,
                     "fields": {"summary": parent_ticket.get("title")},
                 }
-        labels = []
-        if ticket.get("marketing"):
-            labels.append({"name": "marketing"})
+        from bigas.tickets.labels import resolve_ticket_labels
+
+        labels = resolve_ticket_labels(ticket)
         return {
             "key": ticket["key"],
             "fields": {

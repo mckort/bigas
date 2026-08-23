@@ -9,6 +9,7 @@ import {
   fetchBoardTickets,
   fetchTicket,
   fetchTicketByKey,
+  syncBoardFromJira,
   updateTicket,
 } from '../lib/api'
 
@@ -50,6 +51,88 @@ function StatusSelect({ value, columns, onChange, className = '' }) {
   )
 }
 
+function normalizeLabel(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-._]+|[-._]+$/g, '')
+    .slice(0, 255)
+}
+
+function ticketLabels(ticket) {
+  const fromList = Array.isArray(ticket?.labels) ? ticket.labels : []
+  const labels = fromList.map(normalizeLabel).filter(Boolean)
+  if (ticket?.marketing && !labels.includes('marketing')) labels.push('marketing')
+  return labels
+}
+
+function LabelChips({ labels, onRemove, className = '' }) {
+  if (!labels?.length) return null
+  return (
+    <div className={`flex flex-wrap gap-1 ${className}`}>
+      {labels.map((label) => (
+        <span
+          key={label}
+          className="inline-flex items-center gap-1 max-w-full text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted"
+        >
+          <span className="truncate">{label}</span>
+          {onRemove && (
+            <button
+              type="button"
+              onClick={() => onRemove(label)}
+              className="text-muted hover:text-text min-w-[16px]"
+              aria-label={`Remove ${label}`}
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function LabelEditor({ labels, onChange }) {
+  const [draft, setDraft] = useState('')
+
+  const addDraft = () => {
+    const next = normalizeLabel(draft)
+    if (!next) {
+      setDraft('')
+      return
+    }
+    if (!labels.includes(next)) onChange([...labels, next])
+    setDraft('')
+  }
+
+  return (
+    <div className="block text-sm">
+      <span className="text-muted text-xs">Labels</span>
+      <LabelChips
+        labels={labels}
+        onRemove={(label) => onChange(labels.filter((item) => item !== label))}
+        className="mt-1"
+      />
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault()
+            addDraft()
+          }
+        }}
+        onBlur={addDraft}
+        placeholder="customer-request, then Enter"
+        className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+      />
+    </div>
+  )
+}
+
 function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, dragging, onDragStart, onDragEnd }) {
   return (
     <div
@@ -82,6 +165,7 @@ function TicketCard({ ticket, columns, onEdit, onStatusChange, onDiscuss, draggi
       >
         {ticket.title}
       </button>
+      <LabelChips labels={ticketLabels(ticket)} className="mt-2" />
       {ticket.assignee && (
         <p className="text-xs text-muted mt-2 truncate">{ticket.assignee}</p>
       )}
@@ -230,6 +314,7 @@ function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
     assignee: ticket?.assignee || '',
     fix_version: ticket?.fix_version || '',
     issue_type: ticket?.issue_type || 'Task',
+    labels: ticketLabels(ticket),
   })
   const isNew = !ticket?.ticket_id
 
@@ -306,6 +391,10 @@ function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
               />
             </label>
           )}
+          <LabelEditor
+            labels={form.labels}
+            onChange={(labels) => setForm({ ...form, labels })}
+          />
           {!isNew && <TicketComments ticketId={ticket.ticket_id} />}
         </div>
         <div className="p-4 border-t border-border flex flex-col sm:flex-row gap-2">
@@ -456,6 +545,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [showCreate, setShowCreate] = useState(false)
   const [dragTicket, setDragTicket] = useState(null)
   const [pendingTicketKey, setPendingTicketKey] = useState(null)
+  const [jiraImportAvailable, setJiraImportAvailable] = useState(false)
+  const [syncingJira, setSyncingJira] = useState(false)
+  const [syncMessage, setSyncMessage] = useState('')
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
   const columns = activeBoard?.columns || ['To Do', 'In Progress', 'Review', 'Done']
@@ -463,6 +555,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const loadBoards = useCallback(async () => {
     const data = await fetchBoards()
     setBoards(data.boards || [])
+    setJiraImportAvailable(Boolean(data.jira_import_available))
     if (!activeBoardId && data.boards?.length) {
       setActiveBoardId(data.boards[0].board_id)
     }
@@ -567,6 +660,24 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     await loadBoards()
   }
 
+  const handleSyncJira = async () => {
+    if (!activeBoardId || syncingJira) return
+    setSyncingJira(true)
+    setSyncMessage('')
+    try {
+      const data = await syncBoardFromJira(activeBoardId)
+      setSyncMessage(
+        `Jira sync: ${data.created || 0} new, ${data.updated || 0} updated` +
+          (data.skipped ? `, ${data.skipped} skipped` : ''),
+      )
+      await loadTickets()
+    } catch (err) {
+      setSyncMessage(err.message || 'Jira sync failed')
+    } finally {
+      setSyncingJira(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-bg text-muted">
@@ -600,9 +711,21 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           <div className="flex-1 min-w-0">
             <h1 className="font-bold truncate">{activeBoard?.name || 'Board'}</h1>
             {activeBoard?.workflow_enabled && (
-              <p className="text-xs text-muted">AI workflow enabled</p>
+              <p className="text-xs text-muted">
+                {syncMessage || 'AI workflow enabled'}
+              </p>
             )}
           </div>
+          {jiraImportAvailable && activeBoard?.workflow_enabled && (
+            <button
+              type="button"
+              onClick={handleSyncJira}
+              disabled={syncingJira}
+              className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] disabled:opacity-50"
+            >
+              {syncingJira ? 'Syncing…' : 'Sync Jira'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onSwitchView('chat')}

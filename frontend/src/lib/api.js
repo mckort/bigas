@@ -150,3 +150,7 @@ export async function updateTicket(ticketId, payload) {
 export async function deleteTicket(ticketId) {
   return apiFetch(`/api/tickets/${ticketId}`, { method: 'DELETE' })
 }
+
+export async function syncBoardFromJira(boardId) {
+  return apiFetch(`/api/boards/${boardId}/sync-jira`, { method: 'POST' })
+}
