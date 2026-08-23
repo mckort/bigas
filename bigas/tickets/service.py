@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from bigas.tickets.constants import AI_TRIGGER_STATUSES, columns_for_board, next_column
+from bigas.tickets.labels import resolve_ticket_labels
 from bigas.tickets.store import get_ticket_store
 
 logger = logging.getLogger(__name__)
@@ -175,8 +176,11 @@ def comment_author_name(user: Optional[Dict[str, Any]]) -> str:
 def ticket_to_api(ticket: Dict[str, Any], *, include_comments: bool = True) -> Dict[str, Any]:
     key = ticket.get("key") or ""
     comments = list(ticket.get("comments") or [])
+    labels = resolve_ticket_labels(ticket)
     payload = {
         **ticket,
+        "labels": labels,
+        "marketing": any(label == "marketing" for label in labels),
         "url": ticket_url(key),
         "summary": ticket.get("title") or key,
     }
@@ -251,8 +255,10 @@ class TicketService:
         assignee: Optional[str] = None,
         fix_version: Optional[str] = None,
         marketing: bool = False,
+        labels: Optional[List[Any]] = None,
         parent_key: Optional[str] = None,
         thread_id: Optional[str] = None,
+        key: Optional[str] = None,
     ) -> Dict[str, Any]:
         ticket = self._store.create_ticket(
             board_id,
@@ -263,9 +269,11 @@ class TicketService:
             assignee=assignee,
             fix_version=fix_version,
             marketing=marketing,
+            labels=labels,
             parent_key=parent_key,
             thread_id=thread_id,
             user_id=user_id,
+            key=key,
         )
         return ticket_to_api(ticket)
 
@@ -297,8 +305,11 @@ class TicketService:
         description: str,
         issue_type: str = "Task",
         marketing: bool = False,
+        labels: Optional[List[Any]] = None,
         parent_key: Optional[str] = None,
         user_id: Optional[str] = None,
+        key: Optional[str] = None,
+        status: str = "To Do",
     ) -> Dict[str, Any]:
         uid = user_id or _sync_user_id()
         board = self._store.find_board_for_project(project_key, uid)
@@ -312,8 +323,11 @@ class TicketService:
             description=description,
             issue_type=issue_type,
             marketing=marketing,
+            labels=labels,
             parent_key=parent_key,
             user_id=uid,
+            key=key,
+            status=status,
         )
         return ticket_to_api(ticket)
 

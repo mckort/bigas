@@ -78,6 +78,7 @@ class CreateJiraIssueService:
                 description=body,
                 issue_type=itype,
                 marketing=marketing,
+                labels=[_MARKETING_LABEL] if marketing else None,
                 parent_key=epic,
                 user_id=user_id,
             )
@@ -90,8 +91,8 @@ class CreateJiraIssueService:
                 "project_key": proj,
                 "source": "internal_board",
             }
-            if marketing:
-                out["labels"] = [_MARKETING_LABEL]
+            if ticket.get("labels"):
+                out["labels"] = ticket.get("labels")
             if epic:
                 out["parent_epic_key"] = epic
             return out

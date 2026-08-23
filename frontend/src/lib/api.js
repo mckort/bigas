@@ -150,3 +150,23 @@ export async function updateTicket(ticketId, payload) {
 export async function deleteTicket(ticketId) {
   return apiFetch(`/api/tickets/${ticketId}`, { method: 'DELETE' })
 }
+
+export async function syncBoardFromJira(boardId) {
+  const token = getToken()
+  const headers = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const res = await fetch(`/api/boards/${boardId}/sync-jira`, { method: 'POST', headers })
+  const data = await res.json().catch(() => ({}))
+  if (res.status === 409) {
+    return { ok: false, status: 'running', error: data.error }
+  }
+  if (!res.ok) {
+    throw new Error(data.error || `Request failed (${res.status})`)
+  }
+  return data
+}
+
+export async function fetchBoardJiraSyncStatus(boardId) {
+  return apiFetch(`/api/boards/${boardId}/jira-sync-status`)
+}
