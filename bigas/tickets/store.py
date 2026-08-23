@@ -699,15 +699,17 @@ class FirestoreTicketStore:
 
     def list_all_epics(self) -> List[Dict[str, Any]]:
         tickets = []
-        for doc in self._tickets.stream():
+        board_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+        for doc in self._tickets.where("issue_type", "==", "Epic").stream():
             if not doc.exists:
                 continue
             ticket = doc.to_dict() or {}
-            if (ticket.get("issue_type") or "").strip().title() != "Epic":
-                continue
             if ticket.get("status") == "Done":
                 continue
-            board = self.get_board(ticket.get("board_id") or "")
+            board_id = ticket.get("board_id") or ""
+            if board_id not in board_cache:
+                board_cache[board_id] = self.get_board(board_id) if board_id else None
+            board = board_cache[board_id]
             proj = ticket.get("project_key") or (board or {}).get("project_key")
             if proj:
                 tickets.append(ticket)
@@ -717,13 +719,8 @@ class FirestoreTicketStore:
         key = (parent_key or "").strip().upper()
         if not key:
             return []
-        tickets = []
-        for doc in self._tickets.stream():
-            if not doc.exists:
-                continue
-            ticket = doc.to_dict() or {}
-            if (ticket.get("parent_key") or "").upper() == key:
-                tickets.append(ticket)
+        docs = self._tickets.where("parent_key", "==", key).stream()
+        tickets = [doc.to_dict() for doc in docs if doc.exists]
         return sorted(tickets, key=lambda t: t.get("key", ""))
 
     def find_board_for_project(self, project_key: str, user_id: str) -> Optional[Dict[str, Any]]:

@@ -25,17 +25,16 @@ class TicketJiraAdapter:
     def _board(self, ticket: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return self._store.get_board(ticket.get("board_id") or "")
 
-    def get_issue(
+    def _format_issue(
         self,
-        issue_key: str,
+        ticket: Dict[str, Any],
         *,
-        fields: Optional[List[str]] = None,
-        expand: Optional[str] = None,
+        issue_key: Optional[str] = None,
+        board: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        ticket = self._ticket(issue_key)
-        if not ticket:
-            raise JiraError(f"Ticket {issue_key} not found")
-        board = self._board(ticket)
+        key = issue_key or ticket["key"]
+        if board is None:
+            board = self._board(ticket)
         proj = board.get("project_key") if board else ticket.get("project_key")
         parent_key = ticket.get("parent_key")
         parent = None
@@ -52,7 +51,7 @@ class TicketJiraAdapter:
         return {
             "key": ticket["key"],
             "fields": {
-                "summary": ticket.get("title") or issue_key,
+                "summary": ticket.get("title") or key,
                 "description": ticket.get("description") or "",
                 "status": {"name": ticket.get("status") or "To Do"},
                 "issuetype": {"name": ticket.get("issue_type") or "Task"},
@@ -62,6 +61,18 @@ class TicketJiraAdapter:
                 "issuelinks": [],
             },
         }
+
+    def get_issue(
+        self,
+        issue_key: str,
+        *,
+        fields: Optional[List[str]] = None,
+        expand: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        ticket = self._ticket(issue_key)
+        if not ticket:
+            raise JiraError(f"Ticket {issue_key} not found")
+        return self._format_issue(ticket, issue_key=issue_key)
 
     def list_comments(
         self,
@@ -95,15 +106,19 @@ class TicketJiraAdapter:
         wanted = {str(s).strip().lower() for s in (statuses or []) if str(s).strip()}
         projects = {str(k).strip().upper() for k in (project_keys or []) if str(k).strip()}
         epics = []
+        board_cache: Dict[str, Optional[Dict[str, Any]]] = {}
         for ticket in self._store.list_all_epics():
-            board = self._board(ticket)
+            board_id = ticket.get("board_id") or ""
+            if board_id not in board_cache:
+                board_cache[board_id] = self._store.get_board(board_id) if board_id else None
+            board = board_cache[board_id]
             proj = ((board or {}).get("project_key") or ticket.get("project_key") or "").upper()
             if projects and proj not in projects:
                 continue
             status = (ticket.get("status") or "").strip()
             if wanted and status.lower() not in wanted:
                 continue
-            epics.append(self.get_issue(ticket["key"]))
+            epics.append(self._format_issue(ticket, board=board))
         return epics
 
     def get_issues_for_epic(
@@ -129,7 +144,7 @@ class TicketJiraAdapter:
             status = (ticket.get("status") or "").strip()
             if not _status_matches_clause(status, clause):
                 continue
-            out.append(self.get_issue(ticket["key"]))
+            out.append(self._format_issue(ticket))
         return out
 
     def add_comment(self, issue_key: str, body_text: str) -> Dict[str, Any]:
@@ -208,12 +223,16 @@ def _ticket_updated_at(ticket: Dict[str, Any]) -> Optional[datetime]:
     return parsed
 
 
+def _normalize_jql_clause(clause: str) -> str:
+    return " ".join((clause or "").strip().lower().split())
+
+
 def _status_matches_clause(status: str, clause: str) -> bool:
-    if not clause:
+    normalized = _normalize_jql_clause(clause)
+    if not normalized:
         return True
     name = (status or "").strip()
     lower = name.lower()
-    normalized = " ".join(clause.split())
     equals = re.search(r"status\s*=\s*([^,\s]+(?:\s+[^,\s]+)*)", normalized, re.IGNORECASE)
     if equals:
         return lower == equals.group(1).strip().lower()
