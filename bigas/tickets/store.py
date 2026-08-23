@@ -593,6 +593,7 @@ class FirestoreTicketStore:
 
         @firestore.transactional
         def _allocate(transaction):
+            # Do not call twice in the same transaction: reads must precede all writes.
             if display:
                 if not _ISSUE_KEY_RE.match(display):
                     raise ValueError(f"invalid key {requested!r}")
@@ -635,15 +636,17 @@ class FirestoreTicketStore:
             seq = current + 1
             auto_display = f"{prefix}-{seq}"
             lock_ref = self._key_locks.document(auto_display)
-            for _ in range(500):
+            # Firestore transactions cap at 500 document reads (~2 reads/iteration here).
+            for _ in range(200):
                 lock_snap = lock_ref.get(transaction=transaction)
-                existing = list(
-                    self._tickets.where("key", "==", auto_display)
-                    .limit(1)
-                    .stream(transaction=transaction)
-                )
-                if not lock_snap.exists and not existing:
-                    break
+                if not lock_snap.exists:
+                    existing = list(
+                        self._tickets.where("key", "==", auto_display)
+                        .limit(1)
+                        .stream(transaction=transaction)
+                    )
+                    if not existing:
+                        break
                 seq += 1
                 auto_display = f"{prefix}-{seq}"
                 lock_ref = self._key_locks.document(auto_display)
