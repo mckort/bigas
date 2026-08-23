@@ -1,8 +1,10 @@
 """JiraClient-compatible adapter for internal tickets (AI automation handlers)."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from bigas.resources.product.create_release_notes.jira_client import JiraError
 from bigas.tickets.constants import next_column
 from bigas.tickets.store import get_ticket_store
 
@@ -31,7 +33,7 @@ class TicketJiraAdapter:
     ) -> Dict[str, Any]:
         ticket = self._ticket(issue_key)
         if not ticket:
-            raise RuntimeError(f"Ticket {issue_key} not found")
+            raise JiraError(f"Ticket {issue_key} not found")
         board = self._board(ticket)
         proj = board.get("project_key") if board else ticket.get("project_key")
         parent_key = ticket.get("parent_key")
@@ -80,6 +82,53 @@ class TicketJiraAdapter:
                     "author": {"displayName": "Bigas"},
                 }
             )
+        return out
+
+    def get_epics_by_statuses(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        project_keys: Optional[List[str]] = None,
+        fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        wanted = {str(s).strip().lower() for s in (statuses or []) if str(s).strip()}
+        projects = {str(k).strip().upper() for k in (project_keys or []) if str(k).strip()}
+        epics = []
+        for ticket in self._store.list_all_epics():
+            board = self._board(ticket)
+            proj = ((board or {}).get("project_key") or ticket.get("project_key") or "").upper()
+            if projects and proj not in projects:
+                continue
+            status = (ticket.get("status") or "").strip()
+            if wanted and status.lower() not in wanted:
+                continue
+            epics.append(self.get_issue(ticket["key"]))
+        return epics
+
+    def get_issues_for_epic(
+        self,
+        epic_key: str,
+        *,
+        status_clause: str = "",
+        updated_since_days: Optional[int] = None,
+        fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        children = self._store.list_tickets_for_parent(epic_key)
+        if updated_since_days:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=int(updated_since_days))
+            kept = []
+            for ticket in children:
+                updated = _ticket_updated_at(ticket)
+                if updated is not None and updated >= cutoff:
+                    kept.append(ticket)
+            children = kept
+        clause = (status_clause or "").strip().lower()
+        out: List[Dict[str, Any]] = []
+        for ticket in children:
+            status = (ticket.get("status") or "").strip()
+            if not _status_matches_clause(status, clause):
+                continue
+            out.append(self.get_issue(ticket["key"]))
         return out
 
     def add_comment(self, issue_key: str, body_text: str) -> Dict[str, Any]:
@@ -137,3 +186,30 @@ class TicketJiraAdapter:
             "new_status": nxt,
             "message": f"Moved {issue_key} to {nxt}",
         }
+
+
+def _ticket_updated_at(ticket: Dict[str, Any]) -> Optional[datetime]:
+    raw = (ticket.get("updated_at") or ticket.get("created_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _status_matches_clause(status: str, clause: str) -> bool:
+    if not clause:
+        return True
+    name = (status or "").strip()
+    lower = name.lower()
+    if "status = done" in clause:
+        return lower == "done"
+    if "status != done" in clause:
+        return lower != "done"
+    if "in progress" in clause:
+        return "in progress" in lower
+    return True
