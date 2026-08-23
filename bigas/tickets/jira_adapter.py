@@ -1,10 +1,11 @@
 """JiraClient-compatible adapter for internal tickets (AI automation handlers)."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from bigas.resources.product.create_release_notes.jira_client import JiraError
+from bigas.jira_exceptions import JiraError
 from bigas.tickets.constants import next_column
 from bigas.tickets.store import get_ticket_store
 
@@ -190,15 +191,18 @@ class TicketJiraAdapter:
 
 def _ticket_updated_at(ticket: Dict[str, Any]) -> Optional[datetime]:
     raw = ticket.get("updated_at") or ticket.get("created_at")
+    if raw is None:
+        return None
     if isinstance(raw, datetime):
         parsed = raw
-    elif isinstance(raw, str) and raw.strip():
+    else:
+        text = str(raw).strip()
+        if not text:
+            return None
         try:
-            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:
             return None
-    else:
-        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
@@ -209,10 +213,13 @@ def _status_matches_clause(status: str, clause: str) -> bool:
         return True
     name = (status or "").strip()
     lower = name.lower()
-    if "status = done" in clause:
-        return lower == "done"
-    if "status != done" in clause:
-        return lower != "done"
-    if "in progress" in clause:
+    normalized = " ".join(clause.split())
+    equals = re.search(r"status\s*=\s*([^,\s]+(?:\s+[^,\s]+)*)", normalized, re.IGNORECASE)
+    if equals:
+        return lower == equals.group(1).strip().lower()
+    not_equals = re.search(r"status\s*!=\s*([^,\s]+(?:\s+[^,\s]+)*)", normalized, re.IGNORECASE)
+    if not_equals:
+        return lower != not_equals.group(1).strip().lower()
+    if re.search(r"in\s+progress", normalized, re.IGNORECASE):
         return "in progress" in lower
     return True
