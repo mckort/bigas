@@ -240,9 +240,11 @@ class TicketService:
 
     def delete_board(self, board_id: str, *, user_id: str) -> bool:
         tickets = self._store.list_tickets(board_id, user_id=user_id)
+        if not self._store.delete_board(board_id, user_id=user_id):
+            return False
         for ticket in tickets:
             self._delete_ticket_attachment_blobs(ticket)
-        return self._store.delete_board(board_id, user_id=user_id)
+        return True
 
     def delete_ticket(self, ticket_id: str, *, user_id: str) -> bool:
         ticket = self._store.get_ticket(ticket_id)
@@ -251,8 +253,10 @@ class TicketService:
         board = self._store.get_board(ticket.get("board_id") or "")
         if board and board.get("user_id") != user_id:
             return False
+        if not self._store.delete_ticket(ticket_id, user_id=user_id):
+            return False
         self._delete_ticket_attachment_blobs(ticket)
-        return self._store.delete_ticket(ticket_id, user_id=user_id)
+        return True
 
     def _delete_ticket_attachment_blobs(self, ticket: Dict[str, Any]) -> None:
         from bigas.tickets.attachments import delete_attachment_blobs
@@ -371,7 +375,7 @@ class TicketService:
         filename: str,
         content_type: str,
     ) -> None:
-        from bigas.tickets.attachments import clip_extracted_text, describe_image
+        from bigas.tickets.attachments import clip_extracted_text, describe_image, _image_fallback
 
         try:
             extracted = clip_extracted_text(
@@ -389,6 +393,22 @@ class TicketService:
                 attachment_id,
                 exc_info=True,
             )
+            try:
+                failure_text = clip_extracted_text(
+                    _image_fallback(filename, "interpretation failed"),
+                )
+                self._store.update_attachment(
+                    ticket_id,
+                    attachment_id,
+                    extracted_text=failure_text,
+                )
+            except Exception:
+                logger.warning(
+                    "Could not mark attachment interpretation failure for ticket %s attachment %s",
+                    ticket_id,
+                    attachment_id,
+                    exc_info=True,
+                )
 
     def delete_attachment(self, ticket_id: str, attachment_id: str) -> Optional[Dict[str, Any]]:
         from bigas.tickets.attachments import get_attachment_blob_store

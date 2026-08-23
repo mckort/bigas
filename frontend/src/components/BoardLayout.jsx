@@ -344,6 +344,14 @@ function isImageAttachment(attachment) {
 const ATTACHMENT_ACCEPT =
   'image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.md'
 const MAX_TICKET_ATTACHMENTS = 10
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+function attachmentSizeError(file) {
+  if ((file?.size || 0) > MAX_ATTACHMENT_BYTES) {
+    return `${file.name} is larger than 10 MB`
+  }
+  return ''
+}
 
 function pendingFileKey(file) {
   return `${file.name}:${file.size}:${file.lastModified}`
@@ -371,19 +379,26 @@ function LocalImagePreview({ file }) {
 
 function AttachmentPreview({ ticketId, attachment }) {
   const [url, setUrl] = useState('')
+  const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
     if (!isImageAttachment(attachment)) return undefined
     let objectUrl = ''
     let cancelled = false
+    setLoadError(false)
+    setUrl('')
     fetchTicketAttachmentBlob(ticketId, attachment.id)
       .then((blob) => {
         if (cancelled) return
         objectUrl = URL.createObjectURL(blob)
         setUrl(objectUrl)
+        setLoadError(false)
       })
       .catch(() => {
-        if (!cancelled) setUrl('')
+        if (!cancelled) {
+          setUrl('')
+          setLoadError(true)
+        }
       })
     return () => {
       cancelled = true
@@ -391,6 +406,9 @@ function AttachmentPreview({ ticketId, attachment }) {
     }
   }, [ticketId, attachment.id, attachment.content_type])
 
+  if (loadError) {
+    return <p className="mt-2 text-xs text-red-600">Could not load image preview</p>
+  }
   if (!url) return null
   return (
     <img
@@ -401,7 +419,7 @@ function AttachmentPreview({ ticketId, attachment }) {
   )
 }
 
-function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
+function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange, refreshToken = 0 }) {
   const [attachments, setAttachments] = useState([])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
@@ -423,14 +441,20 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
     return () => {
       cancelled = true
     }
-  }, [ticketId])
+  }, [ticketId, refreshToken])
 
   const addPendingFiles = (files) => {
     const incoming = Array.from(files || []).filter(Boolean)
     if (!incoming.length) return
     const existingKeys = new Set(pending.map(pendingFileKey))
     const next = [...pending]
+    const errors = []
     for (const file of incoming) {
+      const sizeError = attachmentSizeError(file)
+      if (sizeError) {
+        errors.push(sizeError)
+        continue
+      }
       const key = pendingFileKey(file)
       if (existingKeys.has(key)) continue
       if (next.length >= MAX_TICKET_ATTACHMENTS) {
@@ -440,6 +464,8 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
       existingKeys.add(key)
       next.push(file)
     }
+    if (errors.length) setError(errors.join('; '))
+    else setError('')
     onPendingFilesChange?.(next)
   }
 
@@ -447,7 +473,6 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
     const list = Array.from(files || []).filter(Boolean)
     if (!list.length) return
     if (isPending) {
-      setError('')
       addPendingFiles(list)
       if (inputRef.current) inputRef.current.value = ''
       return
@@ -458,15 +483,24 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
     }
     setUploading(true)
     setError('')
+    const errors = []
     try {
       for (const file of list) {
-        const data = await uploadTicketAttachment(ticketId, file)
-        if (data.attachment) {
-          setAttachments((prev) => [...prev, data.attachment])
+        const sizeError = attachmentSizeError(file)
+        if (sizeError) {
+          errors.push(sizeError)
+          continue
+        }
+        try {
+          const data = await uploadTicketAttachment(ticketId, file)
+          if (data.attachment) {
+            setAttachments((prev) => [...prev, data.attachment])
+          }
+        } catch (err) {
+          errors.push(err.message || `Could not upload ${file.name}`)
         }
       }
-    } catch (err) {
-      setError(err.message || 'Could not upload attachment')
+      if (errors.length) setError(errors.join('; '))
     } finally {
       setUploading(false)
       if (inputRef.current) inputRef.current.value = ''
@@ -484,7 +518,7 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
     }
   }
 
-  const currentCount = isPending ? pending.length : attachments.length
+  const currentCount = attachments.length + pending.length
   const dropLabel = uploading
     ? 'Interpreting and uploading…'
     : isPending
@@ -505,13 +539,16 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
         {currentCount === 0 && (
           <p className="text-xs text-muted">No attachments yet.</p>
         )}
-        {isPending &&
+        {pending.length > 0 &&
           pending.map((file) => (
             <div key={pendingFileKey(file)} className="rounded-xl px-3 py-2 bg-surface border border-border">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{file.name}</p>
-                  <p className="text-[11px] text-muted">{formatAttachmentSize(file.size)}</p>
+                  <p className="text-[11px] text-muted">
+                    {formatAttachmentSize(file.size)}
+                    {ticketId ? ' · not uploaded yet' : ''}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -526,7 +563,7 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
               <LocalImagePreview file={file} />
             </div>
           ))}
-        {!isPending &&
+        {ticketId &&
           attachments.map((attachment) => (
             <div key={attachment.id} className="rounded-xl px-3 py-2 bg-surface border border-border">
               <div className="flex items-start justify-between gap-2">
@@ -704,6 +741,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
   const isNew = !ticket?.ticket_id
   const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
   const [pendingFiles, setPendingFiles] = useState([])
+  const [attachmentRefreshToken, setAttachmentRefreshToken] = useState(0)
   const [saving, setSaving] = useState(false)
 
   return (
@@ -812,6 +850,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             ticketId={isNew ? null : ticket.ticket_id}
             pendingFiles={pendingFiles}
             onPendingFilesChange={setPendingFiles}
+            refreshToken={attachmentRefreshToken}
           />
           {!isNew && <TicketComments ticketId={ticket.ticket_id} />}
           {saveError && <p className="text-xs text-red-600">{saveError}</p>}
@@ -844,12 +883,16 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               setSaving(true)
               onSaveError?.('')
               try {
-                await onSave({
+                const result = await onSave({
                   ...form,
                   labels,
                   parent_key: form.issue_type === 'Epic' ? '' : form.parent_key,
                   files: pendingFiles,
                 })
+                if (result?.failedFiles?.length) {
+                  setPendingFiles(result.failedFiles)
+                  setAttachmentRefreshToken((value) => value + 1)
+                }
               } catch (err) {
                 onSaveError?.(err.message || 'Could not save ticket')
               } finally {
@@ -1087,23 +1130,50 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     const files = Array.from(form.files || []).filter(Boolean)
     const payload = { ...form }
     delete payload.files
+
+    const uploadPendingFiles = async (ticketId) => {
+      const failedFiles = []
+      let uploadError = ''
+      for (const file of files) {
+        const sizeError = attachmentSizeError(file)
+        if (sizeError) {
+          failedFiles.push(file)
+          uploadError = uploadError || sizeError
+          continue
+        }
+        try {
+          await uploadTicketAttachment(ticketId, file)
+        } catch (err) {
+          failedFiles.push(file)
+          uploadError = uploadError || err.message || 'Could not upload attachment'
+        }
+      }
+      if (failedFiles.length) {
+        setModalSaveError(uploadError)
+        await loadTickets()
+        return { failedFiles }
+      }
+      return null
+    }
+
     if (modalTicket?.ticket_id) {
       await updateTicket(modalTicket.ticket_id, payload)
+      if (files.length) {
+        const uploadResult = await uploadPendingFiles(modalTicket.ticket_id)
+        if (uploadResult?.failedFiles?.length) {
+          return uploadResult
+        }
+      }
     } else {
       const data = await createTicket(activeBoardId, payload)
       const created = data.ticket
       if (created?.ticket_id && files.length) {
-        try {
-          for (const file of files) {
-            await uploadTicketAttachment(created.ticket_id, file)
-          }
-        } catch (err) {
-          setModalSaveError(err.message || 'Could not upload attachment')
+        const uploadResult = await uploadPendingFiles(created.ticket_id)
+        if (uploadResult?.failedFiles?.length) {
           setModalTicket(created)
           setShowCreate(false)
           setCreateStatus(null)
-          await loadTickets()
-          return
+          return uploadResult
         }
       }
     }
