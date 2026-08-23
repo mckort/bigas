@@ -499,3 +499,38 @@ def test_sync_jira_requires_project_board(client):
     )
     assert denied.status_code == 400
     assert "Jira" in denied.get_json()["error"] or "Personal" in denied.get_json()["error"]
+
+
+def test_sync_jira_rejects_concurrent_sync(client):
+    boards = client.get("/api/boards", headers=_auth_headers()).get_json()["boards"]
+    vfa = next(b for b in boards if b.get("project_key") == "VFA")
+    store = get_ticket_store()
+    assert store.try_begin_jira_sync(vfa["board_id"], user_id="dev-user")
+    denied = client.post(
+        f"/api/boards/{vfa['board_id']}/sync-jira",
+        headers=_auth_headers(),
+    )
+    assert denied.status_code == 409
+    assert denied.get_json()["status"] == "running"
+    store.finish_jira_sync(
+        vfa["board_id"],
+        user_id="dev-user",
+        status="completed",
+        result={"ok": True},
+    )
+
+
+def test_allocate_key_auto_increment_is_reserved(client):
+    boards = client.get("/api/boards", headers=_auth_headers()).get_json()["boards"]
+    personal = next(b for b in boards if not b.get("project_key"))
+    store = get_ticket_store()
+    board = store.get_board(personal["board_id"])
+    first_key = store._allocate_key(board, None)
+    with pytest.raises(ValueError, match="already exists"):
+        store._allocate_key(board, first_key)
+    ticket = store.create_ticket(
+        personal["board_id"],
+        title="Next auto key",
+        user_id="dev-user",
+    )
+    assert ticket["key"] != first_key

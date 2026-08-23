@@ -211,27 +211,25 @@ class MemoryTicketStore:
         self._key_index: Dict[str, str] = {}
         self._counters: Dict[str, int] = {}
 
-    def _next_key(self, board: Dict[str, Any]) -> str:
-        prefix = _board_prefix(board.get("project_key"))
-        with self._lock:
-            seq = self._counters.get(prefix, 0) + 1
-            self._counters[prefix] = seq
-        return f"{prefix}-{seq}"
-
     def _allocate_key(self, board: Dict[str, Any], requested: Optional[str] = None) -> str:
         display = (requested or "").strip().upper()
-        if not display:
-            return self._next_key(board)
-        if not _ISSUE_KEY_RE.match(display):
-            raise ValueError(f"invalid key {requested!r}")
         prefix = _board_prefix(board.get("project_key"))
-        number = _key_number(display, prefix)
         with self._lock:
-            if display in self._key_index:
-                raise ValueError(f"key {display} already exists")
-            if number is not None:
-                self._counters[prefix] = max(self._counters.get(prefix, 0), number)
-        return display
+            if display:
+                if not _ISSUE_KEY_RE.match(display):
+                    raise ValueError(f"invalid key {requested!r}")
+                if display in self._key_index:
+                    raise ValueError(f"key {display} already exists")
+                number = _key_number(display, prefix)
+                if number is not None:
+                    self._counters[prefix] = max(self._counters.get(prefix, 0), number)
+                self._key_index[display] = ""
+                return display
+            seq = self._counters.get(prefix, 0) + 1
+            self._counters[prefix] = seq
+            display = f"{prefix}-{seq}"
+            self._key_index[display] = ""
+            return display
 
     def list_boards(self, user_id: str) -> List[Dict[str, Any]]:
         with self._lock:
@@ -523,6 +521,53 @@ class MemoryTicketStore:
                 return board
         return None
 
+    def get_jira_sync(self, board_id: str) -> Optional[Dict[str, Any]]:
+        board = self.get_board(board_id)
+        if not board:
+            return None
+        return board.get("jira_sync") or {"status": "idle"}
+
+    def try_begin_jira_sync(self, board_id: str, *, user_id: str) -> bool:
+        with self._lock:
+            board = self._boards.get(board_id)
+            if not board or board.get("user_id") != user_id:
+                return False
+            sync = board.get("jira_sync") or {}
+            if sync.get("status") == "running":
+                return False
+            board["jira_sync"] = {
+                "status": "running",
+                "started_at": _utcnow_iso(),
+                "finished_at": None,
+                "result": None,
+                "error": None,
+            }
+            board["updated_at"] = _utcnow_iso()
+            return True
+
+    def finish_jira_sync(
+        self,
+        board_id: str,
+        *,
+        user_id: str,
+        status: str,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            board = self._boards.get(board_id)
+            if not board or board.get("user_id") != user_id:
+                return
+            sync = board.get("jira_sync") or {}
+            board["jira_sync"] = {
+                **sync,
+                "status": status,
+                "finished_at": _utcnow_iso(),
+                "result": result,
+                "error": error,
+            }
+            board["updated_at"] = _utcnow_iso()
+
 
 class FirestoreTicketStore:
     """Firestore-backed ticket store."""
@@ -536,46 +581,46 @@ class FirestoreTicketStore:
         self._counters = self._db.collection("ticket_counters")
         self._key_locks = self._db.collection("ticket_key_locks")
 
-    def _next_key(self, board: Dict[str, Any]) -> str:
-        from google.cloud import firestore
-
-        prefix = _board_prefix(board.get("project_key"))
-        counter_ref = self._counters.document(prefix)
-
-        @firestore.transactional
-        def _increment(transaction):
-            snap = counter_ref.get(transaction=transaction)
-            current = int((snap.to_dict() or {}).get("seq") or 0) if snap.exists else 0
-            seq = current + 1
-            transaction.set(counter_ref, {"seq": seq, "prefix": prefix}, merge=True)
-            return f"{prefix}-{seq}"
-
-        transaction = self._db.transaction()
-        return _increment(transaction)
-
     def _allocate_key(self, board: Dict[str, Any], requested: Optional[str] = None) -> str:
         from google.cloud import firestore
 
         display = (requested or "").strip().upper()
-        if not display:
-            return self._next_key(board)
-        if not _ISSUE_KEY_RE.match(display):
-            raise ValueError(f"invalid key {requested!r}")
-
         prefix = _board_prefix(board.get("project_key"))
-        number = _key_number(display, prefix)
         counter_ref = self._counters.document(prefix)
-        lock_ref = self._key_locks.document(display)
-        tickets_query = self._tickets.where("key", "==", display).limit(1)
 
         @firestore.transactional
         def _allocate(transaction):
-            existing = list(tickets_query.stream(transaction=transaction))
-            if existing:
-                raise ValueError(f"key {display} already exists")
-            lock_snap = lock_ref.get(transaction=transaction)
-            if lock_snap.exists:
-                raise ValueError(f"key {display} already exists")
+            if display:
+                if not _ISSUE_KEY_RE.match(display):
+                    raise ValueError(f"invalid key {requested!r}")
+
+                lock_ref = self._key_locks.document(display)
+                tickets_query = self._tickets.where("key", "==", display).limit(1)
+                existing = list(tickets_query.stream(transaction=transaction))
+                if existing:
+                    raise ValueError(f"key {display} already exists")
+                lock_snap = lock_ref.get(transaction=transaction)
+                if lock_snap.exists:
+                    raise ValueError(f"key {display} already exists")
+
+                number = _key_number(display, prefix)
+                counter_snap = counter_ref.get(transaction=transaction)
+                current = (
+                    int((counter_snap.to_dict() or {}).get("seq") or 0)
+                    if counter_snap.exists
+                    else 0
+                )
+                if number is not None:
+                    next_seq = max(current, number)
+                    if next_seq != current:
+                        transaction.set(
+                            counter_ref,
+                            {"seq": next_seq, "prefix": prefix},
+                            merge=True,
+                        )
+
+                transaction.set(lock_ref, {"prefix": prefix, "key": display})
+                return display
 
             counter_snap = counter_ref.get(transaction=transaction)
             current = (
@@ -583,17 +628,15 @@ class FirestoreTicketStore:
                 if counter_snap.exists
                 else 0
             )
-            if number is not None:
-                next_seq = max(current, number)
-                if next_seq != current:
-                    transaction.set(
-                        counter_ref,
-                        {"seq": next_seq, "prefix": prefix},
-                        merge=True,
-                    )
-
-            transaction.set(lock_ref, {"prefix": prefix, "key": display})
-            return display
+            seq = current + 1
+            transaction.set(counter_ref, {"seq": seq, "prefix": prefix}, merge=True)
+            auto_display = f"{prefix}-{seq}"
+            lock_ref = self._key_locks.document(auto_display)
+            lock_snap = lock_ref.get(transaction=transaction)
+            if lock_snap.exists:
+                raise ValueError(f"key {auto_display} already exists")
+            transaction.set(lock_ref, {"prefix": prefix, "key": auto_display})
+            return auto_display
 
         transaction = self._db.transaction()
         return _allocate(transaction)
@@ -793,9 +836,11 @@ class FirestoreTicketStore:
         if user_id and board and board.get("user_id") != user_id:
             return False
         key = (ticket.get("key") or "").strip().upper()
-        ref.delete()
+        batch = self._db.batch()
+        batch.delete(ref)
         if key:
-            self._key_locks.document(key).delete()
+            batch.delete(self._key_locks.document(key))
+        batch.commit()
         return True
 
     def add_comment(
@@ -884,6 +929,76 @@ class FirestoreTicketStore:
             if board.get("project_key") == proj:
                 return board
         return None
+
+    def get_jira_sync(self, board_id: str) -> Optional[Dict[str, Any]]:
+        board = self.get_board(board_id)
+        if not board:
+            return None
+        return board.get("jira_sync") or {"status": "idle"}
+
+    def try_begin_jira_sync(self, board_id: str, *, user_id: str) -> bool:
+        from google.cloud import firestore
+
+        ref = self._boards.document(board_id)
+
+        @firestore.transactional
+        def _begin(transaction):
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return False
+            board = snap.to_dict() or {}
+            if board.get("user_id") != user_id:
+                return False
+            sync = board.get("jira_sync") or {}
+            if sync.get("status") == "running":
+                return False
+            transaction.update(
+                ref,
+                {
+                    "jira_sync": {
+                        "status": "running",
+                        "started_at": _utcnow_iso(),
+                        "finished_at": None,
+                        "result": None,
+                        "error": None,
+                    },
+                    "updated_at": _utcnow_iso(),
+                },
+            )
+            return True
+
+        transaction = self._db.transaction()
+        return _begin(transaction)
+
+    def finish_jira_sync(
+        self,
+        board_id: str,
+        *,
+        user_id: str,
+        status: str,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        ref = self._boards.document(board_id)
+        snap = ref.get()
+        if not snap.exists:
+            return
+        board = snap.to_dict() or {}
+        if board.get("user_id") != user_id:
+            return
+        sync = board.get("jira_sync") or {}
+        ref.update(
+            {
+                "jira_sync": {
+                    **sync,
+                    "status": status,
+                    "finished_at": _utcnow_iso(),
+                    "result": result,
+                    "error": error,
+                },
+                "updated_at": _utcnow_iso(),
+            }
+        )
 
 
 _store: Optional[Any] = None

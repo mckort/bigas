@@ -112,13 +112,40 @@ def board_tickets(board_id: str):
 @require_chat_auth
 def board_sync_jira(board_id: str):
     from bigas.tickets.jira_import import JiraImportError, dispatch_jira_board_sync
+    from bigas.tickets.store import get_ticket_store
+
+    user_id = g.chat_user["uid"]
+    store = get_ticket_store()
+    board = store.get_board(board_id)
+    if not board or board.get("user_id") != user_id:
+        return jsonify({"error": "Board not found"}), 404
+    if not store.try_begin_jira_sync(board_id, user_id=user_id):
+        return jsonify({"ok": False, "status": "running", "error": "Jira sync already in progress"}), 409
 
     try:
-        result = dispatch_jira_board_sync(user_id=g.chat_user["uid"], board_id=board_id)
+        result = dispatch_jira_board_sync(user_id=user_id, board_id=board_id)
     except JiraImportError as exc:
+        store.finish_jira_sync(board_id, user_id=user_id, status="failed", error=str(exc))
         return jsonify({"error": str(exc)}), 400
+
+    if result.get("status") != "started":
+        store.finish_jira_sync(board_id, user_id=user_id, status="completed", result=result)
     status_code = 202 if result.get("status") == "started" else 200
     return jsonify(result), status_code
+
+
+@tickets_bp.route("/api/boards/<board_id>/jira-sync-status", methods=["GET"])
+@require_chat_auth
+def board_jira_sync_status(board_id: str):
+    from bigas.tickets.store import get_ticket_store
+
+    user_id = g.chat_user["uid"]
+    store = get_ticket_store()
+    board = store.get_board(board_id)
+    if not board or board.get("user_id") != user_id:
+        return jsonify({"error": "Board not found"}), 404
+    sync = store.get_jira_sync(board_id) or {"status": "idle"}
+    return jsonify({"jira_sync": sync})
 
 
 @tickets_bp.route("/api/boards/<board_id>/sync-jira-worker", methods=["POST"])
@@ -130,14 +157,22 @@ def board_sync_jira_worker(board_id: str):
     user_id = g.chat_user["uid"]
     from bigas.tickets.store import get_ticket_store
 
-    board = get_ticket_store().get_board(board_id)
+    store = get_ticket_store()
+    board = store.get_board(board_id)
     if not board or board.get("user_id") != user_id:
         return jsonify({"error": "Board not found"}), 404
 
     try:
         result = sync_jira_board(user_id=user_id, board_id=board_id)
     except JiraImportError as exc:
+        store.finish_jira_sync(board_id, user_id=user_id, status="failed", error=str(exc))
         return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        store.finish_jira_sync(board_id, user_id=user_id, status="failed", error=str(exc))
+        logger.exception("Jira sync worker failed for board %s", board_id)
+        raise
+
+    store.finish_jira_sync(board_id, user_id=user_id, status="completed", result=result)
     return jsonify(result)
 
 

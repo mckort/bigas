@@ -175,9 +175,15 @@ def sync_jira_board(
         raise JiraImportError(str(exc)) from exc
 
     service = TicketService()
+    existing_by_key = {
+        (ticket.get("key") or "").strip().upper(): ticket
+        for ticket in store.list_tickets(board_id, user_id=user_id)
+        if ticket.get("key")
+    }
     created = 0
     updated = 0
     skipped = 0
+    errors = 0
     scanned = 0
 
     for issue in issues:
@@ -188,51 +194,57 @@ def sync_jira_board(
         if not key:
             continue
         scanned += 1
-        labels = fields.get("labels") or []
-        existing = store.get_ticket_by_key(key)
-        if existing:
-            if existing.get("board_id") != board_id:
-                skipped += 1
+        try:
+            labels = fields.get("labels") or []
+            existing = existing_by_key.get(key)
+            if existing:
+                if existing.get("board_id") != board_id:
+                    skipped += 1
+                    continue
+                # Existing tickets: label-only sync. Title, status, and description
+                # stay as edited on the board unless the ticket is newly imported.
+                merged = merge_labels(resolve_ticket_labels(existing), labels)
+                if merged == resolve_ticket_labels(existing):
+                    continue
+                service.update_ticket(
+                    existing["ticket_id"],
+                    user_id=user_id,
+                    previous_status=existing.get("status"),
+                    labels=merged,
+                )
+                updated += 1
                 continue
-            # Existing tickets: label-only sync. Title, status, and description
-            # stay as edited on the board unless the ticket is newly imported.
-            merged = merge_labels(resolve_ticket_labels(existing), labels)
-            if merged == resolve_ticket_labels(existing):
-                continue
-            service.update_ticket(
-                existing["ticket_id"],
-                user_id=user_id,
-                previous_status=existing.get("status"),
-                labels=merged,
-            )
-            updated += 1
-            continue
 
-        itype = _map_issue_type(((fields.get("issuetype") or {}).get("name") or ""))
-        status_name = ((fields.get("status") or {}).get("name") or "").strip()
-        service.create_ticket(
-            board_id,
-            user_id=user_id,
-            title=(fields.get("summary") or key).strip() or key,
-            description=adf_to_plain_text(fields.get("description")),
-            status=_map_status(status_name, project_key),
-            issue_type=itype,
-            assignee=_issue_assignee(fields),
-            fix_version=_issue_fix_version(fields),
-            labels=labels,
-            parent_key=_issue_parent_key(fields),
-            key=key,
-        )
-        created += 1
+            itype = _map_issue_type(((fields.get("issuetype") or {}).get("name") or ""))
+            status_name = ((fields.get("status") or {}).get("name") or "").strip()
+            ticket = service.create_ticket(
+                board_id,
+                user_id=user_id,
+                title=(fields.get("summary") or key).strip() or key,
+                description=adf_to_plain_text(fields.get("description")),
+                status=_map_status(status_name, project_key),
+                issue_type=itype,
+                assignee=_issue_assignee(fields),
+                fix_version=_issue_fix_version(fields),
+                labels=labels,
+                parent_key=_issue_parent_key(fields),
+                key=key,
+            )
+            existing_by_key[key] = ticket
+            created += 1
+        except Exception as exc:
+            errors += 1
+            logger.exception("Failed to import Jira issue %s for board %s: %s", key, board_id, exc)
 
     logger.info(
-        "Jira import for %s on %s: scanned=%s created=%s updated=%s skipped=%s",
+        "Jira import for %s on %s: scanned=%s created=%s updated=%s skipped=%s errors=%s",
         project_key,
         board_id,
         scanned,
         created,
         updated,
         skipped,
+        errors,
     )
     return {
         "ok": True,
@@ -241,4 +253,5 @@ def sync_jira_board(
         "created": created,
         "updated": updated,
         "skipped": skipped,
+        "errors": errors,
     }
