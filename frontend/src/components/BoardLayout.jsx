@@ -434,7 +434,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
     fix_version: ticket?.fix_version || '',
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
-    parent_key: ticketParentKey(ticket) || initialParentKey || '',
+    parent_key: ticket ? ticketParentKey(ticket) : (initialParentKey || ''),
   })
   const isNew = !ticket?.ticket_id
   const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
@@ -471,14 +471,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             <span className="text-muted text-xs">Issue type</span>
             <select
               value={form.issue_type}
-              onChange={(e) => {
-                const issue_type = e.target.value
-                setForm({
-                  ...form,
-                  issue_type,
-                  parent_key: issue_type === 'Epic' ? '' : form.parent_key,
-                })
-              }}
+              onChange={(e) => setForm({ ...form, issue_type: e.target.value })}
               className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
             >
               <option value="Task">Task</option>
