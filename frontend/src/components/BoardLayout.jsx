@@ -255,7 +255,7 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} aria-hidden="true" />
-      <div className="relative bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-card max-h-[90vh] flex flex-col">
+      <div className="relative bg-white w-full sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl rounded-t-2xl sm:rounded-2xl shadow-card max-h-[90vh] sm:max-h-[85vh] flex flex-col">
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h3 className="font-semibold">{isNew ? 'New ticket' : ticket.key}</h3>
           <button type="button" onClick={onClose} className="p-2 min-w-[44px] min-h-[44px]" aria-label="Close">
@@ -276,8 +276,8 @@ function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, o
             <textarea
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
-              rows={4}
-              className="mt-1 w-full border border-border rounded-xl px-3 py-2"
+              rows={12}
+              className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[12rem] sm:min-h-[16rem] lg:min-h-[20rem] resize-y"
             />
           </label>
           <label className="block text-sm">
