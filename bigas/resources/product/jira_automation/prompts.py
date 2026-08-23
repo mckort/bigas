@@ -83,14 +83,14 @@ Summary: {summary}
 {web_context or "(none)"}
 
 Write the research body with these sections:
-### Problem / context
-### Goals
-### Non-goals
-### Proposed approach (research-level)
-### Acceptance criteria
-### Suggested improvements
-### Open questions / risks
-### Relevant code / docs pointers
+### What's going on
+### What we want
+### What's out of scope
+### Suggested direction
+### Done when
+### Extra ideas
+### Open questions
+### Where to look
 """
 
 
@@ -145,16 +145,16 @@ Summary: {summary}
 {repo_context or "(none)"}
 
 Write the plan body with these sections:
-### Technical approach
-### Components / files likely touched
-### Data model / API changes (if any)
-### Step-by-step implementation plan
-### README / docs impact
-### In-app support / help impact
-### Mobile / responsive considerations (if UI)
-### Test plan
-### Rollout / flags / migrations
-### Risks & open questions
+### How to build it
+### Files likely touched
+### Data and API changes
+### Implementation steps
+### Docs impact
+### In-app help
+### Mobile
+### How we'll test it
+### Rollout
+### Open questions
 """
 
 
@@ -210,16 +210,16 @@ Summary: {summary}
 {web_context or "(none)"}
 
 Write the research body with these sections:
-### Problem / context (audience & funnel)
-### Goals
-### Non-goals
-### Message / content outline
-### SEO & metadata notes (title, description, headings, internal links)
-### Proposed approach (research-level)
-### Acceptance criteria
-### Suggested improvements
-### Open questions / risks
-### Relevant pages / content files / components
+### What's going on
+### What we want
+### What's out of scope
+### Message and content
+### SEO and metadata
+### Suggested direction
+### Done when
+### Extra ideas
+### Open questions
+### Where to look
 """
 
 
@@ -273,15 +273,15 @@ Summary: {summary}
 {repo_context or "(none)"}
 
 Write the plan body with these sections:
-### Content / UX approach
-### Pages, routes, and files likely touched
-### Copy / media / SEO details to implement
-### Step-by-step implementation plan
-### README / docs impact
-### Mobile / responsive considerations (if UI)
-### Verification plan (preview checklist)
-### Rollout notes (publish, redirects, sitemap)
-### Risks & open questions
+### Content and UX
+### Pages and files likely touched
+### Copy, media, and SEO
+### Implementation steps
+### Docs impact
+### Mobile
+### How we'll verify it
+### Rollout
+### Open questions
 """
 
 
