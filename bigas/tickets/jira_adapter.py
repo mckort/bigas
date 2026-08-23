@@ -189,12 +189,15 @@ class TicketJiraAdapter:
 
 
 def _ticket_updated_at(ticket: Dict[str, Any]) -> Optional[datetime]:
-    raw = (ticket.get("updated_at") or ticket.get("created_at") or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
+    raw = ticket.get("updated_at") or ticket.get("created_at")
+    if isinstance(raw, datetime):
+        parsed = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 
 import pytest
 
@@ -429,6 +430,15 @@ def test_evaluate_goals_requires_webhook_secret_configuration(client, monkeypatc
 
     resp = client.post("/api/agents/evaluate-goals", json={"timeframe_days": 7})
     assert resp.status_code == 503
+
+
+def test_ticket_updated_at_accepts_datetime():
+    from bigas.tickets.jira_adapter import _ticket_updated_at
+
+    stamp = datetime(2026, 8, 23, 7, 0, tzinfo=timezone.utc)
+    assert _ticket_updated_at({"updated_at": stamp}) == stamp
+    assert _ticket_updated_at({"updated_at": "2026-08-23T07:00:00+00:00"}) == stamp
+    assert _ticket_updated_at({"updated_at": None, "created_at": ""}) is None
 
 
 def test_engine_reads_internal_epics_when_board_enabled(monkeypatch):
