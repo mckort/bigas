@@ -689,7 +689,7 @@ function TicketComments({ ticketId }) {
   )
 }
 
-function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, epics, onClose, onSave, onDelete }) {
+function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, epics, saveError, onSaveError, onClose, onSave, onDelete }) {
   const labelEditorRef = useRef(null)
   const [form, setForm] = useState({
     title: ticket?.title || '',
@@ -705,7 +705,6 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
   const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
   const [pendingFiles, setPendingFiles] = useState([])
   const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState('')
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -843,20 +842,16 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               if (saving) return
               const labels = labelEditorRef.current?.flushDraft?.() ?? form.labels
               setSaving(true)
-              setSaveError('')
+              onSaveError?.('')
               try {
-                const result = await onSave({
+                await onSave({
                   ...form,
                   labels,
                   parent_key: form.issue_type === 'Epic' ? '' : form.parent_key,
                   files: pendingFiles,
                 })
-                if (result?.uploadError) {
-                  setSaveError(result.uploadError)
-                  return
-                }
               } catch (err) {
-                setSaveError(err.message || 'Could not save ticket')
+                onSaveError?.(err.message || 'Could not save ticket')
               } finally {
                 setSaving(false)
               }
@@ -989,6 +984,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [loading, setLoading] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [modalTicket, setModalTicket] = useState(null)
+  const [modalSaveError, setModalSaveError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [createStatus, setCreateStatus] = useState(null)
   const [dragTicket, setDragTicket] = useState(null)
@@ -1102,27 +1098,36 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
             await uploadTicketAttachment(created.ticket_id, file)
           }
         } catch (err) {
+          setModalSaveError(err.message || 'Could not upload attachment')
           setModalTicket(created)
           setShowCreate(false)
           setCreateStatus(null)
           await loadTickets()
-          return { uploadError: err.message || 'Could not upload attachment' }
+          return
         }
       }
     }
+    setModalSaveError('')
     setModalTicket(null)
     setShowCreate(false)
     setCreateStatus(null)
     await loadTickets()
   }
 
+  const openEditTicket = (ticket) => {
+    setModalSaveError('')
+    setModalTicket(ticket)
+  }
+
   const openCreate = (status) => {
+    setModalSaveError('')
     setModalTicket(null)
     setCreateStatus(status || columns[0] || 'To Do')
     setShowCreate(true)
   }
 
   const closeModal = () => {
+    setModalSaveError('')
     setModalTicket(null)
     setShowCreate(false)
     setCreateStatus(null)
@@ -1319,7 +1324,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                       ticket={ticket}
                       parentEpic={epicsByKey[ticketParentKey(ticket)]}
                       columns={columns}
-                      onEdit={setModalTicket}
+                      onEdit={openEditTicket}
                       onStatusChange={handleStatusChange}
                       onDiscuss={onDiscussTicket}
                       onFilterEpic={setEpicFilter}
@@ -1359,7 +1364,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                       ticket={ticket}
                       parentEpic={epicsByKey[ticketParentKey(ticket)]}
                       columns={columns}
-                      onEdit={setModalTicket}
+                      onEdit={openEditTicket}
                       onStatusChange={handleStatusChange}
                       onDiscuss={onDiscussTicket}
                       onFilterEpic={setEpicFilter}
@@ -1386,6 +1391,8 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           initialStatus={createStatus}
           initialParentKey={epicFilter && epicFilter !== '__none__' ? epicFilter : ''}
           epics={epicOptions}
+          saveError={modalSaveError}
+          onSaveError={setModalSaveError}
           onClose={closeModal}
           onSave={handleSave}
           onDelete={handleDeleteTicket}
