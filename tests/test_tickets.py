@@ -56,10 +56,10 @@ def _auth_headers():
     return {"Authorization": "Bearer test-dev-token", "Content-Type": "application/json"}
 
 
-def test_board_spa_and_api_bypass_access_key(client):
-    client.application.config["BIGAS_ACCESS_MODE"] = "restricted"
-    client.application.config["BIGAS_ACCESS_KEYS"] = {"secret-key"}
-    client.application.config["BIGAS_ACCESS_HEADER"] = "X-Bigas-Access-Key"
+def test_board_spa_and_api_bypass_access_key(client, monkeypatch):
+    monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_MODE", "restricted")
+    monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_KEYS", {"secret-key"})
+    monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
 
     page = client.get("/board")
     assert page.status_code != 401
@@ -67,7 +67,9 @@ def test_board_spa_and_api_bypass_access_key(client):
 
     unauth_api = client.get("/api/boards")
     assert unauth_api.status_code == 401
-    assert "access key" not in (unauth_api.get_json() or {}).get("detail", "").lower()
+    body = unauth_api.get_json()
+    detail = body.get("detail", "") if isinstance(body, dict) else str(body or "")
+    assert "access key" not in detail.lower()
 
     allowed = client.get("/api/boards", headers=_auth_headers())
     assert allowed.status_code == 200
