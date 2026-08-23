@@ -1,4 +1,4 @@
-"""Move Jira issue to Final approval when a linked PR is ready to merge."""
+"""Move a linked issue to Final approval after the PR is merged."""
 
 from __future__ import annotations
 
@@ -48,15 +48,31 @@ def _post_discord(message: str) -> None:
     )
 
 
+def _resolve_issue_client(issue_key: str):
+    """Prefer the internal board when that ticket exists; otherwise Jira."""
+    try:
+        from bigas.tickets.jira_adapter import TicketJiraAdapter
+        from bigas.tickets.store import get_ticket_store
+
+        if get_ticket_store().get_ticket_by_key(issue_key):
+            return TicketJiraAdapter()
+    except Exception:
+        logger.debug("Internal ticket lookup skipped for %s", issue_key, exc_info=True)
+    return JiraClient(JiraConfig.from_env())
+
+
 def transition_issue_to_final_approval_for_pr(
     *,
     repo: str,
     pr_number: int,
     pr_url: str,
     github_token: Optional[str] = None,
+    assume_merged: bool = False,
 ) -> Dict[str, Any]:
     """
-    If the PR references a Jira issue in an allowed project, move it to Final approval.
+    If a merged PR references an issue in an allowed project, move it to Final approval.
+
+    Internal-board tickets are updated in the ticket store; otherwise Jira is used.
     Best-effort: returns skipped/ok payload; does not raise for soft misses.
     """
     token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
@@ -81,6 +97,9 @@ def transition_issue_to_final_approval_for_pr(
     except Exception as e:
         return {"skipped": True, "reason": f"github PR fetch failed: {e}"}
 
+    if not assume_merged and not pr.get("merged"):
+        return {"skipped": True, "reason": "pr_not_merged"}
+
     title = (pr.get("title") or "").strip()
     body = (pr.get("body") or "").strip()
     head_ref = ((pr.get("head") or {}).get("ref") or "").strip()
@@ -97,13 +116,13 @@ def transition_issue_to_final_approval_for_pr(
                 "reason": f"project {project_key} not in allowlist",
                 "issue_key": issue_key,
             }
-        jira = JiraClient(JiraConfig.from_env())
-        issue = jira.get_issue(issue_key, fields=["summary", "status"])
+        client = _resolve_issue_client(issue_key)
+        issue = client.get_issue(issue_key, fields=["summary", "status"])
         fields = issue.get("fields") or {}
         summary = (fields.get("summary") or "").strip()
         current = ((fields.get("status") or {}).get("name") or "").strip()
 
-        # Already there (e.g. duplicate review after auto-merge) — no Discord spam.
+        # Already there (e.g. auto-merge plus closed webhook) — no Discord spam.
         if current.casefold() == cfg.status_final_approval.casefold():
             return {
                 "ok": True,
@@ -116,16 +135,16 @@ def transition_issue_to_final_approval_for_pr(
                 "pr_url": pr_url,
             }
 
-        jira.transition_issue(
+        client.transition_issue(
             issue_key,
             to_status_name=cfg.status_final_approval,
             comment=(
-                f"{BIGAS_COMMENT_MARKER} PR ready to merge — moved to "
+                f"{BIGAS_COMMENT_MARKER} PR merged — moved to "
                 f"{cfg.status_final_approval}.\nPR: {pr_url}"
             ),
         )
         _post_discord(
-            f"**Ready for final approval** {issue_discord_label(issue_key, summary)}\n"
+            f"**PR merged — final approval** {issue_discord_label(issue_key, summary)}\n"
             f"Was `{current}` → **{cfg.status_final_approval}**\n"
             f"{format_pr_discord_line(pr_url, title)}"
         )

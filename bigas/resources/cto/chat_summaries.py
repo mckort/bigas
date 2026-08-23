@@ -75,6 +75,34 @@ def summarize_review_result(payload: dict) -> str:
     return "Review finished, but no GitHub comment URL was returned."
 
 
+def summarize_pr_merged_result(payload: dict) -> str:
+    error = payload.get("error")
+    if isinstance(error, str) and error.strip():
+        return f"Could not move the ticket after merge: {error.strip().rstrip('.')}."
+
+    result = payload.get("jira_final_approval")
+    if not isinstance(result, dict):
+        result = {}
+    reason = str(result.get("reason") or "").strip()
+    issue_key = (result.get("issue_key") or "").strip()
+    moved_to = (result.get("moved_to") or "").strip()
+    pr_url = _first_link(payload.get("pr_url"), result.get("pr_url"))
+    suffix = f" {pr_url}" if pr_url else ""
+
+    if result.get("ok") and not result.get("skipped") and issue_key:
+        dest = moved_to or "Final approval (manual)"
+        return f"Moved {issue_key} to {dest}.{suffix}".strip()
+    if reason == "already_in_final_approval" and issue_key:
+        return f"{issue_key} is already in Final approval.{suffix}".strip()
+    if reason == "pr_not_merged":
+        return f"PR is not merged yet; ticket stays put.{suffix}".strip()
+    if reason == "no Jira issue key found on PR":
+        return f"PR is merged, but no ticket key was found on it.{suffix}".strip()
+    if result.get("skipped") and reason:
+        return f"Did not move a ticket after merge ({reason}).{suffix}".strip()
+    return f"Handled merged PR.{suffix}".strip()
+
+
 def summarize_autofix_result(payload: dict) -> str:
     error = payload.get("error")
     if isinstance(error, str) and error.strip():

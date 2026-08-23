@@ -13,6 +13,7 @@ from bigas.resources.cto.chat_summaries import (
     summarize_autofix_result,
     summarize_deploy_hotfix_result,
     summarize_followup_result,
+    summarize_pr_merged_result,
     summarize_review_result,
     with_summary,
 )
@@ -186,7 +187,12 @@ MAX_GITHUB_COMMENT_CHARS = 60_000
 
 
 def _jira_final_approval_for_pr(
-    *, repo: str, pr_number: int, pr_url: str, github_token: str
+    *,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    github_token: str,
+    assume_merged: bool = False,
 ) -> dict:
     try:
         from bigas.resources.product.jira_automation.final_approval import (
@@ -198,10 +204,31 @@ def _jira_final_approval_for_pr(
             pr_number=pr_number,
             pr_url=pr_url,
             github_token=github_token,
+            assume_merged=assume_merged,
         )
     except Exception:
         logger.warning("Jira final-approval hook failed", exc_info=True)
         return {"ok": False, "error": "final_approval_hook_exception"}
+
+
+def _final_approval_after_merge(
+    *,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    github_token: str,
+    merged: bool,
+) -> dict:
+    """Move the linked ticket only after the PR is actually merged."""
+    if not merged:
+        return {"skipped": True, "reason": "pr_not_merged"}
+    return _jira_final_approval_for_pr(
+        repo=repo,
+        pr_number=pr_number,
+        pr_url=pr_url,
+        github_token=github_token,
+        assume_merged=True,
+    )
 
 
 def _fetch_pull_request(
@@ -234,6 +261,36 @@ def _fetch_pull_request(
 
 def _pr_title_of(pr: dict | None) -> str:
     return ((pr or {}).get("title") or "").strip()
+
+
+def _jira_issue_context_from_pr(pr: dict) -> tuple[str, str]:
+    """Best-effort Jira issue key and summary from a PR dict (no status change)."""
+    from bigas.resources.product.jira_automation.final_approval import (
+        _resolve_issue_client,
+        extract_jira_issue_key,
+    )
+
+    issue_key = (
+        extract_jira_issue_key(
+            (pr.get("title") or ""),
+            (pr.get("body") or ""),
+            ((pr.get("head") or {}).get("ref") or ""),
+        )
+        or ""
+    )
+    if not issue_key:
+        return "", ""
+    try:
+        issue = _resolve_issue_client(issue_key).get_issue(
+            issue_key, fields=["summary"]
+        )
+        summary = ((issue.get("fields") or {}).get("summary") or "").strip()
+        return issue_key, summary
+    except Exception:
+        logger.debug(
+            "Could not fetch Jira summary for %s", issue_key, exc_info=True
+        )
+        return issue_key, ""
 
 
 def _jira_issue_heading(issue_key: str = "", issue_summary: str = "") -> str:
@@ -667,8 +724,15 @@ def review_and_comment_pr():
     pr_ref = format_pr_discord_line(pr_url, pr_title)
 
     # Parallel Actions runs (or a late followup) should not re-review / Discord
-    # after the PR was already squash-merged.
+    # after the PR was already squash-merged. Still move the linked ticket.
     if pr.get("merged"):
+        jira_final = _final_approval_after_merge(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=github_token,
+            merged=True,
+        )
         return _json_summary(
             {
                 "success": True,
@@ -678,6 +742,7 @@ def review_and_comment_pr():
                 "review_posted": False,
                 "phase": phase,
                 "pr_url": pr_url,
+                "jira_final_approval": jira_final,
             },
             summarize_review_result,
         )
@@ -804,19 +869,21 @@ def review_and_comment_pr():
             f"**Ready to merge**\n{pr_ref}\n"
             + (f"Comment: {comment_url}" if comment_url else "")
         )
-        jira_final = _jira_final_approval_for_pr(
-            repo=repo,
-            pr_number=pr_number,
-            pr_url=pr_url,
-            github_token=github_token,
-        )
+        issue_key, issue_summary = _jira_issue_context_from_pr(pr)
         auto_merge = _maybe_auto_merge_pr(
             repo=repo,
             pr_number=pr_number,
             pr_url=pr_url,
             github_token=github_token,
-            issue_key=jira_final.get("issue_key") or "",
-            issue_summary=jira_final.get("summary") or "",
+            issue_key=issue_key,
+            issue_summary=issue_summary,
+        )
+        jira_final = _final_approval_after_merge(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=github_token,
+            merged=bool(auto_merge.get("merged")),
         )
     else:
         jira_final = {"skipped": True, "reason": "not_ready"}
@@ -833,6 +900,67 @@ def review_and_comment_pr():
         "auto_merge": auto_merge,
         "pr_url": pr_url,
     }, summarize_review_result)
+
+
+@cto_bp.route("/notify_pr_merged", methods=["POST"])
+def notify_pr_merged():
+    """
+    Move the linked board ticket to Final approval after a PR is merged.
+
+    Used by the PR-closed GitHub Action so a human merge (or delayed GitHub
+    auto-merge) still advances the card. Idempotent if the card is already there.
+
+    Request JSON:
+      - repo (str, required unless pr_url): "owner/repo"
+      - pr_number (int, required unless pr_url)
+      - pr_url (str, optional)
+      - github_token (str, optional)
+    """
+    data = request.get_json(silent=True) or {}
+    repo, pr_number = _resolve_pr_from_payload(data)
+    github_token = (
+        (data.get("github_token") or "").strip()
+        or os.environ.get("GITHUB_TOKEN")
+        or ""
+    )
+
+    if not is_owner_repo(repo):
+        return _json_summary(
+            {"error": "repo is required (e.g. 'owner/repo')"},
+            summarize_pr_merged_result,
+            400,
+        )
+    if pr_number is None:
+        return _json_summary(
+            {"error": "pr_number is required"},
+            summarize_pr_merged_result,
+            400,
+        )
+    if not github_token:
+        return _json_summary(
+            {"error": "GitHub token is required. Set GITHUB_TOKEN in env or pass github_token."},
+            summarize_pr_merged_result,
+            400,
+        )
+
+    pr_url = f"https://github.com/{repo}/pull/{pr_number}"
+    result = _jira_final_approval_for_pr(
+        repo=repo,
+        pr_number=pr_number,
+        pr_url=pr_url,
+        github_token=github_token,
+        assume_merged=False,
+    )
+    payload = {
+        "success": bool(result.get("ok") or result.get("skipped")),
+        "pr_url": pr_url,
+        "jira_final_approval": result,
+    }
+    if result.get("error") and not result.get("ok"):
+        payload["success"] = False
+        payload["error"] = result.get("error")
+        return _json_summary(payload, summarize_pr_merged_result, 502)
+    return _json_summary(payload, summarize_pr_merged_result)
 
 
 @cto_bp.route("/autofix_pr", methods=["POST"])
@@ -1127,6 +1255,13 @@ def autofix_followup():
     pr_ref = format_pr_discord_line(pr_url, pr_title)
     if pr.get("merged"):
         # Another path already merged (or a late finalize after auto-merge).
+        jira_final = _final_approval_after_merge(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=gh_token,
+            merged=True,
+        )
         base.update(
             {
                 "finalized": True,
@@ -1135,6 +1270,7 @@ def autofix_followup():
                 "ready_to_merge": True,
                 "fixes_pushed": False,
                 "rereviewed": False,
+                "jira_final_approval": jira_final,
             }
         )
         return _json_summary(base, summarize_followup_result)
@@ -1310,19 +1446,21 @@ def autofix_followup():
         _post_cto_status(
             f"**Ready to merge**\n{pr_ref}\nComment: {comment_url}"
         )
-        jira_final = _jira_final_approval_for_pr(
-            repo=repo,
-            pr_number=pr_number,
-            pr_url=pr_url,
-            github_token=gh_token,
-        )
+        issue_key, issue_summary = _jira_issue_context_from_pr(pr)
         auto_merge = _maybe_auto_merge_pr(
             repo=repo,
             pr_number=pr_number,
             pr_url=pr_url,
             github_token=gh_token,
-            issue_key=jira_final.get("issue_key") or "",
-            issue_summary=jira_final.get("summary") or "",
+            issue_key=issue_key,
+            issue_summary=issue_summary,
+        )
+        jira_final = _final_approval_after_merge(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=gh_token,
+            merged=bool(auto_merge.get("merged")),
         )
     elif autofix_count >= max_iters:
         _notify_autofix_loop_protection(
@@ -1698,6 +1836,38 @@ def get_manifest():
                         "llm_model": {
                             "type": "string",
                             "description": "Optional model override (default: gemini-3.1-pro-preview)",
+                        },
+                    },
+                    "required": [],
+                },
+            },
+            {
+                "name": "notify_pr_merged",
+                "description": (
+                    "After a PR is merged (auto-merge or someone else merges), move the "
+                    "linked internal-board or Jira ticket to Final approval (manual). "
+                    + SUMMARY_REPLY_INSTRUCTION
+                ),
+                "path": "/mcp/tools/notify_pr_merged",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository as owner/repo. Optional if pr_url is a GitHub pull request URL.",
+                        },
+                        "pr_number": {
+                            "type": "integer",
+                            "description": "Pull request number. Optional if pr_url includes it.",
+                        },
+                        "pr_url": {
+                            "type": "string",
+                            "description": "GitHub pull request URL. Alternative to repo + pr_number.",
+                        },
+                        "github_token": {
+                            "type": "string",
+                            "description": "Optional GitHub PAT override (default: GITHUB_TOKEN env)",
                         },
                     },
                     "required": [],

@@ -1,6 +1,7 @@
 from bigas.resources.cto.chat_summaries import (
     summarize_autofix_result,
     summarize_followup_result,
+    summarize_pr_merged_result,
     summarize_review_result,
     with_summary,
 )
@@ -32,6 +33,22 @@ def test_review_summary_findings_offers_autofix():
     )
     assert "findings" in text.lower()
     assert "run autofix" in text.lower()
+
+
+def test_pr_merged_summary_moved_ticket():
+    text = summarize_pr_merged_result(
+        {
+            "success": True,
+            "pr_url": "https://github.com/mckort/vcfieldassistant/pull/123",
+            "jira_final_approval": {
+                "ok": True,
+                "issue_key": "BIG-15",
+                "moved_to": "Final approval (manual)",
+            },
+        }
+    )
+    assert "BIG-15" in text
+    assert "Final approval" in text
 
 
 def test_review_summary_already_merged_beats_ready_flag():
