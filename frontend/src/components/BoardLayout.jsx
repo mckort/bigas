@@ -20,6 +20,25 @@ const AI_WORKING_STATUSES = new Set([
   'In Progress (AI)',
 ])
 
+function isTodoColumn(col) {
+  return String(col || '').trim().toLowerCase() === 'to do'
+}
+
+function ColumnCreateButton({ hiddenUntilHover = false, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted hover:bg-white/70 hover:text-text min-h-[40px] transition-opacity ${
+        hiddenUntilHover ? 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100' : ''
+      }`}
+    >
+      <span aria-hidden="true">+</span>
+      Create
+    </button>
+  )
+}
+
 function TicketAiMark({ status }) {
   const active = AI_WORKING_STATUSES.has(status)
   return (
@@ -222,11 +241,11 @@ function TicketComments({ ticketId }) {
   )
 }
 
-function TicketModal({ ticket, columns, board, onClose, onSave, onDelete }) {
+function TicketModal({ ticket, columns, board, initialStatus, onClose, onSave, onDelete }) {
   const [form, setForm] = useState({
     title: ticket?.title || '',
     description: ticket?.description || '',
-    status: ticket?.status || columns[0] || 'To Do',
+    status: ticket?.status || initialStatus || columns[0] || 'To Do',
     assignee: ticket?.assignee || '',
     fix_version: ticket?.fix_version || '',
     issue_type: ticket?.issue_type || 'Task',
@@ -454,6 +473,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [modalTicket, setModalTicket] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [createStatus, setCreateStatus] = useState(null)
   const [dragTicket, setDragTicket] = useState(null)
   const [pendingTicketKey, setPendingTicketKey] = useState(null)
 
@@ -545,7 +565,20 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     }
     setModalTicket(null)
     setShowCreate(false)
+    setCreateStatus(null)
     await loadTickets()
+  }
+
+  const openCreate = (status) => {
+    setModalTicket(null)
+    setCreateStatus(status || columns[0] || 'To Do')
+    setShowCreate(true)
+  }
+
+  const closeModal = () => {
+    setModalTicket(null)
+    setShowCreate(false)
+    setCreateStatus(null)
   }
 
   const handleDeleteTicket = async (ticket) => {
@@ -612,10 +645,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           </button>
           <button
             type="button"
-            onClick={() => {
-              setModalTicket(null)
-              setShowCreate(true)
-            }}
+            onClick={() => openCreate(columns[0])}
             className="bg-bigas-blue text-bigas-black font-medium px-3 py-2 rounded-xl min-h-[44px] text-sm"
           >
             + Ticket
@@ -649,6 +679,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                       onDragEnd={() => setDragTicket(null)}
                     />
                   ))}
+                  {isTodoColumn(col) && (
+                    <ColumnCreateButton onClick={() => openCreate(col)} />
+                  )}
                 </div>
               </section>
             )
@@ -662,7 +695,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
             return (
               <section
                 key={col}
-                className="flex-shrink-0 w-72 flex flex-col bg-surface/60 rounded-xl border border-border"
+                className="group flex-shrink-0 w-72 flex flex-col bg-surface/60 rounded-xl border border-border"
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => handleDrop(col)}
               >
@@ -684,6 +717,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                       onDragEnd={() => setDragTicket(null)}
                     />
                   ))}
+                  {isTodoColumn(col) && (
+                    <ColumnCreateButton hiddenUntilHover onClick={() => openCreate(col)} />
+                  )}
                 </div>
               </section>
             )
@@ -696,10 +732,8 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           ticket={showCreate ? null : modalTicket}
           columns={columns}
           board={activeBoard}
-          onClose={() => {
-            setModalTicket(null)
-            setShowCreate(false)
-          }}
+          initialStatus={createStatus}
+          onClose={closeModal}
           onSave={handleSave}
           onDelete={handleDeleteTicket}
         />
