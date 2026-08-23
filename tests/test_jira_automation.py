@@ -58,12 +58,12 @@ def test_adf_heading_roundtrip_preserves_brief_contract():
         f"{BRIEF_HEADING}\n"
         "Ship export from Attio\n\n"
         f"{RESEARCH_HEADING}\n"
-        "### Goals\n"
+        "### What we want\n"
         "old goals\n"
     )
     plain = adf_to_plain_text(markdown_to_adf(original))
     assert extract_brief(plain) == "Ship export from Attio"
-    updated = upsert_research_section(plain, research_markdown="### Goals\nnew goals")
+    updated = upsert_research_section(plain, research_markdown="### What we want\nnew goals")
     assert extract_brief(updated) == "Ship export from Attio"
     assert "old goals" not in updated
     assert "new goals" in updated
@@ -82,7 +82,7 @@ def test_extract_brief_and_upsert_preserves_plan():
         "keep this plan\n"
     )
     assert extract_brief(original) == "Ship export from Attio"
-    updated = upsert_research_section(original, research_markdown="### Goals\nNew goals")
+    updated = upsert_research_section(original, research_markdown="### What we want\nNew goals")
     assert "Ship export from Attio" in updated
     assert "New goals" in updated
     assert "keep this plan" in updated
@@ -99,16 +99,43 @@ def test_upsert_plan_preserves_brief_and_research():
         f"{BRIEF_HEADING}\n"
         "Brand reports with logo\n\n"
         f"{RESEARCH_HEADING}\n"
-        "### Goals\n"
+        "### What we want\n"
         "Allow custom logo on PDF reports\n\n"
         f"{PLAN_HEADING}\n"
         "old plan\n"
     )
-    updated = upsert_plan_section(original, plan_markdown="### Technical approach\nNew plan")
+    updated = upsert_plan_section(original, plan_markdown="### How to build it\nNew plan")
     assert extract_brief(updated) == "Brand reports with logo"
     assert "Allow custom logo on PDF reports" in extract_section(updated, RESEARCH_HEADING)
     assert "New plan" in extract_section(updated, PLAN_HEADING)
     assert "old plan" not in updated
+
+
+def test_description_parsing_ignores_llm_subsection_headers():
+    """LLM research/plan bodies use ### headings; only ## Brief/Research/Plan are parsed."""
+    research_body = (
+        "### What's going on\n"
+        "Context here\n\n"
+        "### Done when\n"
+        "- criterion one\n"
+    )
+    plan_body = (
+        "### How to build it\n"
+        "Build steps\n\n"
+        "### Docs impact\n"
+        "Update README\n"
+    )
+    description = upsert_plan_section(
+        upsert_research_section(
+            f"{BRIEF_HEADING}\nShip feature\n",
+            research_markdown=research_body,
+        ),
+        plan_markdown=plan_body,
+    )
+    assert extract_brief(description) == "Ship feature"
+    assert "Context here" in extract_section(description, RESEARCH_HEADING)
+    assert "Build steps" in extract_section(description, PLAN_HEADING)
+    assert "Update README" in extract_section(description, PLAN_HEADING)
 
 
 def test_config_maps_design_status(monkeypatch):
@@ -395,9 +422,9 @@ def test_design_prompts_include_readme_impact():
         linked_issues_text="(none)",
         repo_context="(none)",
     )
-    assert "### README / docs impact" in product_plan
-    assert "### In-app support / help impact" in product_plan
-    assert "### Mobile / responsive considerations (if UI)" in product_plan
+    assert "### Docs impact" in product_plan
+    assert "### In-app help" in product_plan
+    assert "### Mobile" in product_plan
 
     product_system, _ = design_prompts_for(WORKSTREAM_PRODUCT)
     assert "in-app support/help impact" in product_system
@@ -413,9 +440,9 @@ def test_design_prompts_include_readme_impact():
         linked_issues_text="(none)",
         repo_context="(none)",
     )
-    assert "### README / docs impact" in marketing_plan
-    assert "### In-app support / help impact" not in marketing_plan
-    assert "### Mobile / responsive considerations (if UI)" in marketing_plan
+    assert "### Docs impact" in marketing_plan
+    assert "### In-app help" not in marketing_plan
+    assert "### Mobile" in marketing_plan
 
     marketing_system, _ = design_prompts_for(WORKSTREAM_MARKETING)
     assert "responsive design" in marketing_system

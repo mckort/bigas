@@ -1,4 +1,9 @@
-"""Preserve human Brief; replace Bigas AI sections in issue descriptions."""
+"""Preserve human Brief; replace Bigas AI sections in issue descriptions.
+
+Only top-level ``## Brief``, ``## AI Research (Bigas)``, and ``## AI Plan (Bigas)``
+headings are parsed. ``###`` subsection headers inside research/plan bodies are
+opaque markdown passed through to Jira and downstream implement prompts unchanged.
+"""
 
 from __future__ import annotations
 
