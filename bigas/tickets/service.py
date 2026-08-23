@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -30,6 +31,18 @@ def _sync_user_id() -> str:
     if user:
         return user["uid"]
     return "dev-user"
+
+
+def _should_run_interpretation_inline() -> bool:
+    """Run screenshot interpretation inline in tests."""
+    try:
+        from flask import current_app, has_app_context
+
+        if has_app_context() and current_app.config.get("TESTING"):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def ticket_url(key: str) -> str:
@@ -226,7 +239,25 @@ class TicketService:
         }
 
     def delete_board(self, board_id: str, *, user_id: str) -> bool:
+        tickets = self._store.list_tickets(board_id, user_id=user_id)
+        for ticket in tickets:
+            self._delete_ticket_attachment_blobs(ticket)
         return self._store.delete_board(board_id, user_id=user_id)
+
+    def delete_ticket(self, ticket_id: str, *, user_id: str) -> bool:
+        ticket = self._store.get_ticket(ticket_id)
+        if not ticket:
+            return False
+        board = self._store.get_board(ticket.get("board_id") or "")
+        if board and board.get("user_id") != user_id:
+            return False
+        self._delete_ticket_attachment_blobs(ticket)
+        return self._store.delete_ticket(ticket_id, user_id=user_id)
+
+    def _delete_ticket_attachment_blobs(self, ticket: Dict[str, Any]) -> None:
+        from bigas.tickets.attachments import delete_attachment_blobs
+
+        delete_attachment_blobs(list(ticket.get("attachments") or []))
 
     def list_tickets(self, board_id: str, *, user_id: str) -> List[Dict[str, Any]]:
         tickets = self._store.list_tickets(board_id, user_id=user_id)
@@ -258,6 +289,7 @@ class TicketService:
     ) -> Dict[str, Any]:
         from bigas.tickets.attachments import (
             AttachmentError,
+            IMAGE_MIME_TYPES,
             attachment_blob_name,
             build_attachment_record,
             extract_attachment_text,
@@ -275,10 +307,12 @@ class TicketService:
             size_bytes=len(data or b""),
             existing_count=len(existing),
         )
+        defer_image_llm = mime in IMAGE_MIME_TYPES and not _should_run_interpretation_inline()
         extracted = extract_attachment_text(
             data=data,
             filename=safe_name,
             content_type=mime,
+            defer_image_llm=defer_image_llm,
         )
         record = build_attachment_record(
             filename=safe_name,
@@ -296,7 +330,65 @@ class TicketService:
         if not saved:
             blobs.delete(path)
             raise AttachmentError("Could not save attachment")
+        if defer_image_llm:
+            self._dispatch_attachment_interpretation(
+                ticket_id=ticket_id,
+                attachment_id=record["id"],
+                data=data,
+                filename=safe_name,
+                content_type=mime,
+            )
         return saved
+
+    def _dispatch_attachment_interpretation(
+        self,
+        *,
+        ticket_id: str,
+        attachment_id: str,
+        data: bytes,
+        filename: str,
+        content_type: str,
+    ) -> None:
+        thread = threading.Thread(
+            target=self._interpret_attachment_background,
+            kwargs={
+                "ticket_id": ticket_id,
+                "attachment_id": attachment_id,
+                "data": data,
+                "filename": filename,
+                "content_type": content_type,
+            },
+            daemon=True,
+        )
+        thread.start()
+
+    def _interpret_attachment_background(
+        self,
+        *,
+        ticket_id: str,
+        attachment_id: str,
+        data: bytes,
+        filename: str,
+        content_type: str,
+    ) -> None:
+        from bigas.tickets.attachments import clip_extracted_text, describe_image
+
+        try:
+            extracted = clip_extracted_text(
+                describe_image(data, content_type, filename),
+            )
+            self._store.update_attachment(
+                ticket_id,
+                attachment_id,
+                extracted_text=extracted,
+            )
+        except Exception:
+            logger.warning(
+                "Background screenshot interpretation failed for ticket %s attachment %s",
+                ticket_id,
+                attachment_id,
+                exc_info=True,
+            )
 
     def delete_attachment(self, ticket_id: str, attachment_id: str) -> Optional[Dict[str, Any]]:
         from bigas.tickets.attachments import get_attachment_blob_store

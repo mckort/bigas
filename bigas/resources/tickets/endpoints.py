@@ -250,7 +250,7 @@ def ticket_detail(ticket_id: str):
         return jsonify({"ticket": ticket_to_api(ticket)})
 
     if request.method == "DELETE":
-        if store.delete_ticket(ticket_id, user_id=user_id):
+        if service.delete_ticket(ticket_id, user_id=user_id):
             return jsonify({"ok": True})
         return jsonify({"error": "Ticket not found"}), 404
 
@@ -298,10 +298,17 @@ def ticket_attachments(ticket_id: str):
     if board and board.get("user_id") != user_id:
         return jsonify({"error": "Forbidden"}), 403
 
+    from bigas.tickets.attachments import MAX_ATTACHMENT_BYTES, read_upload_body
+
     uploaded = request.files.get("file")
     if uploaded is None or not (uploaded.filename or "").strip():
         return jsonify({"error": "file is required"}), 400
-    data = uploaded.read()
+    if request.content_length is not None and request.content_length > MAX_ATTACHMENT_BYTES:
+        return jsonify({"error": "File is larger than 10 MB"}), 400
+    try:
+        data = read_upload_body(uploaded)
+    except AttachmentError as exc:
+        return jsonify({"error": str(exc)}), 400
     try:
         attachment = TicketService().add_attachment(
             ticket_id,

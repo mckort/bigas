@@ -452,7 +452,10 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange }) {
       if (inputRef.current) inputRef.current.value = ''
       return
     }
-    if (uploading) return
+    if (uploading) {
+      setError('Please wait for the current upload to finish')
+      return
+    }
     setUploading(true)
     setError('')
     try {
@@ -842,12 +845,16 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               setSaving(true)
               setSaveError('')
               try {
-                await onSave({
+                const result = await onSave({
                   ...form,
                   labels,
                   parent_key: form.issue_type === 'Epic' ? '' : form.parent_key,
                   files: pendingFiles,
                 })
+                if (result?.uploadError) {
+                  setSaveError(result.uploadError)
+                  return
+                }
               } catch (err) {
                 setSaveError(err.message || 'Could not save ticket')
               } finally {
@@ -1089,18 +1096,18 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     } else {
       const data = await createTicket(activeBoardId, payload)
       const created = data.ticket
-      try {
-        if (created?.ticket_id) {
+      if (created?.ticket_id && files.length) {
+        try {
           for (const file of files) {
             await uploadTicketAttachment(created.ticket_id, file)
           }
+        } catch (err) {
+          setModalTicket(created)
+          setShowCreate(false)
+          setCreateStatus(null)
+          await loadTickets()
+          return { uploadError: err.message || 'Could not upload attachment' }
         }
-      } catch (err) {
-        setShowCreate(false)
-        setCreateStatus(null)
-        setModalTicket(created)
-        await loadTickets()
-        throw err
       }
     }
     setModalTicket(null)

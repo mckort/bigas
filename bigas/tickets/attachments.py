@@ -141,13 +141,36 @@ def attachments_text_for_issue(jira: Any, issue_key: str) -> str:
     return format_ticket_attachments(items)
 
 
+def read_upload_body(stream: Any, *, max_bytes: int = MAX_ATTACHMENT_BYTES) -> bytes:
+    """Read an upload stream without loading more than max_bytes into memory."""
+    if stream is None:
+        return b""
+    content_length = getattr(stream, "content_length", None)
+    if content_length is not None and content_length > max_bytes:
+        raise AttachmentError("File is larger than 10 MB")
+    data = stream.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise AttachmentError("File is larger than 10 MB")
+    return data
+
+
+def image_interpretation_pending_text(filename: str) -> str:
+    return (
+        f"[Screenshot: {sanitize_filename(filename)}] "
+        "Interpreting image for AI. Refresh in a moment if this ticket moves to an AI step."
+    )
+
+
 def extract_attachment_text(
     *,
     data: bytes,
     filename: str,
     content_type: str,
+    defer_image_llm: bool = False,
 ) -> str:
     if content_type in IMAGE_MIME_TYPES:
+        if defer_image_llm:
+            return image_interpretation_pending_text(filename)
         return clip_extracted_text(describe_image(data, content_type, filename))
     if content_type in TEXT_MIME_TYPES:
         return clip_extracted_text(_decode_text_bytes(data))
@@ -324,10 +347,25 @@ def get_attachment_blob_store() -> Any:
         else:
             try:
                 _blob_store = GcsAttachmentBlobStore(bucket_name=bucket)
-            except Exception:
-                logger.warning("GCS attachment store unavailable; using memory", exc_info=True)
-                _blob_store = InMemoryAttachmentBlobStore()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"STORAGE_BUCKET_NAME is set but GCS attachment store failed: {exc}"
+                ) from exc
         return _blob_store
+
+
+def delete_attachment_blobs(attachments: List[Dict[str, Any]]) -> None:
+    """Best-effort delete of stored attachment bytes."""
+    paths = [
+        (item.get("storage_path") or "").strip()
+        for item in (attachments or [])
+        if (item.get("storage_path") or "").strip()
+    ]
+    if not paths:
+        return
+    blobs = get_attachment_blob_store()
+    for path in paths:
+        blobs.delete(path)
 
 
 def reset_attachment_blob_store_for_tests() -> None:
