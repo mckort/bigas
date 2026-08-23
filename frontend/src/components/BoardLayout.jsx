@@ -699,7 +699,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
     fix_version: ticket?.fix_version || '',
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
-    parent_key: ticketParentKey(ticket) || initialParentKey || '',
+    parent_key: ticket ? ticketParentKey(ticket) : (initialParentKey || ''),
   })
   const isNew = !ticket?.ticket_id
   const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
