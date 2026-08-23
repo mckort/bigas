@@ -138,7 +138,10 @@ def dispatch_ticket_status_automation(
         )
     except requests.exceptions.ReadTimeout:
         return
-    except requests.exceptions.RequestException as e:
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ConnectTimeout,
+    ) as e:
         logger.warning(
             "Ticket automation worker dispatch failed for %s; running inline: %s",
             ticket.get("key"),
@@ -149,6 +152,12 @@ def dispatch_ticket_status_automation(
             old_status=old_status,
             new_status=new_status,
             project_key=project_key,
+        )
+    except requests.exceptions.RequestException as e:
+        logger.warning(
+            "Ticket automation worker dispatch failed for %s: %s",
+            ticket.get("key"),
+            e,
         )
 
 

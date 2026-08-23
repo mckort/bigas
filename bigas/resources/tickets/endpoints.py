@@ -138,7 +138,7 @@ def ticket_automation_worker():
     if not ticket:
         return jsonify({"error": "Ticket not found"}), 404
     board = store.get_board(ticket.get("board_id") or "")
-    if board and board.get("user_id") != user_id:
+    if not board or board.get("user_id") != user_id:
         return jsonify({"error": "Forbidden"}), 403
 
     run_ticket_status_automation(
