@@ -8,6 +8,19 @@ export function UnreadDot({ show, className = '' }) {
   )
 }
 
+const AGENT_SIDEBAR_ORDER = ['chief', 'cfo', 'cto', 'devops', 'marketing', 'product']
+
+function sortAgents(agents) {
+  return [...agents].sort((a, b) => {
+    const aRank = AGENT_SIDEBAR_ORDER.indexOf(a.agent_id)
+    const bRank = AGENT_SIDEBAR_ORDER.indexOf(b.agent_id)
+    const aOrder = aRank === -1 ? AGENT_SIDEBAR_ORDER.length : aRank
+    const bOrder = bRank === -1 ? AGENT_SIDEBAR_ORDER.length : bRank
+    if (aOrder !== bOrder) return aOrder - bOrder
+    return (a.name || '').localeCompare(b.name || '')
+  })
+}
+
 export default function AgentSidebar({
   agents,
   activeAgentId,
@@ -17,6 +30,7 @@ export default function AgentSidebar({
   onClose,
   unreadAgentIds,
 }) {
+  const orderedAgents = sortAgents(agents)
   return (
     <>
       {mobileOpen && (
@@ -55,7 +69,7 @@ export default function AgentSidebar({
           <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
             Specialists
           </p>
-          {agents.map((agent) => {
+          {orderedAgents.map((agent) => {
             const isActive = activeAgentId === agent.agent_id
             const hasUnread = Boolean(unreadAgentIds?.has(agent.agent_id))
             return (
@@ -84,12 +98,7 @@ export default function AgentSidebar({
                   {agent.icon || '🤖'}
                   <UnreadDot show={hasUnread} />
                 </span>
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium truncate text-sm">{agent.name}</div>
-                  <div className="text-xs text-muted truncate capitalize">
-                    {agent.agent_id.replace(/_/g, ' ')}
-                  </div>
-                </div>
+                <div className="min-w-0 flex-1 font-medium truncate text-sm">{agent.name}</div>
               </button>
             )
           })}
