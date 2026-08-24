@@ -28,6 +28,8 @@ The workflow **skips** review runs whose PR head commit **subject** contains `[b
 
 Optional auto-merge: set Bigas env `BIGAS_CTO_AUTO_MERGE=true` to squash-merge when the review has no Blockers/Important (Discord/Activity **PR auto-merged**, or **PR auto-merge enabled** if checks are still pending). The card includes the Jira issue label when the PR is linked (`BIG-15` — summary). Draft PRs are marked ready for review first. Default is off. Repo must allow auto-merge. PR review, autofix, Ready to merge, Final approval, and auto-merge cards go to Discord and the chat Activity feed, not the CTO thread.
 
+Dead/unused code this PR introduced or made unused (imports, functions, helpers, files, replaced call sites) is classified as **Important**, so it blocks ready-to-merge / auto-merge and triggers autofix. Reviewers must not hunt pre-existing unused code elsewhere in the repo.
+
 ## Server-side configuration (Bigas)
 
 1. **GitHub Personal Access Token**

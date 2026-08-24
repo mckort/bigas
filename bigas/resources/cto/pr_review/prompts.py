@@ -14,7 +14,9 @@ If none: write "None."
 
 ### Important
 High-priority issues that should be fixed before merge (validation gaps, leaky
-resources, race/async lifecycle bugs, silent data integrity failures).
+resources, race/async lifecycle bugs, silent data integrity failures, and dead
+or unused code this PR introduced or made unused: unused imports, functions,
+helpers, files, or replaced call sites).
 If none: write "None."
 
 ### Minor
@@ -41,6 +43,17 @@ Project helpers / imports (avoid false blockers):
   treat the finding as resolved — do not repeat it.
 """.strip()
 
+_DEAD_CODE_RULES = """
+Dead / unused code (classify as Important, not Minor):
+- Flag unused imports, functions, helpers, files, and replaced call sites that
+  this PR introduced or made unused. That includes leftover wrappers after a
+  rewrite and code that is no longer reachable from the new path.
+- Do NOT hunt the rest of the repository for pre-existing unused code.
+- Do NOT flag public APIs, feature-flagged / intentionally retained code, or
+  symbols that are used outside the shown diff (tests, other modules, dynamic
+  imports). If usage is unclear from the diff, leave it out.
+""".strip()
+
 
 PR_REVIEW_SYSTEM_PROMPT = f"""You are a senior engineer performing a pull request review.
 Your role is to catch real issues early with specific, actionable feedback.
@@ -54,6 +67,8 @@ Guidelines:
 - Start directly with the review content.
 
 {_PROJECT_HELPER_RULES}
+
+{_DEAD_CODE_RULES}
 
 {_REVIEW_FORMAT}
 """
@@ -76,9 +91,12 @@ Guidelines:
   6. Transactions / duplicate detection / limits that can silently truncate
   7. Error handling that hides failures from users
   8. UI edge cases: empty states, negative values, sorting stability, and mobile/responsive layout on small screens (~320–390px)
+  9. Dead/unused code this PR introduced or made unused (imports, functions, helpers, files, replaced call sites). Classify as Important.
 - Return only the review text—no meta-commentary wrapper.
 
 {_PROJECT_HELPER_RULES}
+
+{_DEAD_CODE_RULES}
 
 {_REVIEW_FORMAT}
 """
@@ -88,8 +106,9 @@ Your job is verification, not a fresh open-ended review.
 
 Guidelines:
 - Primary task: check whether each previously reported Blocker/Important item is fixed.
-- Only report NEW issues if they are true blockers or important correctness/security problems
-  introduced by the autofix, or clearly still broken from the previous list.
+- Only report NEW issues if they are true blockers or important correctness/security
+  problems introduced by the autofix, leftover dead/unused code the autofix
+  introduced or left unused, or clearly still broken from the previous list.
 - Do NOT invent new minor nits, style suggestions, or optional TODOs that were not
   in the previous review. Put residual optional polish under Minor only if essential.
 - If previous Blockers/Important are resolved and no new blockers/important remain,
@@ -100,6 +119,8 @@ Guidelines:
   helper, mark it resolved — do not keep re-reporting it.
 
 {_PROJECT_HELPER_RULES}
+
+{_DEAD_CODE_RULES}
 
 {_REVIEW_FORMAT}
 """

@@ -415,7 +415,7 @@ Copy [.github/workflows/pr-review.yml](.github/workflows/pr-review.yml) into the
 3. **Autofix (optional)** — set repo variable `BIGAS_AUTO_FIX=true`. If the review has Blockers/Important, `autofix_pr` launches a Cursor cloud agent on the same branch; Actions polls `autofix_followup` until the agent finishes, then Bigas re-reviews. Up to five `[bigas-autofix]` rounds; after that Discord/Jira ask you to handle it manually.
 4. **No duplicate cycles** — autofix commits use `[bigas-autofix]` in the subject, so the workflow **skips** those pushes. Re-review stays with the in-flight job instead of starting a second review.
 
-Nits-only / LGTM reviews do not launch autofix. Post-autofix reviews verify the previous Bigas comment instead of inventing a fresh nit list.
+Nits-only / LGTM reviews do not launch autofix. Post-autofix reviews verify the previous Bigas comment instead of inventing a fresh nit list. Dead/unused code introduced or left unused by the PR is classified as **Important** (so it is fixed before merge), not Minor.
 
 Setup, request bodies, and model/token knobs: **[docs/cto-pr-review.md](docs/cto-pr-review.md)**. Loop, cooldown, guards, and auto-merge: **[docs/cto-autofix.md](docs/cto-autofix.md)**. Cost rollups: **[docs/cto-ai-usage.md](docs/cto-ai-usage.md)**.
 
