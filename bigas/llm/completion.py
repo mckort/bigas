@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 from bigas.llm.usage import TokenUsage
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """A provider-normalized function/tool call from one LLM turn."""
+
+    id: str
+    name: str
+    arguments: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -13,6 +22,7 @@ class LLMCompletion:
     text: str
     finish_reason: Optional[str] = None
     usage: TokenUsage = field(default_factory=TokenUsage)
+    tool_calls: Tuple[ToolCall, ...] = ()
 
     @property
     def truncated(self) -> bool:

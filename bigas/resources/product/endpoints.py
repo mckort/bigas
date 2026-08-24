@@ -19,6 +19,10 @@ from bigas.resources.product.create_jira_issue.lookup import (
     LookupJiraError,
     LookupJiraService,
 )
+from bigas.resources.product.search_jira.service import (
+    SearchJiraError,
+    SearchJiraService,
+)
 from bigas.resources.product.create_release_notes.jira_client import normalize_project_keys
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
 from bigas.resources.product.jira_automation.service import (
@@ -435,6 +439,38 @@ def lookup_jira():
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route('/search_jira', methods=['POST'])
+@require_bigas_access_key
+def search_jira():
+    """
+    Search Jira with JQL (read-only, scoped to the portfolio).
+
+    Request JSON:
+      { "jql": "type = Bug AND text ~ \\"Stripe\\"", "max_results": 25 }
+    """
+    data = request.json or {}
+    jql = str(data.get("jql") or data.get("query") or "").strip()
+    max_results = data.get("max_results", data.get("maxResults", 25))
+    try:
+        result = SearchJiraService().search(jql=jql, max_results=max_results)
+        return jsonify(result)
+    except SearchJiraError as e:
+        msg = str(e)
+        status = 400 if any(
+            s in msg.lower()
+            for s in [
+                "required",
+                "outside the portfolio",
+                "not configured",
+                "requires jira cloud",
+            ]
+        ) else 500
+        return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
+    except Exception as e:
+        logger.error("Error in search_jira", exc_info=True)
+        return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
+
+
 def _run_jira_automation_job(job_id: str, parsed: dict) -> None:
     with _JIRA_AI_JOBS_LOCK:
         _JIRA_AI_JOBS[job_id] = {"status": "running", **parsed}
@@ -777,6 +813,37 @@ def get_manifest():
                             "description": "Project whose open Epics should be listed, e.g. GPWW.",
                         },
                     },
+                },
+            },
+            {
+                "name": "search_jira",
+                "description": (
+                    "Search Jira with JQL when the user described a filter instead of issue keys "
+                    "(status, type, text, assignee, labels). Write the JQL yourself. "
+                    "Results are limited to portfolio projects. Use lookup_jira when the user "
+                    "named keys or a range (BIG-15 to BIG-18). After search, answer in your "
+                    "own words — do not paste this dump as the reply."
+                ),
+                "path": "/mcp/tools/search_jira",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "jql": {
+                            "type": "string",
+                            "description": (
+                                "JQL query, e.g. type = Bug AND text ~ \"Stripe\" "
+                                "AND statusCategory != Done. Project scope is added "
+                                "automatically when omitted."
+                            ),
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Max issues to return (default 25, cap 50).",
+                            "default": 25,
+                        },
+                    },
+                    "required": ["jql"],
                 },
             },
         ]

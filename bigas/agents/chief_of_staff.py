@@ -32,14 +32,15 @@ from bigas.resources.devops.pipeline import (
 from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
 from bigas.utils.mcp_client import MCPClient, MCPClientError
 
-MAX_AGENT_TOOL_ROUNDS = 5
+MAX_AGENT_TOOL_ROUNDS = 10
 
 COWORKER_RULES = """
 You are a coworker, not a tool printer.
-- Read the user's ask. Decide what facts you need. Call tools to get them.
+- Answer from what you know when that is enough. Call tools only for live data or a side effect.
 - After you receive tool results, answer the question directly. Do not paste raw tool output as your reply.
 - You may call several tools, or the same tool again with different arguments, before answering.
-- lookup_jira accepts several issue keys or a range (BIG-15 to BIG-18). Use that for status questions, then say which are done.
+- lookup_jira accepts several issue keys or a range (BIG-15 to BIG-18). Use that for named-key status questions.
+- search_jira takes JQL. Use it when the user described a filter (status, type, text) without keys. Do not invent issue keys.
 """.strip()
 
 logger = logging.getLogger(__name__)
@@ -169,44 +170,48 @@ SPECIALIST_CAPABILITIES = (
     "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, AI usage, monitoring.\n"
     "- devops: production deploy via GitHub Actions (including manual trigger_deployment), "
     "deploy status, site health, CI logs, hotfix PRs. vcfieldassistant/VFA is a DevOps deploy.\n"
-    "Every specialist and Chief of Staff can call lookup_jira and create_jira_issue (Task/Bug). "
+    "Every specialist and Chief of Staff can call lookup_jira, search_jira (JQL), and create_jira_issue (Task/Bug). "
     "Look up Epics when needed, then decide whether the new work belongs under one or should be standalone. "
     "Never tell the user to create the Jira issue themselves.\n"
 )
 
 # Shared with every specialist; COS may also call these without a handoff.
-SHARED_AGENT_TOOLS = frozenset({"create_jira_issue", "lookup_jira"})
+SHARED_AGENT_TOOLS = frozenset({"create_jira_issue", "lookup_jira", "search_jira"})
 
-# Read-only / quick lookups COS may run without a specialist handoff,
-# plus shared write tools such as create_jira_issue.
-CHIEF_DIRECT_TOOL_NAMES = {
-    "get_deployment_status",
-    "check_website_health",
-    "ask_analytics_question",
-    "get_latest_report",
-    "get_stored_reports",
-    "fetch_ai_usage",
-    "website_monitor",
-    "get_job_status",
-    "get_job_result",
-} | set(SHARED_AGENT_TOOLS)
-
-# If COS tries to invoke these itself, rewrite to a real specialist handoff.
+# Writes and heavy pipelines: if COS names these, rewrite to a specialist handoff.
+# Everything else in the MCP catalog is Chief-callable (read-only + create_jira_issue).
 MUST_DELEGATE_TOOLS = {
     "trigger_deployment": "devops",
-    "check_deployment_risk": "devops",
     "create_github_pr": "devops",
     "github_workflow_run": "devops",
-    "fetch_github_action_logs": "devops",
     "autofix_pr": "cto",
     "autofix_followup": "cto",
     "fix_failed_deployment": "cto",
     "review_and_comment_pr": "cto",
     "run_qa": "cto",
+    "notify_pr_merged": "cto",
+    "weekly_cto_ai_report": "cto",
     "create_release_notes": "product",
     "progress_updates": "product",
     "generate_weekly_x_post": "product",
     "jira_status_automation": "product",
+    "jira_status_automation_job": "product",
+    "weekly_analytics_report": "marketing",
+    "weekly_analytics_report_async": "marketing",
+    "run_reddit_portfolio_report": "marketing",
+    "run_reddit_portfolio_report_async": "marketing",
+    "run_linkedin_portfolio_report": "marketing",
+    "run_linkedin_portfolio_report_async": "marketing",
+    "run_google_ads_portfolio_report": "marketing",
+    "run_google_ads_portfolio_report_async": "marketing",
+    "run_meta_portfolio_report": "marketing",
+    "run_meta_portfolio_report_async": "marketing",
+    "run_cross_platform_marketing_analysis": "marketing",
+    "run_cross_platform_marketing_analysis_async": "marketing",
+    "cleanup_old_reports": "marketing",
+    "cleanup_old_activity": "marketing",
+    "linkedin_exchange_code": "marketing",
+    "reddit_exchange_code": "marketing",
 }
 
 def _resolve_delegate_target(raw: Optional[str]) -> Optional[str]:
@@ -222,9 +227,31 @@ def _resolve_delegate_target(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def _must_delegate_names() -> set:
+    return {name.lower() for name in MUST_DELEGATE_TOOLS}
+
+
+def _chief_callable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Chief may call any catalog tool that is not a write/pipeline handoff."""
+    blocked = _must_delegate_names()
+    shared = {name.lower() for name in SHARED_AGENT_TOOLS}
+    shared_out: List[Dict[str, Any]] = []
+    rest: List[Dict[str, Any]] = []
+    seen = set()
+    for tool in tools:
+        name = (tool.get("name") or "").lower()
+        if not name or name in seen or name in blocked:
+            continue
+        seen.add(name)
+        if name in shared:
+            shared_out.append(tool)
+        else:
+            rest.append(tool)
+    return shared_out + rest
+
+
 def _chief_direct_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    wanted = {name.lower() for name in CHIEF_DIRECT_TOOL_NAMES}
-    return [tool for tool in tools if (tool.get("name") or "").lower() in wanted]
+    return _chief_callable_tools(tools)
 
 
 def _mcp_tool_to_openai_def(tool: Dict[str, Any]) -> Dict[str, Any]:
@@ -241,25 +268,48 @@ def _mcp_tool_to_openai_def(tool: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _chief_routing_extra(tool_summary: str) -> str:
+def _chief_native_extra() -> str:
     return (
-        "You are the Chief of Staff in the Bigas chat UI. Answer general questions directly. "
-        "For marketing, product, engineering, or deployment tasks, delegate to the specialist "
-        "who owns that work.\n"
+        "You are the Chief of Staff in the Bigas chat UI. "
+        "Answer general questions directly from knowledge when that is enough. "
+        "Call tools only when you need live data or a side effect.\n"
         f"{SPECIALIST_CAPABILITIES}"
         "Never say a specialist cannot do something listed above. Never 'virtually' delegate "
-        "or offer to build a tool that already exists — emit JSON so the specialist actually "
+        "or offer to build a tool that already exists — call delegate_to_* so the specialist "
         "receives the task and replies in this thread.\n"
-        "You MAY call a tool yourself for a simple/quick lookup (live status, health, "
-        "a short analytics question, lookup_jira) and to file a Jira Task/Bug with create_jira_issue. "
-        "After a lookup, answer the user yourself — do not stop at the tool dump. "
-        "Do NOT trigger deploys, autofix, weekly reports, or other specialist pipelines yourself.\n\n"
+        "For named Jira keys or ranges, call lookup_jira. "
+        "For filters without keys, write JQL and call search_jira. Do not invent issue keys. "
+        "You may file a Task/Bug with create_jira_issue. "
+        "After tools return, answer the user yourself. "
+        "Do NOT trigger deploys, autofix, weekly reports, or other specialist pipelines yourself.\n"
+        "Include project_key when the user named a product, site, or Jira key. "
+        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url."
+    )
+
+
+def _specialist_native_extra() -> str:
+    return (
+        "You are responding in the Bigas chat interface. "
+        "Call a tool when you need facts or a side effect; otherwise answer in your own words. "
+        "Never use a raw lookup dump as the final reply. "
+        "Include project_key when the user named a product, site, or Jira key. "
+        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
+        "(a github.com/.../pull/N link is enough). "
+        "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL. "
+        "Named Jira keys → lookup_jira. Filters without keys → search_jira with JQL. "
+        "To file work in Jira, call lookup_jira if you need Epic/parent context, then create_jira_issue. "
+        "Do not ask the user for an Epic key or to create the ticket. "
+        "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone."
+    )
+
+
+def _chief_routing_extra(tool_summary: str) -> str:
+    return (
+        f"{_chief_native_extra()}\n\n"
         "If you should delegate, respond with ONLY:\n"
         '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>"}\n'
-        "If you should call a simple tool, respond with ONLY:\n"
+        "If you should call a tool, respond with ONLY:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
-        "Include project_key when the user named a product, site, or Jira key. "
-        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url.\n"
         "Otherwise respond with ONLY:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
         f"Tools you may call directly:\n{tool_summary or '(none — delegate instead)'}"
@@ -277,6 +327,7 @@ def _specialist_json_extra(tool_summary: str) -> str:
         "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
         "(a github.com/.../pull/N link is enough). "
         "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL. "
+        "Named Jira keys → lookup_jira. Filters without keys → search_jira with JQL. "
         "To file work in Jira, call lookup_jira if you need Epic/parent context, then create_jira_issue. "
         "Do not ask the user for an Epic key or to create the ticket. "
         "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone.\n"
@@ -326,8 +377,6 @@ def _dispatch_chief_tool(
         else:
             task = base_task
         return run_specialist_task(target, task, thread_id=thread_id, async_mode=True)
-    if tool_name.lower() not in {n.lower() for n in CHIEF_DIRECT_TOOL_NAMES}:
-        return f"Tool {tool_name} is not allowed for Chief of Staff."
     if mcp_client:
         return _run_tool_call(
             mcp_client,
@@ -370,7 +419,7 @@ def _filter_tools_for_agent(tools: List[Dict[str, Any]], agent_id: str) -> List[
     return shared_out + domain_out
 
 
-def _tools_summary(tools: List[Dict[str, Any]], limit: int = 20) -> str:
+def _tools_summary(tools: List[Dict[str, Any]], limit: int = 40) -> str:
     lines = []
     for tool in tools[:limit]:
         name = tool.get("name", "")
@@ -573,7 +622,7 @@ def _select_tool_via_llm(
 ) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
     """Returns (response_text, tool_name, tool_args) — tool fields set if a tool should run."""
     llm, _model = get_llm_client(feature="chat")
-    prompt_tools = _chief_direct_tools(tools) if agent_id == "chief" else tools
+    prompt_tools = _chief_callable_tools(tools) if agent_id == "chief" else tools
     tool_summary = _tools_summary(prompt_tools)
     extra = (
         _chief_routing_extra(tool_summary)
@@ -613,6 +662,8 @@ def _select_tool_via_llm(
 def _is_terminal_handoff(tool_name: Optional[str]) -> bool:
     name = (tool_name or "").strip()
     if name.startswith("__delegate__"):
+        return True
+    if _resolve_delegate_target(name):
         return True
     return name.lower() in MUST_DELEGATE_TOOLS
 
@@ -681,75 +732,101 @@ def _run_json_agent_loop(
     return last_tool_text or "I couldn't process that request."
 
 
-def _run_openai_tool_loop(
+def _run_native_tool_loop(
     llm,
     messages: List[Dict[str, Any]],
-    thread_id: str,
+    openai_tools: List[Dict[str, Any]],
     *,
-    mcp_client: Optional[MCPClient] = None,
-    extra_tools: Optional[List[Dict[str, Any]]] = None,
-    user_message: str = "",
-    user_id: Optional[str] = None,
-) -> str:
-    """OpenAI function-calling loop for chief of staff."""
-    if not hasattr(llm, "_client"):
-        return "Tool delegation requires an OpenAI model."
-
-    openai_tools = list(DELEGATE_TOOL_DEFS)
-    if extra_tools:
-        openai_tools.extend(extra_tools)
-
-    for _ in range(5):
-        resp = llm._client.chat.completions.create(
-            model=llm.model_name,
-            messages=messages,
-            tools=openai_tools,
-            tool_choice="auto",
-            temperature=0.3,
-        )
-        record = getattr(llm, "record_openai_response", None)
-        if callable(record):
-            record(resp)
-        msg = resp.choices[0].message
-        if msg.tool_calls:
+    run_tool,
+) -> Optional[str]:
+    """Provider-native function calling. Returns None if the first turn cannot start."""
+    if not hasattr(llm, "complete_detailed"):
+        return None
+    first = True
+    last_tool_text = ""
+    for _round in range(MAX_AGENT_TOOL_ROUNDS):
+        try:
+            kwargs: Dict[str, Any] = {"temperature": 0.3}
+            if openai_tools:
+                kwargs["tools"] = openai_tools
+                kwargs["tool_choice"] = "auto"
+            completion = llm.complete_detailed(messages, **kwargs)
+        except Exception:
+            logger.exception("Native tool-calling turn failed")
+            if first:
+                return None
+            break
+        first = False
+        if completion.tool_calls:
             messages.append(
                 {
                     "role": "assistant",
-                    "content": msg.content,
+                    "content": completion.text or "",
                     "tool_calls": [
                         {
                             "id": tc.id,
                             "type": "function",
-                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments or {}),
+                            },
                         }
-                        for tc in msg.tool_calls
+                        for tc in completion.tool_calls
                     ],
                 }
             )
-            for tc in msg.tool_calls:
-                fn = tc.function.name
-                try:
-                    args = json.loads(tc.function.arguments or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                result = _dispatch_chief_tool(
-                    fn,
-                    args,
-                    user_message=user_message,
-                    thread_id=thread_id,
-                    mcp_client=mcp_client,
-                    user_id=user_id,
-                ) or "Unknown tool."
+            for tc in completion.tool_calls:
+                if _is_terminal_handoff(tc.name):
+                    return run_tool(tc.name, tc.arguments or {}) or last_tool_text or "Done."
+                result = run_tool(tc.name, tc.arguments or {}) or "Done."
+                last_tool_text = result
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
+                        "name": tc.name,
                         "content": result,
                     }
                 )
             continue
-        return (msg.content or "").strip()
-    return "I wasn't able to complete that request."
+        if (completion.text or "").strip():
+            return completion.text.strip()
+        break
+    return last_tool_text or "I wasn't able to complete that request."
+
+
+def _run_agent_with_tools(
+    *,
+    agent_id: str,
+    agent_config: Dict[str, Any],
+    user_message: str,
+    tools: List[Dict[str, Any]],
+    history: Optional[List[Dict[str, str]]],
+    run_tool,
+    extra_openai_tools: Optional[List[Dict[str, Any]]] = None,
+    fallback_complete=None,
+) -> str:
+    """Native tool loop first; JSON action loop if the provider rejects tools."""
+    llm, _model = get_llm_client(feature="chat")
+    extra = _chief_native_extra() if agent_id == "chief" else _specialist_native_extra()
+    system = _agent_system_prompt(agent_config, extra)
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
+    messages.extend((history or [])[-10:])
+    messages.append({"role": "user", "content": user_message})
+    openai_tools = list(extra_openai_tools or [])
+    openai_tools.extend(_mcp_tool_to_openai_def(tool) for tool in tools)
+    native = _run_native_tool_loop(llm, messages, openai_tools, run_tool=run_tool)
+    if native is not None:
+        return native
+    return _run_json_agent_loop(
+        agent_id=agent_id,
+        agent_config=agent_config,
+        user_message=user_message,
+        tools=tools,
+        history=history,
+        run_tool=run_tool,
+        fallback_complete=fallback_complete,
+    )
 
 
 def _agent_display_name(store, agent_id: Optional[str]) -> str:
@@ -894,7 +971,7 @@ def run_specialist_task(
                 temperature=0.4,
             )
 
-        result = _run_json_agent_loop(
+        result = _run_agent_with_tools(
             agent_id=agent_id,
             agent_config=agent_config,
             user_message=task,
@@ -1009,52 +1086,25 @@ def handle_chat_message(
             )
             return {"status": "complete", "message": msg}
 
-        llm, model = get_llm_client(feature="chat")
-        system = _agent_system_prompt(
-            agent_config,
-            "You are the Chief of Staff in the Bigas chat UI. Answer general questions directly. "
-            f"{SPECIALIST_CAPABILITIES}"
-            "Never say a specialist cannot do something listed above. Never 'virtually' delegate — "
-            "call the specialist so they receive the task and reply in this thread. "
-            "You may run a simple lookup yourself (status, health, a short analytics question) "
-            "or look up Jira with lookup_jira / file a Task/Bug with create_jira_issue, "
-            "then answer the user yourself. Never trigger a production deploy — that is DevOps. "
-            "Use the portfolio catalog: this team covers every listed Jira project and repo, not only one website.",
-        )
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
-        messages.extend(history[-10:])
-        messages.append({"role": "user", "content": llm_user_message})
-
         mcp_client, all_tools = _list_chief_mcp_tools()
-        extra_openai = [_mcp_tool_to_openai_def(t) for t in _chief_direct_tools(all_tools)]
-
-        if model.lower().startswith("gpt") and hasattr(llm, "_client"):
-            response_text = _run_openai_tool_loop(
-                llm,
-                messages,
-                thread_id,
-                mcp_client=mcp_client,
-                extra_tools=extra_openai,
+        callable_tools = _chief_callable_tools(all_tools)
+        response_text = _run_agent_with_tools(
+            agent_id="chief",
+            agent_config=agent_config,
+            user_message=llm_user_message,
+            tools=callable_tools,
+            history=history,
+            extra_openai_tools=list(DELEGATE_TOOL_DEFS),
+            run_tool=lambda name, args: _dispatch_chief_tool(
+                name,
+                args,
                 user_message=llm_user_message,
+                thread_id=thread_id,
+                mcp_client=mcp_client,
                 user_id=user_id,
             )
-        else:
-            response_text = _run_json_agent_loop(
-                agent_id="chief",
-                agent_config=agent_config,
-                user_message=llm_user_message,
-                tools=all_tools,
-                history=history,
-                run_tool=lambda name, args: _dispatch_chief_tool(
-                    name,
-                    args,
-                    user_message=llm_user_message,
-                    thread_id=thread_id,
-                    mcp_client=mcp_client,
-                    user_id=user_id,
-                )
-                or "Done.",
-            )
+            or "Done.",
+        )
 
         if response_text:
             msg = store.add_message(
@@ -1085,7 +1135,7 @@ def handle_chat_message(
 
     client = _mcp_client()
     tools = _filter_tools_for_agent(client.list_tools(), agent_id)
-    response_text = _run_json_agent_loop(
+    response_text = _run_agent_with_tools(
         agent_id=agent_id,
         agent_config=agent_config,
         user_message=llm_user_message,

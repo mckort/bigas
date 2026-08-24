@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
 import openai
 
 from bigas.llm.client import LLMClient
-from bigas.llm.completion import LLMCompletion
+from bigas.llm.completion import LLMCompletion, ToolCall
 from bigas.llm.usage import TokenUsage, usage_from_mapping
 
 
@@ -67,8 +68,31 @@ class OpenAILLMClient(LLMClient):
                         "total_tokens": getattr(usage_obj, "total_tokens", None),
                     }
                 )
+        tool_calls = _tool_calls_from_openai_message(getattr(choice, "message", None))
         return LLMCompletion(
             text=(choice.message.content or "").strip(),
             finish_reason=str(finish) if finish is not None else None,
             usage=usage,
+            tool_calls=tool_calls,
         )
+
+
+def _tool_calls_from_openai_message(message: Any) -> tuple:
+    raw = getattr(message, "tool_calls", None) if message is not None else None
+    if not raw:
+        return ()
+    out = []
+    for index, tc in enumerate(raw):
+        fn = getattr(tc, "function", None)
+        name = (getattr(fn, "name", None) or "").strip() if fn is not None else ""
+        if not name:
+            continue
+        try:
+            args = json.loads(getattr(fn, "arguments", None) or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        call_id = (getattr(tc, "id", None) or "").strip() or f"call_{index}_{name}"
+        out.append(ToolCall(id=call_id, name=name, arguments=args))
+    return tuple(out)

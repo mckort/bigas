@@ -432,6 +432,25 @@ class JiraClient:
 
         return all_issues
 
+    def search_jql(
+        self,
+        *,
+        jql: str,
+        fields: Optional[List[str]] = None,
+        max_results_per_page: int = 25,
+        max_pages: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """Run an arbitrary JQL search (read-only)."""
+        query = (jql or "").strip()
+        if not query:
+            raise JiraError("jql is required")
+        return self._search_jql(
+            jql=query,
+            fields=fields or issue_lookup_fields(),
+            max_results_per_page=max_results_per_page,
+            max_pages=max_pages,
+        )
+
     def get_issue(
         self,
         issue_key: str,

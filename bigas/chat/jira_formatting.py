@@ -11,7 +11,8 @@ Jira ticket formatting (mandatory):
 - When you should file work in Jira or the internal Bigas board, call create_jira_issue yourself (Task or Bug only — never Epics). Never tell the user to create the issue themselves.
 - Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true.
 - Use lookup_jira when you need issue details or a project's open Epics. issue_key accepts several keys or a range (BIG-15 to BIG-18). Do not ask the user for an Epic key if you can look it up.
-- After lookup_jira (or any tool), answer the user's question in your own words. Never reply with only ticket links, Open Epics, or a Move button.
+- Use search_jira with JQL when the user described a filter (status, type, text) without naming keys. Do not invent issue keys.
+- After lookup_jira, search_jira, or any tool, answer the user's question in your own words. Never reply with only ticket links, Open Epics, or a Move button.
 - A ticket you looked up does not mean the new work belongs under the same Epic. Set parent_epic_key only when the new Task/Bug clearly belongs under that Epic's goal. Otherwise omit parent_epic_key and create a standalone ticket — that is valid and often correct. Never invent a parent, and never use a Task or Bug as parent.
 - When creating or referencing a ticket, include the ticket title and a clickable Markdown link. For Jira: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`. For the internal board: `[Ticket Title](/board?ticket=TICKET-KEY)`.
 - Never output raw JSON or HTML to the user.
@@ -59,6 +60,14 @@ def humanize_jira_tool_result(payload: Dict[str, Any]) -> Optional[str]:
     issues = payload.get("issues")
     issue = payload.get("issue")
     epics = payload.get("epics")
+    if (
+        payload.get("jql") is not None
+        and isinstance(issues, list)
+        and not issues
+        and not isinstance(issue, dict)
+        and not isinstance(epics, list)
+    ):
+        return "No matching issues."
     if isinstance(issues, list) or isinstance(issue, dict) or isinstance(epics, list):
         return _humanize_lookup_result(
             issue if isinstance(issue, dict) else None,
