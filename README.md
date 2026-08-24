@@ -3,7 +3,7 @@
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>A brand-aligned web chat with your virtual AI team — for the founder who ships, markets, and keeps the lights on, whether that's one project or several.</strong>
+  <strong>A brand-aligned web chat with your virtual AI team — a goal-oriented engine where you and the agents work side by side, on one project or several.</strong>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
@@ -19,6 +19,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server)
 - [Environment variables](#environment-variables)
 - [GA4 setup](#ga4-setup)
+- [Walkthrough: from quarterly Objective to shipped work](#walkthrough-from-quarterly-objective-to-shipped-work)
 - [Walkthrough: from Jira card to merged PR](#walkthrough-from-jira-card-to-merged-pr)
 - [Walkthrough: from PR to ready to merge](#walkthrough-from-pr-to-ready-to-merge)
 - [Walkthrough: from chat to production deploy](#walkthrough-from-chat-to-production-deploy)
@@ -70,6 +71,14 @@ Bigas is for the person who is product, marketing, and engineering at once — o
 
 Chat is the control plane. Chief of Staff sees everything you have connected; Marketing, Product, CTO, and DevOps each keep their own thread so you can jump in without reconstructing context.
 
+That control plane is a **goal-oriented engine**. You set the quarter's Objectives; Key Results are the scoreboard; the board is where you and the AI team work side by side until those numbers move.
+
+**This quarter you set the aim**
+
+1. Open **Objectives** at `/objectives` — not a report, the shared scoreboard the team works toward.
+2. Each Objective has Key Results you own. Tasks on the board link to a KR, so shipping a card and moving a number are the same story.
+3. You approve, drag, and sign off `current`. Agents research, plan, and implement the work you put in front of them. Nobody auto-starts an AI task because a KR is off track.
+
 **During the week you ship**
 
 Work lives on the native Kanban board (default, no Jira required) or on an existing Jira board.
@@ -105,7 +114,7 @@ Work lives on the native Kanban board (default, no Jira required) or on an exist
 
 ## What is Bigas?
 
-**Bigas** (Latin for *team*) is an open-source MCP server that gives a solo founder or small team a virtual staff across **marketing, product, and engineering** — without hiring anyone.
+**Bigas** (Latin for *team*) is an open-source MCP server that gives a solo founder or small team a virtual staff across **marketing, product, and engineering** — without hiring anyone. Chat and the Kanban board are how work moves. **Objectives** are why: humans and AI agents work side by side until the quarter's Key Results move.
 
 It currently ships five specialists, reachable from the **[web chat](#chat-web-interface)** at `/` (Chief of Staff by default, or talk to any specialist directly):
 
@@ -113,7 +122,7 @@ It currently ships five specialists, reachable from the **[web chat](#chat-web-i
 |---|---|
 | **Chief of Staff** | Default chat agent across the whole Jira/GitHub portfolio: answers general questions, delegates to Marketing / Product / CTO / DevOps, can file Jira Task/Bug issues, and monitors progress |
 | **Senior Marketing Analyst** | GA4 web analytics (per site via `BIGAS_GA4_PROPERTY_MAP`) + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis; can file marketing Jira issues |
-| **Product Manager** | Jira board automation — AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval; can create Jira Task/Bug issues |
+| **Product Manager** | Objectives + Kanban — quarterly OKRs on `/objectives`, AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval; can create Jira Task/Bug issues |
 | **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord; can file Jira follow-ups |
 | **DevOps** | Pre-flight deployment risk checks (migrations, config), trigger GitHub Actions deploy workflows (e.g. separate backend + web for vcfieldassistant), post-deploy HTTP health checks, **self-healing CI/CD** (failed workflow_run webhook → log analysis → hotfix PR on `bigas-hotfix/*`); can file Jira follow-ups |
 
@@ -321,6 +330,22 @@ Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_M
 
 ---
 
+## Walkthrough: from quarterly Objective to shipped work
+
+This is the flow that makes Bigas a **goal-oriented engine**: you name what winning the quarter looks like, Key Results hold the numbers, and humans and AI agents work the same board until those numbers move.
+
+**Objective** is its own issue type. **Epic stays Epic** — a delivery container, not a stand-in for the quarter's aim. Jira import keeps that split: Epic → Epic, Objective → Objective.
+
+1. Open `/objectives` and write the Objective in plain language.
+2. Add Key Results on that Objective — a metric, a target, a direction. You sign off `current` yourself. Bigas does not invent confidence scores or committed/stretch bets.
+3. Create or link Tasks under a Key Result. Those cards live on `/board` with everything else.
+4. **Open on board** filters the board to that Objective; **Show on board** filters to one KR. You still drag cards. AI columns still research, plan, and implement — they do not auto-start because a KR is off track.
+5. When a KR's number has moved, you update `current`. The dashboard shows on track / at risk / off track against expected pace.
+
+Humans decide. Agents execute the work you put in front of them. The Objective is the shared scoreboard.
+
+---
+
 ## Walkthrough: from Jira card to merged PR
 
 This is the flow that makes the **Product Manager** and **CTO** specialists work together: dragging a Jira card triggers AI research, then AI design, then an AI-implemented pull request — with a human approval gate between every AI step.
@@ -334,7 +359,7 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 3. **`In Progress (AI)`** — Bigas launches a Cursor cloud agent against the repo mapped to this Jira project, which implements the plan and opens a pull request. The PR link is commented on the issue; you get pinged in `bigas-cto` and the CTO chat.
 4. Once the CTO specialist's autofix loop reports the PR is **ready to merge**, Discord pings you. The card stays in **In Progress (AI)** until the PR is **merged** (Bigas auto-merge, GitHub auto-merge after checks, or a human merge). Then Bigas finds the ticket key from the PR title/body and moves the card to **Final approval (manual)**. How that review/autofix loop works: [from PR to ready to merge](#walkthrough-from-pr-to-ready-to-merge).
 
-**Epics** take a different path (Goal Engine). Dragging an Epic into those same AI columns does **not** launch a Cursor implement agent. Instead Bigas creates child Tasks linked to the Epic, then (once the Epic is In Progress) posts a weekly progress report. Details: [Proactive Goal Engine](#proactive-goal-engine-cloud-scheduler).
+**Epics** take a different path (Goal Engine). Dragging an Epic into those same AI columns does **not** launch a Cursor implement agent. Instead Bigas creates child Tasks linked to the Epic, then (once the Epic is In Progress) posts a weekly progress report. Details: [Proactive Goal Engine](#proactive-goal-engine-cloud-scheduler). Quarterly aims are **Objectives**, not Epics — see [from quarterly Objective to shipped work](#walkthrough-from-quarterly-objective-to-shipped-work).
 
 Every AI step lands in a column with **"(manual)"** in the name — cards do not advance without a human drag. Merging the PR stays manual unless you enable `BIGAS_CTO_AUTO_MERGE` (see [cto-autofix.md](docs/cto-autofix.md)).
 
@@ -482,6 +507,7 @@ Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend 
 | **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
 | **Starter prompts** | Empty threads show clickable example questions (e.g. summarize PRs, draft a tweet, GA4 traffic) so you can try the team without reading the API reference |
 | **Kanban board** | Native task pipeline at `/board` — multiple boards per project plus a personal list. Project boards mirror Jira AI columns (research, design, implement); personal boards use a simple To Do → Done flow without agent automation |
+| **Objectives** | Quarterly OKR dashboard at `/objectives`. Each Objective has Key Results you sign off; tasks on the board link to a KR. Open an Objective or KR on the board to filter the work that moves the number |
 | **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
 
 ### Setup
@@ -686,7 +712,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales
 
 ### Proactive Goal Engine (Cloud Scheduler)
 
-Bigas treats **Epics** as high-level project goals. You create them on the native `/board` (or in Jira when `USE_INTERNAL_BOARD=false`) and drag them through the same columns as Tasks — but Epics never go through Research-write / Design-write / Cursor implement. With the internal board, `evaluate-goals` reads those Epics from the ticket store. With Jira as the driver, `jira_status_automation` still runs the Goal Engine on Epic status changes. Cloud Scheduler repeats the evaluation weekly for Epics still in those columns.
+**Epics are not Objectives.** Quarterly OKRs live on `/objectives` (see [from quarterly Objective to shipped work](#walkthrough-from-quarterly-objective-to-shipped-work)). The Goal Engine below is the weekly loop on **Epics**: delivery containers that Chief of Staff breaks into Tasks. You still create Epics on the native `/board` (or in Jira when `USE_INTERNAL_BOARD=false`) and drag them through the same columns as Tasks — but Epics never go through Research-write / Design-write / Cursor implement. With the internal board, `evaluate-goals` reads those Epics from the ticket store. With Jira as the driver, `jira_status_automation` still runs the Goal Engine on Epic status changes. Cloud Scheduler repeats the evaluation weekly for Epics still in those columns.
 
 | Epic status | Agent behavior |
 |---|---|
@@ -906,5 +932,5 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 ---
 
 <div align="center">
-  <strong>Built for solo founders who need a virtual team — on one project or several</strong>
+  <strong>Built for solo founders who need a virtual team that works toward the same Objectives — on one project or several</strong>
 </div>
