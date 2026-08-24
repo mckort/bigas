@@ -156,7 +156,7 @@ def test_jira_formatting_rules_require_english():
     assert "create_jira_issue" in JIRA_FORMATTING_RULES
     assert "Never tell the user to create the issue themselves" in JIRA_FORMATTING_RULES
     assert JIRA_AWARE_AGENT_IDS == frozenset(
-        {"chief", "marketing", "product", "cto", "devops"}
+        {"chief", "marketing", "product", "cto", "cfo", "devops"}
     )
     prompt = _agent_system_prompt(
         {"agent_id": "marketing", "system_prompt_goals": "GA4 analyst."}

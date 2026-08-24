@@ -184,7 +184,7 @@ def fetch_ai_usage(
     *,
     days: int = 7,
     provider: str = "all",
-    feature_prefix: Optional[str] = "cto_",
+    feature_prefix: Optional[str] = None,
     providers: Optional[Sequence[UsageProvider]] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
@@ -213,17 +213,33 @@ def fetch_ai_usage(
 
     by_provider: Dict[str, float] = defaultdict(float)
     by_feature: Dict[str, float] = defaultdict(float)
+    by_app: Dict[str, float] = defaultdict(float)
+    by_model_tier: Dict[str, float] = defaultdict(float)
     activity_by_feature: Dict[str, int] = defaultdict(int)
     cost_total = 0.0
     cost_known = 0
+    empty_fallback_events = 0
+    empty_response_events = 0
     for ev in events:
         activity_by_feature[ev.feature or "unknown"] += 1
+        meta = ev.meta if isinstance(ev.meta, dict) else {}
+        if meta.get("empty_fallback") in (True, "true", 1):
+            empty_fallback_events += 1
+        if meta.get("empty_response") in (True, "true", 1):
+            empty_response_events += 1
         if ev.est_cost_usd is None:
             continue
         cost_total += float(ev.est_cost_usd)
         cost_known += 1
         by_provider[ev.provider] += float(ev.est_cost_usd)
         by_feature[ev.feature] += float(ev.est_cost_usd)
+        app = str(meta.get("app") or "").strip() or (
+            "vcfieldassistant" if str(meta.get("gcp_project") or "") == "vcfieldassistant" else "bigas"
+        )
+        by_app[app] += float(ev.est_cost_usd)
+        tier = str(meta.get("model_tier") or "").strip()
+        if tier:
+            by_model_tier[tier] += float(ev.est_cost_usd)
 
     # Top PRs by estimated cost (cursor meta.pr_url).
     pr_costs: Dict[str, float] = defaultdict(float)
@@ -247,7 +263,11 @@ def fetch_ai_usage(
             "events_with_cost": cost_known,
             "by_provider": {k: round(v, 6) for k, v in sorted(by_provider.items())},
             "by_feature": {k: round(v, 6) for k, v in sorted(by_feature.items())},
+            "by_app": {k: round(v, 6) for k, v in sorted(by_app.items())},
+            "by_model_tier": {k: round(v, 6) for k, v in sorted(by_model_tier.items())},
             "activity_by_feature": dict(sorted(activity_by_feature.items())),
+            "empty_fallback_events": empty_fallback_events,
+            "empty_response_events": empty_response_events,
         },
         "top_prs": [{"pr_url": u, "est_cost_usd": round(c, 6)} for u, c in top_prs],
         "events": [e.as_dict() for e in events],
@@ -278,6 +298,23 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         lines.append("By feature:")
         for name, cost in sorted(by_feature.items(), key=lambda kv: kv[1], reverse=True):
             lines.append(f"- {name}: ~${float(cost):.4f}")
+
+    by_app = totals.get("by_app") or {}
+    if by_app:
+        lines.append("By app:")
+        for name, cost in sorted(by_app.items(), key=lambda kv: kv[1], reverse=True):
+            lines.append(f"- {name}: ~${float(cost):.4f}")
+    by_model_tier = totals.get("by_model_tier") or {}
+    if by_model_tier:
+        lines.append("By model tier (judgment=Pro, helper=Flash):")
+        for name, cost in sorted(by_model_tier.items(), key=lambda kv: kv[1], reverse=True):
+            lines.append(f"- {name}: ~${float(cost):.4f}")
+    empty_fb = totals.get("empty_fallback_events") or 0
+    empty_rs = totals.get("empty_response_events") or 0
+    if empty_fb or empty_rs:
+        lines.append(
+            f"Empty Pro responses: {empty_rs}; Flash fallbacks after Pro: {empty_fb}"
+        )
 
     activity_by_feature = totals.get("activity_by_feature") or {}
     if activity_by_feature:

@@ -1612,7 +1612,7 @@ def fetch_ai_usage_endpoint():
     Request JSON:
       - days (int, default 7, max 90)
       - provider (str, default "all"): all | cursor | llm_logs
-      - feature_prefix (str, default "cto_")
+      - feature_prefix (str, optional): filter features; omit/empty = all (Bigas + VCFA)
       - post_to_discord (bool, default false)
     """
     data = request.get_json(silent=True)
@@ -1625,7 +1625,7 @@ def fetch_ai_usage_endpoint():
     provider = (data.get("provider") or "all").strip() or "all"
     feature_prefix = data.get("feature_prefix")
     if feature_prefix is None:
-        feature_prefix = "cto_"
+        feature_prefix = ""
     else:
         feature_prefix = str(feature_prefix)
     post_to_discord = bool(data.get("post_to_discord") or False)
@@ -2020,7 +2020,7 @@ def get_manifest():
                         },
                         "feature_prefix": {
                             "type": "string",
-                            "description": 'Optional feature filter prefix (default "cto_")',
+                            "description": 'Optional feature filter prefix. Omit or "" for all apps/features (Gemini Bigas + VCFA, Cursor). Example: "cto_" or "llm."',
                         },
                         "post_to_discord": {
                             "type": "boolean",

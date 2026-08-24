@@ -10,6 +10,7 @@ from bigas.providers.usage.cursor import CursorCloudAgentUsageProvider
 from bigas.providers.usage.llm_logs import (
     CloudRunLlmUsageProvider,
     _parse_log_payload,
+    _usage_project_ids,
 )
 from bigas.resources.cto.usage.pricing import (
     CursorTokenUsage,
@@ -140,7 +141,66 @@ class FetchAiUsageTests(unittest.TestCase):
         self.assertEqual(report["totals"]["events"], 1)
         self.assertEqual(report["totals"]["activity_by_feature"], {"cto_autofix": 1})
         self.assertEqual(report["totals"]["est_cost_usd"], 1.25)
+        self.assertEqual(report["totals"]["by_app"]["bigas"], 1.25)
         self.assertEqual(report["top_prs"][0]["pr_url"], "https://github.com/o/r/pull/9")
+
+    def test_aggregates_app_and_model_tier(self):
+        class FakeProvider:
+            name = "llm_logs"
+            display_name = "Fake"
+
+            def fetch_usage(self, *, start, end, feature_prefix=None):
+                return [
+                    UsageEvent(
+                        provider="llm_logs",
+                        source_id="v1",
+                        started_at=start.isoformat(),
+                        feature="llm.living_analysis",
+                        model="gemini-2.5-pro",
+                        est_cost_usd=1.0,
+                        meta={
+                            "app": "vcfieldassistant",
+                            "model_tier": "judgment",
+                            "empty_response": True,
+                            "empty_fallback": True,
+                        },
+                    ),
+                    UsageEvent(
+                        provider="llm_logs",
+                        source_id="v2",
+                        started_at=start.isoformat(),
+                        feature="llm.living_analysis",
+                        model="gemini-2.5-flash",
+                        est_cost_usd=0.2,
+                        meta={"app": "vcfieldassistant", "model_tier": "helper"},
+                    ),
+                ]
+
+        now = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+        report = fetch_ai_usage(
+            days=7,
+            provider="all",
+            feature_prefix=None,
+            providers=[FakeProvider()],
+            now=now,
+        )
+        self.assertEqual(report["totals"]["by_app"]["vcfieldassistant"], 1.2)
+        self.assertEqual(report["totals"]["by_model_tier"]["judgment"], 1.0)
+        self.assertEqual(report["totals"]["by_model_tier"]["helper"], 0.2)
+        self.assertEqual(report["totals"]["empty_response_events"], 1)
+        self.assertEqual(report["totals"]["empty_fallback_events"], 1)
+        msg = format_weekly_cto_ai_report(report)
+        self.assertIn("vcfieldassistant", msg)
+        self.assertIn("judgment", msg)
+
+    @patch.dict("os.environ", {"BIGAS_LLM_USAGE_PROJECTS": ""}, clear=False)
+    def test_default_usage_projects_include_vcfa(self):
+        ids = _usage_project_ids("bigas-503008")
+        self.assertEqual(ids, ["bigas-503008", "vcfieldassistant"])
+
+    @patch.dict("os.environ", {"BIGAS_LLM_USAGE_PROJECTS": "a, b"}, clear=False)
+    def test_usage_projects_env_override(self):
+        self.assertEqual(_usage_project_ids("ignored"), ["a", "b"])
 
     def test_weekly_report_uses_totals_not_truncated_events(self):
         report = {

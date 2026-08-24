@@ -39,7 +39,7 @@ def _email_system_prompt() -> str:
         '"params": {...}}\n'
         "  ]\n"
         "}\n"
-        "For delegate: params must include agent_id (marketing|product|cto|devops) and task.\n"
+        "For delegate: params must include agent_id (marketing|product|cto|cfo|devops) and task.\n"
         "For tool: params must include tool_name and arguments object.\n"
         "For draft_reply: params must include text (the suggested reply body). Label it Send.\n"
     )

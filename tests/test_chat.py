@@ -48,7 +48,7 @@ def test_list_agents(client):
     assert resp.status_code == 200
     agents = resp.get_json()["agents"]
     ids = {a["agent_id"] for a in agents}
-    assert {"chief", "marketing", "product", "cto", "devops"}.issubset(ids)
+    assert {"chief", "marketing", "product", "cto", "cfo", "devops"}.issubset(ids)
 
 
 def test_create_thread_and_messages(client, monkeypatch):
@@ -618,7 +618,7 @@ def test_create_jira_issue_is_shared_across_agents():
     ]
     callable_names = [t["name"] for t in _chief_callable_tools(catalog)]
     assert callable_names[:3] == ["lookup_jira", "search_jira", "create_jira_issue"]
-    for agent_id in ("marketing", "product", "cto", "devops"):
+    for agent_id in ("marketing", "product", "cto", "cfo", "devops"):
         names = [t["name"] for t in _filter_tools_for_agent(catalog, agent_id)]
         assert names[:3] == ["lookup_jira", "search_jira", "create_jira_issue"], agent_id
         assert "lookup_jira" in names

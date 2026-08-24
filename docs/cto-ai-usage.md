@@ -15,11 +15,20 @@ Registered under domain `usage` (see `GET /mcp/providers`):
 | Provider | Source | Config |
 |---|---|---|
 | `cursor` | Cursor Cloud Agents API (`List Agents` + `/usage`) | `CURSOR_API_KEY` |
-| `llm_logs` | Cloud Logging lines with `event: llm_usage` | `GOOGLE_CLOUD_PROJECT` (or `GOOGLE_PROJECT_ID`) + runtime credentials with `logging.read` |
+| `llm_logs` | Cloud Logging lines with `event: llm_usage` | Home project + `vcfieldassistant` (override with `BIGAS_LLM_USAGE_PROJECTS`). Needs `logging.read` on each project. |
 
-Adding Claude (or any LLM) later usually needs **no new history provider** if calls go through `bigas.llm` (`get_llm_client`) and keep emitting `llm_usage` logs. Add a new provider only for an external meter (like Cursor).
+Adding Claude (or any LLM) later usually needs **no new history provider** if calls go through `bigas.llm` (`get_llm_client`) and emit `event: llm_usage` structured logs. VC Field Assistant emits the same line from `recordLlmUsage`, with extra fields:
+
+- `app` (`bigas` | `vcfieldassistant`)
+- `gcp_project`
+- `model_tier` (`judgment` = Pro / thesis-moats-landscape, `helper` = Flash)
+- `analysis_pass` (e.g. `derived`, `competitor_proposal`)
+- `empty_response` / `empty_fallback` / `thinking_budget`
+
+`fetch_ai_usage` totals include `by_app`, `by_model_tier`, `empty_response_events`, and `empty_fallback_events`. The **CFO** chat agent reads these and proposes savings.
 
 Optional: `BIGAS_CTO_USAGE_LOG_FILTER` — extra Cloud Logging filter clause ANDed into the query.
+`BIGAS_LLM_USAGE_PROJECTS` — comma-separated GCP project IDs (default: current project + `vcfieldassistant`).
 
 List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) when the agent payload has no model id.
 
@@ -37,7 +46,7 @@ List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) wh
 ```
 
 - `provider`: `all` | `cursor` | `llm_logs`
-- `feature_prefix`: optional filter (default `cto_`). Pass `""` / omit via weekly report for all features (`chat`, `marketing`, `cto_pr_review`, …).
+- `feature_prefix`: optional filter. Omit or `""` for all features (Bigas chat/PR review **and** VCFA living analysis). Example: `cto_` or `llm.`.
 - Returns totals (including `activity_by_feature` LLM call counts), per-provider / per-feature costs, top PRs (from Cursor agent names), and events (capped at 200 in the HTTP body). Weekly Discord reports use `totals.activity_by_feature`, not the truncated events list.
 
 ### `POST /mcp/tools/weekly_cto_ai_report`

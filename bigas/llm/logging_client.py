@@ -12,6 +12,29 @@ from bigas.llm.usage import TokenUsage, usage_from_mapping, usage_log_payload
 logger = logging.getLogger(__name__)
 
 
+def _default_usage_extra(*, feature: str, model: str) -> Dict[str, Any]:
+    import os
+
+    name = (model or "").lower()
+    if "flash" in name:
+        tier = "helper"
+    elif "pro" in name:
+        tier = "judgment"
+    else:
+        tier = None
+    extra: Dict[str, Any] = {
+        "app": "bigas",
+        "gcp_project": (
+            (os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip()
+            or (os.environ.get("GOOGLE_PROJECT_ID") or "").strip()
+            or None
+        ),
+    }
+    if tier:
+        extra["model_tier"] = tier
+    return extra
+
+
 class LoggingLLMClient(LLMClient):
     """
     Delegates to an inner LLMClient and logs list-price usage after each call.
@@ -95,6 +118,7 @@ class LoggingLLMClient(LLMClient):
                         feature=self._feature,
                         model=self._model,
                         usage=usage,
+                        **_default_usage_extra(feature=self._feature, model=self._model),
                     ),
                     ensure_ascii=True,
                     sort_keys=True,
