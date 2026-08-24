@@ -157,16 +157,27 @@ def thread_messages(thread_id: str):
 
 def _parse_chat_message_request():
     """Return (content, client_id, [(filename, content_type, data), ...])."""
-    from bigas.tickets.attachments import AttachmentError, read_upload_body
+    from bigas.tickets.attachments import (
+        AttachmentError,
+        MAX_ATTACHMENTS_PER_CHAT_MESSAGE,
+        read_upload_body,
+    )
 
     ctype = (request.content_type or "").lower()
     if "multipart/form-data" in ctype:
         content = (request.form.get("content") or "").strip()
         client_id = (request.form.get("client_id") or "").strip() or None
+        named_uploads = [
+            uploaded
+            for uploaded in request.files.getlist("file")
+            if uploaded is not None and (uploaded.filename or "").strip()
+        ]
+        if len(named_uploads) > MAX_ATTACHMENTS_PER_CHAT_MESSAGE:
+            raise AttachmentError(
+                f"At most {MAX_ATTACHMENTS_PER_CHAT_MESSAGE} attachments per message"
+            )
         uploads = []
-        for uploaded in request.files.getlist("file"):
-            if uploaded is None or not (uploaded.filename or "").strip():
-                continue
+        for uploaded in named_uploads:
             try:
                 data = read_upload_body(uploaded.stream)
             except AttachmentError:
@@ -188,7 +199,11 @@ def _parse_chat_message_request():
 def chat_attachment_detail(thread_id: str, attachment_id: str):
     from io import BytesIO
 
-    from bigas.tickets.attachments import find_message_attachment, get_attachment_blob_store
+    from bigas.tickets.attachments import (
+        IMAGE_MIME_TYPES,
+        find_message_attachment,
+        get_attachment_blob_store,
+    )
 
     store = get_chat_store()
     user_id = g.chat_user["uid"]
@@ -202,10 +217,11 @@ def chat_attachment_detail(thread_id: str, attachment_id: str):
     data = get_attachment_blob_store().get(path) if path else None
     if data is None:
         return jsonify({"error": "Attachment not found"}), 404
+    content_type = record.get("content_type") or "application/octet-stream"
     return send_file(
         BytesIO(data),
-        mimetype=record.get("content_type") or "application/octet-stream",
-        as_attachment=False,
+        mimetype=content_type,
+        as_attachment=content_type not in IMAGE_MIME_TYPES,
         download_name=record.get("filename") or "attachment",
     )
 

@@ -299,6 +299,39 @@ function LocalChatImagePreview({ file }) {
   )
 }
 
+function ChatAttachmentDownload({ threadId, attachment }) {
+  const [downloading, setDownloading] = useState(false)
+
+  async function handleDownload() {
+    if (!threadId || !attachment?.id || downloading) return
+    setDownloading(true)
+    try {
+      const blob = await fetchChatAttachmentBlob(threadId, attachment.id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = attachment.filename || 'attachment'
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      /* ignore download errors */
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleDownload}
+      disabled={downloading}
+      className="mt-1 text-xs underline underline-offset-2 hover:opacity-70 disabled:opacity-50"
+    >
+      {downloading ? 'Downloading…' : 'Download'}
+    </button>
+  )
+}
+
 function ChatAttachmentPreview({ threadId, attachment }) {
   const [url, setUrl] = useState('')
   useEffect(() => {
@@ -345,7 +378,11 @@ function MessageAttachments({ message, threadId }) {
         <div key={attachment.id} className="rounded-xl px-3 py-2 bg-white/40 text-sm">
           <p className="font-medium truncate">{attachment.filename}</p>
           <p className="text-[11px] opacity-70">{formatAttachmentSize(attachment.size_bytes)}</p>
-          <ChatAttachmentPreview threadId={threadId} attachment={attachment} />
+          {isImageAttachment(attachment) ? (
+            <ChatAttachmentPreview threadId={threadId} attachment={attachment} />
+          ) : (
+            <ChatAttachmentDownload threadId={threadId} attachment={attachment} />
+          )}
         </div>
       ))}
     </div>
@@ -1070,11 +1107,6 @@ export default function ChatLayout({
     const text = (messageText ?? input).trim()
     const files = messageText ? [] : pendingFiles
     if ((!text && !files.length) || !threadId || sending) return
-    if (!messageText) {
-      setInput('')
-      setPendingFiles([])
-      setAttachError('')
-    }
     setSending(true)
     setWaitingForReply(true)
     const clientId = createClientMessageId()
@@ -1101,11 +1133,15 @@ export default function ChatLayout({
           result.status !== 'in_progress' && !lastMessageIsInProgress(next) && !res.deploy_poll_active
         if (done) setWaitingForReply(false)
       }
+      if (!messageText) {
+        setInput('')
+        setPendingFiles([])
+        setAttachError('')
+      }
     } catch (err) {
       setWaitingForReply(false)
       setMessages((prev) => [
         ...prev.filter((m) => m.message_id !== optimistic.message_id),
-        optimistic,
         {
           message_id: `err-${Date.now()}`,
           role: 'assistant',
@@ -1315,10 +1351,14 @@ export default function ChatLayout({
                     .filter((item) => item.type.startsWith('image/'))
                     .map((item) => item.getAsFile())
                     .filter(Boolean)
-                  if (images.length) {
-                    e.preventDefault()
+                  if (!images.length) return
+                  const pastedText = (e.clipboardData?.getData('text/plain') || '').trim()
+                  if (pastedText) {
                     addPendingFiles(images)
+                    return
                   }
+                  e.preventDefault()
+                  addPendingFiles(images)
                 }}
                 placeholder={`Message ${activeAgent.name}…`}
                 className="flex-1 bg-transparent border-0 px-1 py-2 text-sm sm:text-base min-w-0 focus:outline-none placeholder:text-muted"

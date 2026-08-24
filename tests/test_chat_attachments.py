@@ -20,6 +20,8 @@ from flask import Flask
 from bigas.chat import db as chat_db
 from bigas.resources.chat.endpoints import chat_bp
 from bigas.tickets.attachments import (
+    AttachmentError,
+    get_attachment_blob_store,
     message_text_for_llm,
     process_chat_files,
     reset_attachment_blob_store_for_tests,
@@ -83,6 +85,52 @@ def test_process_chat_files_interprets_screenshot():
     assert "iphone.png" in records[0]["extracted_text"]
     assert "Modal cut off" in records[0]["extracted_text"]
     assert records[0]["storage_path"].startswith("chat_attachments/thread-1/")
+
+
+def test_process_chat_files_validates_before_storage():
+    set_image_describer(lambda data, mime, name: "ok")
+    with pytest.raises(AttachmentError):
+        process_chat_files(
+            [
+                ("good.png", "image/png", b"\x89PNG"),
+                ("bad.bin", "application/octet-stream", b"data"),
+            ],
+            thread_id="thread-orphan",
+            uploaded_by="dev-user",
+        )
+    store = get_attachment_blob_store()
+    assert not store._data
+
+
+def test_rejects_too_many_multipart_files(client, monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.chat.endpoints.handle_chat_message",
+        lambda **kwargs: {"status": "complete"},
+    )
+    thread_id = client.post(
+        "/api/chat/threads",
+        headers={**_auth_headers(), "Content-Type": "application/json"},
+        data=json.dumps({"agent_id": "chief"}),
+    ).get_json()["thread"]["thread_id"]
+
+    resp = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        headers=_auth_headers(),
+        data={
+            "content": "too many",
+            "file": [
+                (io.BytesIO(b"a"), "a.txt"),
+                (io.BytesIO(b"b"), "b.txt"),
+                (io.BytesIO(b"c"), "c.txt"),
+                (io.BytesIO(b"d"), "d.txt"),
+                (io.BytesIO(b"e"), "e.txt"),
+                (io.BytesIO(b"f"), "f.txt"),
+            ],
+        },
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert "5 attachments" in resp.get_json()["error"]
 
 
 def test_send_chat_message_with_screenshot(client, monkeypatch):

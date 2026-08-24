@@ -185,8 +185,7 @@ def process_chat_files(
         raise AttachmentError(
             f"At most {MAX_ATTACHMENTS_PER_CHAT_MESSAGE} attachments per message"
         )
-    records: List[Dict[str, Any]] = []
-    blobs = get_attachment_blob_store()
+    validated: List[Tuple[str, str, bytes]] = []
     for index, (filename, content_type, data) in enumerate(uploads):
         safe_name, mime = validate_upload(
             filename=filename,
@@ -196,6 +195,11 @@ def process_chat_files(
             max_count=MAX_ATTACHMENTS_PER_CHAT_MESSAGE,
             entity="message",
         )
+        validated.append((safe_name, mime, data or b""))
+
+    records: List[Dict[str, Any]] = []
+    blobs = get_attachment_blob_store()
+    for safe_name, mime, data in validated:
         extracted = extract_attachment_text(
             data=data,
             filename=safe_name,
@@ -205,14 +209,14 @@ def process_chat_files(
         record = build_attachment_record(
             filename=safe_name,
             content_type=mime,
-            size_bytes=len(data or b""),
+            size_bytes=len(data),
             storage_path="",
             extracted_text=extracted,
             uploaded_by=uploaded_by,
         )
         path = chat_attachment_blob_name(thread_id, record["id"], safe_name)
         record["storage_path"] = path
-        blobs.put(path, data or b"", mime)
+        blobs.put(path, data, mime)
         records.append(record)
     return records
 
