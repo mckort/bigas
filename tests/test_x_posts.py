@@ -26,6 +26,7 @@ from bigas.resources.product.x_posts.service import (
     XPostsError,
     XPostsService,
     _extract_json,
+    fallback_tweets_from_jira_features,
     format_discord_message,
 )
 from bigas.resources.product.x_posts.signing import sign_draft_id, verify_draft_token
@@ -314,6 +315,100 @@ def test_generate_retries_when_jira_feature_commits_skipped(monkeypatch):
     assert result["jira_features"] == ["VFA-32"]
     assert "pending rejection" in result["tweets"][0].lower()
     assert responses == []
+
+
+def test_fallback_tweets_strip_jira_keys_and_group_by_product():
+    tweets, news = fallback_tweets_from_jira_features(
+        [
+            {
+                "project_key": "VFA",
+                "jira_key": "VFA-32",
+                "subject": "VFA-32: Add Pending rejection pipeline column",
+            },
+            {
+                "project_key": "BIG",
+                "jira_key": "BIG-19",
+                "subject": "BIG-19 Instead of using Jira for ticket pipeline - build into bigas chat UI",
+            },
+            {
+                "project_key": "BIG",
+                "jira_key": "BIG-12",
+                "subject": "BIG-12: Implement Proactive Goal Engine (Agentic Workflows)",
+            },
+        ]
+    )
+    assert len(tweets) == 2
+    assert all("VFA-32" not in t and "BIG-19" not in t and "BIG-12" not in t for t in tweets)
+    vfa = next(t for t in tweets if t.startswith("VC Field Assistant:"))
+    bigas = next(t for t in tweets if t.startswith("Bigas:"))
+    assert "Pending rejection pipeline column" in vfa
+    assert "build into bigas chat UI" in bigas
+    assert "Proactive Goal Engine" in bigas
+    assert "Add Pending rejection pipeline column" in news
+    assert all(len(t) <= 280 for t in tweets)
+
+
+def test_generate_falls_back_when_model_skips_jira_features(monkeypatch):
+    monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
+    monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
+    store = InMemoryDraftStore()
+    provider = XProvider(
+        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
+    )
+    llm = SimpleNamespace(
+        complete=lambda **_kwargs: json.dumps(
+            {
+                "newsworthy": [],
+                "skip": True,
+                "reason": "No newsworthy user-facing changes this period.",
+                "tweets": [],
+            }
+        )
+    )
+    service = XPostsService(x_provider=provider, draft_store=store)
+    service._llm = llm
+    service._model = "test-model"
+    with patch(
+        "bigas.resources.product.x_posts.service.fetch_commits_for_projects",
+        return_value={
+            "by_project": {
+                "VFA": [
+                    {"subject": "Fix type pin", "is_autofix": False},
+                    {
+                        "subject": "VFA-33: Generate automated Business Intelligence",
+                        "is_autofix": False,
+                    },
+                ],
+                "BIG": [
+                    {
+                        "subject": "BIG-19: Instead of using Jira for ticket pipeline - build into bigas chat UI",
+                        "is_autofix": False,
+                    },
+                ],
+            },
+            "stats": {
+                "VFA": {"total": 2, "repo": "mckort/vcfieldassistant"},
+                "BIG": {"total": 1, "repo": "mckort/bigas"},
+            },
+            "errors": [],
+        },
+    ), patch(
+        "bigas.resources.product.x_posts.service.project_repo_map_from_env",
+        return_value={
+            "VFA": "mckort/vcfieldassistant",
+            "BIG": "mckort/bigas",
+        },
+    ):
+        result = service.generate(days=7, project_keys=["VFA", "BIG"], dry_run=False)
+    assert result["skip"] is False
+    assert result["jira_features"] == ["VFA-33", "BIG-19"]
+    assert result["reason"] == "Fallback draft from shipped Jira features"
+    assert any("Business Intelligence" in t for t in result["tweets"])
+    assert any("chat UI" in t for t in result["tweets"])
+    assert all("VFA-33" not in t and "BIG-19" not in t for t in result["tweets"])
+    draft = store.load(result["draft_id"])
+    assert draft["tweets"] == result["tweets"]
+    assert "Approve" in format_discord_message(result)
 
 
 def test_generate_omits_autofix_commits(monkeypatch):

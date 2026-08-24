@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlencode
 
 from bigas.llm.factory import get_llm_client
@@ -23,6 +24,7 @@ from bigas.resources.product.progress_updates.github_commits import (
     format_commits_for_prompt,
     format_jira_feature_commits,
     jira_feature_commits,
+    jira_issue_key_in_subject,
     project_repo_map_from_env,
 )
 from bigas.resources.product.x_posts.drafts import (
@@ -41,10 +43,83 @@ from bigas.resources.product.x_posts.signing import sign_draft_id, signing_secre
 logger = logging.getLogger(__name__)
 
 MAX_THREAD_TWEETS = 5
+_LEADING_SEPARATORS_RE = re.compile(r"^[\s:\-–—|/]+")
+_MULTI_SPACE_RE = re.compile(r"\s+")
 
 
 class XPostsError(RuntimeError):
     pass
+
+
+def _public_feature_summary(subject: str) -> str:
+    """Commit subject without the Jira key, for public tweets."""
+    text = str(subject or "").strip()
+    key = jira_issue_key_in_subject(text)
+    if key:
+        idx = text.upper().find(key.upper())
+        if idx != -1:
+            text = (text[:idx] + text[idx + len(key) :]).strip()
+    text = _LEADING_SEPARATORS_RE.sub("", text)
+    return _MULTI_SPACE_RE.sub(" ", text).strip()
+
+
+def _tweet_for_product(label: str, items: Sequence[str]) -> str:
+    body = "; ".join(item for item in items if item)
+    if not body:
+        return ""
+    name = (label or "").strip()
+    if name and name != "the product":
+        return f"{name}: {body}"
+    return body
+
+
+def fallback_tweets_from_jira_features(
+    features: Sequence[Dict[str, Any]],
+) -> Tuple[List[str], List[str]]:
+    """Deterministic tweets when the model skips a week that shipped Jira features."""
+    by_product: Dict[str, List[str]] = {}
+    newsworthy: List[str] = []
+    seen_news = set()
+    for feat in features or []:
+        if not isinstance(feat, dict):
+            continue
+        key = str(feat.get("jira_key") or "").strip() or (
+            jira_issue_key_in_subject(str(feat.get("subject") or "")) or ""
+        )
+        project = str(feat.get("project_key") or "").strip().upper()
+        if not project and key:
+            project = key.split("-", 1)[0].upper()
+        summary = _public_feature_summary(str(feat.get("subject") or ""))
+        if not summary:
+            continue
+        folded = summary.casefold()
+        if folded not in seen_news:
+            seen_news.add(folded)
+            newsworthy.append(summary)
+        label = product_label_for_project_keys([project] if project else [])
+        bucket = by_product.setdefault(label, [])
+        if summary not in bucket:
+            bucket.append(summary)
+
+    tweets: List[str] = []
+    for label, items in by_product.items():
+        remaining = list(items)
+        while remaining and len(tweets) < MAX_THREAD_TWEETS:
+            chunk: List[str] = []
+            while remaining:
+                candidate_items = chunk + [remaining[0]]
+                candidate = _tweet_for_product(label, candidate_items)
+                if not chunk or len(candidate) <= TWEET_MAX_CHARS:
+                    chunk = candidate_items
+                    remaining.pop(0)
+                    if len(candidate) > TWEET_MAX_CHARS:
+                        break
+                else:
+                    break
+            text = clamp_tweet(_tweet_for_product(label, chunk))
+            if text:
+                tweets.append(text)
+    return tweets[:MAX_THREAD_TWEETS], newsworthy
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -315,6 +390,17 @@ class XPostsService:
                 )
             if drafted:
                 skip = False
+            elif jira_features:
+                drafted, fallback_news = fallback_tweets_from_jira_features(jira_features)
+                if drafted:
+                    skip = False
+                    reason = "Fallback draft from shipped Jira features"
+                    if not newsworthy:
+                        newsworthy = fallback_news
+                    logger.warning(
+                        "X post LLM skipped despite %d Jira features; using fallback draft",
+                        len(jira_features),
+                    )
             model_name = self._model
 
         result: Dict[str, Any] = {
