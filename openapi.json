@@ -996,8 +996,8 @@
     },
     "/mcp/tools/progress_updates": {
       "post": {
-        "summary": "Generate a team progress update from Jira issues.",
-        "description": "Uses Jira issues moved to Done in the last N days to generate a progress update and optionally post it to Discord.",
+        "summary": "Generate a team progress update from Done issues.",
+        "description": "Uses Jira or internal-board issues moved to Done in the last N days. Set group_by=label to group by ticket labels (ignores customer-request by default).",
         "requestBody": {
           "required": false,
           "content": {
@@ -1021,6 +1021,17 @@
                     "type": "string",
                     "description": "JQL fragment to narrow results; default AND statusCategory = Done.",
                     "default": "AND statusCategory = Done"
+                  },
+                  "group_by": {
+                    "type": "string",
+                    "enum": ["project", "label"],
+                    "description": "Group Done items by project (default) or by remaining ticket labels.",
+                    "default": "project"
+                  },
+                  "ignore_labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Labels to skip as group headings when group_by=label. Default customer-request."
                   }
                 }
               }

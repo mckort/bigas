@@ -48,6 +48,7 @@ class TicketJiraAdapter:
         from bigas.tickets.labels import resolve_ticket_labels
 
         labels = resolve_ticket_labels(ticket)
+        assignee = (ticket.get("assignee") or "").strip()
         return {
             "key": ticket["key"],
             "fields": {
@@ -59,6 +60,9 @@ class TicketJiraAdapter:
                 "labels": labels,
                 "parent": parent,
                 "issuelinks": [],
+                "assignee": {"displayName": assignee} if assignee else None,
+                "resolutiondate": (ticket.get("done_at") or "").strip() or None,
+                "updated": ticket.get("updated_at") or ticket.get("created_at"),
             },
         }
 
@@ -127,6 +131,38 @@ class TicketJiraAdapter:
                 continue
             epics.append(self._format_issue(ticket, board=board))
         return epics
+
+    def search_issues_done_in_last_n_days(
+        self,
+        *,
+        days: int = 14,
+        jql_extra: str = "",
+        project_keys: Optional[List[str]] = None,
+        fields: Optional[List[str]] = None,
+        max_results_per_page: int = 50,
+        max_pages: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Return Done tickets whose done_at (else updated_at) falls in the last N days."""
+        del jql_extra, fields, max_results_per_page, max_pages
+        if days < 1 or days > 365:
+            raise ValueError("days must be between 1 and 365")
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+        tickets = self._store.list_tickets_by_status("Done", project_keys=project_keys)
+        out: List[Dict[str, Any]] = []
+        for ticket in tickets:
+            stamp = _ticket_done_at(ticket)
+            if stamp is None or stamp < cutoff:
+                continue
+            out.append(self._format_issue(ticket))
+        out.sort(
+            key=lambda issue: str(
+                (issue.get("fields") or {}).get("resolutiondate")
+                or (issue.get("fields") or {}).get("updated")
+                or ""
+            ),
+            reverse=True,
+        )
+        return out
 
     def get_issues_for_epic(
         self,
@@ -216,7 +252,17 @@ class TicketJiraAdapter:
 
 
 def _ticket_updated_at(ticket: Dict[str, Any]) -> Optional[datetime]:
-    raw = ticket.get("updated_at") or ticket.get("created_at")
+    return _parse_ticket_datetime(ticket.get("updated_at") or ticket.get("created_at"))
+
+
+def _ticket_done_at(ticket: Dict[str, Any]) -> Optional[datetime]:
+    """When the ticket was moved to Done; fall back to updated_at for older rows."""
+    return _parse_ticket_datetime(
+        ticket.get("done_at") or ticket.get("updated_at") or ticket.get("created_at")
+    )
+
+
+def _parse_ticket_datetime(raw: Any) -> Optional[datetime]:
     if raw is None:
         return None
     if isinstance(raw, datetime):

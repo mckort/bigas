@@ -6,7 +6,7 @@ import re
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from bigas.tickets.constants import columns_for_board, is_valid_status
 from bigas.tickets.labels import has_marketing, normalize_labels, resolve_ticket_labels
@@ -85,6 +85,7 @@ def _compose_ticket(
         "project_key": project_key,
         "created_at": now,
         "updated_at": now,
+        "done_at": now if status == "Done" else "",
     }
 
 
@@ -158,6 +159,11 @@ def _apply_ticket_field_updates(
             if not is_valid_status(st, project_key=project_key):
                 continue
             updates["status"] = st
+            old_status = (ticket.get("status") or "").strip()
+            if st == "Done" and old_status != "Done":
+                updates["done_at"] = _utcnow_iso()
+            elif st != "Done" and old_status == "Done":
+                updates["done_at"] = ""
         elif key == "title":
             title = (value or "").strip()
             if title:
@@ -558,6 +564,33 @@ class MemoryTicketStore:
                 if status and ticket.get("status") != status:
                     continue
                 if issue_type and ticket.get("issue_type") != issue_type:
+                    continue
+                tickets.append(dict(ticket))
+        return sorted(tickets, key=lambda t: t.get("key", ""))
+
+    def list_tickets_by_status(
+        self,
+        status: str,
+        *,
+        project_keys: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        wanted = {str(k).strip().upper() for k in (project_keys or []) if str(k).strip()}
+        st = (status or "").strip()
+        with self._lock:
+            tickets = []
+            for ticket in self._tickets.values():
+                if ticket.get("status") != st:
+                    continue
+                board = self._boards.get(ticket.get("board_id") or "")
+                proj = (
+                    (board.get("project_key") if board else None)
+                    or ticket.get("project_key")
+                    or ""
+                )
+                proj = str(proj).strip().upper()
+                if not proj:
+                    continue
+                if wanted and proj not in wanted:
                     continue
                 tickets.append(dict(ticket))
         return sorted(tickets, key=lambda t: t.get("key", ""))
@@ -1072,6 +1105,27 @@ class FirestoreTicketStore:
             if status and ticket.get("status") != status:
                 continue
             if issue_type and ticket.get("issue_type") != issue_type:
+                continue
+            tickets.append(ticket)
+        return sorted(tickets, key=lambda t: t.get("key", ""))
+
+    def list_tickets_by_status(
+        self,
+        status: str,
+        *,
+        project_keys: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        wanted = {str(k).strip().upper() for k in (project_keys or []) if str(k).strip()}
+        st = (status or "").strip()
+        tickets = []
+        for doc in self._tickets.where("status", "==", st).stream():
+            if not doc.exists:
+                continue
+            ticket = doc.to_dict() or {}
+            proj = str(ticket.get("project_key") or "").strip().upper()
+            if not proj:
+                continue
+            if wanted and proj not in wanted:
                 continue
             tickets.append(ticket)
         return sorted(tickets, key=lambda t: t.get("key", ""))

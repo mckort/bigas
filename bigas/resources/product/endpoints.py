@@ -184,10 +184,13 @@ def create_release_notes():
 @product_bp.route('/progress_updates', methods=['POST'])
 def progress_updates():
     """
-    Generate a team progress update from Jira issues moved to Done in the last N days.
+    Generate a team progress update from issues moved to Done in the last N days
+    (Jira or the internal board).
     Request JSON (optional):
-      { "days": 7, "post_to_discord": true, "post_to_chat": true, "jql_extra": "...", "project_keys": ["VFA","WAYW"] }
+      { "days": 7, "post_to_discord": true, "post_to_chat": true, "jql_extra": "...",
+        "project_keys": ["VFA","WAYW"], "group_by": "label", "ignore_labels": ["customer-request"] }
     Default jql_extra is "AND statusCategory = Done". Specify the period with `days` (default 7).
+    group_by=label groups by remaining ticket labels (Unlabeled bucket; customer-request ignored by default).
     When chat is enabled, the same message is posted to the Product Manager thread.
     """
     data = request.json or {}
@@ -199,10 +202,20 @@ def progress_updates():
     # Default jql_extra for progress report: narrow to statusCategory = Done (can override via request).
     jql_extra = (data.get("jql_extra") or "AND statusCategory = Done").strip()
     project_keys = _project_keys_from_request(data)
+    group_by = (data.get("group_by") or "project")
+    ignore_labels = data.get("ignore_labels")
+    if str(group_by).strip().lower() not in ("project", "label"):
+        return jsonify({"error": "group_by must be 'project' or 'label'"}), 400
 
     try:
         service = ProgressUpdatesService()
-        result = service.run(days=days, jql_extra=jql_extra, project_keys=project_keys)
+        result = service.run(
+            days=days,
+            jql_extra=jql_extra,
+            project_keys=project_keys,
+            group_by=group_by,
+            ignore_labels=ignore_labels,
+        )
 
         message = result.get("message", "")
         if post_to_discord and message:
@@ -617,7 +630,7 @@ def get_manifest():
             },
             {
                 "name": "progress_updates",
-                "description": "Generate a team progress update from Jira issues moved to Done in the last N days (AI coach message, optional Discord and Product Manager chat post). Specify the period with days (default 7). Uses jql_extra default AND statusCategory = Done. Supports multiple Jira projects via project_keys or JIRA_PROJECT_KEY=VFA,WAYW.",
+                "description": "Generate a team progress update from issues moved to Done in the last N days (Jira or the internal board). Optional Discord and Product Manager chat post. Set group_by=label to group by ticket labels (ignores customer-request by default, Unlabeled bucket). Do not invent product-area headings. Specify days (default 7). Uses jql_extra default AND statusCategory = Done on Jira. Supports project_keys or JIRA_PROJECT_KEY=VFA,WAYW.",
                 "path": "/mcp/tools/progress_updates",
                 "method": "POST",
                 "parameters": {
@@ -632,6 +645,17 @@ def get_manifest():
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "Optional Jira project keys override. Defaults to all keys in JIRA_PROJECT_KEY env."
+                        },
+                        "group_by": {
+                            "type": "string",
+                            "enum": ["project", "label"],
+                            "description": "How to group Done items. Use label when the user asks to group by Jira/board labels, ignore Customer request, or put unlabeled items in Unlabeled. Default project.",
+                            "default": "project"
+                        },
+                        "ignore_labels": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Labels to skip as group headings when group_by=label. Default [\"customer-request\"]. Tickets still appear under remaining labels or Unlabeled."
                         }
                     }
                 }

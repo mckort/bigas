@@ -378,6 +378,7 @@ class JiraClient:
                 "resolutiondate",
                 "assignee",
                 "updated",
+                "labels",
             ]
 
         keys = self._resolve_project_keys(project_keys)
