@@ -92,7 +92,7 @@ Polled by GitHub Actions after launch:
 
 Discord “round N/M” uses the number of `[bigas-autofix]` commits on the PR after a successful push (completed round), not Actions loop attempts that finished without commits.
 
-The autofix prompt instructs the agent **not** to ask for confirmation and to push fixes immediately.
+The autofix prompt instructs the agent **not** to ask for confirmation and to push fixes immediately. It also tells the agent to remove leftover dead/unused code from its own fixes (not a repo-wide cleanup).
 
 ## Guards
 

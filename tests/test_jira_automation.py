@@ -408,6 +408,8 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "VFA-14:" in prompt
     assert "Jira: VFA-14" in prompt
     assert "simple ticket that skipped those steps" in prompt
+    assert "dead/unused code created by THIS implementation" in prompt
+    assert "Do not do a repo-wide unused-code cleanup" in prompt
 
 
 def test_can_launch_implement_allows_simple_ticket():
@@ -616,6 +618,8 @@ def test_resolve_workstream_defaults_to_product():
     assert "small mobile screen" in marketing_impl
     assert "responsive design" in marketing_impl
     assert "Do NOT ask for confirmation" in marketing_impl
+    assert "dead/unused code created by THIS implementation" in marketing_impl
+    assert "Do not do a repo-wide unused-code cleanup" in marketing_impl
 
 
 def test_extract_pr_and_branch_from_cursor_payload():

@@ -49,6 +49,7 @@ Pull request: {pr_url}
 7. If after inspecting the code there is nothing safe to fix, make no commits and explain why.
 8. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — apply the fixes and push commits immediately. Do not stop after a proposal.
 9. If the review claims a helper/import is wrong (e.g. deleteField vs FieldValue.delete) but the repo already provides that helper via a local wrapper imported in the same file, treat the finding as already resolved — do not churn the code just to silence the review.
+10. Before you finish: if your fixes left unused imports, functions, helpers, files, or replaced call sites, remove that dead code. Do not expand into a repo-wide cleanup.
 """
 
 

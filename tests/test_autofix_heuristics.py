@@ -135,6 +135,8 @@ def test_autofix_prompt_forbids_confirmation():
     assert "Also fix Minor items" in prompt
     assert "Fix all Blockers and Important" in prompt
     assert "already resolved" in prompt or "local wrapper" in prompt
+    assert "remove that dead code" in prompt
+    assert "Do not expand into a repo-wide cleanup" in prompt
 
 
 def test_pr_review_prompts_respect_project_helpers():
@@ -150,6 +152,27 @@ def test_pr_review_prompts_respect_project_helpers():
 
     assert "mobile/responsive" in PR_REVIEW_INITIAL_SYSTEM_PROMPT
     assert "small mobile screens" in PR_REVIEW_SYSTEM_PROMPT
+
+
+def test_pr_review_prompts_classify_dead_code_as_important():
+    from bigas.resources.cto.pr_review.prompts import (
+        PR_REVIEW_INITIAL_SYSTEM_PROMPT,
+        PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT,
+        PR_REVIEW_SYSTEM_PROMPT,
+    )
+
+    for text in (
+        PR_REVIEW_INITIAL_SYSTEM_PROMPT,
+        PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT,
+        PR_REVIEW_SYSTEM_PROMPT,
+    ):
+        assert "Dead / unused code (classify as Important, not Minor)" in text
+        assert "this PR introduced or made unused" in text
+        assert "Do NOT hunt the rest of the repository" in text
+
+    assert "Classify as Important" in PR_REVIEW_INITIAL_SYSTEM_PROMPT
+    assert "leftover dead/unused code" in PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
+    assert "unused code this PR introduced or made unused" in PR_REVIEW_SYSTEM_PROMPT
 
 def test_autofix_looks_like_confirmation_stop():
     assert autofix_looks_like_confirmation_stop(
