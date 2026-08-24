@@ -1678,8 +1678,9 @@ def weekly_cto_ai_report():
     )
 
     report = fetch_ai_usage(days=days, provider="all", feature_prefix=None)
-    message = build_weekly_cfo_ai_report(report)
+    message = None
     if post_to_discord:
+        message = build_weekly_cfo_ai_report(report)
         publish_weekly_cfo_ai_report(message)
 
     events = report.get("events") or []
