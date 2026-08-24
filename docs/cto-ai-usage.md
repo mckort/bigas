@@ -1,21 +1,25 @@
 # Bigas AI usage (Cursor + LLM logs)
 
-List-price visibility for Bigas AI spend:
+List-price visibility for Bigas AI spend plus GCP invoice line items and Tavily:
 
 1. **Per autofix round** — Discord includes Cursor token usage + list-price estimate when `autofix_followup` finalizes.
 2. **Per LLM call** — `get_llm_client()` wraps the provider client and emits `event: llm_usage` (chat, PR review, marketing, Jira, …).
 3. **Historical / weekly** — modular `UsageProvider`s fetch the last N days without a local event store. Cloud Scheduler (`bigas-cto-ai-usage-weekly`, Sunday 16:00) posts numbers + LLM analysis to the **CFO** chat thread.
 
-Estimates are **operational only**, not invoices. Gemini thinking is billed as output: when `total_tokens` is present, billed output is `total − prompt` (same rule as VC Field Assistant), so Pro PR-review is not undercounted.
+Estimates are **operational only**, not invoices. Gemini thinking is billed as output: when `total_tokens` is present, billed output is `total − prompt` (same rule as VC Field Assistant), so Pro PR-review is not undercounted. `gcp_billing` is the Cloud Billing export (invoice, ~1 day lag). Tavily is VCFA Firestore list-price, not GCP.
 
 ## Providers
 
-Registered under domain `usage` (see `GET /mcp/providers`):
+Registered under domain `usage` (see `GET /mcp/providers`). **None are on by default.** List the names you want in `BIGAS_USAGE_PROVIDERS` (comma-separated). Omit it and the weekly report runs with no cost sources.
 
-| Provider | Source | Config |
+| Provider | Source | Also needs |
 |---|---|---|
 | `cursor` | Cursor Cloud Agents API (`List Agents` + `/usage`) | `CURSOR_API_KEY` |
 | `llm_logs` | Cloud Logging lines with `event: llm_usage` | Home project + `vcfieldassistant` (override with `BIGAS_LLM_USAGE_PROJECTS`). Runtime SA (`bigas-run`) needs `roles/logging.viewer` on **each** scanned project (home + VCFA). |
+| `gcp_billing` | Cloud Billing export in BigQuery (`gcp_billing` dataset) | Same project list as `llm_logs`. Runtime SA needs `bigquery.jobUser` + dataset read. Enable **Standard usage cost** export to `bigas-503008.gcp_billing` in [Billing export](https://console.cloud.google.com/billing/011097-9C6611-22F8ED/export?project=bigas-503008). EU dataset backfills current + previous month. Gemini on the invoice is `gcp.gemini_invoice` — do not add it to `llm_logs`. |
+| `tavily` | VCFA Firestore `aiUsageDaily` shards (`byProvider.tavily` / `tavily.*` features) | `BIGAS_TAVILY_USAGE_PROJECT` (default `vcfieldassistant`). Runtime SA needs `roles/datastore.viewer` on that project. |
+
+To add another system, drop a `UsageProvider` subclass in `bigas/providers/usage/` and list its `name` in `BIGAS_USAGE_PROVIDERS`. See README [Plug in a usage source](../README.md#plug-in-a-usage-source).
 
 Adding Claude (or any LLM) later usually needs **no new history provider** if calls go through `bigas.llm` (`get_llm_client`) and emit `event: llm_usage` structured logs. VC Field Assistant emits the same line from `recordLlmUsage`, with extra fields:
 
@@ -27,8 +31,11 @@ Adding Claude (or any LLM) later usually needs **no new history provider** if ca
 
 `fetch_ai_usage` totals include `by_app`, `by_model_tier`, `empty_response_events`, and `empty_fallback_events`. The **CFO** chat agent reads these and proposes savings.
 
-Optional: `BIGAS_CTO_USAGE_LOG_FILTER` — extra Cloud Logging filter clause ANDed into the query.
+Optional: `BIGAS_USAGE_PROVIDERS` — comma-separated names to enable (`cursor,llm_logs,gcp_billing,tavily`). Unset = none.
+`BIGAS_CTO_USAGE_LOG_FILTER` — extra Cloud Logging filter clause ANDed into the query.
 `BIGAS_LLM_USAGE_PROJECTS` — comma-separated GCP project IDs (default: current project + `vcfieldassistant`).
+`BIGAS_GCP_BILLING_DATASET` — BigQuery dataset for billing export (default `gcp_billing`).
+`BIGAS_TAVILY_USAGE_PROJECT` — Firestore project for Tavily rollups (default `vcfieldassistant`).
 
 List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) when the agent payload has no model id.
 
@@ -45,7 +52,7 @@ List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) wh
 }
 ```
 
-- `provider`: `all` | `cursor` | `llm_logs`
+- `provider`: `all` | `cursor` | `llm_logs` | `gcp_billing` | `tavily`
 - `feature_prefix`: optional filter. Omit or `""` for all features (Bigas chat/PR review **and** VCFA living analysis). Example: `cto_` or `llm.`.
 - Returns totals (including `activity_by_feature` LLM call counts), per-provider / per-feature costs, top PRs (from Cursor agent names), and events (capped at 200 in the HTTP body). Weekly CFO reports use `totals.activity_by_feature`, not the truncated events list.
 

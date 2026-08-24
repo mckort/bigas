@@ -1612,7 +1612,7 @@ def fetch_ai_usage_endpoint():
 
     Request JSON:
       - days (int, default 7, max 90)
-      - provider (str, default "all"): all | cursor | llm_logs
+      - provider (str, default "all"): all | cursor | llm_logs | gcp_billing | tavily
       - feature_prefix (str, optional): filter features; omit/empty = all (Bigas + VCFA)
       - post_to_discord (bool, default false)
     """
@@ -2004,9 +2004,9 @@ def get_manifest():
             {
                 "name": "fetch_ai_usage",
                 "description": (
-                    "Fetch historical AI usage from configured usage providers "
-                    "(Cursor cloud agents API and/or LLM Cloud Logging). "
-                    "Returns list-price estimates and token totals."
+                    "Fetch historical AI and cloud usage from configured providers "
+                    "(Cursor, LLM Cloud Logging, GCP Billing export, Tavily). "
+                    "Returns list-price estimates plus GCP invoice line items."
                 ),
                 "path": "/mcp/tools/fetch_ai_usage",
                 "method": "POST",
@@ -2019,11 +2019,11 @@ def get_manifest():
                         },
                         "provider": {
                             "type": "string",
-                            "description": 'Usage provider: "all" (default), "cursor", or "llm_logs"',
+                            "description": 'Usage provider: "all" (default), "cursor", "llm_logs", "gcp_billing", or "tavily"',
                         },
                         "feature_prefix": {
                             "type": "string",
-                            "description": 'Optional feature filter prefix. Omit or "" for all apps/features (Gemini Bigas + VCFA, Cursor). Example: "cto_" or "llm."',
+                            "description": 'Optional feature filter prefix. Omit or "" for all apps/features (Gemini Bigas + VCFA, Cursor, Tavily, GCP services). Example: "cto_" or "gcp."',
                         },
                         "post_to_discord": {
                             "type": "boolean",

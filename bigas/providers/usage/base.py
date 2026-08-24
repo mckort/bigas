@@ -8,7 +8,21 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+import os
 from typing import Any, Dict, List, Optional
+
+
+def usage_provider_enabled(name: str) -> bool:
+    """True when ``name`` is listed in ``BIGAS_USAGE_PROVIDERS``.
+
+    Comma-separated, case-insensitive. Unset or empty means no usage
+    providers — the weekly CFO report still runs, just with no sources.
+    """
+    raw = (os.environ.get("BIGAS_USAGE_PROVIDERS") or "").strip()
+    if not raw:
+        return False
+    wanted = {p.strip().lower() for p in raw.split(",") if p.strip()}
+    return (name or "").strip().lower() in wanted
 
 
 @dataclass
@@ -45,7 +59,7 @@ class UsageProvider(ABC):
     @classmethod
     @abstractmethod
     def is_configured(cls) -> bool:
-        """Return True only when required env/credentials are present."""
+        """Return True only when this source is listed and its credentials exist."""
 
     @abstractmethod
     def fetch_usage(

@@ -646,8 +646,8 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub. Details: [docs/cto-pr-review.md](docs/cto-pr-review.md) |
 | `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
 | `POST autofix_followup` | Poll the autofix agent; on completion, re-reviews the PR and posts the result to Discord. Details: [docs/cto-autofix.md](docs/cto-autofix.md) |
-| `POST fetch_ai_usage` | Historical AI usage from usage providers (Cursor API + LLM Cloud Logging); list-price estimates. Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md) |
-| `POST weekly_cto_ai_report` | Weekly AI cost summary + LLM analysis → CFO chat (Cursor + all LLM features from Cloud Logging) |
+| `POST fetch_ai_usage` | Optional cost rollup from plugged-in usage providers (`BIGAS_USAGE_PROVIDERS`). Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md) |
+| `POST weekly_cto_ai_report` | Weekly cost summary + LLM analysis → CFO chat (whatever usage providers are enabled) |
 | `POST website_monitor` | CTO tool: check configured websites (`MONITOR_URLS`) for availability and SSL certificate health. Alerts via Discord (`DISCORD_WEBHOOK_URL_CTO`) on failures. |
 
 ### DevOps & self-healing CI
@@ -820,9 +820,23 @@ flowchart TB
   CTO --> Discord
 ```
 
-- **Providers:** `bigas/registry.py` scans `bigas/providers/**` and exposes the active set at `GET /mcp/providers`.
+- **Providers:** `bigas/registry.py` scans `bigas/providers/**` and exposes the active set at `GET /mcp/providers`. Usage/cost sources (`cursor`, `llm_logs`, `gcp_billing`, `tavily`, or your own) are listed in `BIGAS_USAGE_PROVIDERS` — omit the var and none run. See [Plug in a usage source](#plug-in-a-usage-source).
 - **Tools:** each resource registers Flask routes under `/mcp/tools/*`; combined manifest at `GET /mcp/manifest`.
 - **Chat:** React SPA at `/`; dev mode uses in-memory storage (`CHAT_STORAGE_MODE=memory`).
+
+### Plug in a usage source
+
+The weekly CFO report (`fetch_ai_usage` / `weekly_cto_ai_report`) is optional. It only includes sources named in `BIGAS_USAGE_PROVIDERS` (comma-separated). Unset that variable and the job still runs, with no cost lines.
+
+Built-in names: `cursor` (needs `CURSOR_API_KEY`), `llm_logs` (Cloud Logging `event: llm_usage`), `gcp_billing` (BigQuery billing export), `tavily` (VCFA Firestore). Credentials for a source are still required; listing a name without them skips it.
+
+To add another system (Stripe, OpenAI invoices, …):
+
+1. Drop a file in `bigas/providers/usage/` that subclasses `UsageProvider` (`name`, `is_configured()`, `fetch_usage()` → `UsageEvent`s).
+2. Add that `name` to `BIGAS_USAGE_PROVIDERS`.
+3. Restart. `fetch_ai_usage` aggregates whatever is active; one failing source does not drop the others.
+
+Details: **[docs/cto-ai-usage.md](docs/cto-ai-usage.md)**. Same discovery pattern as ads/finance: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 Deep dives (paid ads orchestrator, chat data flow, Secret Manager, email ingest): **[docs/architecture.md](docs/architecture.md)**. Adding providers: **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[DESIGN_SPEC.md](DESIGN_SPEC.md)**.
 

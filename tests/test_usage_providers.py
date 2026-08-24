@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from bigas.providers.usage.base import UsageEvent
+from bigas.providers.usage.base import UsageEvent, usage_provider_enabled
 from bigas.providers.usage.cursor import CursorCloudAgentUsageProvider
 from bigas.providers.usage.llm_logs import (
     CloudRunLlmUsageProvider,
@@ -100,7 +100,7 @@ class WeeklyReportTests(unittest.TestCase):
             "errors": [],
         }
         msg = format_weekly_cto_ai_report(report)
-        self.assertIn("Bigas AI usage", msg)
+        self.assertIn("Bigas AI + cloud usage", msg)
         self.assertIn("$12.3400", msg)
         self.assertIn("cursor:", msg)
         self.assertIn("- cto_autofix: 2", msg)
@@ -143,6 +143,7 @@ class FetchAiUsageTests(unittest.TestCase):
         self.assertEqual(report["totals"]["events"], 1)
         self.assertEqual(report["totals"]["activity_by_feature"], {"cto_autofix": 1})
         self.assertEqual(report["totals"]["est_cost_usd"], 1.25)
+        self.assertEqual(report["totals"]["invoice_cost_usd"], 0.0)
         self.assertEqual(report["totals"]["by_app"]["bigas"], 1.25)
         self.assertEqual(report["top_prs"][0]["pr_url"], "https://github.com/o/r/pull/9")
 
@@ -235,7 +236,7 @@ class FetchAiUsageTests(unittest.TestCase):
             return_value=(FakeLlm(), "gemini-3.1-pro-preview"),
         ):
             msg = build_weekly_cfo_ai_report(report)
-        self.assertIn("CFO: AI usage", msg)
+        self.assertIn("CFO: AI + cloud usage", msg)
         self.assertIn("CFO analysis", msg)
         self.assertIn("Gemini 3 Flash", msg)
 
@@ -258,7 +259,7 @@ class FetchAiUsageTests(unittest.TestCase):
             side_effect=RuntimeError("no key"),
         ):
             msg = build_weekly_cfo_ai_report(report)
-        self.assertIn("CFO: AI usage", msg)
+        self.assertIn("CFO: AI + cloud usage", msg)
         self.assertNotIn("CFO analysis", msg)
 
     def test_publish_weekly_goes_to_cfo_not_cto(self):
@@ -307,9 +308,49 @@ class LlmLogsParseTests(unittest.TestCase):
         self.assertEqual(data["app"], "bigas")
         self.assertEqual(data["est_cost_usd"], 0.007594)
 
-    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "demo-proj"}, clear=False)
+    @patch.dict(
+        "os.environ",
+        {"GOOGLE_CLOUD_PROJECT": "demo-proj", "BIGAS_USAGE_PROVIDERS": "llm_logs"},
+        clear=False,
+    )
     def test_llm_logs_is_configured(self):
         self.assertTrue(CloudRunLlmUsageProvider.is_configured())
+
+    @patch.dict(
+        "os.environ",
+        {"GOOGLE_CLOUD_PROJECT": "demo-proj", "BIGAS_USAGE_PROVIDERS": ""},
+        clear=False,
+    )
+    def test_llm_logs_off_unless_listed(self):
+        self.assertFalse(CloudRunLlmUsageProvider.is_configured())
+
+    def test_usage_provider_enabled_parses_list(self):
+        with patch.dict(
+            "os.environ",
+            {"BIGAS_USAGE_PROVIDERS": "cursor, llm_logs"},
+            clear=False,
+        ):
+            self.assertTrue(usage_provider_enabled("llm_logs"))
+            self.assertTrue(usage_provider_enabled("CURSOR"))
+            self.assertFalse(usage_provider_enabled("tavily"))
+
+    @patch.dict(
+        "os.environ",
+        {
+            "GOOGLE_CLOUD_PROJECT": "demo-proj",
+            "CURSOR_API_KEY": "k",
+            "BIGAS_USAGE_PROVIDERS": "cursor,llm_logs",
+        },
+        clear=False,
+    )
+    def test_only_listed_usage_providers_configure(self):
+        from bigas.providers.usage.gcp_billing import GcpBillingUsageProvider
+        from bigas.providers.usage.tavily import TavilyUsageProvider
+
+        self.assertTrue(CloudRunLlmUsageProvider.is_configured())
+        self.assertTrue(CursorCloudAgentUsageProvider.is_configured())
+        self.assertFalse(GcpBillingUsageProvider.is_configured())
+        self.assertFalse(TavilyUsageProvider.is_configured())
 
     @patch.dict(
         "os.environ",
@@ -448,6 +489,127 @@ class CursorProviderTests(unittest.TestCase):
         self.assertEqual(events[0].source_id, "bc-new")
         self.assertEqual(events[0].meta.get("repo"), "acme/app")
         self.assertIsNotNone(events[0].est_cost_usd)
+
+
+class GcpBillingTests(unittest.TestCase):
+    @patch.dict(
+        "os.environ",
+        {"GOOGLE_CLOUD_PROJECT": "demo-proj", "BIGAS_USAGE_PROVIDERS": "gcp_billing"},
+        clear=False,
+    )
+    def test_is_configured_when_listed(self):
+        from bigas.providers.usage.gcp_billing import GcpBillingUsageProvider
+
+        self.assertTrue(GcpBillingUsageProvider.is_configured())
+
+    def test_service_feature_mapping(self):
+        from bigas.providers.usage.gcp_billing import service_feature
+
+        self.assertEqual(service_feature("Cloud Firestore"), "gcp.firestore")
+        self.assertEqual(service_feature("Cloud Run"), "gcp.cloud_run")
+        self.assertEqual(service_feature("Vertex AI"), "gcp.gemini_invoice")
+        self.assertEqual(service_feature("Generative Language API"), "gcp.gemini_invoice")
+
+    def test_rows_to_events(self):
+        from bigas.providers.usage.gcp_billing import _rows_to_events
+
+        events = _rows_to_events(
+            [
+                {
+                    "project_id": "bigas-503008",
+                    "service": "Cloud Firestore",
+                    "net_cost": "1.25",
+                },
+                {
+                    "project_id": "vcfieldassistant",
+                    "service": "Cloud Run",
+                    "net_cost": "0.4",
+                },
+            ],
+            started_at="2026-08-17T00:00:00+00:00",
+        )
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].feature, "gcp.firestore")
+        self.assertFalse(events[0].cost_estimate)
+        self.assertEqual(events[0].meta["app"], "bigas")
+        self.assertEqual(events[1].meta["app"], "vcfieldassistant")
+
+
+class TavilyUsageTests(unittest.TestCase):
+    def test_merge_skips_gemini_and_keeps_tavily_features(self):
+        from bigas.providers.usage.tavily import events_for_day, merge_tavily_shards
+
+        shards = [
+            {
+                "byProvider": {"gemini": 6.32, "tavily": 6.9},
+                "byFeature": {
+                    "llm.living_analysis": 6.32,
+                    "tavily.company_news_weekly": 6.9,
+                },
+            }
+        ]
+        by_feature, leftover = merge_tavily_shards(shards)
+        self.assertEqual(by_feature, {"tavily.company_news_weekly": 6.9})
+        self.assertEqual(leftover, 0.0)
+        events = events_for_day("2026-08-19", shards, project="vcfieldassistant")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].provider, "tavily")
+        self.assertEqual(events[0].est_cost_usd, 6.9)
+
+    def test_leftover_provider_total_becomes_tavily_search(self):
+        from bigas.providers.usage.tavily import events_for_day
+
+        shards = [{"byProvider": {"tavily": 0.04}, "byFeature": {}}]
+        events = events_for_day("2026-08-18", shards, project="vcfieldassistant")
+        self.assertEqual(events[0].feature, "tavily.search")
+        self.assertEqual(events[0].est_cost_usd, 0.04)
+
+
+class InvoiceVsListPriceTests(unittest.TestCase):
+    def test_gcp_invoice_is_not_in_list_price_total(self):
+        class FakeLlm:
+            name = "llm_logs"
+
+            def fetch_usage(self, *, start, end, feature_prefix=None):
+                return [
+                    UsageEvent(
+                        provider="llm_logs",
+                        source_id="a",
+                        started_at=start.isoformat(),
+                        feature="cto_pr_review",
+                        est_cost_usd=10.0,
+                        cost_estimate=True,
+                    )
+                ]
+
+        class FakeGcp:
+            name = "gcp_billing"
+
+            def fetch_usage(self, *, start, end, feature_prefix=None):
+                return [
+                    UsageEvent(
+                        provider="gcp_billing",
+                        source_id="b",
+                        started_at=start.isoformat(),
+                        feature="gcp.firestore",
+                        est_cost_usd=2.0,
+                        cost_estimate=False,
+                        meta={"cost_kind": "invoice", "app": "bigas"},
+                    )
+                ]
+
+        now = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+        report = fetch_ai_usage(
+            days=7,
+            provider="all",
+            providers=[FakeLlm(), FakeGcp()],
+            now=now,
+        )
+        self.assertEqual(report["totals"]["est_cost_usd"], 10.0)
+        self.assertEqual(report["totals"]["invoice_cost_usd"], 2.0)
+        msg = format_weekly_cto_ai_report(report)
+        self.assertIn("GCP invoice", msg)
+        self.assertIn("gcp.firestore", msg)
 
 
 if __name__ == "__main__":
