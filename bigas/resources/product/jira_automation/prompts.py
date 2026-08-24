@@ -334,17 +334,18 @@ Summary: {summary}
 
 ## Instructions
 1. Implement the issue according to the Brief, Research, Plan, human comments, and ticket attachments.
-2. Prefer the AI Plan for technical approach; treat human comments as clarifications that override open questions.
-3. Keep scope tight — do not refactor unrelated code.
-4. Add/update tests when reasonable.
-5. Update the repository README when the change affects how people install, configure, run, or understand the project. Skip README edits for purely internal refactors with no user-facing or ops impact.
-6. Update in-app support/help content (end-user help articles / support pages) when the change affects what users see or how they use the product. Skip when there is no user-facing behavior change, or when the repo has no in-app help.
-7. All UI changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
-8. Open a pull request when done (autoCreatePR is enabled).
-9. PR title MUST start with `{issue_key}:` followed by a short summary.
-10. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-11. Do not merge the PR.
-12. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+2. If AI Research and AI Plan are empty, this is a simple ticket that skipped those steps. Implement the smallest change that matches the title, brief, and screenshots. Do not invent extra scope or wait for a plan.
+3. Prefer the AI Plan for technical approach when it exists; treat human comments as clarifications that override open questions.
+4. Keep scope tight — do not refactor unrelated code.
+5. Add/update tests when reasonable.
+6. Update the repository README when the change affects how people install, configure, run, or understand the project. Skip README edits for purely internal refactors with no user-facing or ops impact.
+7. Update in-app support/help content (end-user help articles / support pages) when the change affects what users see or how they use the product. Skip when there is no user-facing behavior change, or when the repo has no in-app help.
+8. All UI changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
+9. Open a pull request when done (autoCreatePR is enabled).
+10. PR title MUST start with `{issue_key}:` followed by a short summary.
+11. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
+12. Do not merge the PR.
+13. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
 """
 
 
@@ -381,17 +382,18 @@ Summary: {summary}
 
 ## Instructions
 1. Implement content/SEO/page changes according to the Brief, Research, Plan, human comments, and ticket attachments.
-2. Prefer existing site patterns (content folders, MDX/Markdown, page components, shared SEO/metadata helpers).
-3. Keep scope tight — do not redesign unrelated pages or refactor the whole site.
-4. Match tone and structure of existing content in the repo when writing copy unless the Brief specifies otherwise.
-5. Include sensible SEO basics when relevant (title/description/headings/slug) using the project's existing conventions.
-6. Update the repository README (or equivalent site docs) when the change affects how content, routes, SEO setup, or contributor workflows are documented. Skip when nothing user- or ops-facing changed.
-7. All UI/page changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
-8. Open a pull request when done (autoCreatePR is enabled).
-9. PR title MUST start with `{issue_key}:` followed by a short summary.
-10. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-11. Do not merge the PR.
-12. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+2. If AI Research and AI Plan are empty, this is a simple ticket that skipped those steps. Implement the smallest change that matches the title, brief, and screenshots. Do not invent extra scope or wait for a plan.
+3. Prefer existing site patterns (content folders, MDX/Markdown, page components, shared SEO/metadata helpers).
+4. Keep scope tight — do not redesign unrelated pages or refactor the whole site.
+5. Match tone and structure of existing content in the repo when writing copy unless the Brief specifies otherwise.
+6. Include sensible SEO basics when relevant (title/description/headings/slug) using the project's existing conventions.
+7. Update the repository README (or equivalent site docs) when the change affects how content, routes, SEO setup, or contributor workflows are documented. Skip when nothing user- or ops-facing changed.
+8. All UI/page changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
+9. Open a pull request when done (autoCreatePR is enabled).
+10. PR title MUST start with `{issue_key}:` followed by a short summary.
+11. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
+12. Do not merge the PR.
+13. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
 """
 
 

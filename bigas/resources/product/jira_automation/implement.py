@@ -119,6 +119,29 @@ def lookup_pr_url_for_branch(*, repo: str, branch_name: str) -> str:
     return url
 
 
+def _has_text(value: str) -> bool:
+    text = (value or "").strip()
+    return bool(text) and text not in ("(none)", "(empty)")
+
+
+def can_launch_implement(
+    *,
+    summary: str,
+    brief: str,
+    research: str,
+    plan: str,
+    comments_text: str = "",
+    attachments_text: str = "",
+) -> bool:
+    """True when Implement has enough context — full Research/Plan or a simple ticket."""
+    if _has_text(research) or _has_text(plan):
+        return True
+    return any(
+        _has_text(value)
+        for value in (summary, brief, comments_text, attachments_text)
+    )
+
+
 def _github_pr_title(pr_url: str) -> str:
     parsed = parse_github_pr(pr_url)
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
@@ -263,10 +286,19 @@ class ImplementHandler:
             raw_comments = []
         comments_text = format_human_comments(raw_comments)
         attachments_text = attachments_text_for_issue(self._jira, issue_key)
+        direct_implement = not _has_text(plan) and not _has_text(research)
 
-        if not plan.strip() and not research.strip():
+        if not can_launch_implement(
+            summary=summary,
+            brief=brief,
+            research=research,
+            plan=plan,
+            comments_text=comments_text,
+            attachments_text=attachments_text,
+        ):
             raise ImplementHandlerError(
-                "No AI Plan / AI Research sections found — run Research and Design first."
+                "Nothing to implement — add a title, a short brief, or a screenshot, "
+                "or run Research and Design first."
             )
 
         prompt = build_prompt(
@@ -297,9 +329,14 @@ class ImplementHandler:
         agent_id = launched.get("agent_id") or ""
         run_id = launched.get("run_id") or ""
 
+        skip_note = (
+            " Direct implement from title/brief/screenshot (no Research/Plan)."
+            if direct_implement
+            else ""
+        )
         comment = (
             f"{BIGAS_COMMENT_MARKER} Implementation started via Cursor cloud agent "
-            f"(workstream={workstream}).\n"
+            f"(workstream={workstream}).{skip_note}\n"
             f"Repo: `{repo}` (base `{base_branch}`)\n"
             f"Agent: {agent_url or agent_id}\n"
             f"agent_id={agent_id} run_id={run_id}\n"
@@ -354,6 +391,7 @@ class ImplementHandler:
             "agent_url": agent_url,
             "run_id": run_id,
             "left_in_status": "In Progress (AI)",
+            "direct_implement": direct_implement,
             "had_plan_section": bool(plan.strip()),
             "had_research_section": bool(research.strip()),
             "human_comments_included": comments_text != "(none)",
