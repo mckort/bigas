@@ -77,6 +77,33 @@ export function objectiveChipLabel(item) {
   return item.key || title
 }
 
+function asFloat(value, fallback = 0) {
+  const num = Number(value)
+  return Number.isFinite(num) ? num : fallback
+}
+
+export function krProgress(kr) {
+  if (!kr?.measurable) return null
+  const baseline = asFloat(kr.baseline)
+  const target = asFloat(kr.target)
+  const current = asFloat(kr.current, baseline)
+  const direction = kr.direction || 'increase'
+  if (direction === 'maintain') {
+    if (target === 0) return current === 0 ? 1 : 0
+    const delta = Math.abs(current - target) / Math.abs(target)
+    return Math.max(0, Math.min(1, 1 - delta))
+  }
+  let span = target - baseline
+  if (Math.abs(span) < 1e-9) return null
+  if (direction === 'decrease') {
+    span = baseline - target
+    const moved = baseline - current
+    if (span <= 0) return null
+    return Math.max(0, Math.min(1, moved / span))
+  }
+  return Math.max(0, Math.min(1, (current - baseline) / span))
+}
+
 export function percentLabel(value) {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return `${Math.round(Number(value) * 100)}%`

@@ -409,10 +409,20 @@ class MemoryTicketStore:
         return sorted(tickets, key=lambda t: t.get("created_at", ""))
 
     def list_tickets_for_user(self, user_id: str) -> List[Dict[str, Any]]:
-        tickets: List[Dict[str, Any]] = []
-        for board in self.list_boards(user_id):
-            tickets.extend(self.list_tickets(board["board_id"], user_id=user_id))
-        return tickets
+        board_ids = {
+            board["board_id"]
+            for board in self.list_boards(user_id)
+            if board.get("board_id")
+        }
+        if not board_ids:
+            return []
+        with self._lock:
+            tickets = [
+                dict(ticket)
+                for ticket in self._tickets.values()
+                if ticket.get("board_id") in board_ids
+            ]
+        return sorted(tickets, key=lambda t: t.get("created_at", ""))
 
     def get_ticket(self, ticket_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -947,10 +957,19 @@ class FirestoreTicketStore:
         return sorted(tickets, key=lambda t: t.get("created_at", ""))
 
     def list_tickets_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+        board_ids = [
+            board["board_id"]
+            for board in self.list_boards(user_id)
+            if board.get("board_id")
+        ]
+        if not board_ids:
+            return []
         tickets: List[Dict[str, Any]] = []
-        for board in self.list_boards(user_id):
-            tickets.extend(self.list_tickets(board["board_id"], user_id=user_id))
-        return tickets
+        for start in range(0, len(board_ids), 10):
+            chunk = board_ids[start : start + 10]
+            docs = self._tickets.where("board_id", "in", chunk).stream()
+            tickets.extend(doc.to_dict() for doc in docs if doc.exists)
+        return sorted(tickets, key=lambda t: t.get("created_at", ""))
 
     def get_ticket(self, ticket_id: str) -> Optional[Dict[str, Any]]:
         snap = self._tickets.document(ticket_id).get()
@@ -1243,20 +1262,29 @@ class FirestoreTicketStore:
         return sorted(tickets, key=lambda t: t.get("key", ""))
 
     def list_epics(self, project_key: str) -> List[Dict[str, Any]]:
-        return [
-            t
-            for t in self.list_tickets_by_project(project_key)
-            if _is_epic_ticket(t) and t.get("status") != "Done"
-        ]
+        proj = (project_key or "").strip().upper()
+        docs = (
+            self._tickets.where("project_key", "==", proj)
+            .where("issue_type", "==", "Epic")
+            .stream()
+        )
+        return sorted(
+            [
+                doc.to_dict()
+                for doc in docs
+                if doc.exists and doc.to_dict().get("status") != "Done"
+            ],
+            key=lambda t: t.get("key", ""),
+        )
 
     def list_all_epics(self) -> List[Dict[str, Any]]:
         tickets = []
         board_cache: Dict[str, Optional[Dict[str, Any]]] = {}
-        for doc in self._tickets.stream():
+        for doc in self._tickets.where("issue_type", "==", "Epic").stream():
             if not doc.exists:
                 continue
             ticket = doc.to_dict() or {}
-            if ticket.get("status") == "Done" or not _is_epic_ticket(ticket):
+            if ticket.get("status") == "Done":
                 continue
             board_id = ticket.get("board_id") or ""
             if board_id not in board_cache:

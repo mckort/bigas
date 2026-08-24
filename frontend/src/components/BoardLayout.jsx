@@ -23,6 +23,7 @@ import {
   keyResultsOf,
   normalizeLabel,
   objectiveChipLabel,
+  krProgress,
   objectiveOptionsFromTickets,
   percentLabel,
   ticketLabels,
@@ -63,9 +64,21 @@ function parentKeyFromFilter(filter, tickets) {
   if (!filter || filter === '__none__') return ''
   if (filter.startsWith('kr:')) {
     const krId = filter.slice(3)
-    return tickets.find((ticket) => ticketParentKrId(ticket) === krId)?.parent_key || ''
+    const fromChild = tickets.find((ticket) => ticketParentKrId(ticket) === krId)?.parent_key
+    if (fromChild) return fromChild
+    const objective = tickets.find(
+      (ticket) =>
+        isObjective(ticket) &&
+        keyResultsOf(ticket).some((kr) => String(kr.id || '') === krId),
+    )
+    return objective?.key || ''
   }
   return filter
+}
+
+function parentKrIdFromFilter(filter) {
+  if (!filter || !filter.startsWith('kr:')) return ''
+  return filter.slice(3)
 }
 
 function ColumnCreateButton({ hiddenUntilHover = false, onClick }) {
@@ -291,12 +304,7 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
             <div key={kr.id || kr.title} className="flex items-center gap-2">
               <span className="text-[10px] text-muted truncate flex-1">{kr.title}</span>
               <span className="text-[10px] font-mono text-muted">
-                {kr.measurable === false ? '—' : percentLabel(
-                  kr.target === kr.baseline
-                    ? null
-                    : (Number(kr.current) - Number(kr.baseline)) /
-                        (Number(kr.target) - Number(kr.baseline) || 1),
-                )}
+                {kr.measurable === false ? '—' : percentLabel(krProgress(kr))}
               </span>
             </div>
           ))}
@@ -742,7 +750,7 @@ function TicketComments({ ticketId }) {
   )
 }
 
-function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, epics, saveError, onSaveError, onClose, onSave, onDelete }) {
+function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, initialParentKrId, epics, saveError, onSaveError, onClose, onSave, onDelete }) {
   const labelEditorRef = useRef(null)
   const [form, setForm] = useState({
     title: ticket?.title || '',
@@ -753,7 +761,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
     parent_key: ticket ? ticketParentKey(ticket) : (initialParentKey || ''),
-    parent_kr_id: ticketParentKrId(ticket),
+    parent_kr_id: ticketParentKrId(ticket) || initialParentKrId || '',
     okr_cycle: ticket?.okr_cycle || '',
     okr_owner: ticket?.okr_owner || '',
     key_results: keyResultsOf(ticket).length ? keyResultsOf(ticket) : [],
@@ -1653,6 +1661,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           board={activeBoard}
           initialStatus={createStatus}
           initialParentKey={parentKeyFromFilter(epicFilter, tickets)}
+          initialParentKrId={parentKrIdFromFilter(epicFilter)}
           epics={epicOptions}
           saveError={modalSaveError}
           onSaveError={setModalSaveError}

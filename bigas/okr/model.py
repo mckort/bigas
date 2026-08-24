@@ -219,11 +219,7 @@ def cycle_end_for(cycle: str, *, created_at: Any = None) -> Optional[str]:
         year = int(match.group(1))
         quarter = int(match.group(2))
         month = quarter * 3
-        last_day = 30 if month in (6, 9) else 31 if month != 12 else 31
-        if month == 6:
-            last_day = 30
-        elif month == 3:
-            last_day = 31
+        last_day = {3: 31, 6: 30, 9: 30, 12: 31}[month]
         return f"{year}-{month:02d}-{last_day:02d}T23:59:59+00:00"
     start = parse_iso(created_at)
     if start:
