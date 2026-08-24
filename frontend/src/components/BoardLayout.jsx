@@ -56,18 +56,30 @@ function boardQuery() {
   }
 }
 
-function replaceBoardUrl(boardId, { keepFilters = true } = {}) {
+const BOARD_URL_SYNC_EVENT = 'bigas-board-url'
+
+function replaceBoardLocation(mutateParams) {
   const params = new URLSearchParams(window.location.search)
-  if (!keepFilters) {
-    for (const key of BOARD_FILTER_QUERY_KEYS) params.delete(key)
-  }
-  if (boardId) params.set('board', String(boardId))
-  else params.delete('board')
+  mutateParams(params)
   const qs = params.toString()
   const pathname = window.location.pathname
-  const next = qs ? `${pathname}?${qs}` : pathname
-  if (`${window.location.pathname}${window.location.search}` === next) return
+  const hash = window.location.hash || ''
+  const next = `${qs ? `${pathname}?${qs}` : pathname}${hash}`
+  const current = `${pathname}${window.location.search}${hash}`
+  if (current === next) return false
   window.history.replaceState({}, '', next)
+  window.dispatchEvent(new Event(BOARD_URL_SYNC_EVENT))
+  return true
+}
+
+function replaceBoardUrl(boardId, { keepFilters = true } = {}) {
+  replaceBoardLocation((params) => {
+    if (!keepFilters) {
+      for (const key of BOARD_FILTER_QUERY_KEYS) params.delete(key)
+    }
+    if (boardId) params.set('board', String(boardId))
+    else params.delete('board')
+  })
 }
 
 function filterFromQuery(query) {
@@ -87,13 +99,10 @@ function upsertTicket(list, ticket) {
 }
 
 function clearObjectiveFilterFromUrl() {
-  const params = new URLSearchParams(window.location.search)
-  params.delete('kr')
-  params.delete('objective')
-  const qs = params.toString()
-  const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
-  if (`${window.location.pathname}${window.location.search}` === next) return
-  window.history.replaceState({}, '', next)
+  replaceBoardLocation((params) => {
+    params.delete('kr')
+    params.delete('objective')
+  })
 }
 
 function parentKeyFromFilter(filter, tickets) {
@@ -1248,6 +1257,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [pendingTicketKey, setPendingTicketKey] = useState(null)
   const [syncMessage, setSyncMessage] = useState('')
   const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
+  const optimisticTicketsRef = useRef([])
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
   const columns = activeBoard?.columns || ['To Do', 'In Progress', 'Review', 'Done']
@@ -1272,16 +1282,33 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     })
   }, [])
 
-  const loadTickets = useCallback(async (keepTicket) => {
+  const trackOptimisticTicket = useCallback((ticket) => {
+    if (!ticket?.ticket_id) return
+    optimisticTicketsRef.current = upsertTicket(optimisticTicketsRef.current, ticket)
+    setTickets((prev) => upsertTicket(prev, ticket))
+  }, [])
+
+  const loadTickets = useCallback(async () => {
     if (!activeBoardId) return
     const data = await fetchBoardTickets(activeBoardId)
     const incoming = data.tickets || []
-    setTickets(keepTicket?.ticket_id ? upsertTicket(incoming, keepTicket) : incoming)
+    optimisticTicketsRef.current = optimisticTicketsRef.current.filter(
+      (ticket) => !incoming.some((item) => item.ticket_id === ticket.ticket_id),
+    )
+    const merged = optimisticTicketsRef.current.reduce(
+      (acc, ticket) => upsertTicket(acc, ticket),
+      incoming,
+    )
+    setTickets(merged)
   }, [activeBoardId])
 
   useEffect(() => {
     loadBoards().finally(() => setLoading(false))
   }, [loadBoards])
+
+  useEffect(() => {
+    optimisticTicketsRef.current = []
+  }, [activeBoardId])
 
   useEffect(() => {
     loadTickets()
@@ -1320,7 +1347,11 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   useEffect(() => {
     window.addEventListener('popstate', syncBoardStateFromUrl)
-    return () => window.removeEventListener('popstate', syncBoardStateFromUrl)
+    window.addEventListener(BOARD_URL_SYNC_EVENT, syncBoardStateFromUrl)
+    return () => {
+      window.removeEventListener('popstate', syncBoardStateFromUrl)
+      window.removeEventListener(BOARD_URL_SYNC_EVENT, syncBoardStateFromUrl)
+    }
   }, [syncBoardStateFromUrl])
 
   useEffect(() => {
@@ -1389,7 +1420,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     const payload = { ...form }
     delete payload.files
 
-    const uploadPendingFiles = async (ticketId, keepTicket) => {
+    const uploadPendingFiles = async (ticketId) => {
       const failedFiles = []
       let uploadError = ''
       for (const file of files) {
@@ -1408,7 +1439,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       }
       if (failedFiles.length) {
         setModalSaveError(uploadError)
-        await loadTickets(keepTicket)
+        await loadTickets()
         return { failedFiles }
       }
       return null
@@ -1416,10 +1447,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
     const revealCreatedTicket = (ticket) => {
       if (!ticket?.ticket_id) return
-      setTickets((prev) => upsertTicket(prev, ticket))
+      trackOptimisticTicket(ticket)
       if (!ticketMatchesObjectiveFilter(ticket, epicFilter)) {
         clearObjectiveFilterFromUrl()
-        setEpicFilter('')
       }
     }
 
@@ -1433,23 +1463,17 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       }
     } else {
       const data = await createTicket(activeBoardId, payload)
-      const created = data.ticket
-      revealCreatedTicket(created)
-      if (created?.ticket_id && files.length) {
-        const uploadResult = await uploadPendingFiles(created.ticket_id, created)
+      const createdTicket = data.ticket
+      revealCreatedTicket(createdTicket)
+      if (createdTicket?.ticket_id && files.length) {
+        const uploadResult = await uploadPendingFiles(createdTicket.ticket_id)
         if (uploadResult?.failedFiles?.length) {
-          setModalTicket(created)
+          setModalTicket(createdTicket)
           setShowCreate(false)
           setCreateStatus(null)
           return uploadResult
         }
       }
-      setModalSaveError('')
-      setModalTicket(null)
-      setShowCreate(false)
-      setCreateStatus(null)
-      await loadTickets(created)
-      return
     }
     setModalSaveError('')
     setModalTicket(null)
