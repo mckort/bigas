@@ -54,6 +54,18 @@ function boardQuery() {
   }
 }
 
+function replaceBoardUrl(boardId, { keepFilters = true } = {}) {
+  const params = keepFilters
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams()
+  if (boardId) params.set('board', boardId)
+  else params.delete('board')
+  const qs = params.toString()
+  const next = qs ? `/board?${qs}` : '/board'
+  if (`${window.location.pathname}${window.location.search}` === next) return
+  window.history.replaceState({}, '', next)
+}
+
 function filterFromQuery(query) {
   if (query.krId) return `kr:${query.krId}`
   if (query.objectiveKey) return query.objectiveKey
@@ -1225,13 +1237,16 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   const loadBoards = useCallback(async () => {
     const data = await fetchBoards()
-    setBoards(data.boards || [])
-    if (!activeBoardId && data.boards?.length) {
+    const list = data.boards || []
+    setBoards(list)
+    setActiveBoardId((current) => {
+      if (current && list.some((board) => board.board_id === current)) return current
+      if (!list.length) return null
       const wanted = boardQuery().boardId
-      const match = data.boards.find((board) => board.board_id === wanted)
-      setActiveBoardId(match?.board_id || data.boards[0].board_id)
-    }
-  }, [activeBoardId])
+      const match = list.find((board) => board.board_id === wanted)
+      return match?.board_id || list[0].board_id
+    })
+  }, [])
 
   const loadTickets = useCallback(async () => {
     if (!activeBoardId) return
@@ -1254,6 +1269,13 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     loadBoards()
     loadTickets()
   }, [boardRefreshKey, loadBoards, loadTickets])
+
+  useEffect(() => {
+    if (!activeBoardId) return
+    const query = boardQuery()
+    if (query.boardId === activeBoardId) return
+    replaceBoardUrl(activeBoardId, { keepFilters: !query.boardId })
+  }, [activeBoardId])
 
   useEffect(() => {
     const next = filterFromQuery(boardQuery())

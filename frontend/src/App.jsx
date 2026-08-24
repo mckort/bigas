@@ -46,8 +46,13 @@ export default function App() {
   const switchView = (next) => {
     setView(next)
     const path = next === 'board' ? '/board' : next === 'objectives' ? '/objectives' : '/'
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, '', path)
+    const search =
+      next === 'board' && window.location.pathname.startsWith('/board')
+        ? window.location.search
+        : ''
+    const nextUrl = `${path}${search}`
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.pushState({}, '', nextUrl)
     }
   }
 
