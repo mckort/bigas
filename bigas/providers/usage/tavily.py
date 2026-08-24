@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from bigas.providers.usage.base import UsageEvent, UsageProvider, usage_provider_enabled
 
@@ -130,6 +130,18 @@ class TavilyUsageProvider(UsageProvider):
 
     def __init__(self) -> None:
         self._project = _tavily_project()
+        self._db: Any = None
+
+    def _get_db(self) -> Any:
+        if self._db is None:
+            try:
+                from google.cloud import firestore
+            except ImportError as e:
+                raise RuntimeError(
+                    "google-cloud-firestore is required for Tavily usage"
+                ) from e
+            self._db = firestore.Client(project=self._project)
+        return self._db
 
     def fetch_usage(
         self,
@@ -150,11 +162,7 @@ class TavilyUsageProvider(UsageProvider):
 
     def _load_shards(self, day: str) -> List[Dict[str, Any]]:
         try:
-            from google.cloud import firestore
-        except ImportError as e:
-            raise RuntimeError("google-cloud-firestore is required for Tavily usage") from e
-        try:
-            db = firestore.Client(project=self._project)
+            db = self._get_db()
             snaps = (
                 db.collection("aiUsageDaily")
                 .document(day)

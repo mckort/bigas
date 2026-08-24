@@ -53,8 +53,10 @@ def _dataset_id() -> str:
     return (os.environ.get("BIGAS_GCP_BILLING_DATASET") or "gcp_billing").strip()
 
 
-def _billing_account_table_suffix() -> str:
-    raw = (os.environ.get("BIGAS_BILLING_ACCOUNT") or "011097-9C6611-22F8ED").strip()
+def _billing_account_table_suffix() -> Optional[str]:
+    raw = (os.environ.get("BIGAS_BILLING_ACCOUNT") or "").strip()
+    if not raw:
+        return None
     return raw.replace("-", "_")
 
 
@@ -186,13 +188,14 @@ class GcpBillingUsageProvider(UsageProvider):
         dataset = _dataset_id()
         suffix = _billing_account_table_suffix()
         names = self._list_table_ids(dataset)
-        preferred = (
-            f"gcp_billing_export_v1_{suffix}",
-            f"gcp_billing_export_resource_v1_{suffix}",
-        )
-        for name in preferred:
-            if name in names:
-                return f"{self._project}.{dataset}.{name}"
+        if suffix:
+            preferred = (
+                f"gcp_billing_export_v1_{suffix}",
+                f"gcp_billing_export_resource_v1_{suffix}",
+            )
+            for name in preferred:
+                if name in names:
+                    return f"{self._project}.{dataset}.{name}"
         for name in names:
             if name.startswith("gcp_billing_export_v1_") or name.startswith(
                 "gcp_billing_export_resource_v1_"
