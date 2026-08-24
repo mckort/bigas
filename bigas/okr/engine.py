@@ -67,7 +67,7 @@ def _task_specs_for_kr(objective: Dict[str, Any], kr: Dict[str, Any]) -> List[Di
             "title": f"{title[:80]}",
             "description": (
                 f"Work that moves this parameter toward the Objective, not a new goal.\n\n"
-                f"**Objective:** {objective.get('title')}\n"
+                f"**Objective:** {objective.get('title') or 'Untitled'}\n"
                 f"**KR:** {title}\n"
                 f"**Metric:** {kr.get('metric')} ({kr.get('source')})\n"
                 f"**Baseline → target:** {kr.get('baseline')} → {kr.get('target')} {kr.get('unit') or ''}\n\n"

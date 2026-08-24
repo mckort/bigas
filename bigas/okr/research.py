@@ -128,18 +128,42 @@ def fallback_key_results(ticket: Dict[str, Any], evidence: Optional[Dict[str, st
     )
 
 
+def _first_balanced_json_object(text: str) -> str:
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("no JSON object in LLM response")
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    raise ValueError("no JSON object in LLM response")
+
+
 def _extract_json_object(text: str) -> Dict[str, Any]:
     raw = (text or "").strip()
     if not raw:
         raise ValueError("empty LLM response")
-    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, flags=re.DOTALL)
+    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, flags=re.DOTALL)
     if fenced:
-        raw = fenced.group(1)
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("no JSON object in LLM response")
-    parsed = json.loads(raw[start : end + 1])
+        raw = fenced.group(1).strip()
+    parsed = json.loads(_first_balanced_json_object(raw))
     if not isinstance(parsed, dict):
         raise ValueError("LLM JSON was not an object")
     return parsed

@@ -20,6 +20,7 @@ from bigas.portfolio import (
 logger = logging.getLogger(__name__)
 
 _UA = "bigas-okr-research/1.0"
+_MAX_SITE_FETCH_BYTES = 512 * 1024
 
 
 def resolve_project_key(ticket: Dict[str, Any]) -> str:
@@ -41,12 +42,18 @@ def resolve_project_key(ticket: Dict[str, Any]) -> str:
     return ""
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _cycle_window(ticket: Dict[str, Any]) -> Dict[str, str]:
     created = str(ticket.get("created_at") or "")
     cycle = str(ticket.get("okr_cycle") or "").strip()
     end = cycle_end_for(cycle, created_at=created)
-    start_dt = parse_iso(created) or datetime.now(timezone.utc)
-    end_dt = parse_iso(end) or (start_dt + timedelta(days=90))
+    start_dt = _ensure_utc(parse_iso(created) or datetime.now(timezone.utc))
+    end_dt = _ensure_utc(parse_iso(end) or (start_dt + timedelta(days=90)))
     now = datetime.now(timezone.utc)
     remaining = max(0, int((end_dt - now).total_seconds() // 86400))
     total = max(1, int((end_dt - start_dt).total_seconds() // 86400))
@@ -251,17 +258,40 @@ def fetch_site_snapshot(urls: List[str]) -> str:
     chunks: List[str] = []
     for url in urls[:3]:
         try:
-            resp = requests.get(
+            with requests.get(
                 url,
                 headers={"User-Agent": _UA},
                 timeout=15,
                 allow_redirects=True,
-            )
-            if resp.status_code >= 400:
-                chunks.append(f"{url}: HTTP {resp.status_code}")
-                continue
-            text = _strip_html(resp.text or "")
-            chunks.append(f"{url}\n{text[:4000]}")
+                stream=True,
+            ) as resp:
+                if resp.status_code >= 400:
+                    chunks.append(f"{url}: HTTP {resp.status_code}")
+                    continue
+                content_length = resp.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        if int(content_length) > _MAX_SITE_FETCH_BYTES:
+                            chunks.append(
+                                f"{url}: response too large ({content_length} bytes)"
+                            )
+                            continue
+                    except ValueError:
+                        pass
+                raw = b""
+                for part in resp.iter_content(chunk_size=8192):
+                    if not part:
+                        continue
+                    remaining = _MAX_SITE_FETCH_BYTES - len(raw)
+                    if len(part) > remaining:
+                        raw += part[:remaining]
+                        break
+                    raw += part
+                    if len(raw) >= _MAX_SITE_FETCH_BYTES:
+                        break
+                encoding = resp.encoding or resp.apparent_encoding or "utf-8"
+                text = _strip_html(raw.decode(encoding, errors="replace"))
+                chunks.append(f"{url}\n{text[:4000]}")
         except Exception as exc:
             chunks.append(f"{url}: unavailable ({exc})")
     return "\n\n".join(chunks) if chunks else "(Website fetch returned nothing.)"
