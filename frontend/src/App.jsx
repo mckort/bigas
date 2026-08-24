@@ -7,9 +7,13 @@ import AgentSettings from './components/AgentSettings'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 
+function isBoardPath(path) {
+  return path === '/board' || path.startsWith('/board/')
+}
+
 function initialView() {
   const path = window.location.pathname || ''
-  if (path.startsWith('/board')) return 'board'
+  if (isBoardPath(path)) return 'board'
   if (path.startsWith('/objectives')) return 'objectives'
   return 'chat'
 }
@@ -46,8 +50,13 @@ export default function App() {
   const switchView = (next) => {
     setView(next)
     const path = next === 'board' ? '/board' : next === 'objectives' ? '/objectives' : '/'
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, '', path)
+    const search =
+      next === 'board' && isBoardPath(window.location.pathname)
+        ? window.location.search
+        : ''
+    const nextUrl = `${path}${search}`
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.pushState({}, '', nextUrl)
     }
   }
 

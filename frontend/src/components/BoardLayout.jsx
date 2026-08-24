@@ -44,6 +44,8 @@ function isTodoColumn(col) {
   return String(col || '').trim().toLowerCase() === 'to do'
 }
 
+const BOARD_FILTER_QUERY_KEYS = ['kr', 'objective', 'ticket']
+
 function boardQuery() {
   const params = new URLSearchParams(window.location.search)
   return {
@@ -52,6 +54,20 @@ function boardQuery() {
     krId: (params.get('kr') || '').trim(),
     objectiveKey: (params.get('objective') || '').trim().toUpperCase(),
   }
+}
+
+function replaceBoardUrl(boardId, { keepFilters = true } = {}) {
+  const params = new URLSearchParams(window.location.search)
+  if (!keepFilters) {
+    for (const key of BOARD_FILTER_QUERY_KEYS) params.delete(key)
+  }
+  if (boardId) params.set('board', String(boardId))
+  else params.delete('board')
+  const qs = params.toString()
+  const pathname = window.location.pathname
+  const next = qs ? `${pathname}?${qs}` : pathname
+  if (`${window.location.pathname}${window.location.search}` === next) return
+  window.history.replaceState({}, '', next)
 }
 
 function filterFromQuery(query) {
@@ -1225,13 +1241,16 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   const loadBoards = useCallback(async () => {
     const data = await fetchBoards()
-    setBoards(data.boards || [])
-    if (!activeBoardId && data.boards?.length) {
+    const list = data.boards || []
+    setBoards(list)
+    setActiveBoardId((current) => {
+      if (current && list.some((board) => String(board.board_id) === String(current))) return current
+      if (!list.length) return null
       const wanted = boardQuery().boardId
-      const match = data.boards.find((board) => board.board_id === wanted)
-      setActiveBoardId(match?.board_id || data.boards[0].board_id)
-    }
-  }, [activeBoardId])
+      const match = list.find((board) => String(board.board_id) === wanted)
+      return match?.board_id || list[0].board_id
+    })
+  }, [])
 
   const loadTickets = useCallback(async () => {
     if (!activeBoardId) return
@@ -1254,6 +1273,34 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     loadBoards()
     loadTickets()
   }, [boardRefreshKey, loadBoards, loadTickets])
+
+  useEffect(() => {
+    if (!activeBoardId) return
+    const query = boardQuery()
+    if (query.boardId === String(activeBoardId)) return
+    replaceBoardUrl(activeBoardId, { keepFilters: !query.boardId })
+  }, [activeBoardId])
+
+  const syncBoardStateFromUrl = useCallback(() => {
+    const query = boardQuery()
+    if (query.boardId && boards.length) {
+      const match = boards.find((board) => String(board.board_id) === query.boardId)
+      if (match) {
+        setActiveBoardId((current) =>
+          String(current) === String(match.board_id) ? current : match.board_id,
+        )
+      }
+    }
+    const nextFilter = filterFromQuery(query)
+    setEpicFilter(nextFilter)
+    if (query.ticketKey) setPendingTicketKey(query.ticketKey)
+    else setPendingTicketKey(null)
+  }, [boards])
+
+  useEffect(() => {
+    window.addEventListener('popstate', syncBoardStateFromUrl)
+    return () => window.removeEventListener('popstate', syncBoardStateFromUrl)
+  }, [syncBoardStateFromUrl])
 
   useEffect(() => {
     const next = filterFromQuery(boardQuery())
