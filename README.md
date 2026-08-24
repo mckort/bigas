@@ -336,9 +336,9 @@ This is the flow that makes Bigas a **goal-oriented engine**: you name what winn
 
 **Objective** is its own issue type. **Epic stays Epic** — a delivery container, not a stand-in for the quarter's aim. Jira import keeps that split: Epic → Epic, Objective → Objective.
 
-1. Open `/objectives` and write the Objective in plain language.
-2. Add Key Results on that Objective — a metric, a target, a direction. You sign off `current` yourself. Bigas does not invent confidence scores or committed/stretch bets.
-3. Create or link Tasks under a Key Result. Those cards live on `/board` with everything else.
+1. Open `/objectives` (or the project board) and write the Objective in plain language.
+2. Drag it to **Research and describe (AI)**. Bigas loads that board's brand, pulls live evidence (GA4, website, repo), and a thinking model **analyzes** it — then proposes 2–4 Key Results as measurable from→to improvements that most help this Objective. No canned metric kit. The card moves to **Description approval (manual)**.
+3. After you approve, drag to **Design and plan (AI)** to create one Task per KR (you can still add or link more). Those cards live on `/board` with everything else. The weekly pulse keeps KR-linked work current.
 4. **Open on board** filters the board to that Objective; **Show on board** filters to one KR. You still drag cards. AI columns still research, plan, and implement — they do not auto-start because a KR is off track.
 5. When a KR's number has moved, you update `current`. The dashboard shows on track / at risk / off track against expected pace.
 

@@ -1,4 +1,4 @@
-"""Prototype OKR pipeline: research → plan → in progress."""
+"""OKR pipeline: research → description approval → plan → in progress."""
 
 from __future__ import annotations
 
@@ -14,10 +14,14 @@ from bigas.okr.model import (
     objective_progress,
     promote_objective_type,
 )
+from bigas.okr.research import run_okr_research
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
+from bigas.resources.product.jira_automation.description import upsert_research_section
 from bigas.tickets.labels import resolve_ticket_labels
 
 logger = logging.getLogger(__name__)
+
+DESCRIPTION_APPROVAL_STATUS = "Description approval (manual)"
 
 
 def _phase_for_status(status: str) -> Optional[str]:
@@ -31,152 +35,8 @@ def _comment(store, ticket_id: str, body: str) -> None:
 
 
 def propose_key_results(ticket: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Deterministic KR proposals so the prototype works without an LLM."""
-    title = (ticket.get("title") or "").strip()
-    existing = normalize_key_results(ticket.get("key_results"))
-    if existing:
-        return existing
-
-    lowered = title.lower()
-    cycle_note = "Score weekly from the live source; do not use task-count as a proxy."
-    proposals: List[Dict[str, Any]]
-
-    if any(word in lowered for word in ("acquire", "growth", "customer", "founder", "signup")):
-        proposals = [
-            {
-                "title": "40 weekly active founders",
-                "metric": "Weekly active founders",
-                "unit": "founders",
-                "baseline": 12,
-                "target": 40,
-                "current": 12,
-                "source": "ga4",
-                "measurable": True,
-                "ai_note": "Leading indicator. Instrument a weekly active event if GA4 only has sessions.",
-            },
-            {
-                "title": "25% activation within 7 days of signup",
-                "metric": "7-day activation rate",
-                "unit": "%",
-                "baseline": 8,
-                "target": 25,
-                "current": 8,
-                "source": "ga4",
-                "measurable": True,
-                "ai_note": "Needs a single activation definition (first AI run, first board created, or first deploy).",
-            },
-            {
-                "title": "3 public case studies published",
-                "metric": "Published case studies",
-                "unit": "posts",
-                "baseline": 0,
-                "target": 3,
-                "current": 0,
-                "source": "manual",
-                "measurable": True,
-            },
-            {
-                "title": "Founder NPS from weekly pulse",
-                "metric": "NPS",
-                "unit": "score",
-                "baseline": 0,
-                "target": 40,
-                "current": 0,
-                "source": "unknown",
-                "measurable": False,
-                "measurement_gap": "No survey exists yet. Ship a 1-question pulse in chat before this KR can be scored.",
-            },
-        ]
-    elif any(word in lowered for word in ("reliab", "deliver", "quality", "ci", "deploy")):
-        proposals = [
-            {
-                "title": "Median time from ticket In Progress to merged PR under 48h",
-                "metric": "Ticket-to-merge hours",
-                "unit": "hours",
-                "baseline": 96,
-                "target": 48,
-                "current": 96,
-                "source": "github",
-                "direction": "decrease",
-                "measurable": True,
-                "ai_note": "Join board status timestamps with GitHub merged_at. Prototype uses a manual snapshot.",
-            },
-            {
-                "title": "Failed deploys recovered without human in < 30 min",
-                "metric": "Unattended recoveries",
-                "unit": "%",
-                "baseline": 20,
-                "target": 80,
-                "current": 20,
-                "source": "github",
-                "measurable": True,
-            },
-            {
-                "title": "Zero recurring quota/automation skips on the VFA board",
-                "metric": "Automation skips / week",
-                "unit": "skips",
-                "baseline": 6,
-                "target": 0,
-                "current": 6,
-                "source": "jira",
-                "direction": "decrease",
-                "measurable": True,
-            },
-        ]
-    else:
-        proposals = [
-            {
-                "title": f"Define the outcome metric for: {title[:80]}",
-                "metric": "Primary outcome",
-                "unit": "",
-                "baseline": 0,
-                "target": 1,
-                "current": 0,
-                "source": "unknown",
-                "measurable": False,
-                "measurement_gap": (
-                    "This objective has no obvious counter. Pick one leading metric "
-                    "(usage, revenue, latency, conversion) and one lagging metric before committing KRs."
-                ),
-            },
-            {
-                "title": "Ship instrumentation so the primary metric is queryable weekly",
-                "metric": "Metric freshness (days since last datapoint)",
-                "unit": "days",
-                "baseline": 30,
-                "target": 7,
-                "current": 30,
-                "source": "manual",
-                "direction": "decrease",
-                "measurable": True,
-                "ai_note": cycle_note,
-            },
-            {
-                "title": "Close the first task that can move the metric",
-                "metric": "Validated tasks",
-                "unit": "tasks",
-                "baseline": 0,
-                "target": 3,
-                "current": 0,
-                "source": "jira",
-                "measurable": True,
-            },
-            {
-                "title": "Weekly check-in completed 8 of 12 weeks",
-                "metric": "Check-ins completed",
-                "unit": "weeks",
-                "baseline": 0,
-                "target": 8,
-                "current": 0,
-                "source": "manual",
-                "measurable": True,
-            },
-        ]
-
-    for item in proposals:
-        item["status"] = "proposed"
-        item.setdefault("ai_note", cycle_note)
-    return normalize_key_results(proposals)
+    """Propose KRs from live brand evidence + LLM. Never returns SaaS template KRs."""
+    return run_okr_research(ticket).key_results
 
 
 def _format_kr_comment(key_results: List[Dict[str, Any]], *, heading: str) -> str:
@@ -204,12 +64,15 @@ def _task_specs_for_kr(objective: Dict[str, Any], kr: Dict[str, Any]) -> List[Di
     title = kr.get("title") or "Key result"
     specs = [
         {
-            "title": f"Move “{title[:72]}”",
+            "title": f"{title[:80]}",
             "description": (
-                f"Work that should move this Key Result, not just produce output.\n\n"
+                f"Work that moves this parameter toward the Objective, not a new goal.\n\n"
+                f"**Objective:** {objective.get('title') or 'Untitled'}\n"
                 f"**KR:** {title}\n"
                 f"**Metric:** {kr.get('metric')} ({kr.get('source')})\n"
-                f"If this ticket can be completed without changing the metric, it is the wrong task."
+                f"**Baseline → target:** {kr.get('baseline')} → {kr.get('target')} {kr.get('unit') or ''}\n\n"
+                "Update this task as the number moves. Done only when the KR has moved, "
+                "not when activity was completed."
             ),
             "ai_doable": False,
         }
@@ -262,17 +125,32 @@ def handle_objective_status_change(
     logger.info("OKR pipeline %s %s → %s (%s)", key, from_status, to_status, phase)
 
     if phase == "research":
-        key_results = propose_key_results(ticket)
-        briefing = (
-            f"Reframed “{ticket.get('title')}” as an outcome. "
-            f"{sum(1 for kr in key_results if not kr.get('measurable'))} KR(s) still need instrumentation "
-            "before they can be scored. Confirm, edit, or drop KRs, then drag to Design and plan."
+        from bigas.resources.product.jira_automation.config import JiraAutomationConfig
+
+        research = run_okr_research(ticket)
+        key_results = research.key_results
+        approval = (
+            JiraAutomationConfig.from_env().status_description_approval
+            or DESCRIPTION_APPROVAL_STATUS
+        )
+        briefing = research.briefing or (
+            f"Proposed {len(key_results)} Key Results for “{ticket.get('title')}”. "
+            f"{sum(1 for kr in key_results if not kr.get('measurable'))} KR(s) still need instrumentation. "
+            f"Review in {approval}. If you keep these KRs, drag to Design and plan to create "
+            f"one Task per KR (kept current on the weekly pulse)."
+        )
+        description = upsert_research_section(
+            ticket.get("description") or "",
+            research_markdown=research.research_markdown,
+            brief_fallback=str(ticket.get("title") or key),
         )
         store.update_ticket(
             ticket_id,
             key_results=key_results,
             okr_phase="research",
             okr_briefing=briefing,
+            description=description,
+            status=approval,
             issue_type=promote_objective_type(ticket.get("issue_type") or "", resolve_ticket_labels(ticket)),
         )
         _comment(
@@ -280,7 +158,11 @@ def handle_objective_status_change(
             ticket_id,
             _format_kr_comment(
                 key_results,
-                heading=f"**OKR research** for {key}: proposed Key Results (not committed yet).",
+                heading=(
+                    f"**OKR research** for {key}: proposed Key Results "
+                    f"(not committed yet; model={research.model or 'n/a'}). "
+                    f"Moved to {approval} for review."
+                ),
             ),
         )
         return {
@@ -289,6 +171,10 @@ def handle_objective_status_change(
             "issue_key": key,
             "phase": phase,
             "key_results": len(key_results),
+            "moved_to": approval,
+            "summary": ticket.get("title") or key,
+            "model": research.model,
+            "used_llm": research.used_llm,
         }
 
     if phase == "plan":

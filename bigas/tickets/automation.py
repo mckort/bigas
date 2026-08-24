@@ -53,9 +53,21 @@ class InternalTicketAutomation:
                 HANDLER_DESIGN,
                 HANDLER_IMPLEMENT,
             ):
-                return handle_objective_status_change(
+                result = handle_objective_status_change(
                     ticket, to_status=to_status, from_status=from_status
                 )
+                if (
+                    handler == HANDLER_RESEARCH
+                    and result.get("handler") == "okr_research"
+                    and result.get("moved_to")
+                    and not result.get("skipped")
+                ):
+                    self._notify_pm(
+                        issue_key,
+                        result,
+                        result.get("moved_to") or self._config.status_description_approval,
+                    )
+                return result
 
         if not handler:
             return {"ok": True, "skipped": True, "reason": "no handler for status"}
