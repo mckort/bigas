@@ -21,7 +21,7 @@ Jira ticket formatting (mandatory):
   Replace TICKET-KEY with the actual issue key (e.g. BIG-13).
 """.strip()
 
-JIRA_AWARE_AGENT_IDS = frozenset({"chief", "marketing", "product", "cto", "devops"})
+JIRA_AWARE_AGENT_IDS = frozenset({"chief", "marketing", "product", "cto", "cfo", "devops"})
 
 
 def jira_transition_action_markdown(issue_key: str) -> str:

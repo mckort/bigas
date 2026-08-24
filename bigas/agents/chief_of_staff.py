@@ -84,6 +84,10 @@ AGENT_TOOL_PREFIXES = {
         "website_monitor",
         "run_qa",
     ),
+    "cfo": (
+        "fetch_ai_usage",
+        "weekly_cto",
+    ),
     "devops": (
         "check_deployment",
         "trigger_deployment",
@@ -128,11 +132,25 @@ DELEGATE_TOOL_DEFS = [
         "type": "function",
         "function": {
             "name": "delegate_to_cto",
-            "description": "Delegate an engineering/CTO task (PR review, QA, failed-deploy hotfix, monitoring, AI usage).",
+            "description": "Delegate an engineering/CTO task (PR review, QA, failed-deploy hotfix, monitoring).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task": {"type": "string", "description": "Clear task description for the CTO agent."},
+                },
+                "required": ["task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_to_cfo",
+            "description": "Delegate an AI/GCP cost analysis task to the CFO (usage, Gemini spend, savings).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Clear task description for the CFO agent."},
                 },
                 "required": ["task"],
             },
@@ -158,16 +176,18 @@ DELEGATE_MAP = {
     "delegate_to_marketing": "marketing",
     "delegate_to_product": "product",
     "delegate_to_cto": "cto",
+    "delegate_to_cfo": "cfo",
     "delegate_to_devops": "devops",
 }
 
-SPECIALIST_IDS = ("marketing", "product", "cto", "devops")
+SPECIALIST_IDS = ("marketing", "product", "cto", "cfo", "devops")
 
 SPECIALIST_CAPABILITIES = (
     "Specialists (always delegate domain work to them — they have the tools and will reply here):\n"
     "- marketing: GA4, ads (Google/Meta/LinkedIn/Reddit), trends, weekly/portfolio reports.\n"
     "- product: Jira release notes, progress updates, social drafts, board automation.\n"
-    "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, AI usage, monitoring.\n"
+    "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, monitoring.\n"
+    "- cfo: AI/GCP cost, Gemini spend (Bigas + VC Field Assistant), fetch_ai_usage, savings.\n"
     "- devops: production deploy via GitHub Actions (including manual trigger_deployment), "
     "deploy status, site health, CI logs, hotfix PRs. vcfieldassistant/VFA is a DevOps deploy.\n"
     "Every specialist and Chief of Staff can call lookup_jira, search_jira (JQL), and create_jira_issue (Task/Bug). "
@@ -191,6 +211,7 @@ MUST_DELEGATE_TOOLS = {
     "run_qa": "cto",
     "notify_pr_merged": "cto",
     "weekly_cto_ai_report": "cto",
+    "fetch_ai_usage": "cfo",
     "create_release_notes": "product",
     "progress_updates": "product",
     "generate_weekly_x_post": "product",
@@ -307,7 +328,7 @@ def _chief_routing_extra(tool_summary: str) -> str:
     return (
         f"{_chief_native_extra()}\n\n"
         "If you should delegate, respond with ONLY:\n"
-        '{"action":"delegate","agent_id":"marketing|product|cto|devops","task":"<clear task>"}\n'
+        '{"action":"delegate","agent_id":"marketing|product|cto|cfo|devops","task":"<clear task>"}\n'
         "If you should call a tool, respond with ONLY:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
         "Otherwise respond with ONLY:\n"

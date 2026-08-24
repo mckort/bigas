@@ -30,6 +30,29 @@ def _project_id() -> str:
     )
 
 
+def _usage_project_ids(home_project: str) -> List[str]:
+    """Projects whose Cloud Logging llm_usage lines we scan.
+
+    ``BIGAS_LLM_USAGE_PROJECTS`` is a comma-separated override. Default is the
+    home GCP project plus ``vcfieldassistant`` so Gemini COGS on the shared
+    billing account is visible to fetch_ai_usage / CFO.
+    """
+    raw = (os.environ.get("BIGAS_LLM_USAGE_PROJECTS") or "").strip()
+    if raw:
+        ids = [p.strip() for p in raw.split(",") if p.strip()]
+    else:
+        ids = [home_project] if home_project else []
+        if home_project != "vcfieldassistant":
+            ids.append("vcfieldassistant")
+    seen = set()
+    out: List[str] = []
+    for pid in ids:
+        if pid and pid not in seen:
+            seen.add(pid)
+            out.append(pid)
+    return out
+
+
 def _parse_log_payload(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     jp = entry.get("jsonPayload")
     if isinstance(jp, dict) and jp.get("event") == "llm_usage":
@@ -111,6 +134,26 @@ class CloudRunLlmUsageProvider(UsageProvider):
         filter_str = " AND ".join(filter_parts)
 
         events: List[UsageEvent] = []
+        for project in _usage_project_ids(self._project):
+            events.extend(
+                self._fetch_project_events(
+                    project=project,
+                    filter_str=filter_str,
+                    feature_prefix=feature_prefix,
+                    start=start,
+                )
+            )
+        return events
+
+    def _fetch_project_events(
+        self,
+        *,
+        project: str,
+        filter_str: str,
+        feature_prefix: Optional[str],
+        start: datetime,
+    ) -> List[UsageEvent]:
+        events: List[UsageEvent] = []
         page_token: Optional[str] = None
         pages = 0
         max_pages = 20
@@ -118,7 +161,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
         while pages < max_pages:
             pages += 1
             body: Dict[str, Any] = {
-                "resourceNames": [f"projects/{self._project}"],
+                "resourceNames": [f"projects/{project}"],
                 "filter": filter_str,
                 "orderBy": "timestamp desc",
                 "pageSize": 1000,
@@ -129,7 +172,11 @@ class CloudRunLlmUsageProvider(UsageProvider):
             try:
                 payload = self._list_entries(body)
             except Exception as e:
-                logger.warning("Cloud Logging entries:list failed: %s", e)
+                logger.warning(
+                    "Cloud Logging entries:list failed for project %s: %s",
+                    project,
+                    e,
+                )
                 break
 
             for entry in payload.get("entries") or []:
@@ -141,21 +188,14 @@ class CloudRunLlmUsageProvider(UsageProvider):
                 feature = str(data.get("feature") or "").strip() or "llm"
                 if not _feature_matches(feature, feature_prefix):
                     continue
-                # Prefer review totals over per-attempt rows when present.
                 attempt = data.get("attempt")
                 if attempt not in (None, "total") and str(attempt).isdigit():
-                    # Skip per-attempt lines; keep totals (and single-attempt logs
-                    # that never emit a separate total — those have no attempt key
-                    # or attempt==0 only when it's the only line).
-                    # Keep attempt 0 only if there is no "total" companion — hard
-                    # without grouping; skip numeric attempts and keep totals +
-                    # logs without attempt.
                     continue
 
                 ts = (entry.get("timestamp") or start.isoformat()).strip()
                 source_id = (
                     (entry.get("insertId") or "").strip()
-                    or f"{feature}:{ts}:{data.get('model')}"
+                    or f"{project}:{feature}:{ts}:{data.get('model')}"
                 )
                 try:
                     prompt = int(data["prompt_tokens"]) if data.get("prompt_tokens") is not None else None
@@ -195,6 +235,14 @@ class CloudRunLlmUsageProvider(UsageProvider):
                             "phase": data.get("phase"),
                             "attempts": data.get("attempts"),
                             "attempt": data.get("attempt"),
+                            "app": data.get("app"),
+                            "gcp_project": data.get("gcp_project") or project,
+                            "model_tier": data.get("model_tier"),
+                            "analysis_pass": data.get("analysis_pass"),
+                            "empty_fallback": data.get("empty_fallback"),
+                            "empty_response": data.get("empty_response"),
+                            "thinking_budget": data.get("thinking_budget"),
+                            "thoughts_tokens": data.get("thoughts_tokens"),
                         },
                     )
                 )

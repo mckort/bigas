@@ -63,6 +63,7 @@ _EXPERT_AGENTS = (
     ("product", "Product management, Jira backlog, release cadence"),
     ("marketing", "GA4, ads, SEO, growth metrics"),
     ("cto", "Engineering quality, PRs, technical debt, monitoring"),
+    ("cfo", "AI/GCP cost, Gemini spend, Cursor usage"),
     ("devops", "Deployments, CI/CD, infrastructure"),
 )
 

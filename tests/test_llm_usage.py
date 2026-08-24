@@ -113,6 +113,8 @@ class LoggingLLMClientTests(unittest.TestCase):
         self.assertEqual(len(payloads), 1)
         self.assertEqual(payloads[0]["event"], "llm_usage")
         self.assertEqual(payloads[0]["feature"], "chat")
+        self.assertEqual(payloads[0]["app"], "bigas")
+        self.assertEqual(payloads[0]["model_tier"], "helper")
         self.assertIn("est_cost_usd", payloads[0])
         self.assertNotIn("attempt", payloads[0])
 
