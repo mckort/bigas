@@ -4,10 +4,31 @@ The **review_and_comment_pr** tool reviews a pull request diff with AI (default:
 
 ## Add to your repo (repo you want reviewed)
 
-Do this in the **repository where you open pull requests** (not the Bigas repo).
+Do this in the **repository where you open pull requests**. Do **not** copy the full workflow — every product repo must call the canonical file so review → autofix → merge → Final approval stays identical.
 
-**1. Add the workflow file**  
-Create `.github/workflows/pr-review.yml` in your repo. You can copy the contents from this repo’s [.github/workflows/pr-review.yml](../.github/workflows/pr-review.yml).
+**1. Add the caller workflow**  
+Create `.github/workflows/pr-review.yml` from [pr-review.caller.yml](./pr-review.caller.yml):
+
+```yaml
+name: Bigas PR review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  bigas:
+    uses: mckort/bigas/.github/workflows/pr-review.yml@main
+    with:
+      bigas_url: ${{ vars.BIGAS_URL }}
+      auto_fix: ${{ vars.BIGAS_AUTO_FIX || 'true' }}
+    secrets:
+      BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
+      GH_PAT_FOR_BIGAS: ${{ secrets.GH_PAT_FOR_BIGAS }}
+```
+
+The implementation ([pr-review.yml](../.github/workflows/pr-review.yml) in this repo) includes `notify_merged` on PR close so a human merge or delayed GitHub auto-merge still moves the linked ticket to Final approval. Diff fetch uses `github.token` first so a stale `GH_PAT_FOR_BIGAS` cannot 401 the job.
 
 **2. Configure in GitHub**  
 In your repo: **Settings → Secrets and variables → Actions**.

@@ -1,18 +1,40 @@
-# Run Bigas AI PR review and post/update a single comment on the PR.
-# Optionally launch Cursor autofix when BIGAS_AUTO_FIX=true, wait for completion,
-# re-review, and Discord "ready to merge" when clean.
-# In any repo, configure:
-#   Settings → Secrets and variables → Actions
-#   - Variable: BIGAS_URL = your Bigas Cloud Run URL (required)
-#   - Secret:   BIGAS_API_KEY = one of your Bigas access keys (BIGAS_ACCESS_KEYS)
-#   - Variable: BIGAS_AUTO_FIX = true  (optional; enables Cursor autofix after review)
-#   - Secret:   GH_PAT_FOR_BIGAS = GitHub PAT with repo scope (optional if GITHUB_TOKEN is in Bigas Secret Manager)
-# Discord: Bigas posts to CTO channel using DISCORD_WEBHOOK_URL_CTO from GCP Secret Manager (no GitHub secret needed).
+# Canonical Bigas PR review + autofix + Final-approval hook.
+# Product repos should *call* this workflow (do not copy it):
+#   uses: mckort/bigas/.github/workflows/pr-review.yml@main
+# See docs/cto-pr-review.md.
+#
+# Direct use (this repo) still works via pull_request.
+# Configure on the *caller* repo:
+#   - Variable BIGAS_URL (required)
+#   - Secret   BIGAS_API_KEY (required)
+#   - Variable BIGAS_AUTO_FIX (default true when called as reusable)
+#   - Secret   GH_PAT_FOR_BIGAS (optional; stale PATs 401 — github.token is used first)
+# Discord: Bigas posts to CTO via DISCORD_WEBHOOK_URL_CTO in GCP Secret Manager.
 name: Bigas PR review
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, closed]
+  workflow_call:
+    inputs:
+      bigas_url:
+        description: Bigas Cloud Run URL
+        type: string
+        required: true
+      auto_fix:
+        description: '"true" to run Cursor autofix after review'
+        type: string
+        required: false
+        default: "true"
+    secrets:
+      BIGAS_API_KEY:
+        required: true
+      GH_PAT_FOR_BIGAS:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   # Human merge, delayed GitHub auto-merge, or any other merge path.
@@ -28,21 +50,21 @@ jobs:
             exit 1
           fi
         env:
-          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
 
       - name: Move linked ticket to Final approval
         env:
-          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
           GH_PAT: ${{ secrets.GH_PAT_FOR_BIGAS }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           python3 -c "
           import json, os
           payload = {
               'repo': os.environ['GITHUB_REPOSITORY'],
               'pr_number': int('${{ github.event.pull_request.number }}'),
-              'github_token': os.environ.get('GH_PAT') or os.environ.get('GITHUB_TOKEN', '')
+              'github_token': os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_PAT', '')
           }
           with open('payload.json', 'w') as f:
               json.dump(payload, f)
@@ -114,24 +136,33 @@ jobs:
             exit 1
           fi
         env:
-          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
 
       - name: Get PR diff via GitHub API
         id: diff
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT_FOR_BIGAS || github.token }}
+          GH_PAT: ${{ secrets.GH_PAT_FOR_BIGAS }}
+          GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          # Prefer github.token for this repo. A configured-but-expired
+          # GH_PAT_FOR_BIGAS would otherwise 401 and never fall back.
           # Prefer the GitHub API diff for this PR number. Local `git diff base...HEAD`
           # can be empty if the PR was merged into the base branch before this job ran.
-          # Use HTTP status (portable across curl versions) and always keep the body in
-          # diff.txt so API error JSON can be printed on failure.
-          HTTP_CODE=$(curl -sS -w "%{http_code}" -o diff.txt \
-            -H "Accept: application/vnd.github.diff" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
+          fetch_diff() {
+            local token="$1"
+            curl -sS -w "%{http_code}" -o diff.txt \
+              -H "Accept: application/vnd.github.diff" \
+              -H "Authorization: Bearer $token" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
+          }
+          HTTP_CODE="$(fetch_diff "$GH_TOKEN")"
+          if [ "$HTTP_CODE" != "200" ] && [ -n "${GH_PAT:-}" ]; then
+            echo "github.token returned HTTP $HTTP_CODE; retrying with GH_PAT_FOR_BIGAS"
+            HTTP_CODE="$(fetch_diff "$GH_PAT")"
+          fi
           if [ "$HTTP_CODE" != "200" ]; then
             echo "::error::Failed to fetch PR diff from GitHub API (HTTP $HTTP_CODE)"
             cat diff.txt || true
@@ -145,9 +176,10 @@ jobs:
       - name: Trigger Bigas review + comment
         id: bigas
         env:
-          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
           GH_PAT: ${{ secrets.GH_PAT_FOR_BIGAS }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           python3 -c "
           import json, os
@@ -157,7 +189,7 @@ jobs:
               'repo': os.environ['GITHUB_REPOSITORY'],
               'pr_number': ${{ github.event.pull_request.number }},
               'diff': diff,
-              'github_token': os.environ.get('GH_PAT', '')
+              'github_token': os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_PAT', '')
           }
           with open('payload.json', 'w') as f:
               json.dump(payload, f)
@@ -181,11 +213,12 @@ jobs:
           cat response_body.txt || true
 
       - name: Autofix loop (up to 5 rounds) + re-review
-        if: ${{ vars.BIGAS_AUTO_FIX == 'true' }}
+        if: ${{ (inputs.auto_fix || vars.BIGAS_AUTO_FIX || 'true') == 'true' }}
         env:
-          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
           GH_PAT: ${{ secrets.GH_PAT_FOR_BIGAS }}
+          GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MAX_AUTOFIX_ROUNDS: "5"
           MAX_COOLDOWN_WAITS: "20"
@@ -199,7 +232,7 @@ jobs:
           pr_number = int(os.environ["PR_NUMBER"])
           max_rounds = int(os.environ.get("MAX_AUTOFIX_ROUNDS") or "5")
           max_cooldown_waits = int(os.environ.get("MAX_COOLDOWN_WAITS") or "20")
-          gh_pat = (os.environ.get("GH_PAT") or "").strip()
+          gh_pat = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_PAT") or "").strip()
 
           try:
               with open("response_body.txt", encoding="utf-8") as f:
