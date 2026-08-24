@@ -965,6 +965,7 @@ def handle_chat_message(
     user_message: str,
     history: Optional[List[Dict[str, str]]] = None,
     client_id: Optional[str] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Process a user message and return response metadata."""
     store = get_chat_store()
@@ -975,9 +976,22 @@ def handle_chat_message(
     agent_id = thread.get("agent_id") or "chief"
     agent_config = store.get_agent(agent_id) or {}
     history = history or []
+    from bigas.tickets.attachments import message_text_for_llm
 
-    user_metadata = {"client_id": client_id} if client_id else None
-    store.add_message(thread_id, role="user", content=user_message, metadata=user_metadata)
+    user_metadata: Dict[str, Any] = {}
+    if client_id:
+        user_metadata["client_id"] = client_id
+    if attachments:
+        user_metadata["attachments"] = list(attachments)
+    store.add_message(
+        thread_id,
+        role="user",
+        content=user_message,
+        metadata=user_metadata or None,
+    )
+    llm_user_message = message_text_for_llm(
+        {"content": user_message, "metadata": {"attachments": list(attachments or [])}}
+    )
 
     if agent_id == "chief":
         if is_deploy_start(user_message):
@@ -1009,7 +1023,7 @@ def handle_chat_message(
         )
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
         messages.extend(history[-10:])
-        messages.append({"role": "user", "content": user_message})
+        messages.append({"role": "user", "content": llm_user_message})
 
         mcp_client, all_tools = _list_chief_mcp_tools()
         extra_openai = [_mcp_tool_to_openai_def(t) for t in _chief_direct_tools(all_tools)]
@@ -1021,20 +1035,20 @@ def handle_chat_message(
                 thread_id,
                 mcp_client=mcp_client,
                 extra_tools=extra_openai,
-                user_message=user_message,
+                user_message=llm_user_message,
                 user_id=user_id,
             )
         else:
             response_text = _run_json_agent_loop(
                 agent_id="chief",
                 agent_config=agent_config,
-                user_message=user_message,
+                user_message=llm_user_message,
                 tools=all_tools,
                 history=history,
                 run_tool=lambda name, args: _dispatch_chief_tool(
                     name,
                     args,
-                    user_message=user_message,
+                    user_message=llm_user_message,
                     thread_id=thread_id,
                     mcp_client=mcp_client,
                     user_id=user_id,
@@ -1074,7 +1088,7 @@ def handle_chat_message(
     response_text = _run_json_agent_loop(
         agent_id=agent_id,
         agent_config=agent_config,
-        user_message=user_message,
+        user_message=llm_user_message,
         tools=tools,
         history=history,
         run_tool=lambda name, args: _run_tool_call(
@@ -1083,7 +1097,7 @@ def handle_chat_message(
             _enrich_tool_args(
                 name,
                 args or {},
-                user_message,
+                llm_user_message,
                 caller_agent_id=agent_id,
                 user_id=user_id,
             ),
