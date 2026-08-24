@@ -127,6 +127,39 @@ def test_boards_and_tickets_api(client):
     assert update_resp.get_json()["ticket"]["status"] == "In Progress"
 
 
+def test_drag_to_done_sets_done_at(client):
+    resp = client.get("/api/boards", headers=_auth_headers())
+    boards = resp.get_json()["boards"]
+    personal = next((b for b in boards if not b.get("project_key")), boards[0])
+    create_resp = client.post(
+        f"/api/boards/{personal['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps({"title": "Ship ranking"}),
+    )
+    assert create_resp.status_code == 201
+    ticket = create_resp.get_json()["ticket"]
+    assert not ticket.get("done_at")
+
+    moved = client.put(
+        f"/api/tickets/{ticket['ticket_id']}",
+        headers=_auth_headers(),
+        data=json.dumps({"status": "Done"}),
+    )
+    assert moved.status_code == 200
+    body = moved.get_json()["ticket"]
+    assert body["status"] == "Done"
+    assert body["done_at"]
+
+    reopened = client.put(
+        f"/api/tickets/{ticket['ticket_id']}",
+        headers=_auth_headers(),
+        data=json.dumps({"status": "To Do"}),
+    )
+    assert reopened.status_code == 200
+    assert reopened.get_json()["ticket"]["status"] == "To Do"
+    assert not reopened.get_json()["ticket"].get("done_at")
+
+
 def test_create_jira_issue_uses_internal_board(client):
     resp = client.post(
         "/mcp/tools/create_jira_issue",
