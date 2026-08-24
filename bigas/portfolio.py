@@ -15,6 +15,16 @@ DEFAULT_PROJECT_ALIASES: Dict[str, List[str]] = {
     "MYL": ["mylifesdeed", "my lifes deed", "my life's deed"],
 }
 
+DEFAULT_BRAND_NAMES: Dict[str, str] = {
+    "VFA": "VC Field Assistant",
+    "WAYW": "RoadPal",
+    "BIG": "Bigas",
+    "REM": "RemoteBrief",
+    "GPWW": "Green Promo Wear",
+    "FYDA": "Fulfill Your Dream Adventure",
+    "MYL": "My Life's Deed",
+}
+
 DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
     "greenpromowear.com": "GPWW",
     "www.greenpromowear.com": "GPWW",
@@ -102,6 +112,24 @@ def _site_to_project() -> Dict[str, str]:
                     mapping[host] = project
                     break
     return mapping
+
+
+def brand_name(project_key: Optional[str]) -> str:
+    key = (project_key or "").strip().upper()
+    if not key:
+        return "Unknown brand"
+    return DEFAULT_BRAND_NAMES.get(key) or key
+
+
+def site_urls_for_project(project_key: Optional[str]) -> List[str]:
+    key = (project_key or "").strip().upper()
+    if not key:
+        return []
+    urls: List[str] = []
+    for host, mapped in DEFAULT_SITE_TO_PROJECT.items():
+        if mapped == key and not host.startswith("www."):
+            urls.append(f"https://{host}")
+    return urls
 
 
 def project_aliases(project_key: str) -> List[str]:

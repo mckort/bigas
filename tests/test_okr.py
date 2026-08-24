@@ -16,8 +16,9 @@ os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 
 from flask import Flask
 
-from bigas.okr.engine import handle_objective_status_change, propose_key_results
+from bigas.okr.engine import handle_objective_status_change
 from bigas.okr.model import is_objective, kr_health, kr_progress, promote_objective_type
+from bigas.okr.research import OkrResearchResult
 from bigas.resources.tickets.endpoints import tickets_bp
 from bigas.tickets import store as ticket_store_module
 from bigas.tickets.attachments import reset_attachment_blob_store_for_tests, set_image_describer
@@ -44,6 +45,56 @@ def _force_internal_board(monkeypatch):
     ticket_store_module._store = None
     reset_attachment_blob_store_for_tests()
     set_image_describer(None)
+
+
+@pytest.fixture(autouse=True)
+def _mock_okr_research(monkeypatch):
+    def fake(ticket, **kwargs):
+        from bigas.okr.model import normalize_key_results
+
+        krs = normalize_key_results(ticket.get("key_results")) or normalize_key_results(
+            [
+                {
+                    "title": "10 wholesale orders this cycle",
+                    "metric": "Wholesale orders",
+                    "unit": "orders",
+                    "baseline": 1,
+                    "target": 10,
+                    "current": 1,
+                    "source": "ga4",
+                    "measurable": True,
+                },
+                {
+                    "title": "3% add-to-cart rate on product pages",
+                    "metric": "Add-to-cart rate",
+                    "unit": "%",
+                    "baseline": 1.2,
+                    "target": 3,
+                    "current": 1.2,
+                    "source": "ga4",
+                    "measurable": True,
+                },
+                {
+                    "title": "5 qualified B2B inquiries",
+                    "metric": "B2B inquiries",
+                    "unit": "leads",
+                    "baseline": 0,
+                    "target": 5,
+                    "current": 0,
+                    "source": "manual",
+                    "measurable": True,
+                },
+            ]
+        )
+        return OkrResearchResult(
+            key_results=krs,
+            research_markdown="Grounded in GA4 and the project website.",
+            briefing="Proposed KRs for review.",
+            model="test-model",
+            used_llm=True,
+        )
+
+    monkeypatch.setattr("bigas.okr.engine.run_okr_research", fake)
 
 
 @pytest.fixture
@@ -151,6 +202,10 @@ def test_research_proposes_key_results(client):
     store = get_ticket_store()
     live = store.get_ticket(ticket["ticket_id"])
     assert len(live.get("key_results") or []) >= 3
+    titles = " ".join(kr.get("title") or "" for kr in live["key_results"]).lower()
+    assert "weekly active founders" not in titles
+    assert live.get("status") == "Description approval (manual)"
+    assert "AI Research (Bigas)" in (live.get("description") or "")
     comments = live.get("comments") or []
     assert any("OKR research" in (c.get("body") or "") for c in comments)
 
@@ -247,10 +302,19 @@ def test_epic_stays_epic_on_create(client):
     assert not is_objective(ticket)
 
 
-def test_propose_key_results_without_llm():
-    krs = propose_key_results({"title": "Grow the product", "key_results": []})
-    assert 3 <= len(krs) <= 5
-    assert any(kr.get("measurement_gap") or kr.get("measurable") for kr in krs)
+def test_research_uses_mocked_grounded_krs():
+    krs = handle_objective_status_change(
+        {
+            "issue_type": "Objective",
+            "title": "10 paying customers",
+            "ticket_id": "missing",
+            "key": "GPWW-15",
+        },
+        to_status="Research and describe (AI)",
+    )
+    # ticket_id missing → store update is a no-op, but handler still runs.
+    assert krs.get("handler") == "okr_research"
+    assert krs.get("moved_to") == "Description approval (manual)"
 
 
 def test_handle_status_skips_plain_tasks():

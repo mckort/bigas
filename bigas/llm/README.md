@@ -37,6 +37,7 @@ Set `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey)
 | Weekly X posts            | `BIGAS_X_POSTS_MODEL`                |
 | Marketing                 | `BIGAS_MARKETING_LLM_MODEL`          |
 | Duplicate recommendation  | `BIGAS_DUPLICATE_RECOMMENDATION_MODEL` |
+| OKR research              | `BIGAS_OKR_RESEARCH_MODEL`             |
 
 ## Adding another provider (e.g. Claude)
 
