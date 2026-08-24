@@ -91,6 +91,63 @@ def test_cursor_agent_url_satisfies_agent_id(mock_discord, mock_service):
     mock_discord.assert_not_called()
 
 
+def test_post_cto_status_skips_chat_thread(monkeypatch):
+    from bigas.resources.cto import endpoints as ep
+
+    calls = []
+
+    def fake_post(message, *, mirror_thread=True):
+        calls.append({"message": message, "mirror_thread": mirror_thread})
+
+    monkeypatch.setattr(ep, "_post_to_discord_cto", fake_post)
+    ep._post_cto_status("**CTO autofix launched** (1/5)\nPR: https://github.com/acme/app/pull/1")
+    assert calls == [
+        {
+            "message": "**CTO autofix launched** (1/5)\nPR: https://github.com/acme/app/pull/1",
+            "mirror_thread": False,
+        }
+    ]
+
+
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={})
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+def test_autofix_loop_protection_skips_chat_thread(mock_discord, _mock_pr):
+    from bigas.resources.cto.endpoints import _notify_autofix_loop_protection
+
+    _notify_autofix_loop_protection(
+        repo="acme/app",
+        pr_number=1,
+        pr_url="https://github.com/acme/app/pull/1",
+        autofix_count=5,
+        max_iterations=5,
+        github_token="tok",
+    )
+    assert mock_discord.call_args.kwargs.get("mirror_thread") is False
+    assert "CTO autofix stopped" in mock_discord.call_args.args[0]
+
+
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "Fix"})
+@patch("bigas.resources.cto.endpoints.AutofixService")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+def test_autofix_launched_skips_chat_thread(mock_discord, mock_service, _mock_pr):
+    mock_service.return_value.run.return_value = {
+        "launched": True,
+        "agent_url": "https://cursor.com/agents/bc-1",
+        "agent_id": "bc-1",
+        "autofix_round": 1,
+        "max_iterations": 5,
+    }
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/autofix_pr",
+        json={"repo": "acme/app", "pr_number": 1, "cursor_api_key": "ck"},
+    )
+    assert res.status_code == 200
+    assert mock_discord.called
+    assert mock_discord.call_args.kwargs.get("mirror_thread") is False
+    assert "CTO autofix launched" in mock_discord.call_args.args[0]
+
+
 def test_post_to_discord_cto_chunks_skips_chat_thread(monkeypatch):
     from bigas.resources.cto import endpoints as ep
 

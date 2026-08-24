@@ -594,7 +594,7 @@ def _notify_autofix_loop_protection(
             pr_number=pr_number,
             github_token=token,
         )
-    _post_to_discord_cto(
+    _post_cto_status(
         f"**CTO autofix stopped (loop protection)**\n"
         f"{detail}\n"
         f"{format_pr_discord_line(pr_url, _pr_title_of(pr))}"
@@ -640,7 +640,7 @@ def _cto_discord_webhook() -> str:
 def _post_to_discord_cto(message: str, *, mirror_thread: bool = True) -> None:
     """Post to CTO Discord and the CTO chat thread.
     Callers must pass only sanitized messages (use sanitize_error_message for errors) to avoid leaking tokens.
-    Set mirror_thread=False for review results and pipeline status cards (Activity + Discord only).
+    Set mirror_thread=False for PR review, autofix, and pipeline status cards (Activity + Discord only).
     """
     webhook = _cto_discord_webhook()
     if not webhook:
@@ -651,7 +651,7 @@ def _post_to_discord_cto(message: str, *, mirror_thread: bool = True) -> None:
 
 
 def _post_cto_status(message: str) -> None:
-    """PR review/pipeline cards: Discord + Activity, not the CTO chat thread."""
+    """PR review, autofix, and pipeline cards: Discord + Activity, not the CTO chat thread."""
     _post_to_discord_cto(message, mirror_thread=False)
 
 
@@ -772,11 +772,11 @@ def review_and_comment_pr():
 
     # Notify Discord only once we have a usable diff (avoids started+failed spam).
     if phase == "post_autofix":
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO PR re-review after autofix started**\n{pr_ref}"
         )
     else:
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO PR review started**\n{pr_ref}"
         )
 
@@ -1032,7 +1032,7 @@ def autofix_pr():
     except AutofixError as e:
         err = sanitize_error_message(str(e))
         logger.warning("Autofix failed: %s", e)
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO autofix done**\nNot launched.\nReason: {err}\n{pr_ref}"
         )
         if "401" in str(e) or "auth" in str(e).lower():
@@ -1061,7 +1061,7 @@ def autofix_pr():
                 github_token=github_token or "",
             )
         elif result.get("review_clean"):
-            _post_to_discord_cto(
+            _post_cto_status(
                 f"**CTO autofix skipped**\n"
                 f"Review does not need autofix ({sanitize_error_message(reason)}).\n"
                 f"{pr_ref}"
@@ -1111,13 +1111,13 @@ def autofix_pr():
                 pr_number,
             )
             if not is_retry:
-                _post_to_discord_cto(
+                _post_cto_status(
                     f"**CTO autofix skipped (stale review)**\n"
                     f"Review predates the latest autofix commit; waiting for re-review.\n"
                     f"{pr_ref}"
                 )
         elif not is_retry:
-            _post_to_discord_cto(
+            _post_cto_status(
                 f"**CTO autofix skipped**\n"
                 f"Reason: {sanitize_error_message(reason)}\n{pr_ref}"
             )
@@ -1162,7 +1162,7 @@ def autofix_pr():
                 exc_info=True,
             )
 
-    _post_to_discord_cto(
+    _post_cto_status(
         f"**CTO autofix launched** ({round_n}/{max_n})\n"
         f"{pr_ref}\nAgent: {agent_url or agent_id}"
     )
@@ -1284,7 +1284,7 @@ def autofix_followup():
         cursor_api_key=cursor_api_key,
     )
     if not status.get("ok"):
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO autofix failed**\n{pr_ref}\n"
             f"Status: {run_status}\nAgent: {agent_url}{usage_suffix}"
         )
@@ -1324,7 +1324,7 @@ def autofix_followup():
                 "No new `[bigas-autofix]` commit on PR head "
                 "(nothing pushed, or agent only proposed changes)."
             )
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO autofix finished without commits**{round_bit}\n{pr_ref}\n"
             f"{why}\nAgent: {agent_url}{usage_suffix}\n"
             f"Stopping autofix loop for this run (no re-review without a new commit)."
@@ -1343,7 +1343,7 @@ def autofix_followup():
         )
         return _json_summary(base, summarize_followup_result)
 
-    _post_to_discord_cto(
+    _post_cto_status(
         f"**CTO autofix completed**\n{pr_ref}\n"
         f"Fixes pushed to the PR branch.\nAgent: {agent_url}{usage_suffix}"
     )
@@ -1362,7 +1362,7 @@ def autofix_followup():
         )
 
     gh_token = github_token or os.environ.get("GITHUB_TOKEN") or ""
-    _post_to_discord_cto(f"**CTO PR re-review after autofix started**\n{pr_ref}")
+    _post_cto_status(f"**CTO PR re-review after autofix started**\n{pr_ref}")
     previous_review = None
     try:
         previous_review = GitHubPRCommentClient(token=gh_token).get_marked_comment_body(
@@ -1476,7 +1476,7 @@ def autofix_followup():
         # autofix_count = number of `[bigas-autofix]` commits on the PR after this push.
         # That is the completed round index (1-based), not "attempts that did nothing".
         completed_round = autofix_count
-        _post_to_discord_cto(
+        _post_cto_status(
             f"**CTO autofix follow-up**\n"
             f"PR still has findings after autofix round "
             f"{completed_round}/{max_iters} "
