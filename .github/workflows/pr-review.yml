@@ -189,7 +189,7 @@ jobs:
               'repo': os.environ['GITHUB_REPOSITORY'],
               'pr_number': ${{ github.event.pull_request.number }},
               'diff': diff,
-              'github_token': os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_PAT', '')
+              'github_token': os.environ.get('GH_PAT') or os.environ.get('GITHUB_TOKEN', '')
           }
           with open('payload.json', 'w') as f:
               json.dump(payload, f)
@@ -232,7 +232,7 @@ jobs:
           pr_number = int(os.environ["PR_NUMBER"])
           max_rounds = int(os.environ.get("MAX_AUTOFIX_ROUNDS") or "5")
           max_cooldown_waits = int(os.environ.get("MAX_COOLDOWN_WAITS") or "20")
-          gh_pat = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_PAT") or "").strip()
+          gh_pat = (os.environ.get("GH_PAT") or os.environ.get("GITHUB_TOKEN") or "").strip()
 
           try:
               with open("response_body.txt", encoding="utf-8") as f:
