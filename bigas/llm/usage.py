@@ -83,13 +83,35 @@ def resolve_model_price_usd_per_mtok(model: str) -> Optional[Tuple[float, float]
     return None
 
 
+def billed_output_tokens(usage: TokenUsage) -> Optional[int]:
+    """Tokens billed as output (visible text + thinking).
+
+    Gemini Pro often reports thinking only inside ``total_token_count``:
+    ``thoughts_token_count`` is empty and ``candidates_token_count`` is the
+    visible reply. Prefer ``total − prompt`` when total is present so we do
+    not undercount. Never add ``thoughts_tokens`` on top of total.
+    """
+    prompt = usage.prompt_tokens
+    if usage.total_tokens is not None:
+        if prompt is None:
+            return None
+        if usage.total_tokens >= prompt:
+            return max(0, usage.total_tokens - prompt)
+    if usage.candidates_tokens is not None:
+        thoughts = usage.thoughts_tokens if usage.thoughts_tokens is not None else 0
+        return usage.candidates_tokens + thoughts
+    if usage.thoughts_tokens is not None:
+        return usage.thoughts_tokens
+    return None
+
+
 def estimate_cost_usd(model: str, usage: TokenUsage) -> Optional[float]:
     """
     Estimate USD cost for one completion.
 
-    Thinking tokens are billed as output, but provider totals already include
-    them: Gemini ``candidates_token_count`` and OpenAI ``completion_tokens``
-    cover visible + thinking tokens. Do not add ``thoughts_tokens`` on top.
+    Thinking tokens are billed as output. When ``total_tokens`` is present,
+    billed output is ``total − prompt`` (same rule as VC Field Assistant).
+    Otherwise candidates + thoughts, without double-counting total.
     """
     prices = resolve_model_price_usd_per_mtok(model)
     if prices is None or not usage.has_counts:
@@ -100,13 +122,9 @@ def estimate_cost_usd(model: str, usage: TokenUsage) -> Optional[float]:
     if prompt is None:
         return None
 
-    if usage.candidates_tokens is not None:
-        # Already includes thoughts/reasoning tokens when the provider reports them.
-        output = usage.candidates_tokens
-    elif usage.total_tokens is not None and usage.total_tokens >= prompt:
-        output = max(0, usage.total_tokens - prompt)
-    else:
-        output = usage.thoughts_tokens or 0
+    output = billed_output_tokens(usage)
+    if output is None:
+        return None
 
     cost = (prompt / 1_000_000.0) * input_rate + (output / 1_000_000.0) * output_rate
     return round(cost, 6)

@@ -6,7 +6,7 @@ List-price visibility for Bigas AI spend:
 2. **Per LLM call** — `get_llm_client()` wraps the provider client and emits `event: llm_usage` (chat, PR review, marketing, Jira, …).
 3. **Historical / weekly** — modular `UsageProvider`s fetch the last N days without a local event store. Cloud Scheduler (`bigas-cto-ai-usage-weekly`, Sunday 16:00) posts numbers + LLM analysis to the **CFO** chat thread.
 
-Estimates are **operational only**, not invoices.
+Estimates are **operational only**, not invoices. Gemini thinking is billed as output: when `total_tokens` is present, billed output is `total − prompt` (same rule as VC Field Assistant), so Pro PR-review is not undercounted.
 
 ## Providers
 
@@ -15,7 +15,7 @@ Registered under domain `usage` (see `GET /mcp/providers`):
 | Provider | Source | Config |
 |---|---|---|
 | `cursor` | Cursor Cloud Agents API (`List Agents` + `/usage`) | `CURSOR_API_KEY` |
-| `llm_logs` | Cloud Logging lines with `event: llm_usage` | Home project + `vcfieldassistant` (override with `BIGAS_LLM_USAGE_PROJECTS`). Needs `logging.read` on each project. |
+| `llm_logs` | Cloud Logging lines with `event: llm_usage` | Home project + `vcfieldassistant` (override with `BIGAS_LLM_USAGE_PROJECTS`). Runtime SA (`bigas-run`) needs `roles/logging.viewer` on **each** scanned project (home + VCFA). |
 
 Adding Claude (or any LLM) later usually needs **no new history provider** if calls go through `bigas.llm` (`get_llm_client`) and emit `event: llm_usage` structured logs. VC Field Assistant emits the same line from `recordLlmUsage`, with extra fields:
 

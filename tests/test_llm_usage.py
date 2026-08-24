@@ -13,6 +13,7 @@ from bigas.llm.factory import get_llm_client
 from bigas.llm.logging_client import LoggingLLMClient
 from bigas.llm.usage import (
     TokenUsage,
+    billed_output_tokens,
     estimate_cost_usd,
     resolve_model_price_usd_per_mtok,
     usage_from_mapping,
@@ -67,6 +68,20 @@ class TokenUsageTests(unittest.TestCase):
         cost = estimate_cost_usd("gemini-2.5-flash", usage)
         self.assertEqual(cost, 0.30 + 2.50)
 
+    def test_uses_total_minus_prompt_when_thoughts_missing(self):
+        # Production Gemini Pro: thinking is in total, not candidates or thoughts.
+        usage = TokenUsage(
+            prompt_tokens=3131,
+            candidates_tokens=286,
+            thoughts_tokens=None,
+            total_tokens=10737,
+        )
+        cost = estimate_cost_usd("gemini-pro-latest", usage)
+        billed_out = 10737 - 3131
+        expected = round(3131 / 1_000_000.0 * 2.00 + billed_out / 1_000_000.0 * 12.00, 6)
+        self.assertEqual(cost, expected)
+        self.assertGreater(cost, 0.009694)
+
     def test_thoughts_only_fallback_when_candidates_missing(self):
         usage = TokenUsage(
             prompt_tokens=1_000_000,
@@ -76,6 +91,16 @@ class TokenUsageTests(unittest.TestCase):
         )
         cost = estimate_cost_usd("gemini-2.5-flash", usage)
         self.assertEqual(cost, 0.30 + 2.50)
+
+    def test_billed_output_none_when_total_without_prompt(self):
+        usage = TokenUsage(
+            prompt_tokens=None,
+            candidates_tokens=100,
+            thoughts_tokens=50,
+            total_tokens=1000,
+        )
+        self.assertIsNone(billed_output_tokens(usage))
+        self.assertIsNone(estimate_cost_usd("gemini-2.5-flash", usage))
 
     def test_usage_log_payload(self):
         usage = TokenUsage(prompt_tokens=1000, candidates_tokens=100, total_tokens=1100)
