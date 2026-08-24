@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { createTicket, fetchObjectives, fetchTicket, seedOkrDemo, updateTicket } from '../lib/api'
+import { createTicket, deleteTicket, fetchObjectives, fetchTicket, updateTicket } from '../lib/api'
+import { SettingsButton } from './AgentSettings'
 import { healthLabel, percentLabel } from '../lib/okr'
 
 function healthClass(health) {
@@ -47,6 +48,70 @@ function StatusCard({ label, value, tone = 'default' }) {
       <p className="text-xs text-muted mt-2">{label}</p>
     </div>
   )
+}
+
+function linkedTicketCount(objective) {
+  const keys = new Set()
+  for (const kr of objective.key_results || []) {
+    for (const ticket of kr.tickets || []) {
+      if (ticket.key) keys.add(ticket.key)
+    }
+  }
+  for (const ticket of objective.unlinked_tickets || []) {
+    if (ticket.key) keys.add(ticket.key)
+  }
+  return keys.size
+}
+
+function DeleteObjectiveDialog({ objective, onCancel, onConfirm, busy }) {
+  const [deleteChildren, setDeleteChildren] = useState(false)
+  const count = linkedTicketCount(objective)
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-black/30" onClick={busy ? undefined : onCancel} aria-hidden="true" />
+      <div className="relative bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-card p-5 space-y-4">
+        <h3 className="font-semibold">Delete {objective.key}?</h3>
+        <p className="text-sm text-muted leading-relaxed">
+          This removes the Objective. Linked tasks stay on the board unless you choose to delete them too.
+        </p>
+        {count > 0 && (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={deleteChildren}
+              onChange={(e) => setDeleteChildren(e.target.checked)}
+              className="mt-1"
+            />
+            <span>Also delete {count} linked task{count === 1 ? '' : 's'}</span>
+          </label>
+        )}
+        <div className="flex flex-wrap gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(deleteChildren)}
+            disabled={busy}
+            className="text-sm px-3 py-2 rounded-xl bg-red-600 text-white min-h-[44px] disabled:opacity-50"
+          >
+            {busy ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+  if (!kr?.signed_off_at) return ''
+  const when = new Date(kr.signed_off_at)
+  if (Number.isNaN(when.getTime())) return kr.signed_off_at
+  const who = kr.signed_off_by ? ` by ${kr.signed_off_by}` : ''
+  return `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${who}`
 }
 
 function formatSignedOff(kr) {
@@ -231,12 +296,17 @@ function KeyResultPanel({ objective, kr, user, onClose, onReload, onShowOnBoard 
   )
 }
 
-function ObjectiveCard({ objective, onOpenKr, onOpenBoard, onDiscuss }) {
+function ObjectiveCard({ objective, onOpenKr, onOpenBoard, onDiscuss, onDelete }) {
   return (
-    <article className="border border-border rounded-2xl bg-white overflow-hidden flex flex-col h-full">
+    <article className="border border-border rounded-2xl bg-white overflow-hidden flex flex-col h-full min-w-[18rem]">
       <div className="p-4 sm:p-5 flex-1">
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <span className="text-[11px] font-mono text-muted">{objective.key}</span>
+          {objective.board_name && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted">
+              {objective.board_name}
+            </span>
+          )}
           <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${healthClass(objective.health)}`}>
             {healthLabel(objective.health)}
           </span>
@@ -309,17 +379,25 @@ function ObjectiveCard({ objective, onOpenKr, onOpenBoard, onDiscuss }) {
         >
           Discuss with Chief of Staff
         </button>
+        <button
+          type="button"
+          onClick={() => onDelete(objective)}
+          className="text-xs px-3 py-2 rounded-lg border border-red-200 text-red-700 min-h-[36px] bg-white ml-auto"
+        >
+          Delete
+        </button>
       </div>
     </article>
   )
 }
 
-export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscussTicket }) {
+export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscussTicket, onOpenSettings }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [seeding, setSeeding] = useState(false)
   const [error, setError] = useState('')
   const [activeKr, setActiveKr] = useState(null)
+  const [pendingDelete, setPendingDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = async () => {
     setError('')
@@ -333,19 +411,6 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
       .catch((err) => setError(err.message || 'Could not load objectives'))
       .finally(() => setLoading(false))
   }, [])
-
-  const handleSeed = async () => {
-    setSeeding(true)
-    setError('')
-    try {
-      const result = await seedOkrDemo(false)
-      setData(result.dashboard || (await fetchObjectives()))
-    } catch (err) {
-      setError(err.message || 'Could not seed demo')
-    } finally {
-      setSeeding(false)
-    }
-  }
 
   const openBoard = (objective, kr) => {
     const params = new URLSearchParams()
@@ -373,6 +438,21 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
     })
   }
 
+  const handleDelete = async (deleteChildren) => {
+    if (!pendingDelete?.ticket_id) return
+    setDeleting(true)
+    setError('')
+    try {
+      await deleteTicket(pendingDelete.ticket_id, { deleteChildren })
+      setPendingDelete(null)
+      await load()
+    } catch (err) {
+      setError(err.message || 'Could not delete objective')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-bg text-muted">
@@ -384,15 +464,11 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
   const stats = data?.stats || {}
   const briefing = data?.briefing || {}
   const objectives = data?.objectives || []
-  const boards = data?.boards?.length
-    ? data.boards
-    : objectives.length
-      ? [{ board_id: 'all', name: 'Objectives', project_key: '', objectives }]
-      : []
 
   return (
     <div className="min-h-screen bg-bg text-text flex flex-col">
       <header className="sticky top-0 z-10 bg-bg/90 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center gap-2">
+        <SettingsButton onClick={onOpenSettings} />
         <div className="flex-1 min-w-0">
           <p className="text-[11px] uppercase tracking-wide text-muted">OKR prototype</p>
           <h1 className="font-bold truncate">Objectives · {data?.cycle || 'Current cycle'}</h1>
@@ -473,64 +549,24 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
             <section className="border border-dashed border-border rounded-2xl p-8 text-center bg-surface/60">
               <h3 className="font-semibold">No objectives on your boards yet</h3>
               <p className="text-sm text-muted mt-2 max-w-xl mx-auto">
-                Create a ticket with type Objective, drag it to Research and describe, or load a Q3
-                demo cycle to explore the dashboard.
+                Create a ticket with type Objective on a board, then drag it to Research and describe.
               </p>
-              <button
-                type="button"
-                onClick={handleSeed}
-                disabled={seeding}
-                className="mt-4 bg-bigas-blue text-bigas-black font-medium px-4 py-2 rounded-xl min-h-[44px] text-sm disabled:opacity-50"
-              >
-                {seeding ? 'Loading demo…' : 'Load Q3 demo cycle'}
-              </button>
             </section>
           )}
 
           {objectives.length > 0 && (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={handleSeed}
-                disabled={seeding}
-                className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] disabled:opacity-50"
-              >
-                {seeding ? 'Seeding…' : 'Add demo cycle'}
-              </button>
+            <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(20rem,1fr))]">
+              {objectives.map((objective) => (
+                <ObjectiveCard
+                  key={objective.key}
+                  objective={objective}
+                  onOpenKr={(obj, kr) => setActiveKr({ objective: obj, kr })}
+                  onOpenBoard={openBoard}
+                  onDiscuss={discuss}
+                  onDelete={setPendingDelete}
+                />
+              ))}
             </div>
-          )}
-
-          {boards.filter((board) => (board.objectives || []).length > 0).map((board) => (
-            <section key={board.board_id} className="space-y-3">
-              <div className="flex items-baseline justify-between gap-3">
-                <h2 className="font-semibold">{board.name}</h2>
-                <p className="text-[11px] text-muted">
-                  {board.project_key || 'Personal'} · {(board.objectives || []).length} objective
-                  {(board.objectives || []).length === 1 ? '' : 's'}
-                </p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {board.objectives.map((objective) => (
-                  <ObjectiveCard
-                    key={objective.key}
-                    objective={objective}
-                    onOpenKr={(obj, kr) => setActiveKr({ objective: obj, kr })}
-                    onOpenBoard={openBoard}
-                    onDiscuss={discuss}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
-          {objectives.length > 0 && boards.some((board) => !(board.objectives || []).length) && (
-            <p className="text-sm text-muted">
-              No objectives yet on{' '}
-              {boards
-                .filter((board) => !(board.objectives || []).length)
-                .map((board) => board.name)
-                .join(', ')}
-              .
-            </p>
           )}
         </div>
       </main>
@@ -543,6 +579,14 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
           onClose={() => setActiveKr(null)}
           onReload={reloadAndKeepKr}
           onShowOnBoard={openBoard}
+        />
+      )}
+      {pendingDelete && (
+        <DeleteObjectiveDialog
+          objective={pendingDelete}
+          busy={deleting}
+          onCancel={() => !deleting && setPendingDelete(null)}
+          onConfirm={handleDelete}
         />
       )}
     </div>

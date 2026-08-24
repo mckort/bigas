@@ -220,8 +220,9 @@ export async function updateTicket(ticketId, payload) {
   })
 }
 
-export async function deleteTicket(ticketId) {
-  return apiFetch(`/api/tickets/${ticketId}`, { method: 'DELETE' })
+export async function deleteTicket(ticketId, { deleteChildren } = {}) {
+  const qs = deleteChildren ? '?delete_children=true' : ''
+  return apiFetch(`/api/tickets/${ticketId}${qs}`, { method: 'DELETE' })
 }
 
 export async function syncBoardFromJira(boardId) {

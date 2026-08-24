@@ -111,7 +111,7 @@ export default function AgentSidebar({
             className="w-full flex items-center gap-2 text-sm text-muted hover:text-text py-3 px-3 rounded-xl hover:bg-white transition-colors min-h-[44px]"
           >
             <span aria-hidden="true">⚙️</span>
-            Agent settings
+            Settings
           </button>
         </div>
       </aside>

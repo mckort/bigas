@@ -256,7 +256,12 @@ def ticket_detail(ticket_id: str):
         return jsonify({"ticket": ticket_to_api(ticket)})
 
     if request.method == "DELETE":
-        if service.delete_ticket(ticket_id, user_id=user_id):
+        delete_children = str(request.args.get("delete_children") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if service.delete_ticket(ticket_id, user_id=user_id, delete_children=delete_children):
             return jsonify({"ok": True})
         return jsonify({"error": "Ticket not found"}), 404
 

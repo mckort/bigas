@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import AgentSidebar, { UnreadDot } from './AgentSidebar'
 import ActivityFeed from './ActivityFeed'
-import AgentSettings from './AgentSettings'
+import { SettingsButton } from './AgentSettings'
 import {
   approveProposal,
   createThread,
@@ -678,6 +678,7 @@ export default function ChatLayout({
   onSwitchView,
   discussContext,
   onClearDiscussContext,
+  onOpenSettings,
 }) {
   const [agents, setAgents] = useState([])
   const [activeAgentId, setActiveAgentId] = useState('chief')
@@ -694,7 +695,6 @@ export default function ChatLayout({
   const [events, setEvents] = useState([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [threads, setThreads] = useState([])
   const [lastOpened, setLastOpened] = useState(() => seedLastOpened(readLastOpened()))
   const bottomRef = useRef(null)
@@ -1165,7 +1165,7 @@ export default function ChatLayout({
         agents={agents}
         activeAgentId={activeAgentId}
         onSelectAgent={handleSelectAgent}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={onOpenSettings}
         mobileOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         unreadAgentIds={unreadAgentIds}
@@ -1173,6 +1173,7 @@ export default function ChatLayout({
 
       <main className="flex-1 flex flex-col min-w-0 bg-bg">
         <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-white/90 backdrop-blur-sm sticky top-0 z-10">
+          <SettingsButton onClick={onOpenSettings} />
           <button
             type="button"
             className="relative lg:hidden text-xl min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 hover:bg-surface rounded-xl transition-colors"
@@ -1396,8 +1397,6 @@ export default function ChatLayout({
       </main>
 
       <ActivityFeed events={events} open={activityOpen} onClose={() => setActivityOpen(false)} />
-
-      <AgentSettings open={settingsOpen} onClose={() => { setSettingsOpen(false); loadAgents() }} />
     </div>
   )
 }
