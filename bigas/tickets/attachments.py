@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_ATTACHMENTS_PER_TICKET = 10
+MAX_ATTACHMENTS_PER_CHAT_MESSAGE = 5
 MAX_EXTRACTED_CHARS = 8000
 ATTACHMENT_PREFIX = "ticket_attachments/"
+CHAT_ATTACHMENT_PREFIX = "chat_attachments/"
 
 IMAGE_MIME_TYPES = {
     "image/png",
@@ -56,6 +58,19 @@ Focus on:
 - Visible UI text, labels, errors, and copy (quote exactly)
 - Layout and what the user is pointing at or highlighting
 - Bugs, broken states, missing pieces, or the intended change if obvious
+- Annotations, arrows, circles, or handwritten notes
+
+Be concrete and complete. Do not speculate beyond what is visible.
+Do not start with "The image shows" — just describe the screen."""
+
+CHAT_SCREENSHOT_PROMPT = """You are reading a screenshot attached to a chat with an AI teammate.
+
+Describe what the image shows so the assistant can answer without seeing the image.
+
+Focus on:
+- Visible UI text, labels, errors, and copy (quote exactly)
+- Layout and what the user is pointing at or highlighting
+- Bugs, broken states, missing pieces, or the question the screenshot implies
 - Annotations, arrows, circles, or handwritten notes
 
 Be concrete and complete. Do not speculate beyond what is visible.
@@ -101,6 +116,10 @@ def attachment_blob_name(ticket_id: str, attachment_id: str, filename: str) -> s
     return f"{ATTACHMENT_PREFIX}{ticket_id}/{attachment_id}/{sanitize_filename(filename)}"
 
 
+def chat_attachment_blob_name(thread_id: str, attachment_id: str, filename: str) -> str:
+    return f"{CHAT_ATTACHMENT_PREFIX}{thread_id}/{attachment_id}/{sanitize_filename(filename)}"
+
+
 def clip_extracted_text(text: str, *, limit: int = MAX_EXTRACTED_CHARS) -> str:
     body = (text or "").strip()
     if len(body) <= limit:
@@ -141,6 +160,78 @@ def attachments_text_for_issue(jira: Any, issue_key: str) -> str:
     return format_ticket_attachments(items)
 
 
+def message_text_for_llm(message: Dict[str, Any]) -> str:
+    """User/assistant text plus attachment interpretations for the chat LLM."""
+    text = str(message.get("content") or "").strip()
+    meta = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    attachments = list((meta or {}).get("attachments") or [])
+    att_block = format_ticket_attachments(attachments)
+    if not attachments or att_block == "(none)":
+        return text
+    if text:
+        return f"{text}\n\n## Attachments\n{att_block}"
+    return f"## Attachments\n{att_block}"
+
+
+def process_chat_files(
+    files: List[Tuple[str, Optional[str], bytes]],
+    *,
+    thread_id: str,
+    uploaded_by: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Validate, store, and interpret files attached to a chat message."""
+    uploads = list(files or [])
+    if len(uploads) > MAX_ATTACHMENTS_PER_CHAT_MESSAGE:
+        raise AttachmentError(
+            f"At most {MAX_ATTACHMENTS_PER_CHAT_MESSAGE} attachments per message"
+        )
+    records: List[Dict[str, Any]] = []
+    blobs = get_attachment_blob_store()
+    for index, (filename, content_type, data) in enumerate(uploads):
+        safe_name, mime = validate_upload(
+            filename=filename,
+            content_type=content_type,
+            size_bytes=len(data or b""),
+            existing_count=index,
+            max_count=MAX_ATTACHMENTS_PER_CHAT_MESSAGE,
+            entity="message",
+        )
+        extracted = extract_attachment_text(
+            data=data,
+            filename=safe_name,
+            content_type=mime,
+            image_prompt=CHAT_SCREENSHOT_PROMPT,
+        )
+        record = build_attachment_record(
+            filename=safe_name,
+            content_type=mime,
+            size_bytes=len(data or b""),
+            storage_path="",
+            extracted_text=extracted,
+            uploaded_by=uploaded_by,
+        )
+        path = chat_attachment_blob_name(thread_id, record["id"], safe_name)
+        record["storage_path"] = path
+        blobs.put(path, data or b"", mime)
+        records.append(record)
+    return records
+
+
+def find_message_attachment(
+    messages: List[Dict[str, Any]],
+    attachment_id: str,
+) -> Optional[Dict[str, Any]]:
+    aid = (attachment_id or "").strip()
+    if not aid:
+        return None
+    for message in messages or []:
+        meta = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        for item in list((meta or {}).get("attachments") or []):
+            if (item.get("id") or "") == aid:
+                return dict(item)
+    return None
+
+
 def read_upload_body(stream: Any, *, max_bytes: int = MAX_ATTACHMENT_BYTES) -> bytes:
     """Read an upload stream without loading more than max_bytes into memory."""
     if stream is None:
@@ -167,11 +258,14 @@ def extract_attachment_text(
     filename: str,
     content_type: str,
     defer_image_llm: bool = False,
+    image_prompt: Optional[str] = None,
 ) -> str:
     if content_type in IMAGE_MIME_TYPES:
         if defer_image_llm:
             return image_interpretation_pending_text(filename)
-        return clip_extracted_text(describe_image(data, content_type, filename))
+        return clip_extracted_text(
+            describe_image(data, content_type, filename, prompt=image_prompt)
+        )
     if content_type in TEXT_MIME_TYPES:
         return clip_extracted_text(_decode_text_bytes(data))
     if content_type == "application/pdf":
@@ -179,7 +273,13 @@ def extract_attachment_text(
     return ""
 
 
-def describe_image(data: bytes, content_type: str, filename: str) -> str:
+def describe_image(
+    data: bytes,
+    content_type: str,
+    filename: str,
+    *,
+    prompt: Optional[str] = None,
+) -> str:
     if _image_describer is not None:
         try:
             return (_image_describer(data, content_type, filename) or "").strip()
@@ -187,7 +287,7 @@ def describe_image(data: bytes, content_type: str, filename: str) -> str:
             logger.warning("Custom image describer failed for %s", filename, exc_info=True)
             return _image_fallback(filename, "interpretation failed")
     try:
-        return _describe_image_with_llm(data, content_type, filename)
+        return _describe_image_with_llm(data, content_type, filename, prompt=prompt)
     except Exception as exc:
         logger.warning("Screenshot interpretation failed for %s: %s", filename, exc)
         return _image_fallback(filename, str(exc) or "vision unavailable")
@@ -234,18 +334,25 @@ def _extract_pdf_text(data: bytes, filename: str) -> str:
     return f"[PDF: {sanitize_filename(filename)}] No extractable text found."
 
 
-def _describe_image_with_llm(data: bytes, content_type: str, filename: str) -> str:
+def _describe_image_with_llm(
+    data: bytes,
+    content_type: str,
+    filename: str,
+    *,
+    prompt: Optional[str] = None,
+) -> str:
     from bigas.llm.factory import get_llm_client
     from bigas.llm.gemini_client import GeminiLLMClient
     from bigas.llm.openai_client import OpenAILLMClient
 
     client, _model = get_llm_client(feature="ticket_attachments")
     inner = getattr(client, "_inner", client)
-    prompt = f"{SCREENSHOT_PROMPT}\n\nFilename: {sanitize_filename(filename)}"
+    body = (prompt or SCREENSHOT_PROMPT).strip() or SCREENSHOT_PROMPT
+    full_prompt = f"{body}\n\nFilename: {sanitize_filename(filename)}"
 
     if isinstance(inner, GeminiLLMClient):
         response = inner._model.generate_content(
-            [prompt, {"mime_type": content_type, "data": data}],
+            [full_prompt, {"mime_type": content_type, "data": data}],
         )
         text = (getattr(response, "text", None) or "").strip()
         if text:
@@ -260,7 +367,7 @@ def _describe_image_with_llm(data: bytes, content_type: str, filename: str) -> s
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": prompt},
+                        {"type": "text", "text": full_prompt},
                         {
                             "type": "image_url",
                             "image_url": {"url": f"data:{content_type};base64,{encoded}"},
@@ -380,9 +487,12 @@ def validate_upload(
     content_type: Optional[str],
     size_bytes: int,
     existing_count: int,
+    max_count: int = MAX_ATTACHMENTS_PER_TICKET,
+    entity: str = "ticket",
 ) -> Tuple[str, str]:
-    if existing_count >= MAX_ATTACHMENTS_PER_TICKET:
-        raise AttachmentError(f"At most {MAX_ATTACHMENTS_PER_TICKET} attachments per ticket")
+    limit = max(1, int(max_count))
+    if existing_count >= limit:
+        raise AttachmentError(f"At most {limit} attachments per {entity}")
     if size_bytes <= 0:
         raise AttachmentError("File is empty")
     if size_bytes > MAX_ATTACHMENT_BYTES:

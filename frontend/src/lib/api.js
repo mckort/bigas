@@ -60,13 +60,50 @@ export async function fetchMessages(threadId, since) {
   return apiFetch(`/api/chat/threads/${threadId}/messages${qs}`)
 }
 
-export async function sendMessage(threadId, content, clientId) {
-  const body = { content }
-  if (clientId) body.client_id = clientId
-  return apiFetch(`/api/chat/threads/${threadId}/messages`, {
+export async function sendMessage(threadId, content, clientId, files) {
+  const list = Array.from(files || []).filter(Boolean)
+  if (!list.length) {
+    const body = { content }
+    if (clientId) body.client_id = clientId
+    return apiFetch(`/api/chat/threads/${threadId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  }
+  const token = getToken()
+  const headers = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  const form = new FormData()
+  form.append('content', content || '')
+  if (clientId) form.append('client_id', clientId)
+  for (const file of list) {
+    form.append('file', file)
+  }
+  const res = await fetch(`/api/chat/threads/${threadId}/messages`, {
     method: 'POST',
-    body: JSON.stringify(body),
+    headers,
+    body: form,
   })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error || `Request failed (${res.status})`)
+  }
+  return data
+}
+
+export async function fetchChatAttachmentBlob(threadId, attachmentId) {
+  const token = getToken()
+  const headers = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(
+    `/api/chat/threads/${threadId}/attachments/${attachmentId}`,
+    { headers },
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `Request failed (${res.status})`)
+  }
+  return res.blob()
 }
 
 export async function pollDeployPostcheck(threadId) {

@@ -7,6 +7,7 @@ import {
   approveProposal,
   createThread,
   fetchAgents,
+  fetchChatAttachmentBlob,
   fetchFeed,
   fetchMessages,
   fetchThreads,
@@ -261,7 +262,97 @@ function EmailTriageBody({ message }) {
   )
 }
 
-function MessageBubble({ message, agentIcon, onProposalResolved }) {
+const CHAT_ATTACHMENT_ACCEPT =
+  'image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.md'
+const MAX_CHAT_ATTACHMENTS = 5
+
+function pendingFileKey(file) {
+  return `${file.name}:${file.size}:${file.lastModified}`
+}
+
+function isImageAttachment(attachment) {
+  return String(attachment?.content_type || attachment?.type || '').startsWith('image/')
+}
+
+function formatAttachmentSize(bytes) {
+  const size = Number(bytes) || 0
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function LocalChatImagePreview({ file }) {
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    if (!file?.type?.startsWith('image/')) return undefined
+    const objectUrl = URL.createObjectURL(file)
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [file])
+  if (!url) return null
+  return (
+    <img
+      src={url}
+      alt={file.name}
+      className="mt-2 max-h-40 w-full object-contain rounded-lg bg-white/70"
+    />
+  )
+}
+
+function ChatAttachmentPreview({ threadId, attachment }) {
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    if (!threadId || !attachment?.id || !isImageAttachment(attachment)) return undefined
+    let objectUrl = ''
+    let cancelled = false
+    fetchChatAttachmentBlob(threadId, attachment.id)
+      .then((blob) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setUrl('')
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [threadId, attachment?.id, attachment?.content_type])
+  if (!url) return null
+  return (
+    <img
+      src={url}
+      alt={attachment.filename}
+      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-white/70"
+    />
+  )
+}
+
+function MessageAttachments({ message, threadId }) {
+  const attachments = message?.metadata?.attachments || []
+  const localFiles = message?.metadata?.local_files || []
+  if (!attachments.length && !localFiles.length) return null
+  return (
+    <div className="mt-2 space-y-2">
+      {localFiles.map((file) => (
+        <div key={pendingFileKey(file)} className="rounded-xl px-3 py-2 bg-white/40 text-sm">
+          <p className="font-medium truncate">{file.name}</p>
+          <LocalChatImagePreview file={file} />
+        </div>
+      ))}
+      {attachments.map((attachment) => (
+        <div key={attachment.id} className="rounded-xl px-3 py-2 bg-white/40 text-sm">
+          <p className="font-medium truncate">{attachment.filename}</p>
+          <p className="text-[11px] opacity-70">{formatAttachmentSize(attachment.size_bytes)}</p>
+          <ChatAttachmentPreview threadId={threadId} attachment={attachment} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
   const meta = message.metadata || {}
@@ -302,6 +393,7 @@ function MessageBubble({ message, agentIcon, onProposalResolved }) {
             <ChatMarkdown content={message.content} />
           )}
         </div>
+        <MessageAttachments message={message} threadId={threadId} />
         <ActionProposalCard message={message} onResolved={onProposalResolved} />
         {showResolved && (
           <p className="mt-2 text-xs text-muted capitalize">{meta.status}</p>
@@ -555,7 +647,11 @@ export default function ChatLayout({
   const [threadId, setThreadId] = useState(null)
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
+  const [pendingFiles, setPendingFiles] = useState([])
+  const [attachError, setAttachError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
   const [sending, setSending] = useState(false)
+  const fileInputRef = useRef(null)
   const [waitingForReply, setWaitingForReply] = useState(false)
   const [deployPollActive, setDeployPollActive] = useState(false)
   const [events, setEvents] = useState([])
@@ -569,6 +665,28 @@ export default function ChatLayout({
   const lastFeedTs = useRef('')
   const unreadChannelRef = useRef(null)
   const messagesThreadIdRef = useRef(null)
+
+  const addPendingFiles = useCallback((files) => {
+    const incoming = Array.from(files || []).filter(Boolean)
+    if (!incoming.length) return
+    setPendingFiles((prev) => {
+      const existingKeys = new Set(prev.map(pendingFileKey))
+      const next = [...prev]
+      let overflow = false
+      for (const file of incoming) {
+        const key = pendingFileKey(file)
+        if (existingKeys.has(key)) continue
+        if (next.length >= MAX_CHAT_ATTACHMENTS) {
+          overflow = true
+          break
+        }
+        existingKeys.add(key)
+        next.push(file)
+      }
+      setAttachError(overflow ? `At most ${MAX_CHAT_ATTACHMENTS} attachments per message` : '')
+      return next
+    })
+  }, [])
 
   const activeAgent = agents.find((a) => a.agent_id === activeAgentId) || { icon: '🤖', name: 'Agent' }
   const unreadAgentIds = useMemo(
@@ -823,6 +941,11 @@ export default function ChatLayout({
     }
   }, [activeAgentId, openAgentThread])
 
+  useEffect(() => {
+    setPendingFiles([])
+    setAttachError('')
+  }, [threadId])
+
   const showTyping = waitingForReply || lastMessageIsInProgress(messages)
 
   useEffect(() => {
@@ -945,8 +1068,13 @@ export default function ChatLayout({
   async function handleSend(e, messageText) {
     e?.preventDefault?.()
     const text = (messageText ?? input).trim()
-    if (!text || !threadId || sending) return
-    if (!messageText) setInput('')
+    const files = messageText ? [] : pendingFiles
+    if ((!text && !files.length) || !threadId || sending) return
+    if (!messageText) {
+      setInput('')
+      setPendingFiles([])
+      setAttachError('')
+    }
     setSending(true)
     setWaitingForReply(true)
     const clientId = createClientMessageId()
@@ -955,11 +1083,11 @@ export default function ChatLayout({
       role: 'user',
       content: text,
       created_at: new Date().toISOString(),
-      metadata: { client_id: clientId },
+      metadata: { client_id: clientId, local_files: files },
     }
     setMessages((prev) => [...prev, optimistic])
     try {
-      const result = await sendMessage(threadId, text, clientId)
+      const result = await sendMessage(threadId, text, clientId, files)
       const res = await fetchMessages(threadId)
       const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res)
       if (next.length) {
@@ -1093,6 +1221,7 @@ export default function ChatLayout({
                 message={m}
                 agentIcon={activeAgent.icon}
                 onProposalResolved={refreshMessages}
+                threadId={threadId}
               />
             ))}
             {showTyping && (
@@ -1103,18 +1232,101 @@ export default function ChatLayout({
         </div>
 
         <div className="border-t border-border bg-white/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
-          <form onSubmit={handleSend} className="max-w-3xl mx-auto">
-            <div className="flex gap-2 items-end bg-white border border-border rounded-2xl shadow-input px-3 py-2 sm:px-4 sm:py-2.5 focus-within:ring-2 focus-within:ring-bigas-blue/40 transition-shadow">
+          <form
+            onSubmit={handleSend}
+            className="max-w-3xl mx-auto"
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDragOver(true)
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragOver(false)
+              addPendingFiles(e.dataTransfer.files)
+            }}
+          >
+            {pendingFiles.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {pendingFiles.map((file) => (
+                  <div
+                    key={pendingFileKey(file)}
+                    className="flex items-center gap-2 rounded-xl border border-border bg-surface px-2 py-1.5 max-w-[220px]"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate">{file.name}</p>
+                      <p className="text-[10px] text-muted">{formatAttachmentSize(file.size)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPendingFiles((prev) =>
+                          prev.filter((item) => pendingFileKey(item) !== pendingFileKey(file)),
+                        )
+                      }
+                      className="text-muted hover:text-text text-sm px-1"
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {attachError && <p className="text-xs text-red-600 mb-2">{attachError}</p>}
+            <div
+              className={`flex gap-2 items-end bg-white border rounded-2xl shadow-input px-3 py-2 sm:px-4 sm:py-2.5 focus-within:ring-2 focus-within:ring-bigas-blue/40 transition-shadow ${
+                dragOver ? 'border-bigas-blue' : 'border-border'
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={CHAT_ATTACHMENT_ACCEPT}
+                className="sr-only"
+                onChange={(e) => {
+                  addPendingFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending || !threadId}
+                className="text-muted hover:text-text w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-surface disabled:opacity-30"
+                aria-label="Attach file"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 01-7.78-7.78l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.49 8.49a1.5 1.5 0 01-2.12-2.12l7.78-7.78"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onPaste={(e) => {
+                  const images = Array.from(e.clipboardData?.items || [])
+                    .filter((item) => item.type.startsWith('image/'))
+                    .map((item) => item.getAsFile())
+                    .filter(Boolean)
+                  if (images.length) {
+                    e.preventDefault()
+                    addPendingFiles(images)
+                  }
+                }}
                 placeholder={`Message ${activeAgent.name}…`}
                 className="flex-1 bg-transparent border-0 px-1 py-2 text-sm sm:text-base min-w-0 focus:outline-none placeholder:text-muted"
                 aria-label={`Message ${activeAgent.name}`}
               />
               <button
                 type="submit"
-                disabled={sending || !input.trim()}
+                disabled={sending || (!input.trim() && !pendingFiles.length)}
                 className="bg-bigas-black text-white font-semibold rounded-xl w-11 h-11 sm:w-12 sm:h-12 disabled:opacity-30 flex-shrink-0 flex items-center justify-center hover:opacity-90 transition-opacity"
                 aria-label="Send message"
               >
@@ -1128,7 +1340,7 @@ export default function ChatLayout({
               </button>
             </div>
             <p className="text-[11px] text-muted text-center mt-2 hidden sm:block">
-              Bigas specialists use the same tools as Discord and scheduled workflows.
+              Attach screenshots or files — they are interpreted for the AI in this conversation.
             </p>
           </form>
         </div>

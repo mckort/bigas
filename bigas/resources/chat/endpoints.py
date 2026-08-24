@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from flask import Blueprint, g, jsonify, request, send_from_directory
+from flask import Blueprint, g, jsonify, request, send_file, send_from_directory
 
 from bigas.access import require_bigas_access_key
 from bigas.agents.chief_of_staff import handle_chat_message, post_agent_callback
@@ -115,15 +115,27 @@ def thread_messages(thread_id: str):
         deploy_poll_active = bool(thread_data.get("pending_deploy_poll"))
         return jsonify({"messages": messages, "deploy_poll_active": deploy_poll_active})
 
-    body = request.get_json(silent=True) or {}
-    content = (body.get("content") or "").strip()
-    if not content:
-        return jsonify({"error": "content is required"}), 400
-    client_id = (body.get("client_id") or "").strip() or None
+    from bigas.tickets.attachments import (
+        AttachmentError,
+        message_text_for_llm,
+        process_chat_files,
+    )
+
+    try:
+        content, client_id, uploads = _parse_chat_message_request()
+        if not content and not uploads:
+            return jsonify({"error": "content or file is required"}), 400
+        attachments = process_chat_files(
+            uploads,
+            thread_id=thread_id,
+            uploaded_by=user_id,
+        )
+    except AttachmentError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     history_msgs = store.list_messages(thread_id)
     history = [
-        {"role": m["role"], "content": m["content"]}
+        {"role": m["role"], "content": message_text_for_llm(m)}
         for m in history_msgs
         if m.get("role") in ("user", "assistant")
     ]
@@ -135,11 +147,67 @@ def thread_messages(thread_id: str):
             user_message=content,
             history=history,
             client_id=client_id,
+            attachments=attachments or None,
         )
         return jsonify(result)
     except Exception as e:
         logger.exception("Chat message handling failed")
         return jsonify({"error": str(e)}), 500
+
+
+def _parse_chat_message_request():
+    """Return (content, client_id, [(filename, content_type, data), ...])."""
+    from bigas.tickets.attachments import AttachmentError, read_upload_body
+
+    ctype = (request.content_type or "").lower()
+    if "multipart/form-data" in ctype:
+        content = (request.form.get("content") or "").strip()
+        client_id = (request.form.get("client_id") or "").strip() or None
+        uploads = []
+        for uploaded in request.files.getlist("file"):
+            if uploaded is None or not (uploaded.filename or "").strip():
+                continue
+            try:
+                data = read_upload_body(uploaded.stream)
+            except AttachmentError:
+                raise
+            uploads.append((uploaded.filename or "attachment", uploaded.mimetype, data))
+        return content, client_id, uploads
+
+    body = request.get_json(silent=True) or {}
+    content = (body.get("content") or "").strip()
+    client_id = (body.get("client_id") or "").strip() or None
+    return content, client_id, []
+
+
+@chat_bp.route(
+    "/api/chat/threads/<thread_id>/attachments/<attachment_id>",
+    methods=["GET"],
+)
+@require_chat_auth
+def chat_attachment_detail(thread_id: str, attachment_id: str):
+    from io import BytesIO
+
+    from bigas.tickets.attachments import find_message_attachment, get_attachment_blob_store
+
+    store = get_chat_store()
+    user_id = g.chat_user["uid"]
+    thread = store.get_thread(thread_id)
+    if not thread or thread.get("user_id") != user_id:
+        return jsonify({"error": "Thread not found"}), 404
+    record = find_message_attachment(store.list_messages(thread_id), attachment_id)
+    if not record:
+        return jsonify({"error": "Attachment not found"}), 404
+    path = (record.get("storage_path") or "").strip()
+    data = get_attachment_blob_store().get(path) if path else None
+    if data is None:
+        return jsonify({"error": "Attachment not found"}), 404
+    return send_file(
+        BytesIO(data),
+        mimetype=record.get("content_type") or "application/octet-stream",
+        as_attachment=False,
+        download_name=record.get("filename") or "attachment",
+    )
 
 
 @chat_bp.route("/api/chat/threads/<thread_id>/deploy-poll", methods=["POST"])
