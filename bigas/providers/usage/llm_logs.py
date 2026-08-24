@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from bigas.llm.usage import TokenUsage, estimate_cost_usd
 from bigas.providers.usage.base import UsageEvent, UsageProvider
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,41 @@ def _parse_log_payload(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _optional_int(data: Dict[str, Any], key: str) -> Optional[int]:
+    val = data.get(key)
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _reestimated_cost_usd(
+    *,
+    model: Optional[str],
+    prompt: Optional[int],
+    candidates: Optional[int],
+    thoughts: Optional[int],
+    total: Optional[int],
+    logged: Optional[float],
+) -> Optional[float]:
+    """Prefer a live list-price from token counts so old logs that omitted thinking get corrected."""
+    if model:
+        recomputed = estimate_cost_usd(
+            model,
+            TokenUsage(
+                prompt_tokens=prompt,
+                candidates_tokens=candidates,
+                thoughts_tokens=thoughts,
+                total_tokens=total,
+            ),
+        )
+        if recomputed is not None:
+            return recomputed
+    return logged
+
+
 def _feature_matches(feature: str, prefix: Optional[str]) -> bool:
     if not prefix:
         return True
@@ -134,14 +170,33 @@ class CloudRunLlmUsageProvider(UsageProvider):
         filter_str = " AND ".join(filter_parts)
 
         events: List[UsageEvent] = []
+        failures: List[str] = []
         for project in _usage_project_ids(self._project):
-            events.extend(
-                self._fetch_project_events(
-                    project=project,
-                    filter_str=filter_str,
-                    feature_prefix=feature_prefix,
-                    start=start,
+            try:
+                events.extend(
+                    self._fetch_project_events(
+                        project=project,
+                        filter_str=filter_str,
+                        feature_prefix=feature_prefix,
+                        start=start,
+                    )
                 )
+            except Exception as e:
+                logger.warning(
+                    "Cloud Logging llm_usage failed for project %s: %s",
+                    project,
+                    e,
+                )
+                failures.append(f"{project}: {e}")
+        if failures and not events:
+            raise RuntimeError(
+                "Cloud Logging llm_usage failed: " + "; ".join(failures)
+            )
+        if failures:
+            logger.error(
+                "Cloud Logging llm_usage partial failure (%s events kept): %s",
+                len(events),
+                "; ".join(failures),
             )
         return events
 
@@ -172,12 +227,9 @@ class CloudRunLlmUsageProvider(UsageProvider):
             try:
                 payload = self._list_entries(body)
             except Exception as e:
-                logger.warning(
-                    "Cloud Logging entries:list failed for project %s: %s",
-                    project,
-                    e,
-                )
-                break
+                raise RuntimeError(
+                    f"Cloud Logging entries:list failed for project {project}: {e}"
+                ) from e
 
             for entry in payload.get("entries") or []:
                 if not isinstance(entry, dict):
@@ -197,27 +249,26 @@ class CloudRunLlmUsageProvider(UsageProvider):
                     (entry.get("insertId") or "").strip()
                     or f"{project}:{feature}:{ts}:{data.get('model')}"
                 )
-                try:
-                    prompt = int(data["prompt_tokens"]) if data.get("prompt_tokens") is not None else None
-                except (TypeError, ValueError):
-                    prompt = None
-                try:
-                    candidates = (
-                        int(data["candidates_tokens"])
-                        if data.get("candidates_tokens") is not None
-                        else None
-                    )
-                except (TypeError, ValueError):
-                    candidates = None
-                try:
-                    total = int(data["total_tokens"]) if data.get("total_tokens") is not None else None
-                except (TypeError, ValueError):
-                    total = None
-                est = data.get("est_cost_usd")
-                try:
-                    est_f = float(est) if est is not None else None
-                except (TypeError, ValueError):
-                    est_f = None
+                prompt = _optional_int(data, "prompt_tokens")
+                candidates = _optional_int(data, "candidates_tokens")
+                thoughts = _optional_int(data, "thoughts_tokens")
+                total = _optional_int(data, "total_tokens")
+                logged_est: Optional[float] = None
+                raw_est = data.get("est_cost_usd")
+                if raw_est is not None:
+                    try:
+                        logged_est = float(raw_est)
+                    except (TypeError, ValueError):
+                        logged_est = None
+                model = str(data.get("model")).strip() if data.get("model") else None
+                est_f = _reestimated_cost_usd(
+                    model=model,
+                    prompt=prompt,
+                    candidates=candidates,
+                    thoughts=thoughts,
+                    total=total,
+                    logged=logged_est,
+                )
 
                 events.append(
                     UsageEvent(
@@ -225,7 +276,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
                         source_id=source_id,
                         started_at=ts,
                         feature=feature,
-                        model=(str(data.get("model")).strip() if data.get("model") else None),
+                        model=model,
                         input_tokens=prompt,
                         output_tokens=candidates,
                         total_tokens=total,
@@ -242,7 +293,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
                             "empty_fallback": data.get("empty_fallback"),
                             "empty_response": data.get("empty_response"),
                             "thinking_budget": data.get("thinking_budget"),
-                            "thoughts_tokens": data.get("thoughts_tokens"),
+                            "thoughts_tokens": thoughts,
                         },
                     )
                 )

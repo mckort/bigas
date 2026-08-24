@@ -67,6 +67,20 @@ class TokenUsageTests(unittest.TestCase):
         cost = estimate_cost_usd("gemini-2.5-flash", usage)
         self.assertEqual(cost, 0.30 + 2.50)
 
+    def test_uses_total_minus_prompt_when_thoughts_missing(self):
+        # Production Gemini Pro: thinking is in total, not candidates or thoughts.
+        usage = TokenUsage(
+            prompt_tokens=3131,
+            candidates_tokens=286,
+            thoughts_tokens=None,
+            total_tokens=10737,
+        )
+        cost = estimate_cost_usd("gemini-pro-latest", usage)
+        billed_out = 10737 - 3131
+        expected = round(3131 / 1_000_000.0 * 2.00 + billed_out / 1_000_000.0 * 12.00, 6)
+        self.assertEqual(cost, expected)
+        self.assertGreater(cost, 0.009694)
+
     def test_thoughts_only_fallback_when_candidates_missing(self):
         usage = TokenUsage(
             prompt_tokens=1_000_000,
