@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from bigas.llm.usage import TokenUsage, billed_output_tokens, estimate_cost_usd
-from bigas.providers.usage.base import UsageEvent, UsageProvider
+from bigas.providers.usage.base import UsageEvent, UsageProvider, usage_provider_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
 
     @classmethod
     def is_configured(cls) -> bool:
-        return bool(_project_id())
+        return usage_provider_enabled("llm_logs") and bool(_project_id())
 
     def __init__(self) -> None:
         self._project = _project_id()
