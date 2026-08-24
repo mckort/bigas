@@ -392,9 +392,9 @@ class ImplementHandler:
             "run_id": run_id,
             "left_in_status": "In Progress (AI)",
             "direct_implement": direct_implement,
-            "had_plan_section": bool(plan.strip()),
-            "had_research_section": bool(research.strip()),
-            "human_comments_included": comments_text != "(none)",
+            "had_plan_section": _has_text(plan),
+            "had_research_section": _has_text(research),
+            "human_comments_included": _has_text(comments_text),
             "monitor_started": monitor_started,
             "outcome": outcome,
         }
