@@ -17,7 +17,7 @@ PR opened/push
           → if cooldown (fresh [bigas-autofix] head): Discord + PR notice, wait, retry
           → else launch Cursor cloud agent (workOnCurrentBranch)
       → poll autofix_followup until agent terminal
-          → Discord: autofix completed / failed / without commits
+          → Discord + Activity: autofix completed / failed / without commits (not the CTO chat thread)
           → re-review updated diff
           → if LGTM: Discord "Ready to merge"
             → if BIGAS_CTO_AUTO_MERGE=true: squash-merge or enable GitHub auto-merge + Discord
