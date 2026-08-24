@@ -100,6 +100,13 @@ def test_humanize_lookup_jira_includes_parent_and_epics():
     assert "[10 paying customers](https://example.atlassian.net/browse/GPWW-2)" in result
 
 
+def test_humanize_search_jira_empty_results():
+    result = humanize_jira_tool_result(
+        {"ok": True, "jql": "type = Bug AND project = VFA", "issues": [], "count": 0}
+    )
+    assert result == "No matching issues."
+
+
 def test_humanize_lookup_jira_lists_statuses_for_range():
     result = humanize_jira_tool_result(
         {
@@ -157,6 +164,7 @@ def test_jira_formatting_rules_require_english():
     assert "create_jira_issue" in prompt
     assert "Never tell the user to create the issue themselves" in prompt
     assert "lookup_jira" in prompt
+    assert "search_jira" in prompt
     assert "does not mean the new work belongs under the same Epic" in prompt
     assert "Never reply with only ticket links" in JIRA_FORMATTING_RULES
     from bigas.agents.chief_of_staff import COWORKER_RULES

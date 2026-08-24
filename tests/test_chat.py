@@ -563,12 +563,12 @@ def test_resolve_delegate_target_aliases():
     assert _resolve_delegate_target("unknown") is None
 
 
-def test_chief_direct_tools_exclude_deploy_trigger():
-    from bigas.agents.chief_of_staff import _chief_direct_tools
+def test_chief_callable_tools_exclude_pipelines_not_reads():
+    from bigas.agents.chief_of_staff import _chief_callable_tools
 
     names = {
         t["name"]
-        for t in _chief_direct_tools(
+        for t in _chief_callable_tools(
             [
                 {"name": "trigger_deployment", "description": "deploy"},
                 {"name": "get_deployment_status", "description": "status"},
@@ -576,37 +576,53 @@ def test_chief_direct_tools_exclude_deploy_trigger():
                 {"name": "check_website_health", "description": "ping"},
                 {"name": "create_jira_issue", "description": "file a ticket"},
                 {"name": "lookup_jira", "description": "look up a ticket"},
+                {"name": "search_jira", "description": "jql search"},
+                {"name": "weekly_analytics_report", "description": "weekly"},
+                {"name": "check_deployment_risk", "description": "risk"},
+                {"name": "fetch_github_action_logs", "description": "logs"},
             ]
         )
     }
-    assert names == {"get_deployment_status", "check_website_health", "create_jira_issue", "lookup_jira"}
+    assert names == {
+        "get_deployment_status",
+        "check_website_health",
+        "create_jira_issue",
+        "lookup_jira",
+        "search_jira",
+        "fetch_analytics_report",
+        "check_deployment_risk",
+        "fetch_github_action_logs",
+    }
 
 
 def test_create_jira_issue_is_shared_across_agents():
     from bigas.agents.chief_of_staff import (
-        CHIEF_DIRECT_TOOL_NAMES,
         MUST_DELEGATE_TOOLS,
         SHARED_AGENT_TOOLS,
+        _chief_callable_tools,
         _filter_tools_for_agent,
     )
 
-    assert SHARED_AGENT_TOOLS == frozenset({"create_jira_issue", "lookup_jira"})
+    assert SHARED_AGENT_TOOLS == frozenset({"create_jira_issue", "lookup_jira", "search_jira"})
     for name in SHARED_AGENT_TOOLS:
-        assert name in CHIEF_DIRECT_TOOL_NAMES
         assert name not in MUST_DELEGATE_TOOLS
 
     catalog = [
         {"name": "fetch_analytics_report", "description": "ga4"},
         {"name": "lookup_jira", "description": "look up a ticket"},
+        {"name": "search_jira", "description": "jql search"},
         {"name": "create_jira_issue", "description": "file a ticket"},
         {"name": "create_release_notes", "description": "notes"},
         {"name": "review_and_comment_pr", "description": "review"},
         {"name": "trigger_deployment", "description": "deploy"},
     ]
+    callable_names = [t["name"] for t in _chief_callable_tools(catalog)]
+    assert callable_names[:3] == ["lookup_jira", "search_jira", "create_jira_issue"]
     for agent_id in ("marketing", "product", "cto", "devops"):
         names = [t["name"] for t in _filter_tools_for_agent(catalog, agent_id)]
-        assert names[:2] == ["lookup_jira", "create_jira_issue"], agent_id
+        assert names[:3] == ["lookup_jira", "search_jira", "create_jira_issue"], agent_id
         assert "lookup_jira" in names
+        assert "search_jira" in names
         assert "create_jira_issue" in names
 
 
@@ -637,6 +653,32 @@ def test_dispatch_chief_tool_allows_create_jira_issue():
     assert called["name"] == "create_jira_issue"
     assert called["args"]["project_key"] == "GPWW"
     assert "GPWW-9" in (result or "")
+
+
+def test_dispatch_chief_tool_allows_read_tools():
+    from bigas.agents.chief_of_staff import _dispatch_chief_tool
+
+    called = {}
+
+    class FakeMcp:
+        def call_tool(self, name, args):
+            called["name"] = name
+            called["args"] = args
+            return {
+                "is_error": False,
+                "text": "",
+                "structured": {"ok": True, "jql": args.get("jql"), "issues": [], "count": 0},
+            }
+
+    result = _dispatch_chief_tool(
+        "search_jira",
+        {"jql": "type = Bug AND text ~ \"Stripe\""},
+        user_message="open stripe bugs",
+        thread_id="thread-1",
+        mcp_client=FakeMcp(),
+    )
+    assert called["name"] == "search_jira"
+    assert "No matching issues" in (result or "")
 
 
 def test_enrich_lookup_jira_extracts_range_from_message():
@@ -688,21 +730,21 @@ def test_dispatch_chief_tool_rejects_unauthorized_tool():
     assert "Delegated to devops" in result
 
 
-def test_dispatch_chief_tool_blocks_disallowed_direct_tool():
+def test_dispatch_chief_tool_rewrites_pipeline_to_handoff():
     from bigas.agents.chief_of_staff import _dispatch_chief_tool
 
     class FakeMcp:
         def call_tool(self, name, args):
-            raise AssertionError("should not call disallowed tool")
+            raise AssertionError("should not run a pipeline tool inline")
 
     result = _dispatch_chief_tool(
-        "fetch_analytics_report",
+        "weekly_analytics_report",
         {},
-        user_message="show analytics",
+        user_message="run the weekly report",
         thread_id="thread-1",
         mcp_client=FakeMcp(),
     )
-    assert result == "Tool fetch_analytics_report is not allowed for Chief of Staff."
+    assert "Delegated to marketing" in result
 
 
 def test_dispatch_chief_tool_coerces_non_dict_args(monkeypatch):
@@ -796,8 +838,8 @@ def test_chief_select_tool_prompt_documents_delegate(monkeypatch):
     system = captured["system"]
     assert '"action":"delegate"' in system
     assert "- get_deployment_status:" in system
+    assert "- fetch_analytics_report:" in system
     assert "- trigger_deployment:" not in system
-    assert "- fetch_analytics_report:" not in system
     assert "devops" in system.lower()
 
 
@@ -969,8 +1011,16 @@ def test_specialist_loop_answers_after_lookup(monkeypatch):
                 },
             }
 
+    class FakeLlm:
+        def complete(self, messages, temperature=0.2):
+            raise AssertionError("JSON path should use _select_tool_via_llm")
+
     monkeypatch.setattr("bigas.agents.chief_of_staff._mcp_client", lambda: FakeClient())
     monkeypatch.setattr("bigas.agents.chief_of_staff._select_tool_via_llm", fake_select)
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff.get_llm_client",
+        lambda feature="chat": (FakeLlm(), "gemini-test"),
+    )
 
     result = handle_chat_message(
         thread_id=thread["thread_id"],

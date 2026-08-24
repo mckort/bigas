@@ -9,6 +9,8 @@ The `bigas.llm` package provides a single provider-agnostic interface for chat-s
   from bigas.llm.factory import get_llm_client
   llm, model = get_llm_client(feature="cto_pr_review", explicit_model=request_model)
   text = llm.complete(messages=[...], max_tokens=4000, temperature=0.3)
+  completion = llm.complete_detailed(messages=[...], tools=openai_tool_defs)
+  # completion.tool_calls is a tuple of ToolCall(id, name, arguments)
   ```
 
 - **Provider** is inferred from the **model name**:

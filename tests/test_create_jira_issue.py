@@ -191,6 +191,10 @@ def test_manifest_includes_create_jira_issue():
     assert "standalone" in lookup["description"].lower()
     assert "range" in lookup["description"].lower()
     assert "issue_keys" in lookup["parameters"]["properties"]
+    search = tools["search_jira"]
+    assert search["path"] == "/mcp/tools/search_jira"
+    assert search["parameters"]["required"] == ["jql"]
+    assert "jql" in search["description"].lower()
 
 
 @pytest.fixture
