@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import Login from './components/Login'
 import ChatLayout from './components/ChatLayout'
 import BoardLayout from './components/BoardLayout'
+import ObjectivesLayout from './components/ObjectivesLayout'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 
 function initialView() {
   const path = window.location.pathname || ''
   if (path.startsWith('/board')) return 'board'
+  if (path.startsWith('/objectives')) return 'objectives'
   return 'chat'
 }
 
@@ -39,7 +41,7 @@ export default function App() {
 
   const switchView = (next) => {
     setView(next)
-    const path = next === 'board' ? '/board' : '/'
+    const path = next === 'board' ? '/board' : next === 'objectives' ? '/objectives' : '/'
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path)
     }
@@ -67,6 +69,20 @@ export default function App() {
 
   if (!user) {
     return <Login onLoggedIn={() => setUser({ email: 'signed-in' })} />
+  }
+
+  if (view === 'objectives') {
+    return (
+      <ObjectivesLayout
+        user={user}
+        onLogout={() => {
+          logout()
+          setUser(null)
+        }}
+        onDiscussTicket={handleDiscussTicket}
+        onSwitchView={switchView}
+      />
+    )
   }
 
   if (view === 'board') {

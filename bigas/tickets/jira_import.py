@@ -117,6 +117,8 @@ def _map_issue_type(name: str) -> str:
         return "Bug"
     if lowered == "epic":
         return "Epic"
+    if lowered == "objective":
+        return "Objective"
     return "Task"
 
 

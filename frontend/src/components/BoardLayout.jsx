@@ -16,6 +16,21 @@ import {
   updateTicket,
   uploadTicketAttachment,
 } from '../lib/api'
+import {
+  emptyKeyResult,
+  isEpic,
+  isObjective,
+  keyResultsOf,
+  normalizeLabel,
+  objectiveChipLabel,
+  krProgress,
+  objectiveOptionsFromTickets,
+  percentLabel,
+  ticketLabels,
+  ticketMatchesObjectiveFilter,
+  ticketParentKey,
+  ticketParentKrId,
+} from '../lib/okr'
 
 const SYSTEM_COMMENT_MARKER = '[bigas-jira-ai]'
 
@@ -27,6 +42,43 @@ const AI_WORKING_STATUSES = new Set([
 
 function isTodoColumn(col) {
   return String(col || '').trim().toLowerCase() === 'to do'
+}
+
+function boardQuery() {
+  const params = new URLSearchParams(window.location.search)
+  return {
+    boardId: (params.get('board') || '').trim(),
+    ticketKey: (params.get('ticket') || '').trim().toUpperCase(),
+    krId: (params.get('kr') || '').trim(),
+    objectiveKey: (params.get('objective') || '').trim().toUpperCase(),
+  }
+}
+
+function filterFromQuery(query) {
+  if (query.krId) return `kr:${query.krId}`
+  if (query.objectiveKey) return query.objectiveKey
+  return ''
+}
+
+function parentKeyFromFilter(filter, tickets) {
+  if (!filter || filter === '__none__') return ''
+  if (filter.startsWith('kr:')) {
+    const krId = filter.slice(3)
+    const fromChild = tickets.find((ticket) => ticketParentKrId(ticket) === krId)?.parent_key
+    if (fromChild) return fromChild
+    const objective = tickets.find(
+      (ticket) =>
+        isObjective(ticket) &&
+        keyResultsOf(ticket).some((kr) => String(kr.id || '') === krId),
+    )
+    return objective?.key || ''
+  }
+  return filter
+}
+
+function parentKrIdFromFilter(filter) {
+  if (!filter || !filter.startsWith('kr:')) return ''
+  return filter.slice(3)
 }
 
 function ColumnCreateButton({ hiddenUntilHover = false, onClick }) {
@@ -74,66 +126,9 @@ function StatusSelect({ value, columns, onChange, className = '' }) {
   )
 }
 
-function normalizeLabel(raw) {
-  return String(raw || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/-{2,}/g, '-')
-    .replace(/^[-._]+|[-._]+$/g, '')
-    .slice(0, 255)
-}
-
-function ticketLabels(ticket) {
-  const fromList = Array.isArray(ticket?.labels) ? ticket.labels : []
-  const labels = fromList.map(normalizeLabel).filter(Boolean)
-  if (ticket?.marketing && !labels.includes('marketing')) labels.push('marketing')
-  return labels
-}
-
-function isEpic(ticket) {
-  return String(ticket?.issue_type || '').trim().toLowerCase() === 'epic'
-}
-
-function ticketParentKey(ticket) {
-  return String(ticket?.parent_key || '').trim().toUpperCase()
-}
-
-function epicOptionsFromTickets(tickets) {
-  const byKey = new Map()
-  for (const ticket of tickets) {
-    if (!isEpic(ticket) || !ticket.key) continue
-    byKey.set(ticket.key, ticket)
-  }
-  for (const ticket of tickets) {
-    const parent = ticketParentKey(ticket)
-    if (parent && !byKey.has(parent)) {
-      byKey.set(parent, { key: parent, title: parent, issue_type: 'Epic' })
-    }
-  }
-  return [...byKey.values()].sort((a, b) =>
-    String(a.title || a.key || '').localeCompare(String(b.title || b.key || '')),
-  )
-}
-
-function ticketMatchesEpicFilter(ticket, filter) {
-  if (!filter) return true
-  const parent = ticketParentKey(ticket)
-  if (filter === '__none__') return !parent && !isEpic(ticket)
-  return ticket.key === filter || parent === filter
-}
-
-function epicChipLabel(epic) {
-  if (!epic) return ''
-  const title = String(epic.title || '').trim()
-  if (title && title !== epic.key) return `${epic.key} · ${title}`
-  return epic.key || title
-}
-
-function EpicChip({ epic, onClick, className = '' }) {
+function ObjectiveChip({ epic, onClick, className = '' }) {
   if (!epic) return null
-  const label = epicChipLabel(epic)
+  const label = objectiveChipLabel(epic)
   const classes = `inline-flex items-center max-w-full text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-bigas-blue/20 border border-black/10 text-bigas-black ${className}`
   if (!onClick) {
     return <span className={classes}><span className="truncate">{label}</span></span>
@@ -242,7 +237,8 @@ function LabelEditor({ labels, onChange }, ref) {
 
 const LabelEditorWithRef = forwardRef(LabelEditor)
 
-function TicketCard({ ticket, parentEpic, columns, onEdit, onStatusChange, onDiscuss, onFilterEpic, dragging, onDragStart, onDragEnd }) {
+function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusChange, onDiscuss, onFilterEpic, dragging, onDragStart, onDragEnd }) {
+  const results = keyResultsOf(ticket)
   return (
     <div
       draggable
@@ -259,6 +255,11 @@ function TicketCard({ ticket, parentEpic, columns, onEdit, onStatusChange, onDis
         <div className="flex items-center gap-1.5 min-w-0">
           <TicketAiMark status={ticket.status} />
           <span className="text-[11px] font-mono text-muted truncate">{ticket.key}</span>
+          {isObjective(ticket) && (
+            <span className="text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-bigas-blue/20 border border-black/10 text-bigas-black flex-shrink-0">
+              Objective
+            </span>
+          )}
           {isEpic(ticket) && (
             <span className="text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted flex-shrink-0">
               Epic
@@ -280,11 +281,34 @@ function TicketCard({ ticket, parentEpic, columns, onEdit, onStatusChange, onDis
         {ticket.title}
       </button>
       {parentEpic && (
-        <EpicChip
+        <ObjectiveChip
           epic={parentEpic}
           onClick={() => onFilterEpic?.(parentEpic.key)}
           className="mt-2"
         />
+      )}
+      {parentKr && (
+        <button
+          type="button"
+          onClick={() => onFilterEpic?.(`kr:${parentKr.id}`)}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="mt-1 inline-flex max-w-full text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted truncate"
+          title="Filter by Key Result"
+        >
+          KR · {parentKr.title}
+        </button>
+      )}
+      {isObjective(ticket) && results.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {results.slice(0, 3).map((kr) => (
+            <div key={kr.id || kr.title} className="flex items-center gap-2">
+              <span className="text-[10px] text-muted truncate flex-1">{kr.title}</span>
+              <span className="text-[10px] font-mono text-muted">
+                {kr.measurable === false ? '—' : percentLabel(krProgress(kr))}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
       <LabelChips labels={ticketLabels(ticket)} className="mt-2" />
       {ticket.attachment_count > 0 && (
@@ -726,7 +750,7 @@ function TicketComments({ ticketId }) {
   )
 }
 
-function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, epics, saveError, onSaveError, onClose, onSave, onDelete }) {
+function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, initialParentKrId, epics, saveError, onSaveError, onClose, onSave, onDelete }) {
   const labelEditorRef = useRef(null)
   const [form, setForm] = useState({
     title: ticket?.title || '',
@@ -737,9 +761,17 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
     parent_key: ticket ? ticketParentKey(ticket) : (initialParentKey || ''),
+    parent_kr_id: ticketParentKrId(ticket) || initialParentKrId || '',
+    okr_cycle: ticket?.okr_cycle || '',
+    okr_owner: ticket?.okr_owner || '',
+    key_results: keyResultsOf(ticket).length ? keyResultsOf(ticket) : [],
   })
   const isNew = !ticket?.ticket_id
+  const isObjectiveType = form.issue_type === 'Objective'
+  const isParentType = form.issue_type === 'Objective' || form.issue_type === 'Epic'
   const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
+  const parentGoal = selectableEpics.find((item) => item.key === form.parent_key)
+  const parentKrs = isObjective(parentGoal) ? keyResultsOf(parentGoal) : []
   const [pendingFiles, setPendingFiles] = useState([])
   const [attachmentRefreshToken, setAttachmentRefreshToken] = useState(0)
   const [saving, setSaving] = useState(false)
@@ -781,7 +813,8 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                 setForm({
                   ...form,
                   issue_type,
-                  parent_key: issue_type === 'Epic' ? '' : form.parent_key,
+                  parent_key: issue_type === 'Objective' || issue_type === 'Epic' ? '' : form.parent_key,
+                  parent_kr_id: issue_type === 'Objective' || issue_type === 'Epic' ? '' : form.parent_kr_id,
                 })
               }}
               className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
@@ -789,24 +822,168 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               <option value="Task">Task</option>
               <option value="Bug">Bug</option>
               <option value="Epic">Epic</option>
+              <option value="Objective">Objective</option>
             </select>
           </label>
-          {form.issue_type !== 'Epic' && (
+          {isObjectiveType && (
+            <div className="space-y-3 border border-border rounded-xl p-3 bg-surface/50">
+              <p className="text-xs font-medium">Key Results</p>
+              <p className="text-[11px] text-muted">
+                3–5 measurable outcomes. If a KR cannot be scored, say what instrumentation is missing.
+                Drag to Research to let Bigas propose these.
+              </p>
+              <div className="grid sm:grid-cols-2 gap-2">
+                <label className="block text-sm">
+                  <span className="text-muted text-xs">Cycle</span>
+                  <input
+                    value={form.okr_cycle}
+                    onChange={(e) => setForm({ ...form, okr_cycle: e.target.value })}
+                    placeholder="2026-Q3"
+                    className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[40px] bg-white"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="text-muted text-xs">Owner</span>
+                  <input
+                    value={form.okr_owner}
+                    onChange={(e) => setForm({ ...form, okr_owner: e.target.value })}
+                    placeholder="Chief of Staff"
+                    className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[40px] bg-white"
+                  />
+                </label>
+              </div>
+              {form.key_results.map((kr, index) => (
+                <div key={kr.id || index} className="border border-border rounded-xl p-3 bg-white space-y-2">
+                  <input
+                    value={kr.title}
+                    onChange={(e) => {
+                      const key_results = [...form.key_results]
+                      key_results[index] = { ...kr, title: e.target.value }
+                      setForm({ ...form, key_results })
+                    }}
+                    placeholder="KR title"
+                    className="w-full border border-border rounded-lg px-2 py-2 text-sm"
+                  />
+                  <div className="grid grid-cols-3 gap-2">
+                    {['baseline', 'current', 'target'].map((field) => (
+                      <label key={field} className="text-[11px] text-muted">
+                        {field}
+                        <input
+                          type="number"
+                          value={kr[field] ?? ''}
+                          onChange={(e) => {
+                            const key_results = [...form.key_results]
+                            key_results[index] = { ...kr, [field]: e.target.value }
+                            setForm({ ...form, key_results })
+                          }}
+                          className="mt-1 w-full border border-border rounded-lg px-2 py-1.5 text-sm text-text"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <select
+                      value={kr.source || 'manual'}
+                      onChange={(e) => {
+                        const key_results = [...form.key_results]
+                        key_results[index] = { ...kr, source: e.target.value }
+                        setForm({ ...form, key_results })
+                      }}
+                      className="text-xs border border-border rounded-lg px-2 py-1.5 bg-white"
+                    >
+                      <option value="ga4">ga4</option>
+                      <option value="github">github</option>
+                      <option value="jira">jira</option>
+                      <option value="ads">ads</option>
+                      <option value="manual">manual</option>
+                      <option value="unknown">unknown</option>
+                    </select>
+                    <label className="text-xs text-muted flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={kr.measurable !== false}
+                        onChange={(e) => {
+                          const key_results = [...form.key_results]
+                          key_results[index] = { ...kr, measurable: e.target.checked }
+                          setForm({ ...form, key_results })
+                        }}
+                      />
+                      Measurable
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          key_results: form.key_results.filter((_, i) => i !== index),
+                        })
+                      }
+                      className="text-xs text-muted ml-auto"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  {kr.measurable === false && (
+                    <textarea
+                      value={kr.measurement_gap || ''}
+                      onChange={(e) => {
+                        const key_results = [...form.key_results]
+                        key_results[index] = { ...kr, measurement_gap: e.target.value }
+                        setForm({ ...form, key_results })
+                      }}
+                      placeholder="What must exist before this can be scored?"
+                      className="w-full border border-border rounded-lg px-2 py-2 text-xs"
+                      rows={2}
+                    />
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() =>
+                  setForm({ ...form, key_results: [...form.key_results, emptyKeyResult()] })
+                }
+                className="text-sm px-3 py-2 rounded-xl border border-dashed border-border min-h-[40px] w-full"
+              >
+                + Key Result
+              </button>
+            </div>
+          )}
+          {!isParentType && (
+            <>
             <label className="block text-sm">
-              <span className="text-muted text-xs">Epic</span>
+              <span className="text-muted text-xs">Parent (Epic or Objective)</span>
               <select
                 value={form.parent_key || ''}
-                onChange={(e) => setForm({ ...form, parent_key: e.target.value })}
+                onChange={(e) => setForm({ ...form, parent_key: e.target.value, parent_kr_id: '' })}
                 className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
               >
                 <option value="">None</option>
                 {selectableEpics.map((epic) => (
                   <option key={epic.key} value={epic.key}>
-                    {epicChipLabel(epic)}
+                    {objectiveChipLabel(epic)}
                   </option>
                 ))}
               </select>
             </label>
+            {parentKrs.length > 0 && (
+              <label className="block text-sm">
+                <span className="text-muted text-xs">Key Result</span>
+                <select
+                  value={form.parent_kr_id || ''}
+                  onChange={(e) => setForm({ ...form, parent_kr_id: e.target.value })}
+                  className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+                >
+                  <option value="">Whole objective</option>
+                  {parentKrs.map((kr) => (
+                    <option key={kr.id} value={kr.id}>
+                      {kr.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            </>
           )}
           <label className="block text-sm">
             <span className="text-muted text-xs">Status</span>
@@ -886,7 +1063,8 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                 const result = await onSave({
                   ...form,
                   labels,
-                  parent_key: form.issue_type === 'Epic' ? '' : form.parent_key,
+                  parent_key: isParentType ? '' : form.parent_key,
+                  parent_kr_id: isParentType ? '' : form.parent_kr_id,
                   files: pendingFiles,
                 })
                 if (result?.failedFiles?.length) {
@@ -1035,13 +1213,16 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [jiraImportAvailable, setJiraImportAvailable] = useState(false)
   const [syncingJira, setSyncingJira] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
-  const [epicFilter, setEpicFilter] = useState('')
+  const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
   const columns = activeBoard?.columns || ['To Do', 'In Progress', 'Review', 'Done']
-  const epicOptions = epicOptionsFromTickets(tickets)
+  const epicOptions = objectiveOptionsFromTickets(tickets)
   const epicsByKey = Object.fromEntries(epicOptions.map((epic) => [epic.key, epic]))
-  const visibleTickets = tickets.filter((ticket) => ticketMatchesEpicFilter(ticket, epicFilter))
+  const krsById = Object.fromEntries(
+    tickets.flatMap((ticket) => keyResultsOf(ticket).filter((kr) => kr.id).map((kr) => [kr.id, kr])),
+  )
+  const visibleTickets = tickets.filter((ticket) => ticketMatchesObjectiveFilter(ticket, epicFilter))
   const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
   const loadBoards = useCallback(async () => {
@@ -1049,7 +1230,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     setBoards(data.boards || [])
     setJiraImportAvailable(Boolean(data.jira_import_available))
     if (!activeBoardId && data.boards?.length) {
-      setActiveBoardId(data.boards[0].board_id)
+      const wanted = boardQuery().boardId
+      const match = data.boards.find((board) => board.board_id === wanted)
+      setActiveBoardId(match?.board_id || data.boards[0].board_id)
     }
   }, [activeBoardId])
 
@@ -1070,12 +1253,16 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }, [loadTickets])
 
   useEffect(() => {
+    const next = filterFromQuery(boardQuery())
+    if (next) {
+      setEpicFilter(next)
+      return
+    }
     setEpicFilter('')
   }, [activeBoardId])
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const ticketKey = (params.get('ticket') || '').trim().toUpperCase()
+    const ticketKey = boardQuery().ticketKey
     if (ticketKey) setPendingTicketKey(ticketKey)
   }, [])
 
@@ -1337,13 +1524,18 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
               value={epicFilter}
               onChange={(e) => setEpicFilter(e.target.value)}
               className="text-sm px-2 py-2 rounded-xl border border-border min-h-[44px] max-w-[160px] sm:max-w-[220px] bg-white"
-              aria-label="Filter by epic"
+              aria-label="Filter by objective"
             >
               <option value="">All tickets</option>
-              <option value="__none__">No epic</option>
+              <option value="__none__">No objective</option>
+              {epicFilter.startsWith('kr:') && (
+                <option value={epicFilter}>
+                  KR · {krsById[epicFilter.slice(3)]?.title || epicFilter.slice(3)}
+                </option>
+              )}
               {epicOptions.map((epic) => (
                 <option key={epic.key} value={epic.key}>
-                  {epicChipLabel(epic)}
+                  {objectiveChipLabel(epic)}
                 </option>
               ))}
             </select>
@@ -1358,6 +1550,13 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
               {syncingJira ? 'Syncing…' : 'Sync Jira'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => onSwitchView('objectives')}
+            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden sm:block"
+          >
+            Objectives
+          </button>
           <button
             type="button"
             onClick={() => onSwitchView('chat')}
@@ -1393,6 +1592,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                       key={ticket.ticket_id}
                       ticket={ticket}
                       parentEpic={epicsByKey[ticketParentKey(ticket)]}
+                      parentKr={krsById[ticketParentKrId(ticket)]}
                       columns={columns}
                       onEdit={openEditTicket}
                       onStatusChange={handleStatusChange}
@@ -1433,6 +1633,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                       key={ticket.ticket_id}
                       ticket={ticket}
                       parentEpic={epicsByKey[ticketParentKey(ticket)]}
+                      parentKr={krsById[ticketParentKrId(ticket)]}
                       columns={columns}
                       onEdit={openEditTicket}
                       onStatusChange={handleStatusChange}
@@ -1459,7 +1660,8 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           columns={columns}
           board={activeBoard}
           initialStatus={createStatus}
-          initialParentKey={epicFilter && epicFilter !== '__none__' ? epicFilter : ''}
+          initialParentKey={parentKeyFromFilter(epicFilter, tickets)}
+          initialParentKrId={parentKrIdFromFilter(epicFilter)}
           epics={epicOptions}
           saveError={modalSaveError}
           onSaveError={setModalSaveError}

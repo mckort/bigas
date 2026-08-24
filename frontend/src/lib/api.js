@@ -243,3 +243,14 @@ export async function syncBoardFromJira(boardId) {
 export async function fetchBoardJiraSyncStatus(boardId) {
   return apiFetch(`/api/boards/${boardId}/jira-sync-status`)
 }
+
+export async function fetchObjectives() {
+  return apiFetch('/api/objectives')
+}
+
+export async function seedOkrDemo(force = false) {
+  return apiFetch('/api/objectives/demo', {
+    method: 'POST',
+    body: JSON.stringify({ force }),
+  })
+}

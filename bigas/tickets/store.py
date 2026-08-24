@@ -8,8 +8,16 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
+from bigas.okr.model import normalize_key_results, promote_objective_type
 from bigas.tickets.constants import columns_for_board, is_valid_status
 from bigas.tickets.labels import has_marketing, normalize_labels, resolve_ticket_labels
+
+
+def _is_epic_ticket(ticket: Optional[Dict[str, Any]]) -> bool:
+    return str((ticket or {}).get("issue_type") or "").strip().title() == "Epic"
+
+
+_GOAL_ISSUE_TYPES = ("Task", "Bug", "Epic", "Objective")
 
 _ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
@@ -60,11 +68,18 @@ def _compose_ticket(
     fix_version: Optional[str],
     labels: List[str],
     parent_key: Optional[str],
+    parent_kr_id: Optional[str],
     thread_id: Optional[str],
     project_key: Optional[str],
+    key_results: Optional[List[Dict[str, Any]]],
+    okr_cycle: Optional[str],
+    okr_owner: Optional[str],
+    okr_briefing: Optional[str],
+    okr_phase: Optional[str],
     now: str,
 ) -> Dict[str, Any]:
     normalized = normalize_labels(labels)
+    itype = promote_objective_type(issue_type, normalized)
     return {
         "ticket_id": ticket_id,
         "board_id": board_id,
@@ -72,13 +87,19 @@ def _compose_ticket(
         "title": title,
         "description": description,
         "status": status,
-        "issue_type": issue_type,
+        "issue_type": itype,
         "assignee": assignee,
         "fix_version": fix_version,
         "labels": normalized,
         "marketing": has_marketing(normalized),
         "parent_key": parent_key,
+        "parent_kr_id": parent_kr_id,
         "thread_id": thread_id,
+        "key_results": normalize_key_results(key_results),
+        "okr_cycle": (okr_cycle or "").strip() or None,
+        "okr_owner": (okr_owner or "").strip() or None,
+        "okr_briefing": (okr_briefing or "").strip(),
+        "okr_phase": (okr_phase or "").strip(),
         "comments": [],
         "attachments": [],
         "done_processed": False,
@@ -101,7 +122,13 @@ def _prepare_ticket_values(
     marketing: bool = False,
     labels: Optional[List[Any]] = None,
     parent_key: Optional[str] = None,
+    parent_kr_id: Optional[str] = None,
     thread_id: Optional[str] = None,
+    key_results: Optional[List[Any]] = None,
+    okr_cycle: Optional[str] = None,
+    okr_owner: Optional[str] = None,
+    okr_briefing: Optional[str] = None,
+    okr_phase: Optional[str] = None,
 ) -> Dict[str, Any]:
     proj = board.get("project_key")
     cols = columns_for_board(project_key=proj)
@@ -112,11 +139,14 @@ def _prepare_ticket_values(
     if not summary:
         raise ValueError("title is required")
     itype = (issue_type or "Task").strip().title() or "Task"
-    if itype not in ("Task", "Bug", "Epic"):
+    if itype not in _GOAL_ISSUE_TYPES:
         itype = "Task"
+    labels_norm = normalize_labels(labels, marketing=bool(marketing))
+    itype = promote_objective_type(itype, labels_norm)
     parent = (parent_key or "").strip().upper() or None
     if parent and not _ISSUE_KEY_RE.match(parent):
         parent = None
+    kr_id = (parent_kr_id or "").strip() or None
     return {
         "title": summary,
         "description": (description or "").strip(),
@@ -124,10 +154,16 @@ def _prepare_ticket_values(
         "issue_type": itype,
         "assignee": (assignee or "").strip() or None,
         "fix_version": (fix_version or "").strip() or None,
-        "labels": normalize_labels(labels, marketing=bool(marketing)),
+        "labels": labels_norm,
         "parent_key": parent,
+        "parent_kr_id": kr_id,
         "thread_id": (thread_id or "").strip() or None,
         "project_key": proj,
+        "key_results": normalize_key_results(key_results),
+        "okr_cycle": (okr_cycle or "").strip() or None,
+        "okr_owner": (okr_owner or "").strip() or None,
+        "okr_briefing": (okr_briefing or "").strip(),
+        "okr_phase": (okr_phase or "").strip(),
     }
 
 
@@ -149,6 +185,13 @@ def _apply_ticket_field_updates(
         "marketing",
         "labels",
         "parent_key",
+        "parent_kr_id",
+        "key_results",
+        "okr_cycle",
+        "okr_owner",
+        "okr_briefing",
+        "okr_phase",
+        "created_at",
         "done_processed",
     }
     for key, value in fields.items():
@@ -179,11 +222,27 @@ def _apply_ticket_field_updates(
         elif key == "parent_key":
             pk = (value or "").strip().upper() or None
             updates["parent_key"] = pk if pk and _ISSUE_KEY_RE.match(pk) else None
+        elif key == "parent_kr_id":
+            updates["parent_kr_id"] = (value or "").strip() or None
+        elif key == "key_results":
+            updates["key_results"] = normalize_key_results(value)
+        elif key == "okr_cycle":
+            updates["okr_cycle"] = (value or "").strip() or None
+        elif key == "okr_owner":
+            updates["okr_owner"] = (value or "").strip() or None
+        elif key == "okr_briefing":
+            updates["okr_briefing"] = str(value or "")
+        elif key == "okr_phase":
+            updates["okr_phase"] = (value or "").strip()
+        elif key == "created_at":
+            stamp = str(value or "").strip()
+            if stamp:
+                updates["created_at"] = stamp
         elif key == "done_processed":
             updates["done_processed"] = bool(value)
         elif key == "issue_type":
             itype = (value or "Task").strip().title() or "Task"
-            if itype in ("Task", "Bug", "Epic"):
+            if itype in _GOAL_ISSUE_TYPES:
                 updates["issue_type"] = itype
     if "labels" in fields or "marketing" in fields:
         current = fields["labels"] if "labels" in fields else resolve_ticket_labels(ticket)
@@ -195,6 +254,11 @@ def _apply_ticket_field_updates(
         if labels != existing_labels:
             updates["labels"] = labels
             updates["marketing"] = has_marketing(labels)
+    merged_type = updates.get("issue_type") or ticket.get("issue_type") or "Task"
+    merged_labels = updates.get("labels") if "labels" in updates else resolve_ticket_labels(ticket)
+    promoted = promote_objective_type(merged_type, merged_labels)
+    if promoted != (ticket.get("issue_type") or "Task") or "issue_type" in updates:
+        updates["issue_type"] = promoted
     return updates
 
 
@@ -344,6 +408,22 @@ class MemoryTicketStore:
             ]
         return sorted(tickets, key=lambda t: t.get("created_at", ""))
 
+    def list_tickets_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+        board_ids = {
+            board["board_id"]
+            for board in self.list_boards(user_id)
+            if board.get("board_id")
+        }
+        if not board_ids:
+            return []
+        with self._lock:
+            tickets = [
+                dict(ticket)
+                for ticket in self._tickets.values()
+                if ticket.get("board_id") in board_ids
+            ]
+        return sorted(tickets, key=lambda t: t.get("created_at", ""))
+
     def get_ticket(self, ticket_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             ticket = self._tickets.get(ticket_id)
@@ -371,9 +451,15 @@ class MemoryTicketStore:
         marketing: bool = False,
         labels: Optional[List[Any]] = None,
         parent_key: Optional[str] = None,
+        parent_kr_id: Optional[str] = None,
         thread_id: Optional[str] = None,
         user_id: Optional[str] = None,
         key: Optional[str] = None,
+        key_results: Optional[List[Any]] = None,
+        okr_cycle: Optional[str] = None,
+        okr_owner: Optional[str] = None,
+        okr_briefing: Optional[str] = None,
+        okr_phase: Optional[str] = None,
     ) -> Dict[str, Any]:
         board = self.get_board(board_id)
         if not board:
@@ -391,7 +477,13 @@ class MemoryTicketStore:
             marketing=marketing,
             labels=labels,
             parent_key=parent_key,
+            parent_kr_id=parent_kr_id,
             thread_id=thread_id,
+            key_results=key_results,
+            okr_cycle=okr_cycle,
+            okr_owner=okr_owner,
+            okr_briefing=okr_briefing,
+            okr_phase=okr_phase,
         )
 
         ticket_id = str(uuid.uuid4())
@@ -598,8 +690,8 @@ class MemoryTicketStore:
     def list_epics(self, project_key: str) -> List[Dict[str, Any]]:
         return [
             t
-            for t in self.list_tickets_by_project(project_key, issue_type="Epic")
-            if t.get("status") != "Done"
+            for t in self.list_tickets_by_project(project_key)
+            if _is_epic_ticket(t) and t.get("status") != "Done"
         ]
 
     def list_all_epics(self) -> List[Dict[str, Any]]:
@@ -607,8 +699,7 @@ class MemoryTicketStore:
             tickets = [
                 dict(t)
                 for t in self._tickets.values()
-                if (t.get("issue_type") or "").strip().title() == "Epic"
-                and t.get("status") != "Done"
+                if _is_epic_ticket(t) and t.get("status") != "Done"
             ]
         out: List[Dict[str, Any]] = []
         for ticket in tickets:
@@ -865,6 +956,21 @@ class FirestoreTicketStore:
         tickets = [doc.to_dict() for doc in docs if doc.exists]
         return sorted(tickets, key=lambda t: t.get("created_at", ""))
 
+    def list_tickets_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+        board_ids = [
+            board["board_id"]
+            for board in self.list_boards(user_id)
+            if board.get("board_id")
+        ]
+        if not board_ids:
+            return []
+        tickets: List[Dict[str, Any]] = []
+        for start in range(0, len(board_ids), 10):
+            chunk = board_ids[start : start + 10]
+            docs = self._tickets.where("board_id", "in", chunk).stream()
+            tickets.extend(doc.to_dict() for doc in docs if doc.exists)
+        return sorted(tickets, key=lambda t: t.get("created_at", ""))
+
     def get_ticket(self, ticket_id: str) -> Optional[Dict[str, Any]]:
         snap = self._tickets.document(ticket_id).get()
         return snap.to_dict() if snap.exists else None
@@ -889,9 +995,15 @@ class FirestoreTicketStore:
         marketing: bool = False,
         labels: Optional[List[Any]] = None,
         parent_key: Optional[str] = None,
+        parent_kr_id: Optional[str] = None,
         thread_id: Optional[str] = None,
         user_id: Optional[str] = None,
         key: Optional[str] = None,
+        key_results: Optional[List[Any]] = None,
+        okr_cycle: Optional[str] = None,
+        okr_owner: Optional[str] = None,
+        okr_briefing: Optional[str] = None,
+        okr_phase: Optional[str] = None,
     ) -> Dict[str, Any]:
         board = self.get_board(board_id)
         if not board:
@@ -909,7 +1021,13 @@ class FirestoreTicketStore:
             marketing=marketing,
             labels=labels,
             parent_key=parent_key,
+            parent_kr_id=parent_kr_id,
             thread_id=thread_id,
+            key_results=key_results,
+            okr_cycle=okr_cycle,
+            okr_owner=okr_owner,
+            okr_briefing=okr_briefing,
+            okr_phase=okr_phase,
         )
 
         ticket_id = str(uuid.uuid4())
@@ -1144,11 +1262,20 @@ class FirestoreTicketStore:
         return sorted(tickets, key=lambda t: t.get("key", ""))
 
     def list_epics(self, project_key: str) -> List[Dict[str, Any]]:
-        return [
-            t
-            for t in self.list_tickets_by_project(project_key, issue_type="Epic")
-            if t.get("status") != "Done"
-        ]
+        proj = (project_key or "").strip().upper()
+        docs = (
+            self._tickets.where("project_key", "==", proj)
+            .where("issue_type", "==", "Epic")
+            .stream()
+        )
+        return sorted(
+            [
+                doc.to_dict()
+                for doc in docs
+                if doc.exists and doc.to_dict().get("status") != "Done"
+            ],
+            key=lambda t: t.get("key", ""),
+        )
 
     def list_all_epics(self) -> List[Dict[str, Any]]:
         tickets = []
