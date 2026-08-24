@@ -246,16 +246,33 @@ class TicketService:
             self._delete_ticket_attachment_blobs(ticket)
         return True
 
-    def delete_ticket(self, ticket_id: str, *, user_id: str) -> bool:
+    def delete_ticket(self, ticket_id: str, *, user_id: str, delete_children: bool = False) -> bool:
         ticket = self._store.get_ticket(ticket_id)
         if not ticket:
             return False
         board = self._store.get_board(ticket.get("board_id") or "")
         if board and board.get("user_id") != user_id:
             return False
+        parent_key = (ticket.get("key") or "").strip().upper()
+        children = list(self._store.list_tickets_for_parent(parent_key) if parent_key else [])
         if not self._store.delete_ticket(ticket_id, user_id=user_id):
             return False
         self._delete_ticket_attachment_blobs(ticket)
+        if delete_children:
+            for child in children:
+                child_id = child.get("ticket_id") or ""
+                if child_id:
+                    self.delete_ticket(child_id, user_id=user_id, delete_children=False)
+        else:
+            for child in children:
+                child_id = child.get("ticket_id") or ""
+                if child_id:
+                    self._store.update_ticket(
+                        child_id,
+                        user_id=user_id,
+                        parent_key="",
+                        parent_kr_id="",
+                    )
         return True
 
     def _delete_ticket_attachment_blobs(self, ticket: Dict[str, Any]) -> None:

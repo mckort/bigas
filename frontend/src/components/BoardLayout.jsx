@@ -12,7 +12,6 @@ import {
   fetchTicket,
   fetchTicketAttachmentBlob,
   fetchTicketByKey,
-  syncBoardFromJira,
   updateTicket,
   uploadTicketAttachment,
 } from '../lib/api'
@@ -31,6 +30,7 @@ import {
   ticketParentKey,
   ticketParentKrId,
 } from '../lib/okr'
+import { SettingsButton } from './AgentSettings'
 
 const SYSTEM_COMMENT_MARKER = '[bigas-jira-ai]'
 
@@ -1198,7 +1198,7 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
   )
 }
 
-export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchView }) {
+export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchView, onOpenSettings, boardRefreshKey = 0 }) {
   const [boards, setBoards] = useState([])
   const [activeBoardId, setActiveBoardId] = useState(null)
   const [tickets, setTickets] = useState([])
@@ -1210,8 +1210,6 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [createStatus, setCreateStatus] = useState(null)
   const [dragTicket, setDragTicket] = useState(null)
   const [pendingTicketKey, setPendingTicketKey] = useState(null)
-  const [jiraImportAvailable, setJiraImportAvailable] = useState(false)
-  const [syncingJira, setSyncingJira] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
   const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
 
@@ -1228,7 +1226,6 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const loadBoards = useCallback(async () => {
     const data = await fetchBoards()
     setBoards(data.boards || [])
-    setJiraImportAvailable(Boolean(data.jira_import_available))
     if (!activeBoardId && data.boards?.length) {
       const wanted = boardQuery().boardId
       const match = data.boards.find((board) => board.board_id === wanted)
@@ -1251,6 +1248,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     const id = setInterval(loadTickets, 5000)
     return () => clearInterval(id)
   }, [loadTickets])
+
+  useEffect(() => {
+    if (!boardRefreshKey) return
+    loadBoards()
+    loadTickets()
+  }, [boardRefreshKey, loadBoards, loadTickets])
 
   useEffect(() => {
     const next = filterFromQuery(boardQuery())
@@ -1435,7 +1438,6 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     if (!activeBoardId || activeBoard?.jira_sync?.status !== 'running') return
 
     let cancelled = false
-    setSyncingJira(true)
     setSyncMessage('Jira sync running in background…')
 
     pollJiraSyncUntilDone(activeBoardId)
@@ -1449,37 +1451,11 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         if (cancelled) return
         setSyncMessage(err.message || 'Jira sync failed')
       })
-      .finally(() => {
-        if (!cancelled) setSyncingJira(false)
-      })
 
     return () => {
       cancelled = true
     }
   }, [activeBoardId, activeBoard?.jira_sync?.status, loadBoards, loadTickets, pollJiraSyncUntilDone])
-
-  const handleSyncJira = async () => {
-    if (!activeBoardId || syncingJira) return
-    setSyncingJira(true)
-    setSyncMessage('')
-    try {
-      const data = await syncBoardFromJira(activeBoardId)
-      if (data.status === 'started' || data.status === 'running') {
-        setSyncMessage('Jira sync running in background…')
-        const { message } = await pollJiraSyncUntilDone(activeBoardId)
-        setSyncMessage(message)
-        await loadTickets()
-        await loadBoards()
-      } else {
-        setSyncMessage(formatSyncResult(data))
-        await loadTickets()
-      }
-    } catch (err) {
-      setSyncMessage(err.message || 'Jira sync failed')
-    } finally {
-      setSyncingJira(false)
-    }
-  }
 
   if (loading) {
     return (
@@ -1503,6 +1479,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
       <main className="flex-1 flex flex-col min-w-0">
         <header className="sticky top-0 z-10 bg-bg/90 backdrop-blur-sm border-b border-border px-3 sm:px-4 py-3 flex items-center gap-2">
+          <SettingsButton onClick={onOpenSettings} />
           <button
             type="button"
             className="lg:hidden p-2 min-w-[44px] min-h-[44px] border border-border rounded-xl"
@@ -1539,16 +1516,6 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                 </option>
               ))}
             </select>
-          )}
-          {jiraImportAvailable && activeBoard?.workflow_enabled && (
-            <button
-              type="button"
-              onClick={handleSyncJira}
-              disabled={syncingJira}
-              className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] disabled:opacity-50"
-            >
-              {syncingJira ? 'Syncing…' : 'Sync Jira'}
-            </button>
           )}
           <button
             type="button"

@@ -3,6 +3,7 @@ import Login from './components/Login'
 import ChatLayout from './components/ChatLayout'
 import BoardLayout from './components/BoardLayout'
 import ObjectivesLayout from './components/ObjectivesLayout'
+import AgentSettings from './components/AgentSettings'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 
@@ -18,6 +19,9 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [view, setView] = useState(initialView)
   const [discussContext, setDiscussContext] = useState(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [agentsRefreshKey, setAgentsRefreshKey] = useState(0)
+  const [boardRefreshKey, setBoardRefreshKey] = useState(0)
 
   useEffect(() => {
     let unsub = () => {}
@@ -71,44 +75,52 @@ export default function App() {
     return <Login onLoggedIn={() => setUser({ email: 'signed-in' })} />
   }
 
-  if (view === 'objectives') {
-    return (
-      <ObjectivesLayout
-        user={user}
-        onLogout={() => {
-          logout()
-          setUser(null)
-        }}
-        onDiscussTicket={handleDiscussTicket}
-        onSwitchView={switchView}
-      />
-    )
+  const openSettings = () => setSettingsOpen(true)
+  const handleSettingsClose = () => {
+    setSettingsOpen(false)
+    setAgentsRefreshKey((key) => key + 1)
   }
-
-  if (view === 'board') {
-    return (
-      <BoardLayout
-        user={user}
-        onLogout={() => {
-          logout()
-          setUser(null)
-        }}
-        onDiscussTicket={handleDiscussTicket}
-        onSwitchView={switchView}
-      />
-    )
+  const handleLogout = () => {
+    logout()
+    setUser(null)
   }
 
   return (
-    <ChatLayout
-      user={user}
-      onLogout={() => {
-        logout()
-        setUser(null)
-      }}
-      onSwitchView={switchView}
-      discussContext={discussContext}
-      onClearDiscussContext={() => setDiscussContext(null)}
-    />
+    <>
+      {view === 'objectives' ? (
+        <ObjectivesLayout
+          user={user}
+          onLogout={handleLogout}
+          onDiscussTicket={handleDiscussTicket}
+          onSwitchView={switchView}
+          onOpenSettings={openSettings}
+        />
+      ) : view === 'board' ? (
+        <BoardLayout
+          user={user}
+          onLogout={handleLogout}
+          onDiscussTicket={handleDiscussTicket}
+          onSwitchView={switchView}
+          onOpenSettings={openSettings}
+          boardRefreshKey={boardRefreshKey}
+        />
+      ) : (
+        <ChatLayout
+          user={user}
+          onLogout={handleLogout}
+          onSwitchView={switchView}
+          discussContext={discussContext}
+          onClearDiscussContext={() => setDiscussContext(null)}
+          onOpenSettings={openSettings}
+          agentsRefreshKey={agentsRefreshKey}
+        />
+      )}
+      <AgentSettings
+        open={settingsOpen}
+        onClose={handleSettingsClose}
+        onAgentsUpdated={() => setAgentsRefreshKey((key) => key + 1)}
+        onJiraSyncComplete={() => setBoardRefreshKey((key) => key + 1)}
+      />
+    </>
   )
 }

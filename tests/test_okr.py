@@ -259,3 +259,72 @@ def test_handle_status_skips_plain_tasks():
         to_status="Research and describe (AI)",
     )
     assert result.get("skipped")
+
+
+def test_delete_objective_unlinks_children_by_default(client):
+    board = _project_board(client)
+    created = client.post(
+        f"/api/boards/{board['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps(
+            {
+                "title": "Grow weekly founders",
+                "issue_type": "Objective",
+                "key_results": [
+                    {
+                        "id": "kr-abcd1234",
+                        "title": "40 WAF",
+                        "baseline": 10,
+                        "target": 40,
+                        "current": 12,
+                        "source": "ga4",
+                        "measurable": True,
+                    }
+                ],
+            }
+        ),
+    )
+    objective = created.get_json()["ticket"]
+    task = client.post(
+        f"/api/boards/{board['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps(
+            {
+                "title": "Instrument WAF event",
+                "parent_key": objective["key"],
+                "parent_kr_id": "kr-abcd1234",
+            }
+        ),
+    ).get_json()["ticket"]
+    deleted = client.delete(
+        f"/api/tickets/{objective['ticket_id']}",
+        headers=_auth_headers(),
+    )
+    assert deleted.status_code == 200
+    live = client.get(
+        f"/api/tickets/{task['ticket_id']}", headers=_auth_headers()
+    ).get_json()["ticket"]
+    assert not live.get("parent_key")
+    assert not live.get("parent_kr_id")
+
+
+def test_delete_objective_can_remove_children(client):
+    board = _project_board(client)
+    created = client.post(
+        f"/api/boards/{board['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps({"title": "Grow weekly founders", "issue_type": "Objective"}),
+    )
+    objective = created.get_json()["ticket"]
+    task = client.post(
+        f"/api/boards/{board['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps({"title": "Child task", "parent_key": objective["key"]}),
+    ).get_json()["ticket"]
+    deleted = client.delete(
+        f"/api/tickets/{objective['ticket_id']}?delete_children=true",
+        headers=_auth_headers(),
+    )
+    assert deleted.status_code == 200
+    gone = client.get(f"/api/tickets/{task['ticket_id']}", headers=_auth_headers())
+    assert gone.status_code == 404
