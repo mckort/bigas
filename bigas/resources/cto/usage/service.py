@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -338,3 +339,106 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
 
     lines.append("_List-price estimates only; not Cursor/GCP invoices._")
     return "\n".join(lines)
+
+
+def _models_from_report(report: Dict[str, Any]) -> List[str]:
+    seen: List[str] = []
+    found = set()
+    for ev in report.get("events") or []:
+        if not isinstance(ev, dict):
+            continue
+        model = str(ev.get("model") or "").strip()
+        if model and model not in found:
+            found.add(model)
+            seen.append(model)
+    return seen
+
+
+def _configured_stack_blurb() -> str:
+    chat = (os.environ.get("BIGAS_CHAT_MODEL") or os.environ.get("LLM_MODEL") or "").strip()
+    review = (os.environ.get("BIGAS_CTO_PR_REVIEW_MODEL") or "").strip()
+    autofix = (os.environ.get("BIGAS_CTO_AUTOFIX_MODEL") or "").strip()
+    marketing = (os.environ.get("BIGAS_MARKETING_LLM_MODEL") or "").strip()
+    lines = [
+        f"- Bigas default LLM: {chat or 'gemini-3.1-pro-preview'}",
+        f"- Bigas PR review: {review or '(same as default)'}",
+        f"- Cursor autofix: {autofix or 'composer-2.5'}",
+        f"- Bigas marketing: {marketing or '(same as default)'}",
+        "- VCFA living-analysis judgment: gemini-2.5-pro (thinking on)",
+        "- VCFA living-analysis helper + Bigas Flash paths: gemini-2.5-flash",
+    ]
+    return "\n".join(lines)
+
+
+CFO_WEEKLY_ANALYSIS_INSTRUCTIONS = (
+    "You are the Bigas CFO. Write a concise weekly AI cost briefing in English.\n"
+    "Use only the usage numbers given. List-price estimates, not invoices.\n\n"
+    "Do two things:\n"
+    "1) Usage analysis — what drove cost (app, feature, Pro vs Flash), empty Pro/"
+    "Flash-fallback waste, and 2–4 concrete savings.\n"
+    "2) Model landscape — for the models we run now, and other leading LLMs "
+    "(Gemini 2.5/3.x Pro+Flash, Claude, GPT, Cursor composer), note any recent "
+    "releases, price cuts, or quality jumps that could cut cost or improve "
+    "performance. You may challenge keeping Gemini Pro on living-analysis "
+    "judgment (thesis, moats, replicability, landscape, deal memo) if a cheaper "
+    "or newer model would match or beat that analysis quality. Any such "
+    "recommendation must state explicitly that living-analysis performance must "
+    "not get worse, and why you believe quality would hold or improve. "
+    "Do not suggest Flash (or similar) for that judgment work unless you can "
+    "argue quality would not drop. Flag uncertainty. Do not invent list prices. "
+    "End with stay / watch / switch recommendations.\n\n"
+    "Keep it under 400 words. Markdown with short headings. No preamble.\n"
+)
+
+
+def analyze_weekly_ai_spend(report: Dict[str, Any]) -> Optional[str]:
+    """LLM read of the week's usage plus a model-landscape check. Best-effort."""
+    numbers = format_weekly_cto_ai_report(report)
+    seen = _models_from_report(report)
+    seen_txt = ", ".join(seen) if seen else "(none in this window's events)"
+    prompt = (
+        f"{CFO_WEEKLY_ANALYSIS_INSTRUCTIONS}\n"
+        f"Configured stack:\n{_configured_stack_blurb()}\n\n"
+        f"Models seen in this window: {seen_txt}\n\n"
+        f"Usage report:\n{numbers}"
+    )
+    try:
+        from bigas.llm.factory import get_llm_client
+
+        llm, _model = get_llm_client(feature="cfo_ai_usage")
+        text = (llm.complete(
+            [
+                {"role": "system", "content": (
+                    "You are a concise CFO for AI/GCP spend. Challenge the stack when "
+                    "a better cost/quality trade exists, but never recommend a change "
+                    "that would worsen living-analysis performance."
+                )},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=2_048,
+            temperature=0.3,
+        ) or "").strip()
+        return text or None
+    except Exception:
+        logger.warning("CFO weekly AI spend analysis failed", exc_info=True)
+        return None
+
+
+def build_weekly_cfo_ai_report(report: Dict[str, Any]) -> str:
+    numbers = format_weekly_cto_ai_report(report).replace(
+        "**Bigas AI usage",
+        "**CFO: AI usage",
+        1,
+    )
+    analysis = analyze_weekly_ai_spend(report)
+    if not analysis:
+        return numbers
+    return f"{numbers}\n\n**CFO analysis**\n{analysis}"
+
+
+def publish_weekly_cfo_ai_report(message: str) -> None:
+    """Post the weekly AI cost briefing to the CFO chat thread (optional CFO Discord)."""
+    from bigas.discord_webhook import post_long_to_discord
+
+    webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CFO") or "").strip()
+    post_long_to_discord(webhook, message, chat_agent_id="cfo")

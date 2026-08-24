@@ -52,9 +52,10 @@ from bigas.resources.marketing.utils import sanitize_error_message
 from bigas.providers.monitoring.service import MonitoringService, run_monitoring_checks
 from bigas.resources.cto.qa_agent.service import QAAgentError, QAAgentService
 from bigas.resources.cto.usage.service import (
+    build_weekly_cfo_ai_report,
     fetch_ai_usage,
     fetch_cursor_run_usage,
-    format_weekly_cto_ai_report,
+    publish_weekly_cfo_ai_report,
 )
 
 cto_bp = Blueprint(
@@ -1637,7 +1638,7 @@ def fetch_ai_usage_endpoint():
     )
 
     if post_to_discord:
-        _post_to_discord_cto(format_weekly_cto_ai_report(report))
+        publish_weekly_cfo_ai_report(build_weekly_cfo_ai_report(report))
 
     # Cap events in HTTP response to keep payloads manageable.
     # Truncation must happen AFTER formatting Discord report so counts are accurate.
@@ -1655,14 +1656,15 @@ def fetch_ai_usage_endpoint():
 @cto_bp.route("/weekly_cto_ai_report", methods=["POST"])
 def weekly_cto_ai_report():
     """
-    Weekly Bigas AI cost summary from all active usage providers → Discord.
+    Weekly AI cost summary from all active usage providers → CFO chat.
 
     Includes Cursor autofix plus every LLM feature that emits llm_usage
-    (chat, PR review, marketing, Jira, …).
+    (chat, PR review, marketing, Jira, VCFA living analysis). An LLM
+    adds usage analysis and a model-landscape check.
 
     Request JSON:
       - days (int, default 7)
-      - post_to_discord (bool, default true)
+      - post_to_discord (bool, default true): post to CFO chat (and DISCORD_WEBHOOK_URL_CFO if set)
     """
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -1676,9 +1678,10 @@ def weekly_cto_ai_report():
     )
 
     report = fetch_ai_usage(days=days, provider="all", feature_prefix=None)
-    message = format_weekly_cto_ai_report(report)
+    message = None
     if post_to_discord:
-        _post_to_discord_cto(message)
+        message = build_weekly_cfo_ai_report(report)
+        publish_weekly_cfo_ai_report(message)
 
     events = report.get("events") or []
     if len(events) > 200:
@@ -2024,7 +2027,7 @@ def get_manifest():
                         },
                         "post_to_discord": {
                             "type": "boolean",
-                            "description": "Post a summary to the CTO Discord channel",
+                            "description": "Post a summary to the CFO chat thread (and DISCORD_WEBHOOK_URL_CFO if set)",
                         },
                     },
                 },
@@ -2032,10 +2035,10 @@ def get_manifest():
             {
                 "name": "weekly_cto_ai_report",
                 "description": (
-                    "Weekly Bigas AI cost summary across active usage providers "
-                    "(Cursor autofix + LLM usage from Cloud Logging: chat, "
-                    "PR review, marketing, and other features). "
-                    "Posts to Discord by default — suitable for Cloud Scheduler."
+                    "Weekly AI cost summary across Cursor autofix and LLM Cloud Logging "
+                    "(Bigas + VC Field Assistant). Includes an LLM usage analysis and "
+                    "model-landscape check. Posts to the CFO chat thread by default "
+                    "(Cloud Scheduler)."
                 ),
                 "path": "/mcp/tools/weekly_cto_ai_report",
                 "method": "POST",
@@ -2048,7 +2051,7 @@ def get_manifest():
                         },
                         "post_to_discord": {
                             "type": "boolean",
-                            "description": "Post to CTO Discord (default true)",
+                            "description": "Post to CFO chat (default true). Optional DISCORD_WEBHOOK_URL_CFO.",
                         },
                     },
                 },

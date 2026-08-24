@@ -4,7 +4,7 @@ List-price visibility for Bigas AI spend:
 
 1. **Per autofix round** — Discord includes Cursor token usage + list-price estimate when `autofix_followup` finalizes.
 2. **Per LLM call** — `get_llm_client()` wraps the provider client and emits `event: llm_usage` (chat, PR review, marketing, Jira, …).
-3. **Historical / weekly** — modular `UsageProvider`s fetch the last N days without a local event store.
+3. **Historical / weekly** — modular `UsageProvider`s fetch the last N days without a local event store. Cloud Scheduler (`bigas-cto-ai-usage-weekly`, Sunday 16:00) posts numbers + LLM analysis to the **CFO** chat thread.
 
 Estimates are **operational only**, not invoices.
 
@@ -47,7 +47,7 @@ List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) wh
 
 - `provider`: `all` | `cursor` | `llm_logs`
 - `feature_prefix`: optional filter. Omit or `""` for all features (Bigas chat/PR review **and** VCFA living analysis). Example: `cto_` or `llm.`.
-- Returns totals (including `activity_by_feature` LLM call counts), per-provider / per-feature costs, top PRs (from Cursor agent names), and events (capped at 200 in the HTTP body). Weekly Discord reports use `totals.activity_by_feature`, not the truncated events list.
+- Returns totals (including `activity_by_feature` LLM call counts), per-provider / per-feature costs, top PRs (from Cursor agent names), and events (capped at 200 in the HTTP body). Weekly CFO reports use `totals.activity_by_feature`, not the truncated events list.
 
 ### `POST /mcp/tools/weekly_cto_ai_report`
 
@@ -58,14 +58,14 @@ List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) wh
 }
 ```
 
-Aggregates all active usage providers **without** a feature prefix (Cursor autofix + every `llm_usage` feature) and posts a Discord summary (default).
+Aggregates all active usage providers **without** a feature prefix (Cursor autofix + every `llm_usage` feature), asks an LLM for a usage analysis and a model-landscape check (current stack plus leading Gemini/Claude/GPT/Cursor alternatives), and posts to the **CFO** chat thread by default. The analysis may challenge keeping Pro on living-analysis judgment only if quality would hold or improve — performance must not get worse. Optional `DISCORD_WEBHOOK_URL_CFO`. Does not post to the CTO thread.
 
 ## Cloud Scheduler example
 
 ```bash
 gcloud scheduler jobs create http cto-ai-usage-weekly \
   --location=europe-west1 \
-  --schedule="0 9 * * 1" \
+  --schedule="0 16 * * 0" \
   --uri="https://YOUR_CLOUD_RUN_URL/mcp/tools/weekly_cto_ai_report" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
@@ -89,8 +89,11 @@ Estimated list-price: ~$0.4200 (composer-2.5)
 Weekly:
 
 ```text
-**Bigas AI usage (last 7 days)**
+**CFO: AI usage (last 7 days)**
 Estimated list-price total: ~$12.3400
+…
+
+**CFO analysis**
 …
 ```
 
