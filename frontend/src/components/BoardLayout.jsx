@@ -56,24 +56,53 @@ function boardQuery() {
   }
 }
 
-function replaceBoardUrl(boardId, { keepFilters = true } = {}) {
+const BOARD_URL_SYNC_EVENT = 'bigas-board-url'
+
+function replaceBoardLocation(mutateParams) {
   const params = new URLSearchParams(window.location.search)
-  if (!keepFilters) {
-    for (const key of BOARD_FILTER_QUERY_KEYS) params.delete(key)
-  }
-  if (boardId) params.set('board', String(boardId))
-  else params.delete('board')
+  mutateParams(params)
   const qs = params.toString()
   const pathname = window.location.pathname
-  const next = qs ? `${pathname}?${qs}` : pathname
-  if (`${window.location.pathname}${window.location.search}` === next) return
+  const hash = window.location.hash || ''
+  const next = `${qs ? `${pathname}?${qs}` : pathname}${hash}`
+  const current = `${pathname}${window.location.search}${hash}`
+  if (current === next) return false
   window.history.replaceState({}, '', next)
+  window.dispatchEvent(new Event(BOARD_URL_SYNC_EVENT))
+  return true
+}
+
+function replaceBoardUrl(boardId, { keepFilters = true } = {}) {
+  replaceBoardLocation((params) => {
+    if (!keepFilters) {
+      for (const key of BOARD_FILTER_QUERY_KEYS) params.delete(key)
+    }
+    if (boardId) params.set('board', String(boardId))
+    else params.delete('board')
+  })
 }
 
 function filterFromQuery(query) {
   if (query.krId) return `kr:${query.krId}`
   if (query.objectiveKey) return query.objectiveKey
   return ''
+}
+
+function upsertTicket(list, ticket) {
+  if (!ticket?.ticket_id) return list || []
+  const tickets = Array.isArray(list) ? list : []
+  const index = tickets.findIndex((item) => item.ticket_id === ticket.ticket_id)
+  if (index === -1) return [...tickets, ticket]
+  const next = [...tickets]
+  next[index] = { ...tickets[index], ...ticket }
+  return next
+}
+
+function clearObjectiveFilterFromUrl() {
+  replaceBoardLocation((params) => {
+    params.delete('kr')
+    params.delete('objective')
+  })
 }
 
 function parentKeyFromFilter(filter, tickets) {
@@ -1228,6 +1257,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [pendingTicketKey, setPendingTicketKey] = useState(null)
   const [syncMessage, setSyncMessage] = useState('')
   const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
+  const optimisticTicketsRef = useRef([])
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
   const columns = activeBoard?.columns || ['To Do', 'In Progress', 'Review', 'Done']
@@ -1252,10 +1282,24 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     })
   }, [])
 
+  const trackOptimisticTicket = useCallback((ticket) => {
+    if (!ticket?.ticket_id) return
+    optimisticTicketsRef.current = upsertTicket(optimisticTicketsRef.current, ticket)
+    setTickets((prev) => upsertTicket(prev, ticket))
+  }, [])
+
   const loadTickets = useCallback(async () => {
     if (!activeBoardId) return
     const data = await fetchBoardTickets(activeBoardId)
-    setTickets(data.tickets || [])
+    const incoming = data.tickets || []
+    optimisticTicketsRef.current = optimisticTicketsRef.current.filter(
+      (ticket) => !incoming.some((item) => item.ticket_id === ticket.ticket_id),
+    )
+    const merged = optimisticTicketsRef.current.reduce(
+      (acc, ticket) => upsertTicket(acc, ticket),
+      incoming,
+    )
+    setTickets(merged)
   }, [activeBoardId])
 
   useEffect(() => {
@@ -1263,8 +1307,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }, [loadBoards])
 
   useEffect(() => {
+    optimisticTicketsRef.current = []
+  }, [activeBoardId])
+
+  useEffect(() => {
     loadTickets()
-    const id = setInterval(loadTickets, 5000)
+    const id = setInterval(() => loadTickets(), 5000)
     return () => clearInterval(id)
   }, [loadTickets])
 
@@ -1299,7 +1347,11 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   useEffect(() => {
     window.addEventListener('popstate', syncBoardStateFromUrl)
-    return () => window.removeEventListener('popstate', syncBoardStateFromUrl)
+    window.addEventListener(BOARD_URL_SYNC_EVENT, syncBoardStateFromUrl)
+    return () => {
+      window.removeEventListener('popstate', syncBoardStateFromUrl)
+      window.removeEventListener(BOARD_URL_SYNC_EVENT, syncBoardStateFromUrl)
+    }
   }, [syncBoardStateFromUrl])
 
   useEffect(() => {
@@ -1393,6 +1445,14 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       return null
     }
 
+    const revealCreatedTicket = (ticket) => {
+      if (!ticket?.ticket_id) return
+      trackOptimisticTicket(ticket)
+      if (!ticketMatchesObjectiveFilter(ticket, epicFilter)) {
+        clearObjectiveFilterFromUrl()
+      }
+    }
+
     if (modalTicket?.ticket_id) {
       await updateTicket(modalTicket.ticket_id, payload)
       if (files.length) {
@@ -1403,11 +1463,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       }
     } else {
       const data = await createTicket(activeBoardId, payload)
-      const created = data.ticket
-      if (created?.ticket_id && files.length) {
-        const uploadResult = await uploadPendingFiles(created.ticket_id)
+      const createdTicket = data.ticket
+      revealCreatedTicket(createdTicket)
+      if (createdTicket?.ticket_id && files.length) {
+        const uploadResult = await uploadPendingFiles(createdTicket.ticket_id)
         if (uploadResult?.failedFiles?.length) {
-          setModalTicket(created)
+          setModalTicket(createdTicket)
           setShowCreate(false)
           setCreateStatus(null)
           return uploadResult
