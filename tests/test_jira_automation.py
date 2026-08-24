@@ -407,6 +407,135 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "responsive design" in prompt
     assert "VFA-14:" in prompt
     assert "Jira: VFA-14" in prompt
+    assert "simple ticket that skipped those steps" in prompt
+
+
+def test_can_launch_implement_allows_simple_ticket():
+    from bigas.resources.product.jira_automation.implement import can_launch_implement
+
+    assert can_launch_implement(
+        summary="Check margins in button text",
+        brief="Check margins in button text",
+        research="",
+        plan="",
+        attachments_text="### shot.png\nGreen CTA with tight padding",
+    )
+    assert can_launch_implement(
+        summary="Fix typo on shipping page",
+        brief="Fix typo on shipping page",
+        research="",
+        plan="",
+    )
+    assert can_launch_implement(
+        summary="",
+        brief="",
+        research="researched",
+        plan="",
+    )
+    assert not can_launch_implement(
+        summary="",
+        brief="",
+        research="",
+        plan="",
+        comments_text="(none)",
+        attachments_text="(none)",
+    )
+
+
+def test_implement_handler_launches_simple_ticket_without_plan(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+    from bigas.resources.product.jira_automation.implement import ImplementHandler
+
+    launched = {}
+    comments = []
+
+    class FakeCursor:
+        def __init__(self, api_key):
+            pass
+
+        def launch_implementation(self, **kwargs):
+            launched.update(kwargs)
+            return {
+                "agent_url": "https://cursor.com/agents/bc-simple",
+                "agent_id": "bc-simple",
+                "run_id": "run-1",
+            }
+
+    class FakeJira:
+        def get_issue(self, key, fields=None):
+            return {
+                "fields": {
+                    "summary": "Check margins in button text",
+                    "description": "",
+                    "status": {"name": "In Progress (AI)"},
+                    "labels": ["marketing"],
+                    "issuelinks": [],
+                    "parent": None,
+                    "project": {"key": "GPWW"},
+                }
+            }
+
+        def list_comments(self, key, max_results=50):
+            return []
+
+        def add_comment(self, key, body):
+            comments.append(body)
+
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    monkeypatch.setattr(impl, "CursorCloudAgentClient", FakeCursor)
+    monkeypatch.setattr(impl, "_sync_wait_seconds", lambda: 0)
+    monkeypatch.setattr(
+        impl,
+        "attachments_text_for_issue",
+        lambda *_a, **_k: "### shot.png\nGreen button, tight padding",
+    )
+    monkeypatch.setattr(ImplementHandler, "_start_outcome_monitor", lambda *a, **k: None)
+
+    result = ImplementHandler(jira=FakeJira(), cursor_api_key="test-key").run(
+        issue_key="GPWW-10",
+        repo="Green-Promo-Wear-Global/greenpromowear-website",
+    )
+    assert result["ok"] is True
+    assert result["direct_implement"] is True
+    assert result["had_plan_section"] is False
+    assert result["had_research_section"] is False
+    assert "simple ticket that skipped those steps" in launched["prompt_text"]
+    assert "Direct implement" in comments[0]
+
+
+def test_implement_handler_rejects_empty_ticket(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+    from bigas.resources.product.jira_automation.implement import (
+        ImplementHandler,
+        ImplementHandlerError,
+    )
+
+    class FakeJira:
+        def get_issue(self, key, fields=None):
+            return {
+                "fields": {
+                    "summary": "",
+                    "description": "",
+                    "status": {"name": "In Progress (AI)"},
+                    "labels": [],
+                    "issuelinks": [],
+                    "parent": None,
+                    "project": {"key": "GPWW"},
+                }
+            }
+
+        def list_comments(self, key, max_results=50):
+            return []
+
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    monkeypatch.setattr(impl, "CursorCloudAgentClient", lambda api_key: None)
+    monkeypatch.setattr(impl, "attachments_text_for_issue", lambda *_a, **_k: "(none)")
+
+    with pytest.raises(ImplementHandlerError, match="Nothing to implement"):
+        ImplementHandler(jira=FakeJira(), cursor_api_key="test-key").run(
+            issue_key="GPWW-99",
+            repo="org/repo",
+        )
 
 
 def test_design_prompts_include_readme_impact():
