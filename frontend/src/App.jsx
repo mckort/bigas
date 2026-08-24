@@ -7,9 +7,13 @@ import AgentSettings from './components/AgentSettings'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 
+function isBoardPath(path) {
+  return path === '/board' || path.startsWith('/board/')
+}
+
 function initialView() {
   const path = window.location.pathname || ''
-  if (path.startsWith('/board')) return 'board'
+  if (isBoardPath(path)) return 'board'
   if (path.startsWith('/objectives')) return 'objectives'
   return 'chat'
 }
@@ -47,7 +51,7 @@ export default function App() {
     setView(next)
     const path = next === 'board' ? '/board' : next === 'objectives' ? '/objectives' : '/'
     const search =
-      next === 'board' && window.location.pathname.startsWith('/board')
+      next === 'board' && isBoardPath(window.location.pathname)
         ? window.location.search
         : ''
     const nextUrl = `${path}${search}`
