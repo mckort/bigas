@@ -86,7 +86,6 @@ AGENT_TOOL_PREFIXES = {
     ),
     "cfo": (
         "fetch_ai_usage",
-        "weekly_cto",
     ),
     "devops": (
         "check_deployment",

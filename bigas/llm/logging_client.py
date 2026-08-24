@@ -29,7 +29,6 @@ def _default_usage_extra(*, feature: str, model: str) -> Dict[str, Any]:
             or (os.environ.get("GOOGLE_PROJECT_ID") or "").strip()
             or None
         ),
-        "feature": feature,
     }
     if tier:
         extra["model_tier"] = tier
@@ -119,7 +118,7 @@ class LoggingLLMClient(LLMClient):
                         feature=self._feature,
                         model=self._model,
                         usage=usage,
-                        extra=_default_usage_extra(feature=self._feature, model=self._model),
+                        **_default_usage_extra(feature=self._feature, model=self._model),
                     ),
                     ensure_ascii=True,
                     sort_keys=True,

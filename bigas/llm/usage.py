@@ -156,6 +156,7 @@ def usage_log_payload(
     model: str,
     usage: TokenUsage,
     extra: Optional[Dict[str, Any]] = None,
+    **fields: Any,
 ) -> Dict[str, Any]:
     """Build a JSON-serializable structured log payload."""
     payload: Dict[str, Any] = {
@@ -170,4 +171,6 @@ def usage_log_payload(
         payload["cost_estimate"] = True
     if extra:
         payload.update(extra)
+    if fields:
+        payload.update(fields)
     return payload
