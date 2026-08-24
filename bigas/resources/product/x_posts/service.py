@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 MAX_THREAD_TWEETS = 5
 _LEADING_SEPARATORS_RE = re.compile(r"^[\s:\-–—|/]+")
 _MULTI_SPACE_RE = re.compile(r"\s+")
+_EMPTY_BRACKETS_RE = re.compile(r"\(\s*\)|\[\s*\]")
 
 
 class XPostsError(RuntimeError):
@@ -56,9 +57,9 @@ def _public_feature_summary(subject: str) -> str:
     text = str(subject or "").strip()
     key = jira_issue_key_in_subject(text)
     if key:
-        idx = text.upper().find(key.upper())
-        if idx != -1:
-            text = (text[:idx] + text[idx + len(key) :]).strip()
+        pattern = rf"\b{re.escape(key)}\b"
+        text = re.sub(pattern, "", text, count=1, flags=re.IGNORECASE).strip()
+    text = _EMPTY_BRACKETS_RE.sub("", text)
     text = _LEADING_SEPARATORS_RE.sub("", text)
     return _MULTI_SPACE_RE.sub(" ", text).strip()
 
@@ -103,6 +104,8 @@ def fallback_tweets_from_jira_features(
 
     tweets: List[str] = []
     for label, items in by_product.items():
+        if len(tweets) >= MAX_THREAD_TWEETS:
+            break
         remaining = list(items)
         while remaining and len(tweets) < MAX_THREAD_TWEETS:
             chunk: List[str] = []
