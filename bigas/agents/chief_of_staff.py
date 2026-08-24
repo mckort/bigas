@@ -663,7 +663,7 @@ def _is_terminal_handoff(tool_name: Optional[str]) -> bool:
     name = (tool_name or "").strip()
     if name.startswith("__delegate__"):
         return True
-    if name in DELEGATE_MAP or _resolve_delegate_target(name):
+    if _resolve_delegate_target(name):
         return True
     return name.lower() in MUST_DELEGATE_TOOLS
 

@@ -73,8 +73,6 @@ def scope_jql_to_portfolio(
         raise SearchJiraError(
             "JQL references projects outside the portfolio: " + ", ".join(unknown)
         )
-    if mentioned:
-        return query
     clause = ", ".join(allowed_keys)
     order_match = _ORDER_BY_RE.search(query)
     if order_match:

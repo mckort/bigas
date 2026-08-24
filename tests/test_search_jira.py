@@ -44,7 +44,7 @@ def test_scope_jql_preserves_order_by():
 def test_scope_jql_keeps_allowed_project():
     assert (
         scope_jql_to_portfolio("project = VFA AND type = Bug", allowed=["VFA", "WAYW"])
-        == "project = VFA AND type = Bug"
+        == "(project = VFA AND type = Bug) AND project in (VFA, WAYW)"
     )
 
 

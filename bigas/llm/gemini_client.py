@@ -61,7 +61,11 @@ def _as_plain(value: Any) -> Any:
         return value
     if isinstance(value, dict):
         return {str(k): _as_plain(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if (
+        hasattr(value, "__iter__")
+        and not isinstance(value, (dict, str))
+        and not hasattr(value, "items")
+    ):
         return [_as_plain(v) for v in value]
     try:
         return {str(k): _as_plain(v) for k, v in dict(value).items()}
