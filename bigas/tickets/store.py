@@ -1115,19 +1115,32 @@ class FirestoreTicketStore:
         *,
         project_keys: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
-        wanted = {str(k).strip().upper() for k in (project_keys or []) if str(k).strip()}
+        wanted = [str(k).strip().upper() for k in (project_keys or []) if str(k).strip()]
         st = (status or "").strip()
-        tickets = []
-        for doc in self._tickets.where("status", "==", st).stream():
-            if not doc.exists:
-                continue
-            ticket = doc.to_dict() or {}
-            proj = str(ticket.get("project_key") or "").strip().upper()
-            if not proj:
-                continue
-            if wanted and proj not in wanted:
-                continue
-            tickets.append(ticket)
+        tickets: List[Dict[str, Any]] = []
+
+        def _collect(query) -> None:
+            for doc in query.stream():
+                if not doc.exists:
+                    continue
+                ticket = doc.to_dict() or {}
+                proj = str(ticket.get("project_key") or "").strip().upper()
+                if not proj:
+                    continue
+                tickets.append(ticket)
+
+        if wanted:
+            # Firestore `in` queries accept at most 10 values.
+            for start in range(0, len(wanted), 10):
+                chunk = wanted[start : start + 10]
+                _collect(
+                    self._tickets.where("status", "==", st).where(
+                        "project_key", "in", chunk
+                    )
+                )
+        else:
+            _collect(self._tickets.where("status", "==", st))
+
         return sorted(tickets, key=lambda t: t.get("key", ""))
 
     def list_epics(self, project_key: str) -> List[Dict[str, Any]]:

@@ -215,7 +215,7 @@ def _format_done_issues_for_prompt(
     for project in sorted(by_project.keys()):
         lines.append(f"### {project}")
         for i in by_project[project]:
-            lines.append(_format_issue_line(i))
+            lines.append(_format_issue_line(i, ignore_labels=ignore_labels))
     return "\n".join(lines)
 
 
