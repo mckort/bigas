@@ -76,6 +76,26 @@ function filterFromQuery(query) {
   return ''
 }
 
+function upsertTicket(list, ticket) {
+  if (!ticket?.ticket_id) return list || []
+  const tickets = Array.isArray(list) ? list : []
+  const index = tickets.findIndex((item) => item.ticket_id === ticket.ticket_id)
+  if (index === -1) return [...tickets, ticket]
+  const next = [...tickets]
+  next[index] = { ...tickets[index], ...ticket }
+  return next
+}
+
+function clearObjectiveFilterFromUrl() {
+  const params = new URLSearchParams(window.location.search)
+  params.delete('kr')
+  params.delete('objective')
+  const qs = params.toString()
+  const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+  if (`${window.location.pathname}${window.location.search}` === next) return
+  window.history.replaceState({}, '', next)
+}
+
 function parentKeyFromFilter(filter, tickets) {
   if (!filter || filter === '__none__') return ''
   if (filter.startsWith('kr:')) {
@@ -1252,10 +1272,11 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     })
   }, [])
 
-  const loadTickets = useCallback(async () => {
+  const loadTickets = useCallback(async (keepTicket) => {
     if (!activeBoardId) return
     const data = await fetchBoardTickets(activeBoardId)
-    setTickets(data.tickets || [])
+    const incoming = data.tickets || []
+    setTickets(keepTicket?.ticket_id ? upsertTicket(incoming, keepTicket) : incoming)
   }, [activeBoardId])
 
   useEffect(() => {
@@ -1264,7 +1285,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   useEffect(() => {
     loadTickets()
-    const id = setInterval(loadTickets, 5000)
+    const id = setInterval(() => loadTickets(), 5000)
     return () => clearInterval(id)
   }, [loadTickets])
 
@@ -1368,7 +1389,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     const payload = { ...form }
     delete payload.files
 
-    const uploadPendingFiles = async (ticketId) => {
+    const uploadPendingFiles = async (ticketId, keepTicket) => {
       const failedFiles = []
       let uploadError = ''
       for (const file of files) {
@@ -1387,10 +1408,19 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       }
       if (failedFiles.length) {
         setModalSaveError(uploadError)
-        await loadTickets()
+        await loadTickets(keepTicket)
         return { failedFiles }
       }
       return null
+    }
+
+    const revealCreatedTicket = (ticket) => {
+      if (!ticket?.ticket_id) return
+      setTickets((prev) => upsertTicket(prev, ticket))
+      if (!ticketMatchesObjectiveFilter(ticket, epicFilter)) {
+        clearObjectiveFilterFromUrl()
+        setEpicFilter('')
+      }
     }
 
     if (modalTicket?.ticket_id) {
@@ -1404,8 +1434,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     } else {
       const data = await createTicket(activeBoardId, payload)
       const created = data.ticket
+      revealCreatedTicket(created)
       if (created?.ticket_id && files.length) {
-        const uploadResult = await uploadPendingFiles(created.ticket_id)
+        const uploadResult = await uploadPendingFiles(created.ticket_id, created)
         if (uploadResult?.failedFiles?.length) {
           setModalTicket(created)
           setShowCreate(false)
@@ -1413,6 +1444,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           return uploadResult
         }
       }
+      setModalSaveError('')
+      setModalTicket(null)
+      setShowCreate(false)
+      setCreateStatus(null)
+      await loadTickets(created)
+      return
     }
     setModalSaveError('')
     setModalTicket(null)
