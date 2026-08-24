@@ -3,7 +3,7 @@
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>A brand-aligned web chat with your virtual AI team — plus marketing analytics, Jira AI workflows, release notes, CTO code review, and DevOps deployments.</strong>
+  <strong>A brand-aligned web chat with your virtual AI team — for the founder who ships, markets, and keeps the lights on, whether that's one project or several.</strong>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
@@ -13,7 +13,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 ## Table of contents
 
 - [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
-- [Solo Founder Playbooks](#solo-founder-playbooks)
+- [One founder, one project or several](#one-founder-one-project-or-several)
 - [What is Bigas?](#what-is-bigas)
 - [Why Google Cloud Run?](#why-google-cloud-run)
 - [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server)
@@ -64,44 +64,41 @@ For production on Google Cloud Run, see [Tutorial: deploy your first Bigas serve
 
 ---
 
-## Solo Founder Playbooks
+## One founder, one project or several
 
-Concrete workflows for founders juggling dev, maintenance, and distribution across multiple projects.
+Bigas is for the person who is product, marketing, and engineering at once — on a single product or across a whole portfolio. You do not pick a role. You connect the tools you already use; the virtual team covers the rest of the week.
 
-### Playbook 1: The Dev-Marketer
+Chat is the control plane. Chief of Staff sees everything you have connected; Marketing, Product, CTO, and DevOps each keep their own thread so you can jump in without reconstructing context.
 
-**Stack:** Jira + GitHub + X  
-**Goal:** Ship features *and* tell people about them without context-switching.
+**During the week you ship**
 
-1. Drag a Jira card to **Done** → Bigas posts a team progress update (Product agent).
-2. Set a **Fix Version** on release issues → Bigas generates release notes and a blog/social draft.
+Work lives on the native Kanban board (default, no Jira required) or on an existing Jira board.
+
+1. Drag a card to **Done** → Product posts a progress update.
+2. Set a **Fix Version** on release issues → release notes plus a blog/social draft.
 3. Ask in chat: *"Draft a tweet about this week's shipped work"* → edit and approve from the Product thread.
 4. Optional: weekly git activity → X draft with Discord approve/decline links.
 
-**Minimum env:** LLM key and `GITHUB_TOKEN` for AI implement columns. The **native Kanban board** (no `JIRA_*` required) is the default when Jira is not configured; connect external Jira optionally for existing boards.
+**While that ships, you keep the code moving**
 
-### Playbook 2: The Agency Owner
+1. Open a PR → `review_and_comment_pr` (or ask the CTO agent). Bigas reads the diff and posts an architecture-focused review on the PR.
+2. Failed CI? Self-healing can open a hotfix PR; add `CURSOR_API_KEY` for autonomous autofix.
+3. Ask: *"Summarize my open PRs and flag blockers"* from the CTO thread.
 
-**Stack:** GA4 + Google/Meta/LinkedIn/Reddit Ads + Discord  
-**Goal:** One weekly view of traffic and ad spend across client sites.
+**Once a week you look across your site — or every site**
 
 1. Schedule `weekly_analytics_report` and portfolio reports via Cloud Scheduler (or ask in chat).
-2. Ask: *"Run a cross-platform marketing analysis"* → budget comparison across ad platforms.
-3. Reports land in Discord **and** the Marketing Analyst chat thread for async review.
+2. Ask: *"Run a cross-platform marketing analysis"* → spend compared across Google, Meta, LinkedIn, and Reddit.
+3. Reports land in Discord **and** the Marketing Analyst thread for async review.
 
-**Minimum env:** `GA4_PROPERTY_ID`, `GOOGLE_PROJECT_ID`, ad platform tokens, `DISCORD_WEBHOOK_URL_MARKETING`.
+**Minimum env**
 
-### Playbook 3: The Solo CTO
-
-**Stack:** GitHub + Cursor  
-**Goal:** Keep code quality up while you build the next feature.
-
-1. Open a PR → call `review_and_comment_pr` (or ask the CTO agent in chat).
-2. Bigas reads the diff, posts an architecture-focused review comment on the PR.
-3. Failed CI? Self-healing workflow opens a hotfix PR; optional Cursor autofix for deeper fixes.
-4. Ask: *"Summarize my open PRs and flag blockers"* from the CTO thread.
-
-**Minimum env:** `GITHUB_TOKEN`, LLM key. Add `CURSOR_API_KEY` for autonomous autofix.
+| You want | Env |
+|---|---|
+| Chat + agents | LLM key (Gemini or OpenAI) |
+| Board + AI implement columns | `GITHUB_TOKEN`. Native board is default; `JIRA_*` only if you already have Jira. |
+| Analytics | `GA4_PROPERTY_ID`, `GOOGLE_PROJECT_ID`, ad-platform tokens, `DISCORD_WEBHOOK_URL_MARKETING` |
+| Autonomous PR autofix | `CURSOR_API_KEY` |
 
 ---
 
@@ -895,5 +892,5 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 ---
 
 <div align="center">
-  <strong>Built for solo founders who need actionable insights without a full team</strong>
+  <strong>Built for solo founders who need a virtual team — on one project or several</strong>
 </div>
