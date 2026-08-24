@@ -43,6 +43,20 @@ class InternalTicketAutomation:
             project_key = issue_key.split("-", 1)[0].upper()
 
         handler = self._config.handler_for_status(to_status)
+        ticket = self._adapter._ticket(issue_key)
+        if ticket:
+            from bigas.okr.engine import handle_objective_status_change
+            from bigas.okr.model import is_objective
+
+            if is_objective(ticket) and handler in (
+                HANDLER_RESEARCH,
+                HANDLER_DESIGN,
+                HANDLER_IMPLEMENT,
+            ):
+                return handle_objective_status_change(
+                    ticket, to_status=to_status, from_status=from_status
+                )
+
         if not handler:
             return {"ok": True, "skipped": True, "reason": "no handler for status"}
 

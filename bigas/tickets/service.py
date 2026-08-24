@@ -454,8 +454,14 @@ class TicketService:
         marketing: bool = False,
         labels: Optional[List[Any]] = None,
         parent_key: Optional[str] = None,
+        parent_kr_id: Optional[str] = None,
         thread_id: Optional[str] = None,
         key: Optional[str] = None,
+        key_results: Optional[List[Any]] = None,
+        okr_cycle: Optional[str] = None,
+        okr_owner: Optional[str] = None,
+        okr_briefing: Optional[str] = None,
+        okr_phase: Optional[str] = None,
     ) -> Dict[str, Any]:
         ticket = self._store.create_ticket(
             board_id,
@@ -468,9 +474,15 @@ class TicketService:
             marketing=marketing,
             labels=labels,
             parent_key=parent_key,
+            parent_kr_id=parent_kr_id,
             thread_id=thread_id,
             user_id=user_id,
             key=key,
+            key_results=key_results,
+            okr_cycle=okr_cycle,
+            okr_owner=okr_owner,
+            okr_briefing=okr_briefing,
+            okr_phase=okr_phase,
         )
         return ticket_to_api(ticket)
 
@@ -492,6 +504,7 @@ class TicketService:
         new_status = ticket.get("status")
         if new_status and new_status != old_status:
             self._on_status_change(ticket, old_status=old_status or "", new_status=new_status)
+            ticket = self._store.get_ticket(ticket_id) or ticket
         return ticket_to_api(ticket)
 
     def create_ticket_for_project(
@@ -504,6 +517,7 @@ class TicketService:
         marketing: bool = False,
         labels: Optional[List[Any]] = None,
         parent_key: Optional[str] = None,
+        parent_kr_id: Optional[str] = None,
         user_id: Optional[str] = None,
         key: Optional[str] = None,
         status: str = "To Do",
@@ -522,6 +536,7 @@ class TicketService:
             marketing=marketing,
             labels=labels,
             parent_key=parent_key,
+            parent_kr_id=parent_kr_id,
             user_id=uid,
             key=key,
             status=status,
@@ -549,10 +564,22 @@ class TicketService:
         old_status: str,
         new_status: str,
     ) -> None:
+        from bigas.okr.model import is_objective
+
         board = self._store.get_board(ticket.get("board_id") or "")
-        if not board or not board.get("project_key"):
-            return
         if new_status == old_status:
+            return
+
+        if is_objective(ticket) and new_status in AI_TRIGGER_STATUSES:
+            dispatch_ticket_status_automation(
+                ticket,
+                old_status=old_status or "",
+                new_status=new_status,
+                project_key=(board or {}).get("project_key") or "",
+            )
+            return
+
+        if not board or not board.get("project_key"):
             return
 
         project_key = board.get("project_key") or ""

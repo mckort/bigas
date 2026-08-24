@@ -1210,13 +1210,22 @@ export default function ChatLayout({
             Activity
           </button>
           {onSwitchView && (
-            <button
-              type="button"
-              onClick={() => onSwitchView('board')}
-              className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors hidden sm:block"
-            >
-              Board
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onSwitchView('board')}
+                className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors hidden sm:block"
+              >
+                Board
+              </button>
+              <button
+                type="button"
+                onClick={() => onSwitchView('objectives')}
+                className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors hidden sm:block"
+              >
+                Objectives
+              </button>
+            </>
           )}
           <button
             type="button"

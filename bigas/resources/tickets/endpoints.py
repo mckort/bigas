@@ -102,7 +102,13 @@ def board_tickets(board_id: str):
             labels=body.get("labels"),
             parent_key=(body.get("parent_key") or body.get("parent_epic_key") or "").strip()
             or None,
+            parent_kr_id=(body.get("parent_kr_id") or "").strip() or None,
             thread_id=(body.get("thread_id") or "").strip() or None,
+            key_results=body.get("key_results"),
+            okr_cycle=(body.get("okr_cycle") or "").strip() or None,
+            okr_owner=(body.get("okr_owner") or "").strip() or None,
+            okr_briefing=(body.get("okr_briefing") or "").strip() or None,
+            okr_phase=(body.get("okr_phase") or "").strip() or None,
         )
         return jsonify({"ticket": ticket}), 201
     except ValueError as exc:
@@ -270,6 +276,12 @@ def ticket_detail(ticket_id: str):
         "marketing",
         "labels",
         "parent_key",
+        "parent_kr_id",
+        "key_results",
+        "okr_cycle",
+        "okr_owner",
+        "okr_briefing",
+        "okr_phase",
     ):
         if key in body:
             fields[key] = body[key]
@@ -411,3 +423,47 @@ def ticket_transition(ticket_id: str):
         return jsonify(result)
     except Exception as exc:
         return jsonify({"error": str(exc), "success": False}), 400
+
+
+@tickets_bp.route("/api/objectives", methods=["GET"])
+@require_chat_auth
+def okr_dashboard():
+    from bigas.okr.dashboard import build_okr_dashboard
+    from bigas.tickets.store import get_ticket_store
+
+    user_id = g.chat_user["uid"]
+    payload = build_okr_dashboard(get_ticket_store(), user_id=user_id)
+    return jsonify(payload)
+
+
+@tickets_bp.route("/api/objectives/demo", methods=["POST"])
+@require_chat_auth
+def okr_demo_seed():
+    from bigas.okr.demo import demo_already_seeded, seed_okr_demo
+    from bigas.tickets.store import get_ticket_store
+
+    user_id = g.chat_user["uid"]
+    store = get_ticket_store()
+    force = bool((request.get_json(silent=True) or {}).get("force"))
+    if demo_already_seeded(store, user_id) and not force:
+        from bigas.okr.dashboard import build_okr_dashboard
+
+        return jsonify(
+            {
+                "ok": True,
+                "seeded": False,
+                "reason": "demo already present",
+                "dashboard": build_okr_dashboard(store, user_id=user_id),
+            }
+        )
+    result = seed_okr_demo(store, user_id=user_id)
+    from bigas.okr.dashboard import build_okr_dashboard
+
+    return jsonify(
+        {
+            "ok": True,
+            "seeded": True,
+            **result,
+            "dashboard": build_okr_dashboard(store, user_id=user_id),
+        }
+    ), 201

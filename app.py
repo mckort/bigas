@@ -205,6 +205,8 @@ def create_app():
             or path == "/"
             or path == "/board"
             or path.startswith("/board/")
+            or path == "/objectives"
+            or path.startswith("/objectives/")
             or path.startswith("/api/x-posts")
             or path.startswith("/api/qa-proposals")
             or path.startswith("/api/chat/")
@@ -213,6 +215,8 @@ def create_app():
             or path.startswith("/api/boards/")
             or path == "/api/tickets"
             or path.startswith("/api/tickets/")
+            or path == "/api/objectives"
+            or path.startswith("/api/objectives/")
             or path.startswith("/api/agents")
             or path.startswith("/api/feed")
             or path.startswith("/api/auth/")
