@@ -13,6 +13,7 @@ from bigas.llm.factory import get_llm_client
 from bigas.llm.logging_client import LoggingLLMClient
 from bigas.llm.usage import (
     TokenUsage,
+    billed_output_tokens,
     estimate_cost_usd,
     resolve_model_price_usd_per_mtok,
     usage_from_mapping,
@@ -90,6 +91,16 @@ class TokenUsageTests(unittest.TestCase):
         )
         cost = estimate_cost_usd("gemini-2.5-flash", usage)
         self.assertEqual(cost, 0.30 + 2.50)
+
+    def test_billed_output_none_when_total_without_prompt(self):
+        usage = TokenUsage(
+            prompt_tokens=None,
+            candidates_tokens=100,
+            thoughts_tokens=50,
+            total_tokens=1000,
+        )
+        self.assertIsNone(billed_output_tokens(usage))
+        self.assertIsNone(estimate_cost_usd("gemini-2.5-flash", usage))
 
     def test_usage_log_payload(self):
         usage = TokenUsage(prompt_tokens=1000, candidates_tokens=100, total_tokens=1100)

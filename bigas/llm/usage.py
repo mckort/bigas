@@ -92,8 +92,11 @@ def billed_output_tokens(usage: TokenUsage) -> Optional[int]:
     not undercount. Never add ``thoughts_tokens`` on top of total.
     """
     prompt = usage.prompt_tokens
-    if usage.total_tokens is not None and prompt is not None and usage.total_tokens >= prompt:
-        return max(0, usage.total_tokens - prompt)
+    if usage.total_tokens is not None:
+        if prompt is None:
+            return None
+        if usage.total_tokens >= prompt:
+            return max(0, usage.total_tokens - prompt)
     if usage.candidates_tokens is not None:
         thoughts = usage.thoughts_tokens if usage.thoughts_tokens is not None else 0
         return usage.candidates_tokens + thoughts

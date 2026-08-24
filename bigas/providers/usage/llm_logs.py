@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from bigas.llm.usage import TokenUsage, estimate_cost_usd
+from bigas.llm.usage import TokenUsage, billed_output_tokens, estimate_cost_usd
 from bigas.providers.usage.base import UsageEvent, UsageProvider
 
 logger = logging.getLogger(__name__)
@@ -188,15 +188,9 @@ class CloudRunLlmUsageProvider(UsageProvider):
                     e,
                 )
                 failures.append(f"{project}: {e}")
-        if failures and not events:
+        if failures:
             raise RuntimeError(
                 "Cloud Logging llm_usage failed: " + "; ".join(failures)
-            )
-        if failures:
-            logger.error(
-                "Cloud Logging llm_usage partial failure (%s events kept): %s",
-                len(events),
-                "; ".join(failures),
             )
         return events
 
@@ -227,6 +221,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
             try:
                 payload = self._list_entries(body)
             except Exception as e:
+                # Fail the whole project fetch; do not return partial pages.
                 raise RuntimeError(
                     f"Cloud Logging entries:list failed for project {project}: {e}"
                 ) from e
@@ -261,6 +256,12 @@ class CloudRunLlmUsageProvider(UsageProvider):
                     except (TypeError, ValueError):
                         logged_est = None
                 model = str(data.get("model")).strip() if data.get("model") else None
+                usage = TokenUsage(
+                    prompt_tokens=prompt,
+                    candidates_tokens=candidates,
+                    thoughts_tokens=thoughts,
+                    total_tokens=total,
+                )
                 est_f = _reestimated_cost_usd(
                     model=model,
                     prompt=prompt,
@@ -269,6 +270,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
                     total=total,
                     logged=logged_est,
                 )
+                billed_out = billed_output_tokens(usage)
 
                 events.append(
                     UsageEvent(
@@ -278,7 +280,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
                         feature=feature,
                         model=model,
                         input_tokens=prompt,
-                        output_tokens=candidates,
+                        output_tokens=billed_out,
                         total_tokens=total,
                         est_cost_usd=est_f,
                         cost_estimate=bool(data.get("cost_estimate")) or est_f is not None,

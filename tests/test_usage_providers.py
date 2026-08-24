@@ -363,6 +363,45 @@ class LlmLogsParseTests(unittest.TestCase):
         billed_out = 10737 - 3131
         expected = round(3131 / 1_000_000.0 * 2.00 + billed_out / 1_000_000.0 * 12.00, 6)
         self.assertEqual(events[0].est_cost_usd, expected)
+        self.assertEqual(events[0].output_tokens, billed_out)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "GOOGLE_CLOUD_PROJECT": "bigas-503008",
+            "BIGAS_LLM_USAGE_PROJECTS": "bigas-503008,vcfieldassistant",
+        },
+        clear=False,
+    )
+    def test_fetch_raises_when_any_project_fails(self):
+        provider = CloudRunLlmUsageProvider()
+        good_entry = {
+            "timestamp": "2026-08-21T12:00:00Z",
+            "insertId": "abc",
+            "jsonPayload": {
+                "event": "llm_usage",
+                "feature": "chat",
+                "model": "gemini-2.5-flash",
+                "prompt_tokens": 10,
+                "candidates_tokens": 5,
+                "total_tokens": 15,
+            },
+        }
+
+        def list_entries(body):
+            project = body["resourceNames"][0]
+            if project == "projects/vcfieldassistant":
+                raise RuntimeError("403 forbidden")
+            return {"entries": [good_entry]}
+
+        with patch.object(provider, "_list_entries", side_effect=list_entries):
+            with self.assertRaises(RuntimeError) as ctx:
+                provider.fetch_usage(
+                    start=datetime(2026, 8, 17, tzinfo=timezone.utc),
+                    end=datetime(2026, 8, 24, tzinfo=timezone.utc),
+                )
+        self.assertIn("vcfieldassistant", str(ctx.exception))
+        self.assertIn("403 forbidden", str(ctx.exception))
 
 
 class CursorProviderTests(unittest.TestCase):
