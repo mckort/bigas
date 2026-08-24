@@ -679,6 +679,7 @@ export default function ChatLayout({
   discussContext,
   onClearDiscussContext,
   onOpenSettings,
+  agentsRefreshKey = 0,
 }) {
   const [agents, setAgents] = useState([])
   const [activeAgentId, setActiveAgentId] = useState('chief')
@@ -866,6 +867,11 @@ export default function ChatLayout({
   useEffect(() => {
     loadAgents()
   }, [loadAgents])
+
+  useEffect(() => {
+    if (!agentsRefreshKey) return
+    loadAgents()
+  }, [agentsRefreshKey, loadAgents])
 
   useEffect(() => {
     if (!discussContext) return

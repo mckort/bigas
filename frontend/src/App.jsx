@@ -20,6 +20,8 @@ export default function App() {
   const [view, setView] = useState(initialView)
   const [discussContext, setDiscussContext] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [agentsRefreshKey, setAgentsRefreshKey] = useState(0)
+  const [boardRefreshKey, setBoardRefreshKey] = useState(0)
 
   useEffect(() => {
     let unsub = () => {}
@@ -74,6 +76,10 @@ export default function App() {
   }
 
   const openSettings = () => setSettingsOpen(true)
+  const handleSettingsClose = () => {
+    setSettingsOpen(false)
+    setAgentsRefreshKey((key) => key + 1)
+  }
   const handleLogout = () => {
     logout()
     setUser(null)
@@ -96,6 +102,7 @@ export default function App() {
           onDiscussTicket={handleDiscussTicket}
           onSwitchView={switchView}
           onOpenSettings={openSettings}
+          boardRefreshKey={boardRefreshKey}
         />
       ) : (
         <ChatLayout
@@ -105,9 +112,15 @@ export default function App() {
           discussContext={discussContext}
           onClearDiscussContext={() => setDiscussContext(null)}
           onOpenSettings={openSettings}
+          agentsRefreshKey={agentsRefreshKey}
         />
       )}
-      <AgentSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <AgentSettings
+        open={settingsOpen}
+        onClose={handleSettingsClose}
+        onAgentsUpdated={() => setAgentsRefreshKey((key) => key + 1)}
+        onJiraSyncComplete={() => setBoardRefreshKey((key) => key + 1)}
+      />
     </>
   )
 }

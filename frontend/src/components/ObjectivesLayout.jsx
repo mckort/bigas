@@ -107,12 +107,6 @@ function DeleteObjectiveDialog({ objective, onCancel, onConfirm, busy }) {
     </div>
   )
 }
-  if (!kr?.signed_off_at) return ''
-  const when = new Date(kr.signed_off_at)
-  if (Number.isNaN(when.getTime())) return kr.signed_off_at
-  const who = kr.signed_off_by ? ` by ${kr.signed_off_by}` : ''
-  return `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${who}`
-}
 
 function formatSignedOff(kr) {
   if (!kr?.signed_off_at) return ''

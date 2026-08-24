@@ -1198,7 +1198,7 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
   )
 }
 
-export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchView, onOpenSettings }) {
+export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchView, onOpenSettings, boardRefreshKey = 0 }) {
   const [boards, setBoards] = useState([])
   const [activeBoardId, setActiveBoardId] = useState(null)
   const [tickets, setTickets] = useState([])
@@ -1210,7 +1210,6 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [createStatus, setCreateStatus] = useState(null)
   const [dragTicket, setDragTicket] = useState(null)
   const [pendingTicketKey, setPendingTicketKey] = useState(null)
-  const [syncingJira, setSyncingJira] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
   const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
 
@@ -1249,6 +1248,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     const id = setInterval(loadTickets, 5000)
     return () => clearInterval(id)
   }, [loadTickets])
+
+  useEffect(() => {
+    if (!boardRefreshKey) return
+    loadBoards()
+    loadTickets()
+  }, [boardRefreshKey, loadBoards, loadTickets])
 
   useEffect(() => {
     const next = filterFromQuery(boardQuery())
@@ -1433,7 +1438,6 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     if (!activeBoardId || activeBoard?.jira_sync?.status !== 'running') return
 
     let cancelled = false
-    setSyncingJira(true)
     setSyncMessage('Jira sync running in background…')
 
     pollJiraSyncUntilDone(activeBoardId)
@@ -1446,9 +1450,6 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       .catch((err) => {
         if (cancelled) return
         setSyncMessage(err.message || 'Jira sync failed')
-      })
-      .finally(() => {
-        if (!cancelled) setSyncingJira(false)
       })
 
     return () => {

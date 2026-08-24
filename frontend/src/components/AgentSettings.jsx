@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   fetchAgents,
   fetchBoardJiraSyncStatus,
@@ -31,10 +31,30 @@ function formatSyncResult(result) {
   )
 }
 
-async function pollJiraSyncUntilDone(boardId) {
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const id = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(id)
+        reject(new DOMException('Aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
+}
+
+async function pollJiraSyncUntilDone(boardId, signal) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    await sleep(2000, signal)
     const data = await fetchBoardJiraSyncStatus(boardId)
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const status = data.jira_sync?.status
     if (status === 'running') continue
     if (status === 'completed') {
@@ -48,7 +68,7 @@ async function pollJiraSyncUntilDone(boardId) {
   throw new Error('Jira sync timed out')
 }
 
-export default function AgentSettings({ open, onClose }) {
+export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSyncComplete }) {
   const [agents, setAgents] = useState([])
   const [selected, setSelected] = useState(null)
   const [name, setName] = useState('')
@@ -59,10 +79,26 @@ export default function AgentSettings({ open, onClose }) {
   const [jiraImportAvailable, setJiraImportAvailable] = useState(false)
   const [syncingBoardId, setSyncingBoardId] = useState('')
   const [syncMessage, setSyncMessage] = useState('')
+  const syncAbortRef = useRef(null)
+  const mountedRef = useRef(true)
 
   useEffect(() => {
-    if (!open) return
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      syncAbortRef.current?.abort()
+      syncAbortRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!open) {
+      syncAbortRef.current?.abort()
+      syncAbortRef.current = null
+      return
+    }
     fetchAgents().then((res) => {
+      if (!mountedRef.current) return
       setAgents(res.agents || [])
       if (res.agents?.length) {
         selectAgent(res.agents[0])
@@ -70,14 +106,15 @@ export default function AgentSettings({ open, onClose }) {
     })
     fetchBoards()
       .then((res) => {
+        if (!mountedRef.current) return
         setBoards(res.boards || [])
         setJiraImportAvailable(Boolean(res.jira_import_available))
       })
       .catch(() => {
+        if (!mountedRef.current) return
         setBoards([])
         setJiraImportAvailable(false)
       })
-    setSyncMessage('')
   }, [open])
 
   function selectAgent(agent) {
@@ -85,6 +122,10 @@ export default function AgentSettings({ open, onClose }) {
     setName(agent.name || '')
     setGoals(agent.system_prompt_goals || '')
     setMessage('')
+  }
+
+  function handleClose() {
+    onClose?.()
   }
 
   async function handleSave(e) {
@@ -99,7 +140,9 @@ export default function AgentSettings({ open, onClose }) {
       })
       setMessage('Saved!')
       const res = await fetchAgents()
+      if (!mountedRef.current) return
       setAgents(res.agents || [])
+      onAgentsUpdated?.()
     } catch (err) {
       setMessage(err.message)
     } finally {
@@ -109,20 +152,28 @@ export default function AgentSettings({ open, onClose }) {
 
   async function handleSyncJira(board) {
     if (!board?.board_id || syncingBoardId) return
+    syncAbortRef.current?.abort()
+    const controller = new AbortController()
+    syncAbortRef.current = controller
     setSyncingBoardId(board.board_id)
     setSyncMessage(`Syncing ${board.name}…`)
     try {
       const data = await syncBoardFromJira(board.board_id)
+      if (controller.signal.aborted) return
       if (data.status === 'started' || data.status === 'running') {
-        const done = await pollJiraSyncUntilDone(board.board_id)
+        const done = await pollJiraSyncUntilDone(board.board_id, controller.signal)
+        if (controller.signal.aborted) return
         setSyncMessage(`${board.name}: ${done}`)
       } else {
         setSyncMessage(`${board.name}: ${formatSyncResult(data)}`)
       }
+      onJiraSyncComplete?.()
     } catch (err) {
+      if (err?.name === 'AbortError') return
       setSyncMessage(err.message || 'Jira sync failed')
     } finally {
-      setSyncingBoardId('')
+      if (syncAbortRef.current === controller) syncAbortRef.current = null
+      if (!controller.signal.aborted && mountedRef.current) setSyncingBoardId('')
     }
   }
 
@@ -132,13 +183,13 @@ export default function AgentSettings({ open, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-black/30" onClick={handleClose} aria-hidden="true" />
       <div className="relative w-full sm:max-w-2xl max-h-[90vh] overflow-y-auto bg-white border border-border rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 shadow-card">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">Settings</h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="text-muted hover:text-text p-2 min-w-[44px] min-h-[44px] flex items-center justify-center"
             aria-label="Close settings"
           >
