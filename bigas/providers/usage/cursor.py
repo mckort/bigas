@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
-from bigas.providers.usage.base import UsageEvent, UsageProvider
+from bigas.providers.usage.base import UsageEvent, UsageProvider, usage_provider_enabled
 from bigas.resources.cto.autofix.cursor_client import (
     CursorCloudAgentClient,
     CursorCloudAgentError,
@@ -67,7 +67,9 @@ class CursorCloudAgentUsageProvider(UsageProvider):
 
     @classmethod
     def is_configured(cls) -> bool:
-        return bool((os.environ.get("CURSOR_API_KEY") or "").strip())
+        return usage_provider_enabled("cursor") and bool(
+            (os.environ.get("CURSOR_API_KEY") or "").strip()
+        )
 
     def __init__(self, *, api_key: Optional[str] = None) -> None:
         key = (api_key or "").strip() or (os.environ.get("CURSOR_API_KEY") or "").strip()

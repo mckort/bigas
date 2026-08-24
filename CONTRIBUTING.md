@@ -44,6 +44,7 @@ Bigas now supports a **provider-based architecture** so you can add new finance,
 - **Ads providers**: implement `AdsProvider` in `bigas/providers/ads/base.py`
 - **Analytics providers**: implement `AnalyticsProvider` in `bigas/providers/analytics/base.py`
 - **Notification channels**: implement `NotificationChannel` in `bigas/providers/notifications/base.py` (Discord, X, …)
+- **Usage / cost sources**: implement `UsageProvider` in `bigas/providers/usage/base.py`, then list the `name` in `BIGAS_USAGE_PROVIDERS` (see README [Plug in a usage source](README.md#plug-in-a-usage-source))
 
 Each concrete provider:
 

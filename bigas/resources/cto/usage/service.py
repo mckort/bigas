@@ -217,7 +217,8 @@ def fetch_ai_usage(
     by_app: Dict[str, float] = defaultdict(float)
     by_model_tier: Dict[str, float] = defaultdict(float)
     activity_by_feature: Dict[str, int] = defaultdict(int)
-    cost_total = 0.0
+    list_price_total = 0.0
+    invoice_total = 0.0
     cost_known = 0
     empty_fallback_events = 0
     empty_response_events = 0
@@ -230,17 +231,23 @@ def fetch_ai_usage(
             empty_response_events += 1
         if ev.est_cost_usd is None:
             continue
-        cost_total += float(ev.est_cost_usd)
+        usd = float(ev.est_cost_usd)
         cost_known += 1
-        by_provider[ev.provider] += float(ev.est_cost_usd)
-        by_feature[ev.feature] += float(ev.est_cost_usd)
+        by_provider[ev.provider] += usd
+        by_feature[ev.feature] += usd
         app = str(meta.get("app") or "").strip() or (
             "vcfieldassistant" if str(meta.get("gcp_project") or "") == "vcfieldassistant" else "bigas"
         )
-        by_app[app] += float(ev.est_cost_usd)
+        by_app[app] += usd
+        kind = str(meta.get("cost_kind") or "").strip()
+        is_invoice = kind == "invoice" or ev.cost_estimate is False
+        if is_invoice:
+            invoice_total += usd
+        else:
+            list_price_total += usd
         tier = str(meta.get("model_tier") or "").strip()
         if tier:
-            by_model_tier[tier] += float(ev.est_cost_usd)
+            by_model_tier[tier] += usd
 
     # Top PRs by estimated cost (cursor meta.pr_url).
     pr_costs: Dict[str, float] = defaultdict(float)
@@ -259,7 +266,9 @@ def fetch_ai_usage(
         "days": days_n,
         "providers": [p.name for p in selected],
         "totals": {
-            "est_cost_usd": round(cost_total, 6),
+            "est_cost_usd": round(list_price_total, 6),
+            "list_price_usd": round(list_price_total, 6),
+            "invoice_cost_usd": round(invoice_total, 6),
             "events": len(events),
             "events_with_cost": cost_known,
             "by_provider": {k: round(v, 6) for k, v in sorted(by_provider.items())},
@@ -280,15 +289,18 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
     days = report.get("days") or 7
     totals = report.get("totals") or {}
     est = totals.get("est_cost_usd")
+    invoice = totals.get("invoice_cost_usd")
     lines = [
-        f"**Bigas AI usage (last {days} days)**",
+        f"**Bigas AI + cloud usage (last {days} days)**",
         (
-            f"Estimated list-price total: ~${float(est):.4f}"
+            f"List-price (LLM + Cursor + Tavily): ~${float(est):.4f}"
             if est is not None
-            else "Estimated list-price total: n/a"
+            else "List-price (LLM + Cursor + Tavily): n/a"
         ),
-        f"Events: {totals.get('events') or 0}",
     ]
+    if invoice:
+        lines.append(f"GCP invoice (Cloud Billing export): ~${float(invoice):.4f}")
+    lines.append(f"Events: {totals.get('events') or 0}")
     by_provider = totals.get("by_provider") or {}
     if by_provider:
         lines.append("By provider:")
@@ -337,7 +349,11 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         for err in errors[:5]:
             lines.append(f"- {err.get('provider')}: {err.get('error')}")
 
-    lines.append("_List-price estimates only; not Cursor/GCP invoices._")
+    lines.append(
+        "_List-price: Cursor, llm_logs, Tavily. "
+        "gcp_billing is the Cloud Billing invoice (~1 day lag). "
+        "Do not add gcp.gemini_invoice to llm_logs Gemini._"
+    )
     return "\n".join(lines)
 
 
@@ -371,11 +387,14 @@ def _configured_stack_blurb() -> str:
 
 
 CFO_WEEKLY_ANALYSIS_INSTRUCTIONS = (
-    "You are the Bigas CFO. Write a concise weekly AI cost briefing in English.\n"
-    "Use only the usage numbers given. List-price estimates, not invoices.\n\n"
+    "You are the Bigas CFO. Write a concise weekly cost briefing in English.\n"
+    "Use only the usage numbers given.\n\n"
     "Do two things:\n"
     "1) Usage analysis — what drove cost (app, feature, Pro vs Flash), empty Pro/"
-    "Flash-fallback waste, and 2–4 concrete savings.\n"
+    "Flash-fallback waste, Tavily search, and GCP invoice line items "
+    "(Firestore, Cloud Run, …). Give 2–4 concrete savings. "
+    "List-price (llm_logs, Cursor, Tavily) is not the GCP invoice. "
+    "gcp.gemini_invoice is billed Gemini; do not add it to llm_logs Gemini.\n"
     "2) Model landscape — for the models we run now, and other leading LLMs "
     "(Gemini 2.5/3.x Pro+Flash, Claude, GPT, Cursor composer), note any recent "
     "releases, price cuts, or quality jumps that could cut cost or improve "
@@ -426,8 +445,8 @@ def analyze_weekly_ai_spend(report: Dict[str, Any]) -> Optional[str]:
 
 def build_weekly_cfo_ai_report(report: Dict[str, Any]) -> str:
     numbers = format_weekly_cto_ai_report(report).replace(
-        "**Bigas AI usage",
-        "**CFO: AI usage",
+        "**Bigas AI + cloud usage",
+        "**CFO: AI + cloud usage",
         1,
     )
     analysis = analyze_weekly_ai_spend(report)
