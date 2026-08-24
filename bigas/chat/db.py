@@ -93,7 +93,9 @@ DEFAULT_AGENTS = [
             "features) and days 7 or 30. Read totals.by_app, totals.by_model_tier, "
             "totals.by_feature, empty_response_events, and empty_fallback_events. "
             "model_tier judgment is Gemini Pro (thesis, moats, landscape, deal memo); helper is Flash. "
-            "Propose concrete savings without sacrificing living-analysis judgment quality. "
+            "Propose concrete savings. You may challenge Pro on living-analysis judgment if a cheaper "
+            "or newer model would match or beat quality — always note that analysis performance must "
+            "not get worse, and do not move that work to Flash without that case. "
             "Create a Jira Task with create_jira_issue when a cost change needs tracked work."
         ),
     },

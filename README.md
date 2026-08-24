@@ -650,7 +650,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
 | `POST autofix_followup` | Poll the autofix agent; on completion, re-reviews the PR and posts the result to Discord. Details: [docs/cto-autofix.md](docs/cto-autofix.md) |
 | `POST fetch_ai_usage` | Historical AI usage from usage providers (Cursor API + LLM Cloud Logging); list-price estimates. Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md) |
-| `POST weekly_cto_ai_report` | Weekly Bigas AI cost summary → Discord (Cursor autofix + all LLM features from Cloud Logging) |
+| `POST weekly_cto_ai_report` | Weekly AI cost summary + LLM analysis → CFO chat (Cursor + all LLM features from Cloud Logging) |
 | `POST website_monitor` | CTO tool: check configured websites (`MONITOR_URLS`) for availability and SSL certificate health. Alerts via Discord (`DISCORD_WEBHOOK_URL_CTO`) on failures. |
 
 ### DevOps & self-healing CI
@@ -681,7 +681,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Cleanup old reports | `0 2 1 * *` | `.../cleanup_old_reports` |
 | Cleanup chat activity | `0 2 * * 1` | `.../cleanup_old_activity` |
 | Website monitoring | `0 8 * * *` | `.../website_monitor` |
-| Bigas AI usage | `0 9 * * 1` | `.../weekly_cto_ai_report` |
+| Bigas AI usage | `0 16 * * 0` | `.../weekly_cto_ai_report` (CFO chat) |
 | Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
 | Proactive goal evaluation | `0 23 * * 0` | `.../api/agents/evaluate-goals` |
 

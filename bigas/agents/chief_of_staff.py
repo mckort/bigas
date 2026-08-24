@@ -209,7 +209,7 @@ MUST_DELEGATE_TOOLS = {
     "review_and_comment_pr": "cto",
     "run_qa": "cto",
     "notify_pr_merged": "cto",
-    "weekly_cto_ai_report": "cto",
+    "weekly_cto_ai_report": "cfo",
     "fetch_ai_usage": "cfo",
     "create_release_notes": "product",
     "progress_updates": "product",

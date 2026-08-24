@@ -50,6 +50,7 @@ _DISCORD_WEBHOOK_AGENT_ENVS = (
     ("DISCORD_WEBHOOK_URL_MARKETING", "marketing"),
     ("DISCORD_WEBHOOK_URL_PRODUCT", "product"),
     ("DISCORD_WEBHOOK_URL_CTO", "cto"),
+    ("DISCORD_WEBHOOK_URL_CFO", "cfo"),
     ("DISCORD_WEBHOOK_URL_DEVOPS", "devops"),
     ("DISCORD_WEBHOOK_URL_CHIEF", "chief"),
     ("DISCORD_WEBHOOK_URL_QA", "cto"),
@@ -60,6 +61,7 @@ _HINT_TO_AGENT = {
     "pm": "product",
     "product": "product",
     "cto": "cto",
+    "cfo": "cfo",
     "marketing": "marketing",
     "devops": "devops",
     "chief": "chief",
@@ -103,6 +105,8 @@ def resolve_discord_chat_agent(
         upper = url.upper()
         if "CTO" in upper:
             return "cto"
+        if "CFO" in upper:
+            return "cfo"
         if "PRODUCT" in upper or "PM" in upper:
             return "product"
         if "MARKETING" in upper:

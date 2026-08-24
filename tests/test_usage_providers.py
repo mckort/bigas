@@ -21,6 +21,8 @@ from bigas.resources.cto.usage.service import (
     fetch_ai_usage,
     format_cursor_usage_discord_lines,
     format_weekly_cto_ai_report,
+    build_weekly_cfo_ai_report,
+    publish_weekly_cfo_ai_report,
 )
 
 
@@ -216,6 +218,58 @@ class FetchAiUsageTests(unittest.TestCase):
         self.assertIn("LLM calls:", msg)
         self.assertIn("- chat: 200", msg)
         self.assertIn("- cto_pr_review: 50", msg)
+
+    def test_cfo_weekly_report_appends_analysis(self):
+        report = {
+            "days": 7,
+            "totals": {"est_cost_usd": 3.0, "events": 2},
+            "events": [{"model": "gemini-2.5-pro", "feature": "llm.living_analysis"}],
+        }
+
+        class FakeLlm:
+            def complete(self, messages, **kwargs):
+                return "Flash fallback waste is high. Watch Gemini 3 Flash."
+
+        with patch(
+            "bigas.llm.factory.get_llm_client",
+            return_value=(FakeLlm(), "gemini-3.1-pro-preview"),
+        ):
+            msg = build_weekly_cfo_ai_report(report)
+        self.assertIn("CFO: AI usage", msg)
+        self.assertIn("CFO analysis", msg)
+        self.assertIn("Gemini 3 Flash", msg)
+
+    def test_cfo_prompt_may_challenge_pro_if_quality_holds(self):
+        from bigas.resources.cto.usage.service import CFO_WEEKLY_ANALYSIS_INSTRUCTIONS
+
+        text = CFO_WEEKLY_ANALYSIS_INSTRUCTIONS
+        self.assertIn("challenge keeping Gemini Pro", text)
+        self.assertIn("must not get worse", text)
+        self.assertNotIn("that keep living-analysis judgment on Pro", text)
+
+    def test_cfo_weekly_report_survives_llm_failure(self):
+        report = {
+            "days": 7,
+            "totals": {"est_cost_usd": 1.0, "events": 1},
+            "events": [],
+        }
+        with patch(
+            "bigas.llm.factory.get_llm_client",
+            side_effect=RuntimeError("no key"),
+        ):
+            msg = build_weekly_cfo_ai_report(report)
+        self.assertIn("CFO: AI usage", msg)
+        self.assertNotIn("CFO analysis", msg)
+
+    def test_publish_weekly_goes_to_cfo_not_cto(self):
+        with patch(
+            "bigas.discord_webhook.post_long_to_discord"
+        ) as post:
+            publish_weekly_cfo_ai_report("hello cfo")
+        post.assert_called_once()
+        args, kwargs = post.call_args
+        self.assertEqual(kwargs.get("chat_agent_id"), "cfo")
+        self.assertEqual(args[1], "hello cfo")
 
 
 class LlmLogsParseTests(unittest.TestCase):
