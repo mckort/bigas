@@ -5,6 +5,7 @@ it states its sample size.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import time
@@ -91,7 +92,7 @@ def build_okr_scoreboard(
     if use_cache and uid:
         hit = _cache.get(cache_key)
         if hit and (time.monotonic() - hit[0]) < _CACHE_TTL_S:
-            return dict(hit[1])
+            return copy.deepcopy(hit[1])
 
     current = now or _utcnow()
     dashboard = build_okr_dashboard(store, user_id=uid) if uid else {
@@ -200,7 +201,7 @@ def build_okr_scoreboard(
         "sample_stated": True,
     }
     if use_cache and uid:
-        _cache[cache_key] = (time.monotonic(), dict(snapshot))
+        _cache[cache_key] = (time.monotonic(), copy.deepcopy(snapshot))
     return snapshot
 
 

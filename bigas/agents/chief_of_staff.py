@@ -563,12 +563,13 @@ def _agent_system_prompt(
     extra: str = "",
     *,
     user_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
 ) -> str:
     parts = [
         agent_config.get("system_prompt_goals") or "",
         _catalog_prompt(),
     ]
-    agent_id = (agent_config.get("agent_id") or "").strip()
+    agent_id = (agent_id or agent_config.get("agent_id") or "").strip()
     if not agent_id or agent_id in JIRA_AWARE_AGENT_IDS:
         parts.append(JIRA_FORMATTING_RULES)
     parts.append(COWORKER_RULES)
@@ -664,7 +665,9 @@ def _select_tool_via_llm(
         if agent_id == "chief"
         else _specialist_json_extra(tool_summary)
     )
-    system = _agent_system_prompt(agent_config, extra, user_id=user_id)
+    system = _agent_system_prompt(
+        agent_config, extra, user_id=user_id, agent_id=agent_id
+    )
     messages = [{"role": "system", "content": system}]
     messages.extend(history[-10:])
     messages.append({"role": "user", "content": user_message})
@@ -864,7 +867,9 @@ def _run_agent_with_tools(
     """Native tool loop first; JSON action loop if the provider rejects tools."""
     llm, _model = get_llm_client(feature="chat")
     extra = _chief_native_extra() if agent_id == "chief" else _specialist_native_extra()
-    system = _agent_system_prompt(agent_config, extra, user_id=user_id)
+    system = _agent_system_prompt(
+        agent_config, extra, user_id=user_id, agent_id=agent_id
+    )
     messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
     messages.extend((history or [])[-10:])
     messages.append({"role": "user", "content": user_message})
@@ -1029,7 +1034,9 @@ def run_specialist_task(
 
         def _fallback_complete() -> str:
             llm, _ = get_llm_client(feature="chat")
-            system = _agent_system_prompt(agent_config, user_id=chat_user_id)
+            system = _agent_system_prompt(
+                agent_config, user_id=chat_user_id, agent_id=agent_id
+            )
             return llm.complete(
                 [
                     {"role": "system", "content": system},
@@ -1119,7 +1126,10 @@ def handle_chat_message(
         raise ValueError("Thread not found")
 
     agent_id = thread.get("agent_id") or "chief"
-    agent_config = store.get_agent(agent_id) or {}
+    agent_config = store.get_agent(agent_id) or {
+        "agent_id": agent_id,
+        "system_prompt_goals": "",
+    }
     history = history or []
     from bigas.tickets.attachments import message_text_for_llm
 
