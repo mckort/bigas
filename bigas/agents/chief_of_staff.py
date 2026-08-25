@@ -654,7 +654,20 @@ def _select_tool_via_llm(
     messages.extend(history[-10:])
     messages.append({"role": "user", "content": user_message})
 
-    raw = llm.complete(messages, temperature=0.2)
+    try:
+        raw = llm.complete(messages, temperature=0.2)
+    except Exception as exc:
+        from bigas.llm.gemini_client import is_malformed_function_call
+
+        if is_malformed_function_call(exc):
+            logger.exception("Chat LLM MALFORMED_FUNCTION_CALL during JSON tool select")
+            return (
+                "I hit a model error while calling tools. Try that question again, "
+                "or ask the Marketing Analyst specialist directly for GA4 work.",
+                None,
+                None,
+            )
+        raise
     action = _parse_json_action(raw)
     if not action:
         return raw.strip() or "I couldn't process that request.", None, None
@@ -776,6 +789,7 @@ def _run_native_tool_loop(
             if first:
                 return None
             break
+        first_turn = first
         first = False
         if completion.tool_calls:
             messages.append(
@@ -811,6 +825,9 @@ def _run_native_tool_loop(
             continue
         if (completion.text or "").strip():
             return completion.text.strip()
+        # Empty native turn (including Gemini MALFORMED_FUNCTION_CALL) → JSON fallback.
+        if first_turn:
+            return None
         break
     return last_tool_text or "I wasn't able to complete that request."
 
@@ -835,18 +852,29 @@ def _run_agent_with_tools(
     messages.append({"role": "user", "content": user_message})
     openai_tools = list(extra_openai_tools or [])
     openai_tools.extend(_mcp_tool_to_openai_def(tool) for tool in tools)
-    native = _run_native_tool_loop(llm, messages, openai_tools, run_tool=run_tool)
-    if native is not None:
-        return native
-    return _run_json_agent_loop(
-        agent_id=agent_id,
-        agent_config=agent_config,
-        user_message=user_message,
-        tools=tools,
-        history=history,
-        run_tool=run_tool,
-        fallback_complete=fallback_complete,
-    )
+    try:
+        native = _run_native_tool_loop(llm, messages, openai_tools, run_tool=run_tool)
+        if native is not None:
+            return native
+        return _run_json_agent_loop(
+            agent_id=agent_id,
+            agent_config=agent_config,
+            user_message=user_message,
+            tools=tools,
+            history=history,
+            run_tool=run_tool,
+            fallback_complete=fallback_complete,
+        )
+    except Exception as exc:
+        from bigas.llm.gemini_client import is_malformed_function_call
+
+        if is_malformed_function_call(exc):
+            logger.exception("Chat LLM MALFORMED_FUNCTION_CALL")
+            return (
+                "I hit a model error while calling tools. Try that question again, "
+                "or ask the Marketing Analyst specialist directly for GA4 work."
+            )
+        raise
 
 
 def _agent_display_name(store, agent_id: Optional[str]) -> str:

@@ -108,6 +108,105 @@ def test_native_tool_loop_runs_then_answers():
     assert calls == [("search_jira", {"jql": "type = Bug"})]
 
 
+def test_gemini_safe_schema_strips_unsupported_keywords():
+    from bigas.llm.gemini_client import _gemini_safe_schema, _openai_tools_to_gemini_decls
+
+    cleaned = _gemini_safe_schema(
+        {
+            "$schema": "https://json-schema.org/draft/07/schema",
+            "type": "object",
+            "additionalProperties": True,
+            "properties": {
+                "jql": {"type": ["string", "null"], "description": "JQL query"},
+            },
+            "anyOf": [{"type": "object"}],
+        }
+    )
+    assert "$schema" not in cleaned
+    assert "additionalProperties" not in cleaned
+    assert cleaned["properties"]["jql"]["type"] == "string"
+
+    decls = _openai_tools_to_gemini_decls(
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_jira",
+                    "parameters": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"jql": {"type": "string"}},
+                    },
+                },
+            }
+        ]
+    )
+    assert decls[0]["parameters"]["properties"]["jql"]["type"] == "string"
+    assert "additionalProperties" not in decls[0]["parameters"]
+
+
+def test_is_malformed_function_call():
+    from bigas.llm.gemini_client import is_malformed_function_call
+
+    err = 'Error: index: 0 content { parts { text: "" } role: "model" } finish_reason: MALFORMED_FUNCTION_CALL'
+    assert is_malformed_function_call(err)
+    assert is_malformed_function_call("MALFORMED_FUNCTION_CALL")
+    assert not is_malformed_function_call("STOP")
+
+
+def test_native_tool_loop_falls_back_on_empty_first_turn():
+    from bigas.agents.chief_of_staff import _run_native_tool_loop
+    from bigas.llm.completion import LLMCompletion
+
+    class EmptyLLM:
+        def complete_detailed(self, messages, **kwargs):
+            return LLMCompletion(text="", finish_reason="MALFORMED_FUNCTION_CALL")
+
+    assert (
+        _run_native_tool_loop(
+            EmptyLLM(),
+            [{"role": "user", "content": "hi"}],
+            [{"type": "function", "function": {"name": "lookup_jira", "parameters": {}}}],
+            run_tool=lambda name, args: "nope",
+        )
+        is None
+    )
+
+
+def test_run_agent_with_tools_swallows_malformed_function_call():
+    from unittest.mock import patch
+
+    from bigas.agents.chief_of_staff import _run_agent_with_tools
+
+    class BoomLLM:
+        def complete_detailed(self, messages, **kwargs):
+            raise ValueError(
+                'Error: index: 0 content { parts { text: "" } role: "model" } '
+                "finish_reason: MALFORMED_FUNCTION_CALL"
+            )
+
+        def complete(self, messages, **kwargs):
+            raise ValueError(
+                'Error: index: 0 content { parts { text: "" } role: "model" } '
+                "finish_reason: MALFORMED_FUNCTION_CALL"
+            )
+
+    with patch(
+        "bigas.agents.chief_of_staff.get_llm_client",
+        lambda feature="chat": (BoomLLM(), "gemini-test"),
+    ):
+        text = _run_agent_with_tools(
+            agent_id="chief",
+            agent_config={"system_prompt_goals": ""},
+            user_message="Let's discuss ticket GPWW-17",
+            tools=[],
+            history=[],
+            run_tool=lambda name, args: "nope",
+        )
+    assert "model error" in text.lower()
+    assert "MALFORMED_FUNCTION_CALL" not in text
+
+
 def test_native_tool_loop_falls_back_when_first_turn_fails():
     from bigas.agents.chief_of_staff import _run_native_tool_loop
 
