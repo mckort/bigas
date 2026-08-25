@@ -1129,8 +1129,11 @@ export default function ChatLayout({
       setPendingFiles([])
       setAttachError('')
     }
+    let sendSucceeded = false
+    let result
     try {
-      const result = await sendMessage(threadId, text, clientId, files)
+      result = await sendMessage(threadId, text, clientId, files)
+      sendSucceeded = true
       const res = await fetchMessages(threadId)
       const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res)
       if (next.length) {
@@ -1145,20 +1148,36 @@ export default function ChatLayout({
         if (done) setWaitingForReply(false)
       }
     } catch (err) {
-      if (!messageText) {
-        setInput(text)
-        setPendingFiles(files)
+      if (!sendSucceeded) {
+        if (!messageText) {
+          setInput(text)
+          setPendingFiles(files)
+        }
+        setWaitingForReply(false)
+        setMessages((prev) => [
+          ...prev.filter((m) => m.message_id !== optimistic.message_id),
+          {
+            message_id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: `Error: ${err.message}`,
+            created_at: new Date().toISOString(),
+          },
+        ])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            message_id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: `Message sent, but failed to refresh: ${err.message}`,
+            created_at: new Date().toISOString(),
+          },
+        ])
+        if (result?.deploy_poll_active) {
+          setDeployPollActive(true)
+          setWaitingForReply(true)
+        }
       }
-      setWaitingForReply(false)
-      setMessages((prev) => [
-        ...prev.filter((m) => m.message_id !== optimistic.message_id),
-        {
-          message_id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: `Error: ${err.message}`,
-          created_at: new Date().toISOString(),
-        },
-      ])
     } finally {
       setSending(false)
     }
