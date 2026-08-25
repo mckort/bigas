@@ -252,6 +252,60 @@ def progress_updates():
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route("/weekly_okr_pulse", methods=["POST"])
+def weekly_okr_pulse():
+    """
+    Mechanical Monday OKR pulse from the ticket store → Chief of Staff chat
+    (and DISCORD_WEBHOOK_URL_CHIEF, falling back to product).
+
+    Counts always include sample size. An optional LLM comment is appended
+    underneath and must not replace the numbers.
+
+    Request JSON (all optional):
+      { "days": 7, "post_to_discord": true, "post_to_chat": true,
+        "include_comment": true, "user_id": "..." }
+    """
+    from bigas.okr.pulse import build_weekly_okr_pulse, publish_weekly_okr_pulse
+    from bigas.okr.scoreboard import DEFAULT_LOOKBACK_DAYS
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    try:
+        days = int(data.get("days") if data.get("days") is not None else DEFAULT_LOOKBACK_DAYS)
+    except (TypeError, ValueError):
+        return jsonify({"error": "days must be an integer between 1 and 365"}), 400
+    if days < 1 or days > 365:
+        return jsonify({"error": "days must be between 1 and 365"}), 400
+    post_to_discord = True if data.get("post_to_discord") is None else bool(
+        data.get("post_to_discord")
+    )
+    post_to_chat = True if data.get("post_to_chat") is None else bool(data.get("post_to_chat"))
+    include_comment = (
+        True if data.get("include_comment") is None else bool(data.get("include_comment"))
+    )
+    user_id = str(data.get("user_id") or "").strip() or None
+
+    try:
+        result = build_weekly_okr_pulse(
+            user_id=user_id,
+            lookback_days=days,
+            include_comment=include_comment,
+        )
+        posted = {"posted_to_discord": False, "posted_to_chat": False}
+        if post_to_discord or post_to_chat:
+            posted = publish_weekly_okr_pulse(
+                result["message"],
+                post_to_discord=post_to_discord,
+                post_to_chat=post_to_chat,
+            )
+        result.update(posted)
+        return jsonify(result)
+    except Exception as e:
+        logger.error("Error in weekly_okr_pulse", exc_info=True)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
 @product_bp.route('/generate_weekly_x_post', methods=['POST'])
 def generate_weekly_x_post():
     """
@@ -695,6 +749,42 @@ def get_manifest():
                         }
                     }
                 }
+            },
+            {
+                "name": "weekly_okr_pulse",
+                "description": (
+                    "Mechanical Monday OKR pulse from live Objectives: KR health, "
+                    "expected vs actual pace, stale currents, unlinked Done (with sample size), "
+                    "and pending human gates. Posts to Chief of Staff chat. "
+                    "Optional LLM comment cannot replace the counts."
+                ),
+                "path": "/mcp/tools/weekly_okr_pulse",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "days": {
+                            "type": "integer",
+                            "description": "Lookback window for Done tickets (default 7).",
+                            "default": 7,
+                        },
+                        "post_to_discord": {
+                            "type": "boolean",
+                            "description": "Post to Chief Discord (mirrors Chief chat). Default true.",
+                            "default": True,
+                        },
+                        "post_to_chat": {
+                            "type": "boolean",
+                            "description": "Post to Chief of Staff chat if Discord is skipped. Default true.",
+                            "default": True,
+                        },
+                        "include_comment": {
+                            "type": "boolean",
+                            "description": "Append a short LLM comment under the counts. Default true.",
+                            "default": True,
+                        },
+                    },
+                },
             },
             {
                 "name": "generate_weekly_x_post",

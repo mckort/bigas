@@ -340,7 +340,7 @@ This is the flow that makes Bigas a **goal-oriented engine**: you name what winn
 2. Drag it to **Research and describe (AI)**. Bigas loads that board's brand, pulls live evidence (GA4, website, repo), and a thinking model **analyzes** it — then proposes 2–4 Key Results as measurable from→to improvements that most help this Objective. No canned metric kit. The card moves to **Description approval (manual)**.
 3. After you approve, drag to **Design and plan (AI)**. Bigas reads live status (GA4 and other sources), updates KR `current` values, and opens concrete work items toward each KR — not a ticket named after the KR, and not a “wire weekly snapshot” card. The Objective moves to **Design approval (manual)**.
 4. **Open on board** filters the board to that Objective; **Show on board** filters to one KR. You still drag cards. AI columns still research, plan, and implement — they do not auto-start because a KR is off track.
-5. The weekly pulse on **In Progress (AI)** refreshes GA4 currents again. You can still edit `current` by hand. The dashboard shows on track / at risk / off track against expected pace.
+5. The weekly pulse on **In Progress (AI)** refreshes GA4 currents again. You can still edit `current` by hand. The dashboard shows on track / at risk / off track against expected pace. Every Chief, Product, and Marketing chat session is primed with that scoreboard (stale currents, unlinked Done, pending manual gates). Monday's `weekly_okr_pulse` restates the counts without LLM narration.
 
 Humans decide. Agents execute the work you put in front of them. The Objective is the shared scoreboard.
 
@@ -500,8 +500,8 @@ Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend 
 
 | Feature | Description |
 |---|---|
-| **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; can file Jira Task/Bug issues; delegates domain tasks to specialists |
-| **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows |
+| **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; **live Objectives and KR health are injected into every session**; can file Jira Task/Bug issues; delegates domain tasks to specialists |
+| **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows. Product and Marketing also receive the live OKR scoreboard so they cannot plan a week without knowing which KRs are red |
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
 | **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. PR review, autofix, and pipeline cards (Ready to merge, Final approval, auto-merge) stay in Activity and Discord — they are not posted into the CTO chat thread. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
 | **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
@@ -581,7 +581,7 @@ Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_i
 
 All endpoint names below are **relative to `/mcp/tools/`**. For example, `POST weekly_analytics_report` means `POST /mcp/tools/weekly_analytics_report`.
 
-When chat is enabled, Discord notifications are mirrored to the matching specialist thread: marketing reports → Marketing Analyst, Jira research / release notes / progress updates / X drafts → Product Manager, PR review / implement / QA / site alerts → CTO, CI self-heal → DevOps, Goal Engine → Chief of Staff. Short “on its way…” pings stay Discord-only. `CHAT_ENABLED=false` skips those chat posts.
+When chat is enabled, Discord notifications are mirrored to the matching specialist thread: marketing reports → Marketing Analyst, Jira research / release notes / progress updates / X drafts → Product Manager, PR review / implement / QA / site alerts → CTO, CI self-heal → DevOps, Goal Engine and Monday OKR pulse → Chief of Staff. Short “on its way…” pings stay Discord-only. `CHAT_ENABLED=false` skips those chat posts.
 
 Find your service URL with:
 ```bash
@@ -669,6 +669,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord and Product Manager chat |
 | `POST generate_weekly_x_post` | Last N days of git activity → X draft (major changes only) → Discord and Product Manager chat Approve/Decline |
+| `POST weekly_okr_pulse` | Mechanical Monday OKR pulse from `/objectives` (KR health, pace, stale currents, unlinked Done with sample size, pending human gates) → Chief of Staff chat. Optional LLM comment cannot replace the counts |
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub. Details: [docs/cto-pr-review.md](docs/cto-pr-review.md) |
 | `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
 | `POST autofix_followup` | Poll the autofix agent; on completion, re-reviews the PR and posts the result to Discord. Details: [docs/cto-autofix.md](docs/cto-autofix.md) |
@@ -698,6 +699,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Job | Cron | URL |
 |---|---|---|
 | Weekly analytics | `0 9 * * 1` | `.../weekly_analytics_report` |
+| Monday OKR pulse | `0 9 * * 1` | `.../weekly_okr_pulse` |
 | Page analysis | `0 10 * * 2` | `.../analyze_underperforming_pages` |
 | LinkedIn portfolio | `0 9 * * 1` | `.../run_linkedin_portfolio_report` |
 | Weekly X post draft | `0 9 * * 1` | `.../generate_weekly_x_post` |
@@ -747,6 +749,28 @@ gcloud scheduler jobs create http bigas-evaluate-goals \
 Returns **200 OK** with the full evaluation result. Runs synchronously so Cloud Run keeps CPU allocated for the duration (Cloud Run timeout is 900s). `0 23 * * 0` = Sunday 23:00 Europe/Stockholm.
 
 Cloud Scheduler must send `X-Bigas-Access-Key` or `Authorization: Bearer` with a configured `BIGAS_ACCESS_KEY`. Existing jobs that still send `Authorization: Bearer <CRON_SECRET>` continue to work when `CRON_SECRET` is set.
+
+### Monday OKR pulse (Cloud Scheduler)
+
+`weekly_okr_pulse` is the scoreboard that cannot flatter: KR health, expected vs actual pace, stale currents, Done tickets in the last N days (linked vs unlinked, with sample size), and cards waiting in `(manual)` columns. An optional LLM comment is appended *under* the counts and is forbidden from replacing them. A week with zero Done is reported as sample size 0, not as a clean week.
+
+Posts to the **Chief of Staff** chat thread (and `DISCORD_WEBHOOK_URL_CHIEF`, falling back to product). Same access key as other `/mcp/tools/*` scheduler jobs.
+
+Optional env: `BIGAS_OKR_STALE_DAYS` (default 7), `BIGAS_OKR_PULSE_MODEL`.
+
+```bash
+gcloud scheduler jobs create http bigas-monday-okr-pulse \
+  --location=europe-west1 \
+  --schedule="0 9 * * 1" \
+  --time-zone="Europe/Stockholm" \
+  --uri="https://YOUR-SERVICE-URL.a.run.app/mcp/tools/weekly_okr_pulse" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
+  --message-body='{"days": 7}' \
+  --attempt-deadline=300s
+```
+
+`0 9 * * 1` = Monday 09:00 Europe/Stockholm.
 
 ### Email ingest with Cloud Scheduler
 
