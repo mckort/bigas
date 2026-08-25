@@ -1124,8 +1124,16 @@ export default function ChatLayout({
       metadata: { client_id: clientId, local_files: files },
     }
     setMessages((prev) => [...prev, optimistic])
+    if (!messageText) {
+      setInput('')
+      setPendingFiles([])
+      setAttachError('')
+    }
+    let sendSucceeded = false
+    let result
     try {
-      const result = await sendMessage(threadId, text, clientId, files)
+      result = await sendMessage(threadId, text, clientId, files)
+      sendSucceeded = true
       const res = await fetchMessages(threadId)
       const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res)
       if (next.length) {
@@ -1139,22 +1147,37 @@ export default function ChatLayout({
           result.status !== 'in_progress' && !lastMessageIsInProgress(next) && !res.deploy_poll_active
         if (done) setWaitingForReply(false)
       }
-      if (!messageText) {
-        setInput('')
-        setPendingFiles([])
-        setAttachError('')
-      }
     } catch (err) {
-      setWaitingForReply(false)
-      setMessages((prev) => [
-        ...prev.filter((m) => m.message_id !== optimistic.message_id),
-        {
-          message_id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: `Error: ${err.message}`,
-          created_at: new Date().toISOString(),
-        },
-      ])
+      if (!sendSucceeded) {
+        if (!messageText) {
+          setInput(text)
+          setPendingFiles(files)
+        }
+        setWaitingForReply(false)
+        setMessages((prev) => [
+          ...prev.filter((m) => m.message_id !== optimistic.message_id),
+          {
+            message_id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: `Error: ${err.message}`,
+            created_at: new Date().toISOString(),
+          },
+        ])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            message_id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: `Message sent, but failed to refresh: ${err.message}`,
+            created_at: new Date().toISOString(),
+          },
+        ])
+        if (result?.deploy_poll_active) {
+          setDeployPollActive(true)
+          setWaitingForReply(true)
+        }
+      }
     } finally {
       setSending(false)
     }
