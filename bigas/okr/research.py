@@ -51,7 +51,8 @@ What a KR is not:
 - Metrics from a different project than the one in the evidence pack.
 
 Tasks are not created in this step. After human approval, Design and plan
-creates one Task per KR; the weekly pulse keeps them current.
+reads live status (GA4 and other sources) and opens concrete work items
+toward each KR — not a ticket named after the KR, and not a wiring ticket.
 
 Return JSON only — no markdown fences, no preamble.
 
