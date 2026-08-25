@@ -136,3 +136,31 @@ def test_run_okr_plan_drops_clones_and_wiring(monkeypatch):
     assert result.used_llm
     prompt = captured["messages"][0]["content"].lower()
     assert "turn a kr into a ticket" in prompt
+
+
+def test_run_okr_plan_evidence_failure_returns_fallback(monkeypatch):
+    def _boom(_ticket):
+        raise TimeoutError("GA4 timeout")
+
+    monkeypatch.setattr("bigas.okr.plan.gather_okr_evidence", _boom)
+    ticket = {
+        "title": "10 paying customers before the end of the year",
+        "key": "GPWW-17",
+        "key_results": [
+            {
+                "id": "kr-sess",
+                "title": "Increase website sessions from 43 to 1000",
+                "metric": "sessions",
+                "source": "ga4",
+                "measurable": True,
+                "baseline": 43,
+                "target": 1000,
+                "current": 43,
+            }
+        ],
+    }
+    result = run_okr_plan(ticket, key_results=ticket["key_results"], existing_tasks=[])
+    assert result.tasks == []
+    assert not result.used_llm
+    assert "after sources work" in result.briefing
+    assert "### Plan failed" in result.plan_markdown

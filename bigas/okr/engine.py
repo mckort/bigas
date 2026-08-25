@@ -250,11 +250,17 @@ def handle_objective_status_change(
         briefing = planned.briefing or (
             "Planning did not open new work items. Left in Design and plan so you can retry."
         )
+        description = upsert_plan_section(
+            ticket.get("description") or "",
+            plan_markdown=planned.plan_markdown,
+            brief_fallback=str(ticket.get("title") or key),
+        )
         store.update_ticket(
             ticket_id,
             key_results=key_results,
             okr_phase="plan",
             okr_briefing=briefing,
+            description=description,
         )
         _comment(
             store,

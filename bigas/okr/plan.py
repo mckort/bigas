@@ -298,25 +298,19 @@ def run_okr_plan(
 ) -> OkrPlanResult:
     krs = normalize_key_results(key_results if key_results is not None else ticket.get("key_results"))
     children = list(existing_tasks or [])
-    pack = evidence if evidence is not None else gather_okr_evidence(ticket)
-    heuristic_updates = heuristic_ga4_currents(krs, pack.get("ga4") or "")
     existing_titles = {
         str(t.get("title") or "").strip().lower()
         for t in children
         if is_open_task(t) and not is_mechanical_okr_task(t, krs)
     }
-    briefing_fallback = (
-        f"Could not finish OKR planning for {(pack.get('brand') or 'this brand')}. "
-        "No KR-clone or wiring tickets were created. Re-drag to Design and plan after sources work."
-    )
-    plan_fallback = (
-        "### Plan failed\n\n"
-        "The model did not return concrete work items. Live status was still read from evidence "
-        "where possible. Do not treat Key Results as tasks.\n\n"
-        + format_evidence_pack(pack)
-    )
+    pack: Dict[str, str] = dict(evidence) if evidence is not None else {}
+    heuristic_updates: List[Dict[str, Any]] = []
 
     try:
+        if evidence is None:
+            pack = gather_okr_evidence(ticket)
+        heuristic_updates = heuristic_ga4_currents(krs, pack.get("ga4") or "")
+
         from bigas.llm.factory import get_llm_client
 
         client = llm
@@ -368,6 +362,18 @@ def run_okr_plan(
         )
     except Exception as exc:
         logger.warning("OKR plan LLM failed: %s", exc, exc_info=True)
+        if not heuristic_updates:
+            heuristic_updates = heuristic_ga4_currents(krs, pack.get("ga4") or "")
+        briefing_fallback = (
+            f"Could not finish OKR planning for {(pack.get('brand') or 'this brand')}. "
+            "No KR-clone or wiring tickets were created. Re-drag to Design and plan after sources work."
+        )
+        plan_fallback = (
+            "### Plan failed\n\n"
+            "The model did not return concrete work items. Live status was still read from evidence "
+            "where possible. Do not treat Key Results as tasks.\n\n"
+            + format_evidence_pack(pack)
+        )
         return OkrPlanResult(
             tasks=[],
             plan_markdown=plan_fallback,
