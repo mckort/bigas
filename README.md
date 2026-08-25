@@ -338,9 +338,9 @@ This is the flow that makes Bigas a **goal-oriented engine**: you name what winn
 
 1. Open `/objectives` (or the project board) and write the Objective in plain language.
 2. Drag it to **Research and describe (AI)**. Bigas loads that board's brand, pulls live evidence (GA4, website, repo), and a thinking model **analyzes** it — then proposes 2–4 Key Results as measurable from→to improvements that most help this Objective. No canned metric kit. The card moves to **Description approval (manual)**.
-3. After you approve, drag to **Design and plan (AI)** to create one Task per KR (you can still add or link more). Those cards live on `/board` with everything else. The weekly pulse keeps KR-linked work current.
+3. After you approve, drag to **Design and plan (AI)**. Bigas reads live status (GA4 and other sources), updates KR `current` values, and opens concrete work items toward each KR — not a ticket named after the KR, and not a “wire weekly snapshot” card. The Objective moves to **Design approval (manual)**.
 4. **Open on board** filters the board to that Objective; **Show on board** filters to one KR. You still drag cards. AI columns still research, plan, and implement — they do not auto-start because a KR is off track.
-5. When a KR's number has moved, you update `current`. The dashboard shows on track / at risk / off track against expected pace.
+5. The weekly pulse on **In Progress (AI)** refreshes GA4 currents again. You can still edit `current` by hand. The dashboard shows on track / at risk / off track against expected pace.
 
 Humans decide. Agents execute the work you put in front of them. The Objective is the shared scoreboard.
 

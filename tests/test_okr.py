@@ -97,6 +97,43 @@ def _mock_okr_research(monkeypatch):
     monkeypatch.setattr("bigas.okr.engine.run_okr_research", fake)
 
 
+@pytest.fixture(autouse=True)
+def _mock_okr_plan(monkeypatch):
+    def fake(ticket, *, key_results=None, existing_tasks=None, **kwargs):
+        from bigas.okr.model import normalize_key_results
+        from bigas.okr.plan import OkrPlanResult
+
+        krs = normalize_key_results(key_results if key_results is not None else ticket.get("key_results"))
+        tasks = []
+        for kr in krs:
+            metric = kr.get("metric") or kr.get("title") or "this KR"
+            tasks.append(
+                {
+                    "title": f"Ship a campaign that moves {metric}",
+                    "description": f"Concrete work that should move {kr.get('title')}.",
+                    "kr_id": kr["id"],
+                    "ai_doable": True,
+                }
+            )
+        return OkrPlanResult(
+            tasks=tasks,
+            plan_markdown="Plan grounded in evidence. Open work, do not clone KRs.",
+            briefing="Opened work toward the committed KRs.",
+            current_updates=[{"id": kr["id"], "current": kr.get("current")} for kr in krs],
+            model="test-model",
+            used_llm=True,
+        )
+
+    monkeypatch.setattr("bigas.okr.engine.run_okr_plan", fake)
+    monkeypatch.setattr(
+        "bigas.okr.context.gather_okr_evidence",
+        lambda ticket: {
+            "ga4": "Traffic: sessions 43 (prev 10), users 20 (prev 5), pageviews 27 (prev 8).",
+            "brand": "Test brand",
+        },
+    )
+
+
 @pytest.fixture
 def client():
     app = Flask(__name__)
@@ -229,6 +266,11 @@ def test_design_creates_tasks_linked_to_krs(client):
         data=json.dumps({"status": "Design and plan (AI)"}),
     )
     assert planned.status_code == 200
+    store = get_ticket_store()
+    live = store.get_ticket(ticket["ticket_id"])
+    assert live.get("status") == "Design approval (manual)"
+    assert "AI Plan (Bigas)" in (live.get("description") or "")
+    kr_titles = {(kr.get("title") or "").strip().lower() for kr in live.get("key_results") or []}
     children = [
         t
         for t in client.get(
@@ -238,6 +280,57 @@ def test_design_creates_tasks_linked_to_krs(client):
     ]
     assert children
     assert all(c.get("parent_kr_id") for c in children)
+    assert all((c.get("title") or "").strip().lower() not in kr_titles for c in children)
+    assert all("wire weekly snapshot" not in (c.get("title") or "").lower() for c in children)
+
+
+def test_design_closes_mechanical_kr_clone_tickets(client):
+    board = _project_board(client)
+    created = client.post(
+        f"/api/boards/{board['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps({"title": "10 paying customers", "issue_type": "Objective"}),
+    )
+    ticket = created.get_json()["ticket"]
+    client.put(
+        f"/api/tickets/{ticket['ticket_id']}",
+        headers=_auth_headers(),
+        data=json.dumps({"status": "Research and describe (AI)"}),
+    )
+    store = get_ticket_store()
+    live = store.get_ticket(ticket["ticket_id"])
+    kr = (live.get("key_results") or [])[0]
+    clone = client.post(
+        f"/api/boards/{board['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps(
+            {
+                "title": kr["title"],
+                "parent_key": ticket["key"],
+                "parent_kr_id": kr["id"],
+                "labels": ["okr"],
+            }
+        ),
+    ).get_json()["ticket"]
+    wiring = client.post(
+        f"/api/boards/{board['board_id']}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps(
+            {
+                "title": f"Wire weekly snapshot for {kr.get('metric')}",
+                "parent_key": ticket["key"],
+                "parent_kr_id": kr["id"],
+                "labels": ["okr", "ai-doable"],
+            }
+        ),
+    ).get_json()["ticket"]
+    client.put(
+        f"/api/tickets/{ticket['ticket_id']}",
+        headers=_auth_headers(),
+        data=json.dumps({"status": "Design and plan (AI)"}),
+    )
+    assert store.get_ticket(clone["ticket_id"]).get("status") == "Done"
+    assert store.get_ticket(wiring["ticket_id"]).get("status") == "Done"
 
 
 def test_demo_seed_and_dashboard(client):
