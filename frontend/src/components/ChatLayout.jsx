@@ -1124,6 +1124,11 @@ export default function ChatLayout({
       metadata: { client_id: clientId, local_files: files },
     }
     setMessages((prev) => [...prev, optimistic])
+    if (!messageText) {
+      setInput('')
+      setPendingFiles([])
+      setAttachError('')
+    }
     try {
       const result = await sendMessage(threadId, text, clientId, files)
       const res = await fetchMessages(threadId)
@@ -1139,12 +1144,11 @@ export default function ChatLayout({
           result.status !== 'in_progress' && !lastMessageIsInProgress(next) && !res.deploy_poll_active
         if (done) setWaitingForReply(false)
       }
-      if (!messageText) {
-        setInput('')
-        setPendingFiles([])
-        setAttachError('')
-      }
     } catch (err) {
+      if (!messageText) {
+        setInput(text)
+        setPendingFiles(files)
+      }
       setWaitingForReply(false)
       setMessages((prev) => [
         ...prev.filter((m) => m.message_id !== optimistic.message_id),
