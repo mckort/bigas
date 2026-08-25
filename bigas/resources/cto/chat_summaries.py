@@ -212,23 +212,22 @@ def summarize_followup_result(payload: dict) -> str:
             f"Want me to trigger autofix again?{pr_bit}"
         ).strip()
 
-    if payload.get("fixes_pushed") is False:
+    if payload.get("fixes_pushed") is False and not payload.get("rereviewed"):
         return (
             "Autofix finished without pushing commits. "
             f"Want me to trigger autofix again?{pr_bit}"
         ).strip()
 
     merge_bit = _auto_merge_clause(payload.get("auto_merge"))
+    pushed = payload.get("fixes_pushed") is not False
     if payload.get("ready_to_merge"):
+        if pushed:
+            lead = "Autofix pushed fixes and the re-review looks clean."
+        else:
+            lead = "Autofix did not need new commits; the re-review looks clean."
         if comment_url:
-            return (
-                "Autofix pushed fixes and the re-review looks clean. "
-                f"Ready to merge. Comment: {comment_url}.{merge_bit}"
-            ).rstrip()
-        return (
-            "Autofix pushed fixes and the re-review looks clean. "
-            f"Ready to merge.{merge_bit}{pr_bit}"
-        ).strip()
+            return f"{lead} Ready to merge. Comment: {comment_url}.{merge_bit}".rstrip()
+        return f"{lead} Ready to merge.{merge_bit}{pr_bit}".strip()
 
     if payload.get("loop_protection"):
         count = payload.get("autofix_count") or "?"
@@ -236,6 +235,17 @@ def summarize_followup_result(payload: dict) -> str:
         return (
             f"Still has findings after {count}/{max_n} autofix rounds. "
             f"Needs a manual look.{pr_bit}"
+        ).strip()
+
+    if not pushed:
+        if comment_url:
+            return (
+                "Autofix did not push; re-review still has findings. "
+                f"Stopping the loop. Comment: {comment_url}."
+            )
+        return (
+            "Autofix did not push; re-review still has findings. "
+            f"Stopping the loop.{pr_bit}"
         ).strip()
 
     if comment_url:
