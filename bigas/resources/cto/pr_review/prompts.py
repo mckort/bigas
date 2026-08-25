@@ -23,8 +23,9 @@ If none: write "None."
 Non-blocking nits and optional polish. Keep brief.
 If none: write "None."
 
-End with one short overall verdict sentence. If there are no blockers and no
-important issues, include the phrase "ready to merge".
+End with one short overall verdict sentence.
+- If Blockers and Important are both "None.", include the phrase "ready to merge".
+- If either Blockers or Important has any finding, do NOT write "ready to merge".
 """.strip()
 
 _PROJECT_HELPER_RULES = """
@@ -48,6 +49,11 @@ Dead / unused code (classify as Important, not Minor):
 - Flag unused imports, functions, helpers, files, and replaced call sites that
   this PR introduced or made unused. That includes leftover wrappers after a
   rewrite and code that is no longer reachable from the new path.
+- Only flag a replaced file/asset as unused when the diff itself shows every
+  reference is gone (removed from all changed call sites, and no remaining hits
+  in the same files). If the PR swaps a usage in one file but other files may
+  still reference the old path, do NOT flag it.
+- Do NOT write "delete if unused elsewhere" — that is not a finding.
 - Do NOT hunt the rest of the repository for pre-existing unused code.
 - Do NOT flag public APIs, feature-flagged / intentionally retained code, or
   symbols that are used outside the shown diff (tests, other modules, dynamic
@@ -112,11 +118,15 @@ Guidelines:
 - Do NOT invent new minor nits, style suggestions, or optional TODOs that were not
   in the previous review. Put residual optional polish under Minor only if essential.
 - If previous Blockers/Important are resolved and no new blockers/important remain,
-  say the PR is ready to merge.
+  say the PR is ready to merge. If any Blocker/Important remains, do NOT write
+  "ready to merge".
 - Be specific with file paths. Return only the review text.
 - If a previous blocker was about a missing/wrong helper (e.g. deleteField vs
   FieldValue.delete) and the file imports a project wrapper that provides that
   helper, mark it resolved — do not keep re-reporting it.
+- If a previous unused-file/asset finding remains but the file is still referenced
+  (including outside this diff) or the autofix explained it is still used, mark it
+  resolved — do not keep it as Important.
 
 {_PROJECT_HELPER_RULES}
 

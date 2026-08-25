@@ -174,6 +174,17 @@ def test_pr_review_prompts_classify_dead_code_as_important():
     assert "leftover dead/unused code" in PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
     assert "unused code this PR introduced or made unused" in PR_REVIEW_SYSTEM_PROMPT
 
+
+def test_pr_review_prompts_forbid_ready_to_merge_with_findings():
+    from bigas.resources.cto.pr_review.prompts import (
+        PR_REVIEW_INITIAL_SYSTEM_PROMPT,
+        PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT,
+    )
+
+    for text in (PR_REVIEW_INITIAL_SYSTEM_PROMPT, PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT):
+        assert 'do NOT write "ready to merge"' in text
+        assert "delete if unused elsewhere" in text
+
 def test_autofix_looks_like_confirmation_stop():
     assert autofix_looks_like_confirmation_stop(
         "Proposed changes...\n\nShall I proceed with implementing these?"

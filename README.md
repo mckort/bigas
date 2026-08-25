@@ -412,10 +412,10 @@ Copy [.github/workflows/pr-review.yml](.github/workflows/pr-review.yml) into the
 
 1. **Review** — `review_and_comment_pr` reads the PR diff, posts or updates a **single** GitHub comment (marker-based, so re-runs do not spam), and notifies `bigas-cto` on Discord.
 2. **Clean review** — if there are no Blockers/Important, Discord says **ready to merge**. Optional: `BIGAS_CTO_AUTO_MERGE=true` squash-merges (or enables GitHub auto-merge if checks are still pending). When the PR is merged (auto-merge or someone else merges), the linked card moves to **Final approval (manual)**.
-3. **Autofix (optional)** — set repo variable `BIGAS_AUTO_FIX=true`. If the review has Blockers/Important, `autofix_pr` launches a Cursor cloud agent on the same branch; Actions polls `autofix_followup` until the agent finishes, then Bigas re-reviews. Up to five `[bigas-autofix]` rounds; after that Discord/Jira ask you to handle it manually.
+3. **Autofix (optional)** — set repo variable `BIGAS_AUTO_FIX=true`. If the review has Blockers/Important, `autofix_pr` launches a Cursor cloud agent on the same branch; Actions polls `autofix_followup` until the agent finishes, then Bigas re-reviews (including when the agent finishes without a new commit, so stale findings can be dismissed). Up to five `[bigas-autofix]` rounds; after that Discord/Jira ask you to handle it manually.
 4. **No duplicate cycles** — autofix commits use `[bigas-autofix]` in the subject, so the workflow **skips** those pushes. Re-review stays with the in-flight job instead of starting a second review.
 
-Nits-only / LGTM reviews do not launch autofix. Post-autofix reviews verify the previous Bigas comment instead of inventing a fresh nit list. Dead/unused code introduced or left unused by the PR is classified as **Important** (so it is fixed before merge), not Minor.
+Nits-only / LGTM reviews do not launch autofix. Post-autofix reviews verify the previous Bigas comment instead of inventing a fresh nit list. Dead/unused code introduced or left unused by the PR is classified as **Important** (so it is fixed before merge), not Minor — but only when the diff itself shows it is unused.
 
 Setup, request bodies, and model/token knobs: **[docs/cto-pr-review.md](docs/cto-pr-review.md)**. Loop, cooldown, guards, and auto-merge: **[docs/cto-autofix.md](docs/cto-autofix.md)**. Cost rollups: **[docs/cto-ai-usage.md](docs/cto-ai-usage.md)**.
 

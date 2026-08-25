@@ -399,7 +399,10 @@ jobs:
                   print("Loop protection after re-review; done.")
                   break
               if not final.get("fixes_pushed", True):
-                  print("No fixes pushed this round; stopping loop.")
+                  if final.get("rereviewed"):
+                      print("No new commits; re-review already ran. Stopping loop.")
+                  else:
+                      print("No fixes pushed this round; stopping loop.")
                   break
               # Otherwise continue — Bigas updated the review comment; next autofix_pr
               # will use it if under the commit-count limit.
