@@ -73,6 +73,65 @@ def _as_plain(value: Any) -> Any:
         return str(value)
 
 
+_GEMINI_SCHEMA_KEEP = frozenset(
+    {"type", "description", "properties", "required", "enum", "items"}
+)
+
+
+def is_malformed_function_call(value: Any) -> bool:
+    """True when Gemini failed to emit a valid function call (SDK or finish_reason)."""
+    text = str(value or "")
+    return "MALFORMED_FUNCTION_CALL" in text.upper()
+
+
+def _gemini_safe_schema(params: Any) -> Dict[str, Any]:
+    """Strip JSON Schema keywords Gemini function calling cannot parse."""
+    if not isinstance(params, dict):
+        return {"type": "object", "properties": {}}
+    if "$ref" in params:
+        return {"type": "object", "properties": {}}
+    if "properties" not in params:
+        for alt_key in ("anyOf", "oneOf", "allOf"):
+            alts = params.get(alt_key)
+            if isinstance(alts, list):
+                for alt in alts:
+                    if isinstance(alt, dict) and (alt.get("type") == "object" or "properties" in alt):
+                        return _gemini_safe_schema(alt)
+                if alts and isinstance(alts[0], dict):
+                    return _gemini_safe_schema(alts[0])
+    out: Dict[str, Any] = {}
+    raw_type = params.get("type")
+    if isinstance(raw_type, list):
+        non_null = [t for t in raw_type if t != "null"]
+        raw_type = non_null[0] if non_null else "string"
+    if isinstance(raw_type, str) and raw_type:
+        out["type"] = raw_type
+    elif "properties" in params:
+        out["type"] = "object"
+    desc = params.get("description")
+    if isinstance(desc, str) and desc.strip():
+        out["description"] = desc.strip()[:1024]
+    if "enum" in params and isinstance(params["enum"], list):
+        out["enum"] = params["enum"]
+    if isinstance(params.get("properties"), dict):
+        out["type"] = out.get("type") or "object"
+        out["properties"] = {
+            str(key): _gemini_safe_schema(value)
+            for key, value in params["properties"].items()
+        }
+    if isinstance(params.get("required"), list):
+        names = [str(n) for n in params["required"] if n]
+        if names:
+            out["required"] = names
+    items = params.get("items")
+    if isinstance(items, dict):
+        out["type"] = out.get("type") or "array"
+        out["items"] = _gemini_safe_schema(items)
+    if not out:
+        return {"type": "object", "properties": {}}
+    return {k: v for k, v in out.items() if k in _GEMINI_SCHEMA_KEEP or k == "enum"}
+
+
 def _openai_tools_to_gemini_decls(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     decls: List[Dict[str, Any]] = []
     for tool in tools or []:
@@ -87,7 +146,7 @@ def _openai_tools_to_gemini_decls(tools: Optional[List[Dict[str, Any]]]) -> List
             {
                 "name": name,
                 "description": str((fn or {}).get("description") or "")[:1024],
-                "parameters": params,
+                "parameters": _gemini_safe_schema(params),
             }
         )
     return decls
@@ -166,16 +225,22 @@ def _send_payload(content: Dict[str, Any]) -> Any:
 
 
 def _part_function_call(part: Any) -> Optional[Any]:
-    if isinstance(part, dict):
-        return part.get("function_call")
-    return getattr(part, "function_call", None)
+    try:
+        if isinstance(part, dict):
+            return part.get("function_call")
+        return getattr(part, "function_call", None)
+    except Exception:
+        return None
 
 
 def _part_text(part: Any) -> Optional[str]:
-    if isinstance(part, dict):
-        text = part.get("text")
-    else:
-        text = getattr(part, "text", None)
+    try:
+        if isinstance(part, dict):
+            text = part.get("text")
+        else:
+            text = getattr(part, "text", None)
+    except Exception:
+        return None
     if isinstance(text, str) and text.strip():
         return text.strip()
     return None
@@ -316,7 +381,10 @@ class GeminiLLMClient(LLMClient):
 
         try:
             response = _call(model, gen_cfg)
-        except Exception:
+        except Exception as exc:
+            if is_malformed_function_call(exc):
+                logger.warning("Gemini returned MALFORMED_FUNCTION_CALL; treating as empty turn.")
+                return LLMCompletion(text="", finish_reason="MALFORMED_FUNCTION_CALL")
             # Retry once without thinking_config if the SDK/model rejects it.
             if "thinking_config" in (generation_config or {}):
                 logger.warning(
@@ -327,31 +395,60 @@ class GeminiLLMClient(LLMClient):
                 gen_cfg = generation_config if generation_config else None
                 try:
                     response = _call(model, gen_cfg)
-                except Exception:
+                except Exception as retry_exc:
+                    if is_malformed_function_call(retry_exc):
+                        logger.warning(
+                            "Gemini returned MALFORMED_FUNCTION_CALL; treating as empty turn."
+                        )
+                        return LLMCompletion(text="", finish_reason="MALFORMED_FUNCTION_CALL")
                     logger.error("Gemini API call failed in complete_detailed()", exc_info=True)
                     raise
             else:
                 logger.error("Gemini API call failed in complete_detailed()", exc_info=True)
                 raise
 
-        usage = _usage_from_gemini_response(response)
-        candidates = getattr(response, "candidates", None) or []
-        if not candidates:
-            return LLMCompletion(text="", finish_reason=None, usage=usage)
-        candidate = candidates[0]
-        finish_reason = _finish_reason_str(getattr(candidate, "finish_reason", None))
+        try:
+            usage = _usage_from_gemini_response(response)
+        except Exception:
+            usage = TokenUsage()
+        try:
+            candidates = getattr(response, "candidates", None) or []
+            if not candidates:
+                return LLMCompletion(text="", finish_reason=None, usage=usage)
+            candidate = candidates[0]
+            finish_reason = _finish_reason_str(getattr(candidate, "finish_reason", None))
+            if is_malformed_function_call(finish_reason):
+                logger.warning(
+                    "Gemini finish_reason=MALFORMED_FUNCTION_CALL; treating as empty turn."
+                )
+                return LLMCompletion(
+                    text="",
+                    finish_reason="MALFORMED_FUNCTION_CALL",
+                    usage=usage,
+                )
 
-        content = getattr(candidate, "content", None)
-        parts = getattr(content, "parts", None) if content else None or []
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None) if content else None or []
 
-        text, tool_calls = tool_calls_from_gemini_parts(parts)
-        if text or tool_calls:
-            return LLMCompletion(
-                text=text,
-                finish_reason=finish_reason,
-                usage=usage,
-                tool_calls=tool_calls,
-            )
+            text, tool_calls = tool_calls_from_gemini_parts(parts)
+            if text or tool_calls:
+                return LLMCompletion(
+                    text=text,
+                    finish_reason=finish_reason,
+                    usage=usage,
+                    tool_calls=tool_calls,
+                )
+        except Exception as exc:
+            if is_malformed_function_call(exc) or is_malformed_function_call(finish_reason if "finish_reason" in locals() else ""):
+                logger.warning(
+                    "Gemini MALFORMED_FUNCTION_CALL while reading candidate; treating as empty turn."
+                )
+                return LLMCompletion(
+                    text="",
+                    finish_reason="MALFORMED_FUNCTION_CALL",
+                    usage=usage,
+                )
+            raise
 
         # Fallback: do NOT use response.text / candidate.text — those SDK "quick
         # accessors" raise ValueError when no valid Part exists (e.g. MAX_TOKENS
