@@ -74,6 +74,7 @@ AGENT_TOOL_PREFIXES = {
         "progress_updates",
         "generate_weekly_x",
         "jira_status",
+        "weekly_okr",
     ),
     "cto": (
         "review_and_comment",
@@ -557,7 +558,12 @@ def _catalog_prompt() -> str:
         return ""
 
 
-def _agent_system_prompt(agent_config: Dict[str, Any], extra: str = "") -> str:
+def _agent_system_prompt(
+    agent_config: Dict[str, Any],
+    extra: str = "",
+    *,
+    user_id: Optional[str] = None,
+) -> str:
     parts = [
         agent_config.get("system_prompt_goals") or "",
         _catalog_prompt(),
@@ -567,6 +573,13 @@ def _agent_system_prompt(agent_config: Dict[str, Any], extra: str = "") -> str:
         parts.append(JIRA_FORMATTING_RULES)
     parts.append(COWORKER_RULES)
     parts.append(extra)
+    if agent_id:
+        try:
+            from bigas.okr.priming import okr_priming_block_for_agent
+
+            parts.append(okr_priming_block_for_agent(agent_id, user_id=user_id))
+        except Exception:
+            logger.exception("OKR priming skipped for %s", agent_id)
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
@@ -639,6 +652,8 @@ def _select_tool_via_llm(
     user_message: str,
     tools: List[Dict[str, Any]],
     history: List[Dict[str, str]],
+    *,
+    user_id: Optional[str] = None,
 ) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
     """Returns (response_text, tool_name, tool_args) — tool fields set if a tool should run."""
     llm, _model = get_llm_client(feature="chat")
@@ -649,7 +664,7 @@ def _select_tool_via_llm(
         if agent_id == "chief"
         else _specialist_json_extra(tool_summary)
     )
-    system = _agent_system_prompt(agent_config, extra)
+    system = _agent_system_prompt(agent_config, extra, user_id=user_id)
     messages = [{"role": "system", "content": system}]
     messages.extend(history[-10:])
     messages.append({"role": "user", "content": user_message})
@@ -710,6 +725,7 @@ def _run_json_agent_loop(
     history: Optional[List[Dict[str, str]]],
     run_tool,
     fallback_complete=None,
+    user_id: Optional[str] = None,
 ) -> str:
     """Think → tool → observe → answer. User sees only the final answer."""
     observations: List[str] = []
@@ -727,7 +743,7 @@ def _run_json_agent_loop(
                 + "\n\n".join(observations)
             )
         text, tool_name, tool_args = _select_tool_via_llm(
-            agent_id, agent_config, prompt_message, tools, history
+            agent_id, agent_config, prompt_message, tools, history, user_id=user_id
         )
         if tool_name and _is_terminal_handoff(tool_name):
             return run_tool(tool_name, tool_args or {}) or (text or "").strip() or "Done."
@@ -755,6 +771,7 @@ def _run_json_agent_loop(
             ),
             tools,
             history,
+            user_id=user_id,
         )
         if (text or "").strip():
             return text.strip()
@@ -842,11 +859,12 @@ def _run_agent_with_tools(
     run_tool,
     extra_openai_tools: Optional[List[Dict[str, Any]]] = None,
     fallback_complete=None,
+    user_id: Optional[str] = None,
 ) -> str:
     """Native tool loop first; JSON action loop if the provider rejects tools."""
     llm, _model = get_llm_client(feature="chat")
     extra = _chief_native_extra() if agent_id == "chief" else _specialist_native_extra()
-    system = _agent_system_prompt(agent_config, extra)
+    system = _agent_system_prompt(agent_config, extra, user_id=user_id)
     messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
     messages.extend((history or [])[-10:])
     messages.append({"role": "user", "content": user_message})
@@ -864,6 +882,7 @@ def _run_agent_with_tools(
             history=history,
             run_tool=run_tool,
             fallback_complete=fallback_complete,
+            user_id=user_id,
         )
     except Exception as exc:
         from bigas.llm.gemini_client import is_malformed_function_call
@@ -1010,7 +1029,7 @@ def run_specialist_task(
 
         def _fallback_complete() -> str:
             llm, _ = get_llm_client(feature="chat")
-            system = _agent_system_prompt(agent_config)
+            system = _agent_system_prompt(agent_config, user_id=chat_user_id)
             return llm.complete(
                 [
                     {"role": "system", "content": system},
@@ -1027,6 +1046,7 @@ def run_specialist_task(
             history=[],
             run_tool=_run_specialist_tool,
             fallback_complete=_fallback_complete,
+            user_id=chat_user_id,
         )
         if result_threads:
             _add_message_to_threads(
@@ -1143,6 +1163,7 @@ def handle_chat_message(
             tools=callable_tools,
             history=history,
             extra_openai_tools=list(DELEGATE_TOOL_DEFS),
+            user_id=user_id,
             run_tool=lambda name, args: _dispatch_chief_tool(
                 name,
                 args,
@@ -1189,6 +1210,7 @@ def handle_chat_message(
         user_message=llm_user_message,
         tools=tools,
         history=history,
+        user_id=user_id,
         run_tool=lambda name, args: _run_tool_call(
             client,
             name,

@@ -105,6 +105,8 @@ def serialize_objective(
             "url": ticket_url(child.get("key") or ""),
             "parent_kr_id": kr_id or None,
             "ai_doable": "ai-doable" in resolve_ticket_labels(child),
+            "done_at": child.get("done_at") or "",
+            "updated_at": child.get("updated_at") or "",
         }
         if kr_id:
             by_kr[kr_id].append(summary)
