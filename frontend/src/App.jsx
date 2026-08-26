@@ -4,6 +4,7 @@ import ChatLayout from './components/ChatLayout'
 import BoardLayout from './components/BoardLayout'
 import ObjectivesLayout from './components/ObjectivesLayout'
 import AgentSettings from './components/AgentSettings'
+import MobileNav from './components/MobileNav'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 
@@ -124,6 +125,7 @@ export default function App() {
           agentsRefreshKey={agentsRefreshKey}
         />
       )}
+      <MobileNav activeView={view} onSwitchView={switchView} />
       <AgentSettings
         open={settingsOpen}
         onClose={handleSettingsClose}

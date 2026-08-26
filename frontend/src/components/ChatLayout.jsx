@@ -1189,7 +1189,7 @@ export default function ChatLayout({
   }
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row overflow-hidden bg-bg">
+    <div className="h-screen-safe flex flex-col lg:flex-row overflow-hidden bg-bg mobile-nav-offset">
       <AgentSidebar
         agents={agents}
         activeAgentId={activeAgentId}
@@ -1239,24 +1239,6 @@ export default function ChatLayout({
           >
             Activity
           </button>
-          {onSwitchView && (
-            <>
-              <button
-                type="button"
-                onClick={() => onSwitchView('board')}
-                className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors hidden sm:block"
-              >
-                Board
-              </button>
-              <button
-                type="button"
-                onClick={() => onSwitchView('objectives')}
-                className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors hidden sm:block"
-              >
-                Objectives
-              </button>
-            </>
-          )}
           <button
             type="button"
             onClick={handleLogout}
@@ -1306,7 +1288,7 @@ export default function ChatLayout({
           </div>
         </div>
 
-        <div className="border-t border-border bg-white/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
+        <div className="composer-anchor border-t border-border bg-white/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
           <form
             onSubmit={handleSend}
             className="max-w-3xl mx-auto"

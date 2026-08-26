@@ -1574,7 +1574,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row overflow-hidden bg-bg">
+    <div className="h-screen-safe flex flex-col lg:flex-row overflow-hidden bg-bg mobile-nav-offset">
       <BoardSidebar
         boards={boards}
         activeBoardId={activeBoardId}
@@ -1627,20 +1627,6 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           )}
           <button
             type="button"
-            onClick={() => onSwitchView('objectives')}
-            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden sm:block"
-          >
-            Objectives
-          </button>
-          <button
-            type="button"
-            onClick={() => onSwitchView('chat')}
-            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden sm:block"
-          >
-            Chat
-          </button>
-          <button
-            type="button"
             onClick={() => openCreate(columns[0])}
             className="bg-bigas-blue text-bigas-black font-medium px-3 py-2 rounded-xl min-h-[44px] text-sm"
           >
@@ -1651,17 +1637,20 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           </button>
         </header>
 
-        {/* Mobile: stacked columns */}
-        <div className="flex-1 overflow-y-auto lg:hidden p-3 space-y-4">
+        {/* Mobile: horizontal snap-scroll kanban */}
+        <div className="flex-1 overflow-x-auto overflow-y-hidden lg:hidden snap-x-mandatory scrollbar-hide flex gap-3 p-3">
           {columns.map((col) => {
             const colTickets = visibleTickets.filter((t) => t.status === col)
             return (
-              <section key={col} className="border border-border rounded-xl bg-surface/50">
-                <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between">
+              <section
+                key={col}
+                className="flex-shrink-0 w-[85vw] max-w-sm snap-start flex flex-col bg-surface/60 rounded-xl border border-border max-h-full"
+              >
+                <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between flex-shrink-0">
                   <span className="truncate">{col}</span>
                   <span className="text-muted font-normal">{colTickets.length}</span>
                 </h3>
-                <div className="p-2 space-y-2">
+                <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
                   {colTickets.map((ticket) => (
                     <TicketCard
                       key={ticket.ticket_id}

@@ -496,7 +496,7 @@ Cursor IDE: `~/.cursor/mcp.json` with `"type": "http"` and the access header. Gr
 
 ## Chat web interface
 
-Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend is built). The interface uses the Bigas logo palette (white, `#73cdfb` blue, and black). Log in, chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, and **DevOps** specialists — each with their own icon.
+Bigas includes a **clean, brand-aligned web chat UI** at `/` (when the frontend is built). The interface uses the Bigas logo palette (white, `#73cdfb` blue, and black). Log in, chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, and **DevOps** specialists — each with their own icon. The UI is **mobile-responsive** (phones and small tablets): use the bottom tab bar to switch between Chat, Board, and Objectives. On iOS/Android you can **Add to Home Screen** (PWA) for a standalone app experience.
 
 | Feature | Description |
 |---|---|

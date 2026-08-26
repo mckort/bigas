@@ -362,21 +362,21 @@ function ObjectiveCard({ objective, onOpenKr, onOpenBoard, onDiscuss, onDelete }
         <button
           type="button"
           onClick={() => onOpenBoard(objective)}
-          className="text-xs px-3 py-2 rounded-lg border border-border min-h-[36px] bg-white"
+          className="text-xs px-3 py-2 rounded-lg border border-border min-h-[44px] bg-white"
         >
           Open on board
         </button>
         <button
           type="button"
           onClick={() => onDiscuss(objective)}
-          className="text-xs px-3 py-2 rounded-lg border border-border min-h-[36px] bg-white"
+          className="text-xs px-3 py-2 rounded-lg border border-border min-h-[44px] bg-white"
         >
           Discuss with Chief of Staff
         </button>
         <button
           type="button"
           onClick={() => onDelete(objective)}
-          className="text-xs px-3 py-2 rounded-lg border border-red-200 text-red-700 min-h-[36px] bg-white ml-auto"
+          className="text-xs px-3 py-2 rounded-lg border border-red-200 text-red-700 min-h-[44px] bg-white ml-auto"
         >
           Delete
         </button>
@@ -460,7 +460,7 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
   const objectives = data?.objectives || []
 
   return (
-    <div className="min-h-screen bg-bg text-text flex flex-col">
+    <div className="min-h-screen-safe bg-bg text-text flex flex-col mobile-nav-offset">
       <header className="sticky top-0 z-10 bg-bg/90 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center gap-2">
         <SettingsButton onClick={onOpenSettings} />
         <div className="flex-1 min-w-0">
@@ -469,15 +469,8 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
         </div>
         <button
           type="button"
-          onClick={() => onSwitchView('chat')}
-          className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden sm:block"
-        >
-          Chat
-        </button>
-        <button
-          type="button"
           onClick={() => onSwitchView('board')}
-          className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px]"
+          className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
         >
           Board
         </button>
@@ -549,7 +542,7 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
           )}
 
           {objectives.length > 0 && (
-            <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(20rem,1fr))]">
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
               {objectives.map((objective) => (
                 <ObjectiveCard
                   key={objective.key}
