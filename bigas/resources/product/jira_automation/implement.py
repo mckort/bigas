@@ -42,6 +42,14 @@ from bigas.resources.product.jira_automation.prompts import (
 
 logger = logging.getLogger(__name__)
 
+_GITHUB_API_VERSION = "2022-11-28"
+_PULL_NEW_RE = re.compile(
+    r"https?://github\.com/[^/\s]+/[^/\s]+/pull/new/([^\s?#]+)",
+    re.I,
+)
+_SKIP_PR_FALLBACK_STATUSES = frozenset({"CANCELLED", "EXPIRED"})
+_GITHUB_PR_TITLE_MAX = 256
+
 
 class ImplementHandlerError(RuntimeError):
     pass
@@ -83,6 +91,14 @@ def _monitor_interval_seconds() -> int:
 # Backward-compatible alias (product workstream).
 build_implement_prompt = build_implement_prompt_product
 
+def _github_headers(token: str) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": _GITHUB_API_VERSION,
+    }
+
+
 def lookup_pr_for_branch(*, repo: str, branch_name: str) -> tuple[str, str]:
     """Return (html_url, title) for an open PR on branch, or ("", "")."""
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
@@ -93,11 +109,7 @@ def lookup_pr_for_branch(*, repo: str, branch_name: str) -> tuple[str, str]:
     try:
         resp = requests.get(
             f"https://api.github.com/repos/{owner}/{name}/pulls",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
+            headers=_github_headers(token),
             params={"state": "open", "head": f"{owner}:{branch}", "per_page": 5},
             timeout=30,
         )
@@ -117,6 +129,148 @@ def lookup_pr_url_for_branch(*, repo: str, branch_name: str) -> str:
     """Return open PR URL for branch if found via GitHub API."""
     url, _title = lookup_pr_for_branch(repo=repo, branch_name=branch_name)
     return url
+
+
+def branch_from_implement_status(status: Dict[str, Any]) -> str:
+    """Branch Cursor pushed, including pull/new URLs when autoCreatePR fails."""
+    branch = (status.get("branch_name") or "").strip().rstrip("/")
+    if branch:
+        return branch
+    blob = " ".join(
+        str(status.get(key) or "")
+        for key in ("result_text", "detail")
+    )
+    match = _PULL_NEW_RE.search(blob)
+    if not match:
+        return ""
+    return match.group(1).strip().rstrip("/").rstrip(").,")
+
+
+def implement_pr_title(*, issue_key: str, summary: str) -> str:
+    key = (issue_key or "").strip() or "Ticket"
+    text = (summary or "").strip() or "Implementation"
+    title = f"{key}: {text}"
+    return title[:_GITHUB_PR_TITLE_MAX].rstrip()
+
+
+def open_pr_from_branch(
+    *,
+    repo: str,
+    head_branch: str,
+    base_branch: str,
+    title: str,
+    body: str,
+) -> tuple[str, str, str]:
+    """Open a PR from an existing branch. Return (html_url, title, error)."""
+    token = (os.environ.get("GITHUB_TOKEN") or "").strip()
+    branch = (head_branch or "").strip()
+    base = (base_branch or "main").strip() or "main"
+    if not token:
+        return "", "", "GITHUB_TOKEN is required to open the PR"
+    if not branch or "/" not in repo:
+        return "", "", "repo and head branch are required"
+    owner, name = repo.split("/", 1)
+    try:
+        resp = requests.post(
+            f"https://api.github.com/repos/{owner}/{name}/pulls",
+            headers=_github_headers(token),
+            json={
+                "title": (title or "").strip() or branch,
+                "body": (body or "").strip(),
+                "head": branch,
+                "base": base,
+                "draft": False,
+            },
+            timeout=60,
+        )
+    except requests.RequestException as e:
+        logger.warning("GitHub PR create failed for %s@%s", repo, branch, exc_info=True)
+        return "", "", str(e)
+    if resp.status_code in (401, 403):
+        return "", "", f"GitHub auth failed ({resp.status_code}): {(resp.text or '')[:200]}"
+    if resp.status_code == 422:
+        existing_url, existing_title = lookup_pr_for_branch(
+            repo=repo, branch_name=branch
+        )
+        if existing_url:
+            return existing_url, existing_title or title, ""
+        return "", "", f"Pull request rejected: {(resp.text or '')[:300]}"
+    if resp.status_code >= 400:
+        return "", "", f"GitHub PR create error {resp.status_code}: {(resp.text or '')[:300]}"
+    data = resp.json() if resp.text else {}
+    if not isinstance(data, dict):
+        return "", "", "GitHub PR create returned unexpected payload"
+    url = (data.get("html_url") or "").strip()
+    pr_title = (data.get("title") or title or "").strip()
+    if not url:
+        return "", "", "GitHub PR create returned no html_url"
+    return url, pr_title, ""
+
+
+def ensure_implement_pr(
+    outcome: Dict[str, Any],
+    *,
+    repo: str,
+    base_branch: str,
+    issue_key: str,
+    summary: str,
+    agent_url: str = "",
+) -> Dict[str, Any]:
+    """
+    If Cursor finished with a branch but no PR, open one with GITHUB_TOKEN.
+
+    Cursor autoCreatePR often fails with repository permissions even after the
+    branch is pushed. Bigas then creates the PR so the board flow can continue.
+    """
+    if (outcome.get("pr_url") or "").strip():
+        return outcome
+    status = (outcome.get("status") or "").strip().upper()
+    if status in _SKIP_PR_FALLBACK_STATUSES:
+        return outcome
+    branch = (outcome.get("branch_name") or "").strip()
+    if not branch:
+        return outcome
+
+    existing_url, existing_title = lookup_pr_for_branch(repo=repo, branch_name=branch)
+    if existing_url:
+        updated = dict(outcome)
+        updated["kind"] = "pr_opened"
+        updated["pr_url"] = existing_url
+        updated["pr_title"] = existing_title or updated.get("pr_title") or ""
+        updated["detail"] = ""
+        return updated
+
+    title = implement_pr_title(issue_key=issue_key, summary=summary)
+    agent = (agent_url or outcome.get("agent_url") or "").strip()
+    body_lines = [
+        f"Jira: {issue_key}",
+        "",
+        (summary or "").strip(),
+        "",
+        "Opened by Bigas after Cursor autoCreatePR failed (repository permissions).",
+    ]
+    if agent:
+        body_lines.extend(["", f"Agent: {agent}"])
+    url, pr_title, error = open_pr_from_branch(
+        repo=repo,
+        head_branch=branch,
+        base_branch=base_branch,
+        title=title,
+        body="\n".join(body_lines).strip() + "\n",
+    )
+    if url:
+        updated = dict(outcome)
+        updated["kind"] = "pr_opened"
+        updated["pr_url"] = url
+        updated["pr_title"] = pr_title or title
+        updated["pr_opened_by"] = "bigas"
+        updated["detail"] = ""
+        return updated
+
+    extra = f" Bigas could not open a PR from `{branch}`: {error or 'unknown error'}."
+    updated = dict(outcome)
+    updated["detail"] = ((outcome.get("detail") or "").rstrip() + extra).strip()
+    return updated
 
 
 def _has_text(value: str) -> bool:
@@ -152,11 +306,7 @@ def _github_pr_title(pr_url: str) -> str:
     try:
         resp = requests.get(
             f"https://api.github.com/repos/{owner}/{name}/pulls/{number}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
+            headers=_github_headers(token),
             timeout=30,
         )
         if resp.status_code >= 400:
@@ -180,7 +330,7 @@ def evaluate_implementation_outcome(status: Dict[str, Any], *, repo: str) -> Dic
     agent_url = (status.get("agent_url") or "").strip()
     pr_url = (status.get("pr_url") or "").strip()
     pr_title = (status.get("pr_title") or "").strip()
-    branch = (status.get("branch_name") or "").strip()
+    branch = branch_from_implement_status(status)
     if not pr_url and branch:
         pr_url, looked_title = lookup_pr_for_branch(repo=repo, branch_name=branch)
         pr_title = pr_title or looked_title
@@ -357,6 +507,10 @@ class ImplementHandler:
                 agent_id=agent_id,
                 run_id=run_id,
                 repo=repo,
+                base_branch=base_branch,
+                issue_key=issue_key,
+                summary=summary,
+                agent_url=agent_url,
                 timeout_seconds=_sync_wait_seconds(),
             )
             if outcome:
@@ -373,6 +527,7 @@ class ImplementHandler:
                     issue_key=issue_key,
                     summary=summary,
                     repo=repo,
+                    base_branch=base_branch,
                     agent_id=agent_id,
                     run_id=run_id,
                     agent_url=agent_url,
@@ -405,6 +560,7 @@ class ImplementHandler:
         issue_key: str,
         summary: str,
         repo: str,
+        base_branch: str,
         agent_id: str,
         run_id: str,
         agent_url: str,
@@ -415,6 +571,7 @@ class ImplementHandler:
                 "issue_key": issue_key,
                 "summary": summary,
                 "repo": repo,
+                "base_branch": base_branch,
                 "agent_id": agent_id,
                 "run_id": run_id,
                 "agent_url": agent_url,
@@ -430,6 +587,10 @@ class ImplementHandler:
         agent_id: str,
         run_id: str,
         repo: str,
+        base_branch: str,
+        issue_key: str,
+        summary: str,
+        agent_url: str,
         timeout_seconds: int,
     ) -> Optional[Dict[str, Any]]:
         if timeout_seconds <= 0:
@@ -450,7 +611,15 @@ class ImplementHandler:
                 time.sleep(interval)
                 continue
             if status.get("done"):
-                return evaluate_implementation_outcome(status, repo=repo)
+                outcome = evaluate_implementation_outcome(status, repo=repo)
+                return ensure_implement_pr(
+                    outcome,
+                    repo=repo,
+                    base_branch=base_branch,
+                    issue_key=issue_key,
+                    summary=summary,
+                    agent_url=agent_url or (status.get("agent_url") or ""),
+                )
             time.sleep(interval)
         return None
 
@@ -460,6 +629,7 @@ class ImplementHandler:
         issue_key: str,
         summary: str,
         repo: str,
+        base_branch: str,
         agent_id: str,
         run_id: str,
         agent_url: str,
@@ -470,6 +640,10 @@ class ImplementHandler:
             agent_id=agent_id,
             run_id=run_id,
             repo=repo,
+            base_branch=base_branch,
+            issue_key=issue_key,
+            summary=summary,
+            agent_url=agent_url,
             timeout_seconds=remaining,
         )
         label = issue_discord_label(issue_key, summary)
@@ -521,8 +695,18 @@ class ImplementHandler:
         st = outcome.get("status") or ""
 
         if kind == "pr_opened":
+            opened_by = (outcome.get("pr_opened_by") or "").strip()
+            if opened_by == "bigas":
+                intro = (
+                    "Cursor could not auto-create the PR; Bigas opened one from "
+                    f"`{outcome.get('branch_name') or 'branch'}`."
+                )
+                discord_title = "**Implementation PR opened (Bigas fallback)**"
+            else:
+                intro = "Implementation agent opened a PR."
+                discord_title = "**Implementation PR opened**"
             comment = (
-                f"{BIGAS_COMMENT_MARKER} Implementation agent opened a PR.\n"
+                f"{BIGAS_COMMENT_MARKER} {intro}\n"
                 f"PR: {pr_url}\n"
                 f"Agent: {agent_url or agent_id}\n"
                 f"Left in In Progress (AI) until the PR is merged."
@@ -534,7 +718,7 @@ class ImplementHandler:
                     "Failed to write PR-opened comment on %s", issue_key, exc_info=True
                 )
             _post_discord_cto(
-                f"**Implementation PR opened** {label}\n"
+                f"{discord_title} {label}\n"
                 f"{format_pr_discord_line(pr_url, outcome.get('pr_title') or '')}\n"
                 f"Agent: {agent_url or agent_id}"
             )
