@@ -53,7 +53,7 @@ In the product repo (Actions variables/secrets):
 | `BIGAS_API_KEY` | secret | Bigas access key |
 | `BIGAS_AUTO_FIX` | variable | `true` to enable autofix step |
 
-Copy the latest [pr-review.yml](../.github/workflows/pr-review.yml) so it includes the autofix loop.
+Copy the latest [caller](./pr-review.caller.yml) so the product repo tracks [pr-review.yml](../.github/workflows/pr-review.yml) (review, autofix, `notify_merged`).
 
 ## API
 
