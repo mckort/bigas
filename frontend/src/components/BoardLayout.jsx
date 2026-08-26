@@ -1139,7 +1139,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
   )
 }
 
-function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mobileOpen, onClose }) {
+function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, onLogout, mobileOpen, onClose }) {
   const [newName, setNewName] = useState('')
   const [newProject, setNewProject] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -1200,7 +1200,7 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
             )
           })}
         </nav>
-        <div className="p-3 border-t border-border">
+        <div className="p-3 border-t border-border space-y-2">
           {showCreate ? (
             <div className="space-y-2">
               <input
@@ -1237,6 +1237,13 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
               + New board
             </button>
           )}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="lg:hidden w-full text-sm text-muted py-2 rounded-xl border border-border hover:bg-white min-h-[44px]"
+          >
+            Log out
+          </button>
         </div>
       </aside>
     </>
@@ -1581,6 +1588,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         onSelect={setActiveBoardId}
         onCreate={handleCreateBoard}
         onDelete={handleDeleteBoard}
+        onLogout={onLogout}
         mobileOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
