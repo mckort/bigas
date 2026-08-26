@@ -1139,7 +1139,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
   )
 }
 
-function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mobileOpen, onClose }) {
+function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, onLogout, mobileOpen, onClose }) {
   const [newName, setNewName] = useState('')
   const [newProject, setNewProject] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -1200,7 +1200,7 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
             )
           })}
         </nav>
-        <div className="p-3 border-t border-border">
+        <div className="p-3 border-t border-border space-y-2">
           {showCreate ? (
             <div className="space-y-2">
               <input
@@ -1237,6 +1237,13 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
               + New board
             </button>
           )}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="lg:hidden w-full text-sm text-muted py-2 rounded-xl border border-border hover:bg-white min-h-[44px]"
+          >
+            Log out
+          </button>
         </div>
       </aside>
     </>
@@ -1581,74 +1588,83 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         onSelect={setActiveBoardId}
         onCreate={handleCreateBoard}
         onDelete={handleDeleteBoard}
+        onLogout={onLogout}
         mobileOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-10 bg-bg/90 backdrop-blur-sm border-b border-border px-3 sm:px-4 py-3 flex items-center gap-2">
-          <SettingsButton onClick={onOpenSettings} />
-          <button
-            type="button"
-            className="lg:hidden p-2 min-w-[44px] min-h-[44px] border border-border rounded-xl"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="Open boards"
-          >
-            ☰
-          </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="font-bold truncate">{activeBoard?.name || 'Board'}</h1>
-            {activeBoard?.workflow_enabled && (
-              <p className="text-xs text-muted">
-                {syncMessage || 'AI workflow enabled'}
-              </p>
-            )}
-          </div>
-          {showEpicFilter && (
-            <select
-              value={epicFilter}
-              onChange={(e) => setEpicFilter(e.target.value)}
-              className="text-sm px-2 py-2 rounded-xl border border-border min-h-[44px] max-w-[160px] sm:max-w-[220px] bg-white"
-              aria-label="Filter by objective"
+        <header className="sticky top-0 z-10 bg-bg/90 backdrop-blur-sm border-b border-border px-3 sm:px-4 py-3 flex flex-col gap-2 lg:flex-row lg:items-center">
+          <div className="flex items-center gap-2 min-w-0 lg:flex-1">
+            <SettingsButton onClick={onOpenSettings} />
+            <button
+              type="button"
+              className="lg:hidden p-2 min-w-[44px] min-h-[44px] border border-border rounded-xl"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open boards"
             >
-              <option value="">All tickets</option>
-              <option value="__none__">No objective</option>
-              {epicFilter.startsWith('kr:') && (
-                <option value={epicFilter}>
-                  KR · {krsById[epicFilter.slice(3)]?.title || epicFilter.slice(3)}
-                </option>
+              ☰
+            </button>
+            <div className="flex-1 min-w-0">
+              <h1 className="font-bold truncate">{activeBoard?.name || 'Board'}</h1>
+              {activeBoard?.workflow_enabled && (
+                <p className={`text-xs text-muted truncate ${syncMessage ? '' : 'hidden lg:block'}`}>
+                  {syncMessage || 'AI workflow enabled'}
+                </p>
               )}
-              {epicOptions.map((epic) => (
-                <option key={epic.key} value={epic.key}>
-                  {objectiveChipLabel(epic)}
-                </option>
-              ))}
-            </select>
-          )}
-          <button
-            type="button"
-            onClick={() => onSwitchView('objectives')}
-            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
-          >
-            Objectives
-          </button>
-          <button
-            type="button"
-            onClick={() => onSwitchView('chat')}
-            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            onClick={() => openCreate(columns[0])}
-            className="bg-bigas-blue text-bigas-black font-medium px-3 py-2 rounded-xl min-h-[44px] text-sm"
-          >
-            + Ticket
-          </button>
-          <button type="button" onClick={onLogout} className="text-sm text-muted px-2 min-h-[44px]">
-            Log out
-          </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 min-w-0">
+            {showEpicFilter && (
+              <select
+                value={epicFilter}
+                onChange={(e) => setEpicFilter(e.target.value)}
+                className="flex-1 min-w-0 text-sm px-2 py-2 rounded-xl border border-border min-h-[44px] lg:flex-none lg:max-w-[220px] bg-white"
+                aria-label="Filter by objective"
+              >
+                <option value="">All tickets</option>
+                <option value="__none__">No objective</option>
+                {epicFilter.startsWith('kr:') && (
+                  <option value={epicFilter}>
+                    KR · {krsById[epicFilter.slice(3)]?.title || epicFilter.slice(3)}
+                  </option>
+                )}
+                {epicOptions.map((epic) => (
+                  <option key={epic.key} value={epic.key}>
+                    {objectiveChipLabel(epic)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={() => onSwitchView('objectives')}
+              className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
+            >
+              Objectives
+            </button>
+            <button
+              type="button"
+              onClick={() => onSwitchView('chat')}
+              className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              onClick={() => openCreate(columns[0])}
+              className="flex-shrink-0 bg-bigas-blue text-bigas-black font-medium px-3 py-2 rounded-xl min-h-[44px] text-sm"
+            >
+              + Ticket
+            </button>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="hidden lg:inline-flex text-sm text-muted px-2 min-h-[44px] items-center"
+            >
+              Log out
+            </button>
+          </div>
         </header>
 
         {/* Mobile: horizontal snap-scroll kanban */}
