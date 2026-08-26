@@ -4,8 +4,8 @@
   "description": "AI team control plane — chat, board, and objectives",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#73cdfb",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
   "orientation": "portrait-primary",
   "icons": [
     {

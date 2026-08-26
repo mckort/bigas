@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { loginEmail, loginGoogle, logout, isDevMode } from '../lib/auth'
 import { verifyAuth } from '../lib/api'
+import ThemeToggle from './ThemeToggle'
 
 export default function Login({ onLoggedIn }) {
   const [email, setEmail] = useState('')
@@ -43,25 +44,26 @@ export default function Login({ onLoggedIn }) {
     }
   }
 
-  const inputClass =
-    'w-full bg-white border border-border rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-bigas-blue/50'
-
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-surface">
-      <div className="w-full max-w-md bg-white border border-border rounded-2xl p-6 sm:p-8 shadow-card">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-bg relative">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
+      <div className="w-full max-w-md card p-6 sm:p-8 shadow-card">
         <div className="text-center mb-8">
           <img
             src="/bigas-logo.png"
             alt="Bigas"
-            className="h-20 w-20 rounded-2xl object-cover mx-auto mb-4 shadow-soft"
+            className="h-20 w-20 rounded-xl object-cover mx-auto mb-4 shadow-soft"
           />
           <h1 className="text-2xl font-bold tracking-tight">Bigas</h1>
           <p className="text-muted mt-2 text-sm">Your virtual AI team — ready to serve</p>
         </div>
 
         {dev && (
-          <p className="text-sm text-muted mb-4 bg-surface border border-border rounded-xl p-3">
-            Dev mode: use any email and the dev token (default: <code className="text-xs bg-white px-1 py-0.5 rounded border border-border">bigas-dev-token</code>).
+          <p className="text-sm text-muted mb-4 bg-surface border border-border rounded-lg p-3">
+            Dev mode: use any email and the dev token (default:{' '}
+            <code className="text-xs bg-elevated px-1 py-0.5 rounded border border-border">bigas-dev-token</code>).
           </p>
         )}
 
@@ -73,7 +75,7 @@ export default function Login({ onLoggedIn }) {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className={inputClass}
+                className="input-field"
                 required
               />
             </>
@@ -83,15 +85,15 @@ export default function Login({ onLoggedIn }) {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className={inputClass}
+            className="input-field"
             required
           />
-          {error && <p className="text-sm text-bigas-black bg-bigas-blue/30 border border-black/10 rounded-lg px-3 py-2">{error}</p>}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-bigas-black text-white font-semibold rounded-full py-3 hover:opacity-90 disabled:opacity-50 min-h-[48px] transition-opacity"
-          >
+          {error && (
+            <p className="text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+              {error}
+            </p>
+          )}
+          <button type="submit" disabled={loading} className="w-full btn-primary rounded-lg py-3 min-h-[48px]">
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
@@ -101,7 +103,7 @@ export default function Login({ onLoggedIn }) {
             type="button"
             onClick={handleGoogle}
             disabled={loading}
-            className="w-full mt-3 bg-white border border-border text-text font-semibold rounded-full py-3 hover:bg-surface min-h-[48px] transition-colors"
+            className="w-full mt-3 btn-secondary rounded-lg py-3 min-h-[48px] font-semibold"
           >
             Continue with Google
           </button>
