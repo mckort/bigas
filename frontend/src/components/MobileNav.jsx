@@ -42,7 +42,7 @@ export default function MobileNav({ activeView, onSwitchView }) {
 
   return (
     <nav
-      className="lg:hidden fixed bottom-0 inset-x-0 z-50 border-t border-border bg-white/95 backdrop-blur-sm mobile-nav-bar"
+      className="lg:hidden fixed bottom-0 inset-x-0 z-50 border-t border-border bg-elevated/95 backdrop-blur-sm mobile-nav-bar"
       aria-label="Main navigation"
     >
       <div className="flex items-stretch justify-around max-w-lg mx-auto">
@@ -54,11 +54,11 @@ export default function MobileNav({ activeView, onSwitchView }) {
               type="button"
               onClick={() => onSwitchView(tab.id)}
               aria-current={isActive ? 'page' : undefined}
-              className={`flex-1 flex flex-col items-center justify-center gap-0.5 min-h-[56px] min-w-[44px] px-2 py-1.5 text-[11px] font-medium transition-colors ${
-                isActive ? 'text-bigas-black' : 'text-muted hover:text-text'
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 min-h-[56px] min-w-[44px] px-2 py-1.5 text-[11px] font-medium transition-all duration-150 ${
+                isActive ? 'text-accent' : 'text-muted hover:text-text'
               }`}
             >
-              <span className={isActive ? 'text-bigas-blue' : ''}>{tab.icon}</span>
+              <span className={isActive ? 'text-accent' : ''}>{tab.icon}</span>
               <span>{tab.label}</span>
             </button>
           )

@@ -11,7 +11,7 @@ function linkAnchor(href, label, key) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-bigas-black underline underline-offset-2 hover:opacity-70 break-all"
+      className="text-accent underline underline-offset-2 hover:opacity-70 break-all transition-opacity duration-150"
     >
       {label}
     </a>
@@ -78,7 +78,7 @@ export default function ActivityFeed({ events, open, onClose }) {
   return (
     <>
       {open && (
-        <div className="fixed inset-0 bg-black/30 z-40 lg:hidden" onClick={onClose} aria-hidden="true" />
+        <div className="fixed inset-0 bg-overlay z-40 lg:hidden" onClick={onClose} aria-hidden="true" />
       )}
       <aside
         className={`fixed lg:static inset-y-0 right-0 z-50 w-full sm:w-80 bg-surface border-l border-border flex flex-col transform transition-transform duration-200 lg:translate-x-0 ${
@@ -108,10 +108,10 @@ export default function ActivityFeed({ events, open, onClose }) {
           {events.map((event) => (
             <div
               key={event.id}
-              className="bg-white border border-border rounded-xl p-3 shadow-soft"
+              className="card p-3 transition-all duration-150 hover:shadow-card"
             >
               <div className="flex items-center gap-2 text-[11px] text-muted mb-2 uppercase tracking-wide">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-bigas-blue flex-shrink-0" />
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
                 <span>{event.source || event.type}</span>
                 <span>·</span>
                 <time className="normal-case tracking-normal">{new Date(event.created_at).toLocaleString()}</time>
