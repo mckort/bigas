@@ -654,6 +654,27 @@ def test_evaluate_implementation_outcome_finished_no_pr(monkeypatch):
     assert "confirmation" in out["detail"].lower()
 
 
+def test_evaluate_implementation_outcome_reads_pull_new_branch(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+
+    monkeypatch.setattr(impl, "lookup_pr_for_branch", lambda **_k: ("", ""))
+    out = impl.evaluate_implementation_outcome(
+        {
+            "status": "FINISHED",
+            "pr_url": "",
+            "branch_name": "",
+            "result_text": (
+                "Automated PR creation failed due to repository permissions. "
+                "https://github.com/mckort/bigas/pull/new/cursor/bigas-implement-big-41-c8c5"
+            ),
+            "agent_url": "https://cursor.com/agents/abc",
+        },
+        repo="mckort/bigas",
+    )
+    assert out["kind"] == "finished_no_pr"
+    assert out["branch_name"] == "cursor/bigas-implement-big-41-c8c5"
+
+
 def test_evaluate_implementation_outcome_pr_opened(monkeypatch):
     from bigas.resources.product.jira_automation import implement as impl
 
@@ -671,6 +692,134 @@ def test_evaluate_implementation_outcome_pr_opened(monkeypatch):
     assert out["kind"] == "pr_opened"
     assert out["pr_url"].endswith("/pull/12")
     assert out["pr_title"] == "VFA-12: Add reports"
+
+
+def test_branch_from_implement_status_pull_new_url():
+    from bigas.resources.product.jira_automation.implement import (
+        branch_from_implement_status,
+    )
+
+    branch = branch_from_implement_status(
+        {
+            "branch_name": "",
+            "result_text": (
+                "Automated PR creation failed due to repository permissions. "
+                "Open manually here:\n"
+                "https://github.com/mckort/bigas/pull/new/cursor/bigas-implement-big-41-c8c5"
+            ),
+        }
+    )
+    assert branch == "cursor/bigas-implement-big-41-c8c5"
+
+
+def test_ensure_implement_pr_opens_when_cursor_fails(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
+    monkeypatch.setattr(impl, "lookup_pr_for_branch", lambda **_k: ("", ""))
+
+    class FakeResp:
+        status_code = 201
+        text = '{"html_url":"https://github.com/mckort/bigas/pull/179","title":"BIG-41: Look professional"}'
+
+        def json(self):
+            return {
+                "html_url": "https://github.com/mckort/bigas/pull/179",
+                "title": "BIG-41: Look professional",
+            }
+
+    posted = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        posted["url"] = url
+        posted["json"] = json
+        posted["headers"] = headers
+        return FakeResp()
+
+    monkeypatch.setattr(impl.requests, "post", fake_post)
+
+    out = impl.ensure_implement_pr(
+        {
+            "kind": "finished_no_pr",
+            "pr_url": "",
+            "status": "FINISHED",
+            "branch_name": "cursor/bigas-implement-big-41-c8c5",
+            "agent_url": "https://cursor.com/agents/bc-1",
+            "detail": "Cursor agent finished without opening a PR.",
+        },
+        repo="mckort/bigas",
+        base_branch="main",
+        issue_key="BIG-41",
+        summary="Look professional",
+        agent_url="https://cursor.com/agents/bc-1",
+    )
+    assert out["kind"] == "pr_opened"
+    assert out["pr_opened_by"] == "bigas"
+    assert out["pr_url"].endswith("/pull/179")
+    assert posted["json"]["head"] == "cursor/bigas-implement-big-41-c8c5"
+    assert posted["json"]["base"] == "main"
+    assert posted["json"]["draft"] is False
+    assert posted["json"]["title"].startswith("BIG-41:")
+    assert "Jira: BIG-41" in posted["json"]["body"]
+
+
+def test_ensure_implement_pr_skips_cancelled(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+
+    def boom(**_k):
+        raise AssertionError("should not look up or create a PR")
+
+    monkeypatch.setattr(impl, "lookup_pr_for_branch", boom)
+    monkeypatch.setattr(impl, "open_pr_from_branch", boom)
+
+    original = {
+        "kind": "failed",
+        "pr_url": "",
+        "status": "CANCELLED",
+        "branch_name": "cursor/gone",
+        "detail": "cancelled",
+    }
+    out = impl.ensure_implement_pr(
+        original,
+        repo="mckort/bigas",
+        base_branch="main",
+        issue_key="BIG-41",
+        summary="Look professional",
+    )
+    assert out["kind"] == "failed"
+    assert out["pr_url"] == ""
+
+
+def test_ensure_implement_pr_uses_existing_pr(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+
+    monkeypatch.setattr(
+        impl,
+        "lookup_pr_for_branch",
+        lambda **_k: ("https://github.com/mckort/bigas/pull/10", "BIG-41: existing"),
+    )
+
+    def boom(**_k):
+        raise AssertionError("should not create a second PR")
+
+    monkeypatch.setattr(impl, "open_pr_from_branch", boom)
+
+    out = impl.ensure_implement_pr(
+        {
+            "kind": "finished_no_pr",
+            "pr_url": "",
+            "status": "FINISHED",
+            "branch_name": "cursor/already",
+            "detail": "no pr",
+        },
+        repo="mckort/bigas",
+        base_branch="main",
+        issue_key="BIG-41",
+        summary="Look professional",
+    )
+    assert out["kind"] == "pr_opened"
+    assert out["pr_url"].endswith("/pull/10")
+    assert out.get("pr_opened_by") != "bigas"
 
 
 def test_config_maps_implement_status(monkeypatch):
