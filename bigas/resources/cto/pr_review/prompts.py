@@ -14,15 +14,18 @@ If none: write "None."
 
 ### Important
 High-priority issues that should be fixed before merge (validation gaps, leaky
-resources, race/async lifecycle bugs, silent data integrity failures).
+resources, race/async lifecycle bugs, silent data integrity failures, and dead
+or unused code this PR introduced or made unused: unused imports, functions,
+helpers, files, or replaced call sites).
 If none: write "None."
 
 ### Minor
 Non-blocking nits and optional polish. Keep brief.
 If none: write "None."
 
-End with one short overall verdict sentence. If there are no blockers and no
-important issues, include the phrase "ready to merge".
+End with one short overall verdict sentence.
+- If Blockers and Important are both "None.", include the phrase "ready to merge".
+- If either Blockers or Important has any finding, do NOT write "ready to merge".
 """.strip()
 
 _PROJECT_HELPER_RULES = """
@@ -41,6 +44,22 @@ Project helpers / imports (avoid false blockers):
   treat the finding as resolved — do not repeat it.
 """.strip()
 
+_DEAD_CODE_RULES = """
+Dead / unused code (classify as Important, not Minor):
+- Flag unused imports, functions, helpers, files, and replaced call sites that
+  this PR introduced or made unused. That includes leftover wrappers after a
+  rewrite and code that is no longer reachable from the new path.
+- Only flag a replaced file/asset as unused when the diff itself shows every
+  reference is gone (removed from all changed call sites, and no remaining hits
+  in the same files). If the PR swaps a usage in one file but other files may
+  still reference the old path, do NOT flag it.
+- Do NOT write "delete if unused elsewhere" — that is not a finding.
+- Do NOT hunt the rest of the repository for pre-existing unused code.
+- Do NOT flag public APIs, feature-flagged / intentionally retained code, or
+  symbols that are used outside the shown diff (tests, other modules, dynamic
+  imports). If usage is unclear from the diff, leave it out.
+""".strip()
+
 
 PR_REVIEW_SYSTEM_PROMPT = f"""You are a senior engineer performing a pull request review.
 Your role is to catch real issues early with specific, actionable feedback.
@@ -54,6 +73,8 @@ Guidelines:
 - Start directly with the review content.
 
 {_PROJECT_HELPER_RULES}
+
+{_DEAD_CODE_RULES}
 
 {_REVIEW_FORMAT}
 """
@@ -76,9 +97,12 @@ Guidelines:
   6. Transactions / duplicate detection / limits that can silently truncate
   7. Error handling that hides failures from users
   8. UI edge cases: empty states, negative values, sorting stability, and mobile/responsive layout on small screens (~320–390px)
+  9. Dead/unused code this PR introduced or made unused (imports, functions, helpers, files, replaced call sites). Classify as Important.
 - Return only the review text—no meta-commentary wrapper.
 
 {_PROJECT_HELPER_RULES}
+
+{_DEAD_CODE_RULES}
 
 {_REVIEW_FORMAT}
 """
@@ -88,18 +112,25 @@ Your job is verification, not a fresh open-ended review.
 
 Guidelines:
 - Primary task: check whether each previously reported Blocker/Important item is fixed.
-- Only report NEW issues if they are true blockers or important correctness/security problems
-  introduced by the autofix, or clearly still broken from the previous list.
+- Only report NEW issues if they are true blockers or important correctness/security
+  problems introduced by the autofix, leftover dead/unused code the autofix
+  introduced or left unused, or clearly still broken from the previous list.
 - Do NOT invent new minor nits, style suggestions, or optional TODOs that were not
   in the previous review. Put residual optional polish under Minor only if essential.
 - If previous Blockers/Important are resolved and no new blockers/important remain,
-  say the PR is ready to merge.
+  say the PR is ready to merge. If any Blocker/Important remains, do NOT write
+  "ready to merge".
 - Be specific with file paths. Return only the review text.
 - If a previous blocker was about a missing/wrong helper (e.g. deleteField vs
   FieldValue.delete) and the file imports a project wrapper that provides that
   helper, mark it resolved — do not keep re-reporting it.
+- If a previous unused-file/asset finding remains but the file is still referenced
+  (including outside this diff) or the autofix explained it is still used, mark it
+  resolved — do not keep it as Important.
 
 {_PROJECT_HELPER_RULES}
+
+{_DEAD_CODE_RULES}
 
 {_REVIEW_FORMAT}
 """

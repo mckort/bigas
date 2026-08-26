@@ -208,7 +208,7 @@ def _specs() -> List[Dict[str, Any]]:
             "okr_owner": "CTO",
             "okr_briefing": (
                 "Research proposed 3 KRs. One is not measurable until we log automation skips. "
-                "Confirm the KRs, then drag to Design and plan to create tasks."
+                "Confirm the KRs, then drag to Design and plan to open concrete work toward them."
             ),
             "created_days_ago": 5,
             "key_results": [

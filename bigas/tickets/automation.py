@@ -53,9 +53,32 @@ class InternalTicketAutomation:
                 HANDLER_DESIGN,
                 HANDLER_IMPLEMENT,
             ):
-                return handle_objective_status_change(
+                result = handle_objective_status_change(
                     ticket, to_status=to_status, from_status=from_status
                 )
+                if (
+                    handler == HANDLER_RESEARCH
+                    and result.get("handler") == "okr_research"
+                    and result.get("moved_to")
+                    and not result.get("skipped")
+                ):
+                    self._notify_pm(
+                        issue_key,
+                        result,
+                        result.get("moved_to") or self._config.status_description_approval,
+                    )
+                elif (
+                    handler == HANDLER_DESIGN
+                    and result.get("handler") == "okr_plan"
+                    and result.get("moved_to")
+                    and not result.get("skipped")
+                ):
+                    self._notify_okr_plan(
+                        issue_key,
+                        result,
+                        result.get("moved_to") or self._config.status_design_approval,
+                    )
+                return result
 
         if not handler:
             return {"ok": True, "skipped": True, "reason": "no handler for status"}
@@ -115,6 +138,21 @@ class InternalTicketAutomation:
             except Exception:
                 pass
             return {"ok": False, "error": str(exc), "issue_key": issue_key}
+
+    def _notify_okr_plan(self, issue_key: str, result: Dict[str, Any], approval: str) -> None:
+        from bigas.discord_webhook import post_to_discord
+        from bigas.resources.product.jira_automation.comments import issue_discord_label
+
+        created = result.get("tasks_created") or []
+        created_txt = ", ".join(
+            str(item.get("key")) for item in created if isinstance(item, dict) and item.get("key")
+        ) or "none"
+        label = issue_discord_label(issue_key, result.get("summary"))
+        post_to_discord(
+            os.environ.get("DISCORD_WEBHOOK_URL_PRODUCT") or "",
+            f"**OKR plan complete** {label}\nOpened {created_txt}.\nMoved to **{approval}** for review.",
+            chat_agent_id="product",
+        )
 
     def _notify_pm(self, issue_key: str, result: Dict[str, Any], approval: str) -> None:
         from bigas.discord_webhook import post_to_discord

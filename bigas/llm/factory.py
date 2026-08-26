@@ -56,6 +56,9 @@ def get_llm_client(
         "proactive_goals": "BIGAS_PROACTIVE_GOALS_MODEL",
         "ticket_attachments": "BIGAS_TICKET_ATTACHMENTS_MODEL",
         "cfo_ai_usage": "BIGAS_CFO_AI_USAGE_MODEL",
+        "okr_research": "BIGAS_OKR_RESEARCH_MODEL",
+        "okr_plan": "BIGAS_OKR_PLAN_MODEL",
+        "okr_pulse": "BIGAS_OKR_PULSE_MODEL",
     }
     feature_env = feature_env_map.get(feature)
 

@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import AgentSidebar, { UnreadDot } from './AgentSidebar'
 import ActivityFeed from './ActivityFeed'
 import { SettingsButton } from './AgentSettings'
+import ThemeToggle from './ThemeToggle'
 import {
   approveProposal,
   createThread,
@@ -89,7 +90,7 @@ function JiraTransitionButton({ issueKey, label }) {
         type="button"
         onClick={handleClick}
         disabled={state === 'loading' || state === 'success'}
-        className="inline-flex items-center justify-center bg-bigas-black text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 min-h-[44px] max-w-full break-words hover:opacity-90 transition-opacity"
+        className="inline-flex items-center justify-center btn-primary rounded-full px-4 py-2 text-sm disabled:opacity-50 min-h-[44px] max-w-full break-words"
       >
         {text}
       </button>
@@ -108,7 +109,7 @@ const chatMarkdownComponents = {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-bigas-black underline underline-offset-2 hover:opacity-70 break-all"
+        className="text-accent underline underline-offset-2 hover:opacity-70 break-all transition-opacity duration-150"
       >
         {children}
       </a>
@@ -171,7 +172,7 @@ function ActionProposalCard({ message, onResolved }) {
   }
 
   return (
-    <div className="mt-3 pt-3 border-t border-black/10 space-y-3">
+    <div className="mt-3 pt-3 border-t border-border space-y-3">
       {draftActions.map((action) => (
         <div key={action.id}>
           <p className="text-xs text-muted mb-2 font-medium">Suggested reply — edit before sending</p>
@@ -180,14 +181,14 @@ function ActionProposalCard({ message, onResolved }) {
             onChange={(e) => setDrafts((prev) => ({ ...prev, [action.id]: e.target.value }))}
             disabled={resolving}
             rows={8}
-            className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-text resize-y min-h-[8rem] disabled:opacity-50"
+            className="input-field text-sm resize-y min-h-[8rem] disabled:opacity-50"
           />
           <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap gap-2">
             <button
               type="button"
               disabled={resolving || !(drafts[action.id] || '').trim()}
               onClick={() => handleApprove(action.id, { text: drafts[action.id] })}
-              className="bg-bigas-black text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] hover:opacity-90 transition-opacity"
+              className="btn-primary rounded-full px-4 py-2 text-sm disabled:opacity-50 w-full sm:w-auto text-center"
             >
               Send
             </button>
@@ -200,7 +201,7 @@ function ActionProposalCard({ message, onResolved }) {
             type="button"
             disabled={resolving}
             onClick={handleReject}
-            className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] bg-white transition-colors"
+            className="btn-secondary rounded-full px-4 py-2 text-sm disabled:opacity-50 w-full sm:w-auto text-center"
           >
             Reject
           </button>
@@ -216,7 +217,7 @@ function ActionProposalCard({ message, onResolved }) {
                 type="button"
                 disabled={resolving}
                 onClick={() => handleApprove(action.id)}
-                className="bg-bigas-black text-white rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] hover:opacity-90 transition-opacity"
+                className="btn-primary rounded-full px-4 py-2 text-sm disabled:opacity-50 w-full sm:w-auto text-center"
               >
                 {action.label}
               </button>
@@ -225,7 +226,7 @@ function ActionProposalCard({ message, onResolved }) {
               type="button"
               disabled={resolving}
               onClick={handleReject}
-              className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] bg-white transition-colors"
+              className="btn-secondary rounded-full px-4 py-2 text-sm disabled:opacity-50 w-full sm:w-auto text-center"
             >
               Reject all
             </button>
@@ -237,7 +238,7 @@ function ActionProposalCard({ message, onResolved }) {
           type="button"
           disabled={resolving}
           onClick={handleReject}
-          className="border border-border rounded-full px-4 py-2 text-sm text-muted hover:text-text disabled:opacity-50 w-full sm:w-auto text-center min-h-[44px] bg-white transition-colors"
+          className="btn-secondary rounded-full px-4 py-2 text-sm disabled:opacity-50 w-full sm:w-auto text-center"
         >
           Reject all
         </button>
@@ -294,7 +295,7 @@ function LocalChatImagePreview({ file }) {
     <img
       src={url}
       alt={file.name}
-      className="mt-2 max-h-40 w-full object-contain rounded-lg bg-white/70"
+      className="mt-2 max-h-40 w-full object-contain rounded-lg bg-surface"
     />
   )
 }
@@ -357,7 +358,7 @@ function ChatAttachmentPreview({ threadId, attachment }) {
     <img
       src={url}
       alt={attachment.filename}
-      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-white/70"
+      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-surface"
     />
   )
 }
@@ -369,13 +370,13 @@ function MessageAttachments({ message, threadId }) {
   return (
     <div className="mt-2 space-y-2">
       {localFiles.map((file) => (
-        <div key={pendingFileKey(file)} className="rounded-xl px-3 py-2 bg-white/40 text-sm">
+        <div key={pendingFileKey(file)} className="rounded-lg px-3 py-2 bg-surface text-sm">
           <p className="font-medium truncate">{file.name}</p>
           <LocalChatImagePreview file={file} />
         </div>
       ))}
       {attachments.map((attachment) => (
-        <div key={attachment.id} className="rounded-xl px-3 py-2 bg-white/40 text-sm">
+        <div key={attachment.id} className="rounded-lg px-3 py-2 bg-surface text-sm">
           <p className="font-medium truncate">{attachment.filename}</p>
           <p className="text-[11px] opacity-70">{formatAttachmentSize(attachment.size_bytes)}</p>
           {isImageAttachment(attachment) ? (
@@ -400,7 +401,7 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       {!isUser && (
-        <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-white border border-border flex items-center justify-center shadow-soft">
+        <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-elevated border border-border flex items-center justify-center shadow-soft">
           {isHandoff ? (
             <span className="text-sm">📥</span>
           ) : isSystem ? (
@@ -413,14 +414,14 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
         </div>
       )}
       <div
-        className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-3 ${
+        className={`max-w-[85%] sm:max-w-[75%] rounded-xl px-4 py-3 transition-all duration-150 ${
           isUser
-            ? 'bg-bigas-blue text-bigas-black shadow-soft'
+            ? 'bg-accent text-accent-fg shadow-soft'
             : isHandoff
               ? 'bg-surface border border-border text-text'
               : isSystem
                 ? 'bg-surface border border-border text-muted italic'
-                : 'bg-white border border-border text-text shadow-soft'
+                : 'bg-elevated border border-border text-text shadow-soft'
         }`}
       >
         <div className="markdown-body text-sm sm:text-base break-words">
@@ -443,12 +444,12 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
 function TypingIndicator({ agentName, agentIcon }) {
   return (
     <div className="flex gap-3 items-end" aria-live="polite" aria-label={`${agentName} is typing`}>
-      <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-white border border-border flex items-center justify-center shadow-soft">
+      <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-elevated border border-border flex items-center justify-center shadow-soft">
         <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : 'text-lg'}>
           {agentIcon}
         </span>
       </div>
-      <div className="bg-white border border-border rounded-2xl px-4 py-3 shadow-soft">
+      <div className="bg-elevated border border-border rounded-xl px-4 py-3 shadow-soft">
         <div className="flex items-center gap-1.5 h-5">
           <span className="typing-dot" />
           <span className="typing-dot" />
@@ -548,7 +549,7 @@ function StarterPrompts({ onSelect, disabled }) {
             type="button"
             disabled={disabled}
             onClick={() => onSelect(prompt)}
-            className="text-left bg-white border border-border rounded-2xl px-4 py-3 text-sm text-text shadow-soft hover:border-bigas-blue/60 hover:bg-bigas-blue/10 disabled:opacity-50 transition-colors min-h-[44px] max-w-full sm:max-w-[280px]"
+            className="text-left card-interactive rounded-xl px-4 py-3 text-sm text-text disabled:opacity-50 min-h-[44px] max-w-full sm:max-w-[280px] hover:border-accent/40 hover:bg-accent-muted"
           >
             {label}
           </button>
@@ -639,7 +640,7 @@ function unreadAgentIdSet(threads, lastOpened, activeAgentId) {
 function MobileAgentTabs({ agents, activeAgentId, onSelectAgent, unreadAgentIds }) {
   if (!agents.length) return null
   return (
-    <div className="lg:hidden border-b border-border bg-white">
+    <div className="lg:hidden border-b border-border bg-elevated">
       <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2">
         {agents.map((agent) => {
           const isActive = activeAgentId === agent.agent_id
@@ -648,10 +649,10 @@ function MobileAgentTabs({ agents, activeAgentId, onSelectAgent, unreadAgentIds 
               key={agent.agent_id}
               type="button"
               onClick={() => onSelectAgent(agent.agent_id)}
-              className={`flex-shrink-0 flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium min-h-[44px] transition-colors ${
+              className={`flex-shrink-0 flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium min-h-[44px] transition-all duration-150 ${
                 isActive
-                  ? 'bg-bigas-blue text-bigas-black border border-black/10'
-                  : 'bg-surface text-text border border-transparent'
+                  ? 'nav-item-active'
+                  : 'bg-surface text-text border border-transparent hover:bg-surface-muted'
               }`}
             >
               <span className="relative inline-flex">
@@ -1124,8 +1125,16 @@ export default function ChatLayout({
       metadata: { client_id: clientId, local_files: files },
     }
     setMessages((prev) => [...prev, optimistic])
+    if (!messageText) {
+      setInput('')
+      setPendingFiles([])
+      setAttachError('')
+    }
+    let sendSucceeded = false
+    let result
     try {
-      const result = await sendMessage(threadId, text, clientId, files)
+      result = await sendMessage(threadId, text, clientId, files)
+      sendSucceeded = true
       const res = await fetchMessages(threadId)
       const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res)
       if (next.length) {
@@ -1139,22 +1148,37 @@ export default function ChatLayout({
           result.status !== 'in_progress' && !lastMessageIsInProgress(next) && !res.deploy_poll_active
         if (done) setWaitingForReply(false)
       }
-      if (!messageText) {
-        setInput('')
-        setPendingFiles([])
-        setAttachError('')
-      }
     } catch (err) {
-      setWaitingForReply(false)
-      setMessages((prev) => [
-        ...prev.filter((m) => m.message_id !== optimistic.message_id),
-        {
-          message_id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: `Error: ${err.message}`,
-          created_at: new Date().toISOString(),
-        },
-      ])
+      if (!sendSucceeded) {
+        if (!messageText) {
+          setInput(text)
+          setPendingFiles(files)
+        }
+        setWaitingForReply(false)
+        setMessages((prev) => [
+          ...prev.filter((m) => m.message_id !== optimistic.message_id),
+          {
+            message_id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: `Error: ${err.message}`,
+            created_at: new Date().toISOString(),
+          },
+        ])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            message_id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: `Message sent, but failed to refresh: ${err.message}`,
+            created_at: new Date().toISOString(),
+          },
+        ])
+        if (result?.deploy_poll_active) {
+          setDeployPollActive(true)
+          setWaitingForReply(true)
+        }
+      }
     } finally {
       setSending(false)
     }
@@ -1166,7 +1190,7 @@ export default function ChatLayout({
   }
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row overflow-hidden bg-bg">
+    <div className="h-screen-safe flex flex-col lg:flex-row overflow-hidden bg-bg mobile-nav-offset">
       <AgentSidebar
         agents={agents}
         activeAgentId={activeAgentId}
@@ -1178,11 +1202,12 @@ export default function ChatLayout({
       />
 
       <main className="flex-1 flex flex-col min-w-0 bg-bg">
-        <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-white/90 backdrop-blur-sm sticky top-0 z-10">
+        <header className="header-bar flex items-center gap-3 px-4 py-3">
           <SettingsButton onClick={onOpenSettings} />
+          <ThemeToggle />
           <button
             type="button"
-            className="relative lg:hidden text-xl min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 hover:bg-surface rounded-xl transition-colors"
+            className="relative lg:hidden text-xl min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 hover:bg-surface rounded-lg transition-colors duration-150"
             onClick={() => setSidebarOpen(true)}
             aria-label={unreadAgentIds.size ? 'Open agents, unread messages' : 'Open agents'}
           >
@@ -1190,7 +1215,7 @@ export default function ChatLayout({
             <UnreadDot show={unreadAgentIds.size > 0} />
           </button>
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-bigas-blue flex items-center justify-center border border-black/10">
+            <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-accent-muted flex items-center justify-center border border-accent/20">
               <span className={(activeAgent.icon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : 'text-xl'}>
                 {activeAgent.icon}
               </span>
@@ -1200,7 +1225,7 @@ export default function ChatLayout({
               <p className="text-xs text-muted truncate">
                 {showTyping ? (
                   <span>
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-bigas-blue mr-1.5 align-middle" />
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent mr-1.5 align-middle" />
                     Typing…
                   </span>
                 ) : (
@@ -1211,7 +1236,7 @@ export default function ChatLayout({
           </div>
           <button
             type="button"
-            className="lg:hidden text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors"
+            className="lg:hidden text-sm btn-ghost px-3 py-2"
             onClick={() => setActivityOpen(true)}
           >
             Activity
@@ -1221,14 +1246,14 @@ export default function ChatLayout({
               <button
                 type="button"
                 onClick={() => onSwitchView('board')}
-                className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors hidden sm:block"
+                className="text-sm btn-ghost px-3 py-2 hidden lg:block"
               >
                 Board
               </button>
               <button
                 type="button"
                 onClick={() => onSwitchView('objectives')}
-                className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors hidden sm:block"
+                className="text-sm btn-ghost px-3 py-2 hidden lg:block"
               >
                 Objectives
               </button>
@@ -1237,7 +1262,7 @@ export default function ChatLayout({
           <button
             type="button"
             onClick={handleLogout}
-            className="text-sm text-muted hover:text-text px-3 py-2 rounded-lg hover:bg-surface min-h-[44px] transition-colors"
+            className="text-sm btn-ghost px-3 py-2"
           >
             Log out
           </button>
@@ -1254,7 +1279,7 @@ export default function ChatLayout({
           <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-5">
             {messages.length === 0 && !showTyping && (
               <div className="text-center py-12 sm:py-20 px-4">
-                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-bigas-blue border border-black/10 mb-5 text-3xl shadow-soft">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-xl bg-accent-muted border border-accent/20 mb-5 text-3xl shadow-soft">
                   {activeAgent.icon}
                 </div>
                 <p className="text-xl font-semibold text-text mb-2">Chat with {activeAgent.name}</p>
@@ -1283,7 +1308,7 @@ export default function ChatLayout({
           </div>
         </div>
 
-        <div className="border-t border-border bg-white/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
+        <div className="composer-anchor border-t border-border bg-elevated/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
           <form
             onSubmit={handleSend}
             className="max-w-3xl mx-auto"
@@ -1303,7 +1328,7 @@ export default function ChatLayout({
                 {pendingFiles.map((file) => (
                   <div
                     key={pendingFileKey(file)}
-                    className="flex items-center gap-2 rounded-xl border border-border bg-surface px-2 py-1.5 max-w-[220px]"
+                    className="flex items-center gap-2 rounded-lg border border-border bg-surface px-2 py-1.5 max-w-[220px]"
                   >
                     <div className="min-w-0">
                       <p className="text-xs font-medium truncate">{file.name}</p>
@@ -1327,9 +1352,7 @@ export default function ChatLayout({
             )}
             {attachError && <p className="text-xs text-red-600 mb-2">{attachError}</p>}
             <div
-              className={`flex gap-2 items-end bg-white border rounded-2xl shadow-input px-3 py-2 sm:px-4 sm:py-2.5 focus-within:ring-2 focus-within:ring-bigas-blue/40 transition-shadow ${
-                dragOver ? 'border-bigas-blue' : 'border-border'
-              }`}
+              className={`composer-shell ${dragOver ? 'border-accent' : ''}`}
             >
               <input
                 ref={fileInputRef}
@@ -1383,7 +1406,7 @@ export default function ChatLayout({
               <button
                 type="submit"
                 disabled={sending || (!input.trim() && !pendingFiles.length)}
-                className="bg-bigas-black text-white font-semibold rounded-xl w-11 h-11 sm:w-12 sm:h-12 disabled:opacity-30 flex-shrink-0 flex items-center justify-center hover:opacity-90 transition-opacity"
+                className="btn-primary rounded-lg w-11 h-11 sm:w-12 sm:h-12 disabled:opacity-30 flex-shrink-0 flex items-center justify-center p-0"
                 aria-label="Send message"
               >
                 {sending ? (

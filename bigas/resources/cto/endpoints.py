@@ -1308,16 +1308,38 @@ def autofix_followup():
 
     result_text = status.get("result_text") or ""
     asked_confirm = autofix_looks_like_confirmation_stop(result_text)
+    if not fixes_pushed and asked_confirm:
+        round_bit = ""
+        if autofix_round_n is not None:
+            round_bit = f" (launched as round {autofix_round_n})"
+        _post_cto_status(
+            f"**CTO autofix finished without commits**{round_bit}\n{pr_ref}\n"
+            "Agent appears to have stopped to ask for confirmation.\n"
+            f"Agent: {agent_url}{usage_suffix}\n"
+            "Stopping autofix loop for this run (no re-review)."
+        )
+        base.update(
+            {
+                "finalized": True,
+                "ready_to_merge": False,
+                "fixes_pushed": False,
+                "asked_confirmation": True,
+                "head_sha": head_sha,
+                "baseline_head_sha": baseline_head_sha,
+                "autofix_round": autofix_round_n,
+                "rereviewed": False,
+            }
+        )
+        return _json_summary(base, summarize_followup_result)
+
     if not fixes_pushed:
         round_bit = ""
         if autofix_round_n is not None:
             round_bit = f" (launched as round {autofix_round_n})"
-        if asked_confirm:
-            why = "Agent appears to have stopped to ask for confirmation."
-        elif baseline_head_sha and head_sha and baseline_head_sha == head_sha:
+        if baseline_head_sha and head_sha and baseline_head_sha == head_sha:
             why = (
                 "PR head SHA unchanged since launch — agent finished without pushing "
-                "a new `[bigas-autofix]` commit (same review would be re-posted otherwise)."
+                "a new `[bigas-autofix]` commit."
             )
         else:
             why = (
@@ -1327,26 +1349,13 @@ def autofix_followup():
         _post_cto_status(
             f"**CTO autofix finished without commits**{round_bit}\n{pr_ref}\n"
             f"{why}\nAgent: {agent_url}{usage_suffix}\n"
-            f"Stopping autofix loop for this run (no re-review without a new commit)."
+            "Re-reviewing to verify leftover findings."
         )
-        base.update(
-            {
-                "finalized": True,
-                "ready_to_merge": False,
-                "fixes_pushed": False,
-                "asked_confirmation": asked_confirm,
-                "head_sha": head_sha,
-                "baseline_head_sha": baseline_head_sha,
-                "autofix_round": autofix_round_n,
-                "rereviewed": False,
-            }
+    else:
+        _post_cto_status(
+            f"**CTO autofix completed**\n{pr_ref}\n"
+            f"Fixes pushed to the PR branch.\nAgent: {agent_url}{usage_suffix}"
         )
-        return _json_summary(base, summarize_followup_result)
-
-    _post_cto_status(
-        f"**CTO autofix completed**\n{pr_ref}\n"
-        f"Fixes pushed to the PR branch.\nAgent: {agent_url}{usage_suffix}"
-    )
 
     try:
         diff = service.fetch_pr_diff(repo=repo, pr_number=pr_number)
@@ -1463,6 +1472,13 @@ def autofix_followup():
             github_token=gh_token,
             merged=bool(auto_merge.get("merged")),
         )
+    elif not fixes_pushed:
+        _post_cto_status(
+            f"**CTO autofix follow-up**\n"
+            "Agent did not push; re-review still has findings. "
+            "Stopping the autofix loop for this run.\n"
+            f"{pr_ref}"
+        )
     elif autofix_count >= max_iters:
         _notify_autofix_loop_protection(
             repo=repo,
@@ -1490,7 +1506,7 @@ def autofix_followup():
         "rereviewed": True,
         "comment_url": comment_url,
         "ready_to_merge": ready,
-        "fixes_pushed": True,
+        "fixes_pushed": fixes_pushed,
         "head_sha": head_sha,
         "baseline_head_sha": baseline_head_sha,
         "autofix_count": autofix_count,

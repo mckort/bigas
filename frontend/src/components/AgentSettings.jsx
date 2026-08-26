@@ -7,12 +7,14 @@ import {
   updateAgent,
 } from '../lib/api'
 
+import ThemeToggle from './ThemeToggle'
+
 export function SettingsButton({ onClick }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl hover:bg-surface text-muted hover:text-text transition-colors"
+      className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-surface text-muted hover:text-text transition-all duration-150"
       aria-label="Open settings"
       title="Settings"
     >
@@ -183,18 +185,21 @@ export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSy
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/30" onClick={handleClose} aria-hidden="true" />
-      <div className="relative w-full sm:max-w-2xl max-h-[90vh] overflow-y-auto bg-white border border-border rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 shadow-card">
+      <div className="absolute inset-0 modal-overlay" onClick={handleClose} aria-hidden="true" />
+      <div className="relative w-full sm:max-w-2xl max-h-[90vh] overflow-y-auto bg-elevated border border-border rounded-t-xl sm:rounded-xl p-5 sm:p-6 shadow-card">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">Settings</h2>
-          <button
-            type="button"
-            onClick={handleClose}
-            className="text-muted hover:text-text p-2 min-w-[44px] min-h-[44px] flex items-center justify-center"
-            aria-label="Close settings"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <button
+              type="button"
+              onClick={handleClose}
+              className="text-muted hover:text-text p-2 min-w-[44px] min-h-[44px] flex items-center justify-center"
+              aria-label="Close settings"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         <h3 className="text-sm font-medium mb-2">Agents</h3>
@@ -204,9 +209,9 @@ export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSy
               key={a.agent_id}
               type="button"
               onClick={() => selectAgent(a)}
-              className={`px-3 py-2 rounded-full text-sm border min-h-[44px] transition-colors ${
+              className={`px-3 py-2 rounded-lg text-sm border min-h-[44px] transition-all duration-150 ${
                 selected?.agent_id === a.agent_id
-                  ? 'border-black/20 bg-bigas-blue text-bigas-black'
+                  ? 'nav-item-active'
                   : 'border-border hover:bg-surface'
               }`}
             >
@@ -222,7 +227,7 @@ export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSy
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full mt-1.5 bg-white border border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-bigas-blue/50"
+                className="w-full mt-1.5 input-field"
               />
             </div>
             <div>
@@ -231,14 +236,14 @@ export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSy
                 value={goals}
                 onChange={(e) => setGoals(e.target.value)}
                 rows={8}
-                className="w-full mt-1.5 bg-white border border-border rounded-xl px-4 py-3 resize-y focus:outline-none focus:ring-2 focus:ring-bigas-blue/50"
+                className="w-full mt-1.5 input-field resize-y px-4 py-3"
               />
             </div>
             {message && <p className="text-sm text-muted">{message}</p>}
             <button
               type="submit"
               disabled={saving}
-              className="bg-bigas-black text-white font-semibold rounded-full px-6 py-2.5 disabled:opacity-50 min-h-[44px] hover:opacity-90 transition-opacity"
+              className="btn-primary rounded-lg px-6 py-2.5 disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save changes'}
             </button>
@@ -264,7 +269,7 @@ export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSy
                   type="button"
                   onClick={() => handleSyncJira(board)}
                   disabled={Boolean(syncingBoardId)}
-                  className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] disabled:opacity-50 flex-shrink-0"
+                  className="text-sm btn-secondary px-3 py-2 disabled:opacity-50 flex-shrink-0"
                 >
                   {syncingBoardId === board.board_id ? 'Syncing…' : 'Sync from Jira'}
                 </button>

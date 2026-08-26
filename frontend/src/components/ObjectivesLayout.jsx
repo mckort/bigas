@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { createTicket, deleteTicket, fetchObjectives, fetchTicket, updateTicket } from '../lib/api'
 import { SettingsButton } from './AgentSettings'
+import ThemeToggle from './ThemeToggle'
 import { healthLabel, percentLabel } from '../lib/okr'
 
 function healthClass(health) {
-  if (health === 'on_track') return 'bg-emerald-50 text-emerald-900 border-emerald-200'
-  if (health === 'at_risk') return 'bg-amber-50 text-amber-900 border-amber-200'
-  if (health === 'off_track') return 'bg-red-50 text-red-800 border-red-200'
+  if (health === 'on_track') return 'bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-800'
+  if (health === 'at_risk') return 'bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-800'
+  if (health === 'off_track') return 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-200 dark:border-red-800'
   return 'bg-surface text-muted border-border'
 }
 
@@ -22,8 +23,8 @@ function ProgressTrack({ value, expected, label }) {
           {expected != null ? ` · expected ${percentLabel(expected)}` : ''}
         </span>
       </div>
-      <div className="relative h-2 rounded-full bg-black/5 overflow-hidden">
-        <div className="absolute inset-y-0 left-0 bg-bigas-blue" style={{ width: `${pct}%` }} />
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${pct}%` }} />
         <div
           className="absolute top-0 bottom-0 w-px bg-black/50"
           style={{ left: `${exp}%` }}
@@ -36,14 +37,14 @@ function ProgressTrack({ value, expected, label }) {
 
 function StatusCard({ label, value, tone = 'default' }) {
   const tones = {
-    default: 'border-border bg-white',
-    good: 'border-emerald-200 bg-emerald-50',
-    warn: 'border-amber-200 bg-amber-50',
-    bad: 'border-red-200 bg-red-50',
+    default: 'border-border bg-elevated',
+    good: 'border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800',
+    warn: 'border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800',
+    bad: 'border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-800',
     muted: 'border-border bg-surface',
   }
   return (
-    <div className={`rounded-2xl border p-4 min-h-[5.5rem] ${tones[tone] || tones.default}`}>
+    <div className={`rounded-xl border p-4 min-h-[5.5rem] transition-all duration-150 ${tones[tone] || tones.default}`}>
       <p className="text-2xl font-semibold leading-none">{value}</p>
       <p className="text-xs text-muted mt-2">{label}</p>
     </div>
@@ -68,8 +69,8 @@ function DeleteObjectiveDialog({ objective, onCancel, onConfirm, busy }) {
   const count = linkedTicketCount(objective)
   return (
     <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/30" onClick={busy ? undefined : onCancel} aria-hidden="true" />
-      <div className="relative bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-card p-5 space-y-4">
+      <div className="absolute inset-0 modal-overlay" onClick={busy ? undefined : onCancel} aria-hidden="true" />
+      <div className="relative bg-elevated w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-card p-5 space-y-4">
         <h3 className="font-semibold">Delete {objective.key}?</h3>
         <p className="text-sm text-muted leading-relaxed">
           This removes the Objective. Linked tasks stay on the board unless you choose to delete them too.
@@ -90,7 +91,7 @@ function DeleteObjectiveDialog({ objective, onCancel, onConfirm, busy }) {
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] disabled:opacity-50"
+            className="text-sm btn-secondary px-3 py-2 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -175,8 +176,8 @@ function KeyResultPanel({ objective, kr, user, onClose, onReload, onShowOnBoard 
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} aria-hidden="true" />
-      <div className="relative bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-card max-h-[92vh] flex flex-col">
+      <div className="absolute inset-0 modal-overlay" onClick={onClose} aria-hidden="true" />
+      <div className="relative bg-elevated w-full sm:max-w-2xl rounded-t-xl sm:rounded-xl shadow-card max-h-[92vh] flex flex-col">
         <div className="p-4 border-b border-border flex items-start gap-3">
           <div className="flex-1 min-w-0">
             <p className="text-[11px] font-mono text-muted">
@@ -195,7 +196,7 @@ function KeyResultPanel({ objective, kr, user, onClose, onReload, onShowOnBoard 
         <div className="p-4 overflow-y-auto flex-1 space-y-5">
           {error && <p className="text-sm text-red-600">{error}</p>}
 
-          <section className="border border-border rounded-2xl p-4 space-y-3">
+          <section className="card p-4 space-y-3">
             <p className="text-sm text-muted">
               {kr.metric}
               {kr.unit ? ` · ${kr.unit}` : ''} · {kr.source}
@@ -218,7 +219,7 @@ function KeyResultPanel({ objective, kr, user, onClose, onReload, onShowOnBoard 
             {kr.ai_note && <p className="text-[11px] text-muted">{kr.ai_note}</p>}
           </section>
 
-          <section className="border border-border rounded-2xl p-4 space-y-3">
+          <section className="card p-4 space-y-3">
             <p className="text-xs font-medium">Human sign-off</p>
             <p className="text-[11px] text-muted">
               Current is signed by a person. Closed tasks are not a score.
@@ -231,21 +232,21 @@ function KeyResultPanel({ objective, kr, user, onClose, onReload, onShowOnBoard 
                 type="number"
                 value={current}
                 onChange={(e) => setCurrent(e.target.value)}
-                className="flex-1 border border-border rounded-xl px-3 py-2 min-h-[44px]"
+                className="flex-1 input-field"
                 placeholder="Current value"
               />
               <button
                 type="button"
                 onClick={signOff}
                 disabled={busy === 'sign' || current === ''}
-                className="px-4 py-2 rounded-xl bg-bigas-blue text-bigas-black font-medium min-h-[44px] disabled:opacity-50"
+                className="px-4 py-2 rounded-lg btn-accent disabled:opacity-50"
               >
                 {busy === 'sign' ? 'Saving…' : 'Sign off'}
               </button>
             </div>
           </section>
 
-          <section className="border border-border rounded-2xl p-4 space-y-3">
+          <section className="card p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-medium">Linked tasks</p>
               <p className="text-[11px] text-muted">
@@ -258,7 +259,7 @@ function KeyResultPanel({ objective, kr, user, onClose, onReload, onShowOnBoard 
             <button
               type="button"
               onClick={() => onShowOnBoard(objective, kr)}
-              className="w-full text-sm px-3 py-2 rounded-xl border border-border min-h-[44px]"
+              className="w-full text-sm btn-secondary px-3 py-2"
             >
               Show on board
             </button>
@@ -272,13 +273,13 @@ function KeyResultPanel({ objective, kr, user, onClose, onReload, onShowOnBoard 
                 value={taskTitle}
                 onChange={(e) => setTaskTitle(e.target.value)}
                 placeholder="Task title"
-                className="flex-1 border border-border rounded-xl px-3 py-2 min-h-[44px]"
+                className="flex-1 input-field"
               />
               <button
                 type="button"
                 onClick={createLinkedTask}
                 disabled={busy === 'create' || !taskTitle.trim()}
-                className="px-4 py-2 rounded-xl border border-border min-h-[44px] disabled:opacity-50"
+                className="px-4 py-2 rounded-lg btn-secondary disabled:opacity-50"
               >
                 {busy === 'create' ? 'Creating…' : 'Add to To Do'}
               </button>
@@ -292,7 +293,7 @@ function KeyResultPanel({ objective, kr, user, onClose, onReload, onShowOnBoard 
 
 function ObjectiveCard({ objective, onOpenKr, onOpenBoard, onDiscuss, onDelete }) {
   return (
-    <article className="border border-border rounded-2xl bg-white overflow-hidden flex flex-col h-full min-w-[18rem]">
+    <article className="card overflow-hidden flex flex-col h-full min-w-[18rem] transition-all duration-150 hover:shadow-card">
       <div className="p-4 sm:p-5 flex-1">
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <span className="text-[11px] font-mono text-muted">{objective.key}</span>
@@ -328,7 +329,7 @@ function ObjectiveCard({ objective, onOpenKr, onOpenBoard, onDiscuss, onDelete }
               type="button"
               key={kr.id}
               onClick={() => onOpenKr(objective, kr)}
-              className="w-full text-left border border-border rounded-xl p-3 hover:bg-surface/70"
+              className="w-full text-left border border-border rounded-lg p-3 hover:bg-surface transition-all duration-150"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -362,21 +363,21 @@ function ObjectiveCard({ objective, onOpenKr, onOpenBoard, onDiscuss, onDelete }
         <button
           type="button"
           onClick={() => onOpenBoard(objective)}
-          className="text-xs px-3 py-2 rounded-lg border border-border min-h-[36px] bg-white"
+          className="text-xs px-3 py-2 rounded-lg border border-border min-h-[44px] bg-elevated hover:bg-surface transition-colors duration-150"
         >
           Open on board
         </button>
         <button
           type="button"
           onClick={() => onDiscuss(objective)}
-          className="text-xs px-3 py-2 rounded-lg border border-border min-h-[36px] bg-white"
+          className="text-xs px-3 py-2 rounded-lg border border-border min-h-[44px] bg-elevated hover:bg-surface transition-colors duration-150"
         >
           Discuss with Chief of Staff
         </button>
         <button
           type="button"
           onClick={() => onDelete(objective)}
-          className="text-xs px-3 py-2 rounded-lg border border-red-200 text-red-700 min-h-[36px] bg-white ml-auto"
+          className="text-xs px-3 py-2 rounded-lg border border-red-200 text-red-700 dark:text-red-300 dark:border-red-800 min-h-[44px] bg-elevated ml-auto hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors duration-150"
         >
           Delete
         </button>
@@ -460,9 +461,10 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
   const objectives = data?.objectives || []
 
   return (
-    <div className="min-h-screen bg-bg text-text flex flex-col">
-      <header className="sticky top-0 z-10 bg-bg/90 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center gap-2">
+    <div className="min-h-screen-safe bg-bg text-text flex flex-col mobile-nav-offset">
+      <header className="header-bar px-4 py-3 flex items-center gap-2">
         <SettingsButton onClick={onOpenSettings} />
+        <ThemeToggle />
         <div className="flex-1 min-w-0">
           <p className="text-[11px] uppercase tracking-wide text-muted">OKR prototype</p>
           <h1 className="font-bold truncate">Objectives · {data?.cycle || 'Current cycle'}</h1>
@@ -470,14 +472,14 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
         <button
           type="button"
           onClick={() => onSwitchView('chat')}
-          className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden sm:block"
+          className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
         >
           Chat
         </button>
         <button
           type="button"
           onClick={() => onSwitchView('board')}
-          className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px]"
+          className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
         >
           Board
         </button>
@@ -508,7 +510,7 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
             </div>
             {(briefing.this_week || []).length > 0 && (
               <div className="grid md:grid-cols-2 gap-4">
-                <div className="border border-border rounded-2xl bg-white p-4">
+                <div className="card p-4">
                   <p className="text-xs font-medium mb-2">This week</p>
                   <ul className="space-y-1.5 text-sm">
                     {briefing.this_week.map((item) => (
@@ -518,7 +520,7 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
                     ))}
                   </ul>
                 </div>
-                <div className="border border-border rounded-2xl bg-white p-4">
+                <div className="card p-4">
                   <p className="text-xs font-medium mb-2">Watch</p>
                   <ul className="space-y-1.5 text-sm text-muted">
                     {(briefing.risks || []).slice(0, 4).map((item) => (
@@ -540,7 +542,7 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
           </section>
 
           {objectives.length === 0 && (
-            <section className="border border-dashed border-border rounded-2xl p-8 text-center bg-surface/60">
+            <section className="border border-dashed border-border rounded-xl p-8 text-center bg-surface">
               <h3 className="font-semibold">No objectives on your boards yet</h3>
               <p className="text-sm text-muted mt-2 max-w-xl mx-auto">
                 Create a ticket with type Objective on a board, then drag it to Research and describe.
@@ -549,7 +551,7 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
           )}
 
           {objectives.length > 0 && (
-            <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(20rem,1fr))]">
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
               {objectives.map((objective) => (
                 <ObjectiveCard
                   key={objective.key}

@@ -128,6 +128,44 @@ def test_followup_summary_finished_without_commits_offers_retry():
     assert "trigger autofix again" in text.lower()
 
 
+def test_followup_summary_no_push_rereview_ready_to_merge():
+    text = summarize_followup_result(
+        {
+            "success": True,
+            "done": True,
+            "ok": True,
+            "finalized": True,
+            "fixes_pushed": False,
+            "rereviewed": True,
+            "ready_to_merge": True,
+            "comment_url": "https://github.com/mckort/vcfieldassistant/pull/123#issuecomment-1",
+            "auto_merge": {"skipped": True},
+        }
+    )
+    assert "did not need new commits" in text.lower()
+    assert "ready to merge" in text.lower()
+    assert "issuecomment-1" in text
+    assert "trigger autofix again" not in text.lower()
+
+
+def test_followup_summary_no_push_rereview_still_has_findings():
+    text = summarize_followup_result(
+        {
+            "success": True,
+            "done": True,
+            "ok": True,
+            "finalized": True,
+            "fixes_pushed": False,
+            "rereviewed": True,
+            "ready_to_merge": False,
+            "comment_url": "https://github.com/mckort/vcfieldassistant/pull/123#issuecomment-1",
+        }
+    )
+    assert "did not push" in text.lower()
+    assert "stopping the loop" in text.lower()
+    assert "another round may run" not in text.lower()
+
+
 def test_with_summary_attaches_field():
     out = with_summary({"launched": True, "autofix_round": 1, "max_iterations": 5}, summarize_autofix_result)
     assert out["summary"]

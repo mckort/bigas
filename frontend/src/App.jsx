@@ -4,6 +4,7 @@ import ChatLayout from './components/ChatLayout'
 import BoardLayout from './components/BoardLayout'
 import ObjectivesLayout from './components/ObjectivesLayout'
 import AgentSettings from './components/AgentSettings'
+import MobileNav from './components/MobileNav'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 
@@ -73,8 +74,8 @@ export default function App() {
 
   if (!ready) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-surface text-muted">
-        <img src="/bigas-logo.png" alt="" className="h-12 w-12 rounded-xl object-cover animate-pulse" aria-hidden="true" />
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-bg text-muted">
+        <img src="/bigas-logo.png" alt="" className="h-12 w-12 rounded-lg object-cover animate-pulse" aria-hidden="true" />
         <span className="text-sm">Loading…</span>
       </div>
     )
@@ -124,6 +125,7 @@ export default function App() {
           agentsRefreshKey={agentsRefreshKey}
         />
       )}
+      <MobileNav activeView={view} onSwitchView={switchView} />
       <AgentSettings
         open={settingsOpen}
         onClose={handleSettingsClose}

@@ -341,11 +341,12 @@ Summary: {summary}
 6. Update the repository README when the change affects how people install, configure, run, or understand the project. Skip README edits for purely internal refactors with no user-facing or ops impact.
 7. Update in-app support/help content (end-user help articles / support pages) when the change affects what users see or how they use the product. Skip when there is no user-facing behavior change, or when the repo has no in-app help.
 8. All UI changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
-9. Open a pull request when done (autoCreatePR is enabled).
-10. PR title MUST start with `{issue_key}:` followed by a short summary.
-11. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-12. Do not merge the PR.
-13. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+9. Before you open the PR or say you are done: look for dead/unused code created by THIS implementation (unused imports, functions, helpers, files, and call sites you replaced). Remove it. Do not do a repo-wide unused-code cleanup.
+10. Open a pull request when done (autoCreatePR is enabled).
+11. PR title MUST start with `{issue_key}:` followed by a short summary.
+12. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
+13. Do not merge the PR.
+14. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
 """
 
 
@@ -389,11 +390,12 @@ Summary: {summary}
 6. Include sensible SEO basics when relevant (title/description/headings/slug) using the project's existing conventions.
 7. Update the repository README (or equivalent site docs) when the change affects how content, routes, SEO setup, or contributor workflows are documented. Skip when nothing user- or ops-facing changed.
 8. All UI/page changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
-9. Open a pull request when done (autoCreatePR is enabled).
-10. PR title MUST start with `{issue_key}:` followed by a short summary.
-11. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-12. Do not merge the PR.
-13. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+9. Before you open the PR or say you are done: look for dead/unused code created by THIS implementation (unused imports, functions, helpers, files, and call sites you replaced). Remove it. Do not do a repo-wide unused-code cleanup.
+10. Open a pull request when done (autoCreatePR is enabled).
+11. PR title MUST start with `{issue_key}:` followed by a short summary.
+12. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
+13. Do not merge the PR.
+14. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
 """
 
 

@@ -31,6 +31,7 @@ import {
   ticketParentKrId,
 } from '../lib/okr'
 import { SettingsButton } from './AgentSettings'
+import ThemeToggle from './ThemeToggle'
 
 const SYSTEM_COMMENT_MARKER = '[bigas-jira-ai]'
 
@@ -56,24 +57,53 @@ function boardQuery() {
   }
 }
 
-function replaceBoardUrl(boardId, { keepFilters = true } = {}) {
+const BOARD_URL_SYNC_EVENT = 'bigas-board-url'
+
+function replaceBoardLocation(mutateParams) {
   const params = new URLSearchParams(window.location.search)
-  if (!keepFilters) {
-    for (const key of BOARD_FILTER_QUERY_KEYS) params.delete(key)
-  }
-  if (boardId) params.set('board', String(boardId))
-  else params.delete('board')
+  mutateParams(params)
   const qs = params.toString()
   const pathname = window.location.pathname
-  const next = qs ? `${pathname}?${qs}` : pathname
-  if (`${window.location.pathname}${window.location.search}` === next) return
+  const hash = window.location.hash || ''
+  const next = `${qs ? `${pathname}?${qs}` : pathname}${hash}`
+  const current = `${pathname}${window.location.search}${hash}`
+  if (current === next) return false
   window.history.replaceState({}, '', next)
+  window.dispatchEvent(new Event(BOARD_URL_SYNC_EVENT))
+  return true
+}
+
+function replaceBoardUrl(boardId, { keepFilters = true } = {}) {
+  replaceBoardLocation((params) => {
+    if (!keepFilters) {
+      for (const key of BOARD_FILTER_QUERY_KEYS) params.delete(key)
+    }
+    if (boardId) params.set('board', String(boardId))
+    else params.delete('board')
+  })
 }
 
 function filterFromQuery(query) {
   if (query.krId) return `kr:${query.krId}`
   if (query.objectiveKey) return query.objectiveKey
   return ''
+}
+
+function upsertTicket(list, ticket) {
+  if (!ticket?.ticket_id) return list || []
+  const tickets = Array.isArray(list) ? list : []
+  const index = tickets.findIndex((item) => item.ticket_id === ticket.ticket_id)
+  if (index === -1) return [...tickets, ticket]
+  const next = [...tickets]
+  next[index] = { ...tickets[index], ...ticket }
+  return next
+}
+
+function clearObjectiveFilterFromUrl() {
+  replaceBoardLocation((params) => {
+    params.delete('kr')
+    params.delete('objective')
+  })
 }
 
 function parentKeyFromFilter(filter, tickets) {
@@ -102,7 +132,7 @@ function ColumnCreateButton({ hiddenUntilHover = false, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted hover:bg-white/70 hover:text-text min-h-[40px] transition-opacity ${
+      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted hover:bg-elevated hover:text-text min-h-[40px] transition-opacity duration-150 ${
         hiddenUntilHover ? 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100' : ''
       }`}
     >
@@ -130,7 +160,7 @@ function StatusSelect({ value, columns, onChange, className = '' }) {
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`text-xs border border-border rounded-lg px-2 py-1.5 bg-white min-h-[36px] ${className}`}
+      className={`text-xs border border-border rounded-lg px-2 py-1.5 bg-elevated min-h-[36px] ${className}`}
       aria-label="Change status"
     >
       {columns.map((col) => (
@@ -145,7 +175,7 @@ function StatusSelect({ value, columns, onChange, className = '' }) {
 function ObjectiveChip({ epic, onClick, className = '' }) {
   if (!epic) return null
   const label = objectiveChipLabel(epic)
-  const classes = `inline-flex items-center max-w-full text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-bigas-blue/20 border border-black/10 text-bigas-black ${className}`
+  const classes = `chip-accent ${className}`
   if (!onClick) {
     return <span className={classes}><span className="truncate">{label}</span></span>
   }
@@ -154,7 +184,7 @@ function ObjectiveChip({ epic, onClick, className = '' }) {
       type="button"
       onClick={onClick}
       onMouseDown={(e) => e.stopPropagation()}
-      className={`${classes} hover:bg-bigas-blue/40`}
+      className={`${classes} hover:bg-accent/20 transition-colors duration-150`}
       title={`Show tickets in ${epic.key}`}
     >
       <span className="truncate">{label}</span>
@@ -263,8 +293,8 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
         onDragStart(e, ticket)
       }}
       onDragEnd={onDragEnd}
-      className={`bg-white border border-border rounded-xl p-3 shadow-soft cursor-grab active:cursor-grabbing ${
-        dragging ? 'opacity-50' : ''
+      className={`bg-elevated border border-border rounded-lg p-3 shadow-soft cursor-grab active:cursor-grabbing transition-all duration-150 hover:shadow-card hover:border-border-strong ${
+        dragging ? 'opacity-50 scale-[0.98]' : ''
       }`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
@@ -272,7 +302,7 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
           <TicketAiMark status={ticket.status} />
           <span className="text-[11px] font-mono text-muted truncate">{ticket.key}</span>
           {isObjective(ticket) && (
-            <span className="text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-bigas-blue/20 border border-black/10 text-bigas-black flex-shrink-0">
+            <span className="chip-accent flex-shrink-0">
               Objective
             </span>
           )}
@@ -292,7 +322,7 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
       <button
         type="button"
         onClick={() => onEdit(ticket)}
-        className="text-left w-full font-medium text-sm leading-snug hover:text-bigas-black"
+        className="text-left w-full font-medium text-sm leading-snug hover:text-accent transition-colors duration-150"
       >
         {ticket.title}
       </button>
@@ -339,7 +369,7 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
         <button
           type="button"
           onClick={() => onDiscuss(ticket)}
-          className="text-xs px-2 py-1 rounded-lg border border-border hover:bg-surface min-h-[32px]"
+          className="text-xs px-2 py-1 rounded-lg border border-border hover:bg-surface min-h-[32px] transition-colors duration-150"
         >
           Discuss
         </button>
@@ -412,7 +442,7 @@ function LocalImagePreview({ file }) {
     <img
       src={url}
       alt={file.name}
-      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-white border border-border"
+      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-elevated border border-border"
     />
   )
 }
@@ -454,7 +484,7 @@ function AttachmentPreview({ ticketId, attachment }) {
     <img
       src={url}
       alt={attachment.filename}
-      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-white border border-border"
+      className="mt-2 max-h-48 w-full object-contain rounded-lg bg-elevated border border-border"
     />
   )
 }
@@ -637,7 +667,7 @@ function TicketAttachments({ ticketId, pendingFiles, onPendingFilesChange, refre
       {error && <p className="text-xs text-red-600">{error}</p>}
       <label
         className={`block w-full border border-dashed rounded-xl px-3 py-4 text-center text-sm min-h-[44px] cursor-pointer ${
-          dragOver ? 'border-bigas-blue bg-white' : 'border-border hover:bg-white'
+          dragOver ? 'border-accent bg-accent-muted' : 'border-border hover:bg-elevated'
         }`}
         onDragOver={(e) => {
           e.preventDefault()
@@ -794,8 +824,8 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} aria-hidden="true" />
-      <div className="relative bg-white w-full sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl rounded-t-2xl sm:rounded-2xl shadow-card max-h-[90vh] sm:max-h-[85vh] flex flex-col">
+      <div className="absolute inset-0 modal-overlay" onClick={onClose} aria-hidden="true" />
+      <div className="relative bg-elevated w-full sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl rounded-t-xl sm:rounded-xl shadow-card max-h-[90vh] sm:max-h-[85vh] flex flex-col">
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h3 className="font-semibold">{isNew ? 'New ticket' : ticket.key}</h3>
           <button type="button" onClick={onClose} className="p-2 min-w-[44px] min-h-[44px]" aria-label="Close">
@@ -808,7 +838,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             <input
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+              className="mt-1 input-field"
             />
           </label>
           <label className="block text-sm">
@@ -817,7 +847,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={12}
-              className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[12rem] sm:min-h-[16rem] lg:min-h-[20rem] resize-y"
+              className="mt-1 input-field min-h-[12rem] sm:min-h-[16rem] lg:min-h-[20rem] resize-y"
             />
           </label>
           <label className="block text-sm">
@@ -833,7 +863,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                   parent_kr_id: issue_type === 'Objective' || issue_type === 'Epic' ? '' : form.parent_kr_id,
                 })
               }}
-              className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+              className="mt-1 input-field"
             >
               <option value="Task">Task</option>
               <option value="Bug">Bug</option>
@@ -855,7 +885,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                     value={form.okr_cycle}
                     onChange={(e) => setForm({ ...form, okr_cycle: e.target.value })}
                     placeholder="2026-Q3"
-                    className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[40px] bg-white"
+                    className="mt-1 input-field min-h-[40px]"
                   />
                 </label>
                 <label className="block text-sm">
@@ -864,12 +894,12 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                     value={form.okr_owner}
                     onChange={(e) => setForm({ ...form, okr_owner: e.target.value })}
                     placeholder="Chief of Staff"
-                    className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[40px] bg-white"
+                    className="mt-1 input-field min-h-[40px]"
                   />
                 </label>
               </div>
               {form.key_results.map((kr, index) => (
-                <div key={kr.id || index} className="border border-border rounded-xl p-3 bg-white space-y-2">
+                <div key={kr.id || index} className="border border-border rounded-lg p-3 bg-elevated space-y-2">
                   <input
                     value={kr.title}
                     onChange={(e) => {
@@ -905,7 +935,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                         key_results[index] = { ...kr, source: e.target.value }
                         setForm({ ...form, key_results })
                       }}
-                      className="text-xs border border-border rounded-lg px-2 py-1.5 bg-white"
+                      className="text-xs border border-border rounded-lg px-2 py-1.5 bg-elevated"
                     >
                       <option value="ga4">ga4</option>
                       <option value="github">github</option>
@@ -972,7 +1002,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               <select
                 value={form.parent_key || ''}
                 onChange={(e) => setForm({ ...form, parent_key: e.target.value, parent_kr_id: '' })}
-                className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+                className="mt-1 input-field"
               >
                 <option value="">None</option>
                 {selectableEpics.map((epic) => (
@@ -988,7 +1018,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                 <select
                   value={form.parent_kr_id || ''}
                   onChange={(e) => setForm({ ...form, parent_kr_id: e.target.value })}
-                  className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+                  className="mt-1 input-field"
                 >
                   <option value="">Whole objective</option>
                   {parentKrs.map((kr) => (
@@ -1006,7 +1036,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             <select
               value={form.status}
               onChange={(e) => setForm({ ...form, status: e.target.value })}
-              className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+              className="mt-1 input-field"
             >
               {columns.map((col) => (
                 <option key={col} value={col}>
@@ -1020,7 +1050,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             <input
               value={form.assignee}
               onChange={(e) => setForm({ ...form, assignee: e.target.value })}
-              className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+              className="mt-1 input-field"
             />
           </label>
           {board?.workflow_enabled && (
@@ -1030,7 +1060,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                 value={form.fix_version}
                 onChange={(e) => setForm({ ...form, fix_version: e.target.value })}
                 placeholder="e.g. v1.2.0"
-                className="mt-1 w-full border border-border rounded-xl px-3 py-2 min-h-[44px]"
+                className="mt-1 input-field"
               />
             </label>
           )}
@@ -1094,7 +1124,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               }
             }}
             disabled={!form.title.trim() || saving}
-            className="flex-1 bg-bigas-blue text-bigas-black font-medium rounded-xl py-2 min-h-[44px] order-2 sm:order-3 disabled:opacity-50"
+            className="flex-1 btn-accent rounded-lg py-2 min-h-[44px] order-2 sm:order-3 disabled:opacity-50"
           >
             {saving
               ? isNew && pendingFiles.length
@@ -1110,7 +1140,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
   )
 }
 
-function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mobileOpen, onClose }) {
+function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, onLogout, mobileOpen, onClose }) {
   const [newName, setNewName] = useState('')
   const [newProject, setNewProject] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -1126,7 +1156,7 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
   return (
     <>
       {mobileOpen && (
-        <div className="fixed inset-0 bg-black/30 z-40 lg:hidden" onClick={onClose} aria-hidden="true" />
+        <div className="fixed inset-0 bg-overlay z-40 lg:hidden" onClick={onClose} aria-hidden="true" />
       )}
       <aside
         className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-surface border-r border-border flex flex-col transform transition-transform duration-200 lg:translate-x-0 ${
@@ -1147,10 +1177,10 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
                     onSelect(board.board_id)
                     onClose?.()
                   }}
-                  className={`flex-1 text-left px-3 py-2.5 rounded-xl text-sm min-h-[44px] truncate ${
+                  className={`flex-1 text-left px-3 py-2.5 rounded-lg text-sm min-h-[44px] truncate transition-all duration-150 ${
                     active
-                      ? 'bg-bigas-blue text-bigas-black font-medium'
-                      : 'hover:bg-white text-text'
+                      ? 'nav-item-active font-medium'
+                      : 'hover:bg-elevated text-text'
                   }`}
                 >
                   <span className="block truncate">{board.name}</span>
@@ -1171,7 +1201,7 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
             )
           })}
         </nav>
-        <div className="p-3 border-t border-border">
+        <div className="p-3 border-t border-border space-y-2">
           {showCreate ? (
             <div className="space-y-2">
               <input
@@ -1193,7 +1223,7 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
                 <button
                   type="button"
                   onClick={handleCreate}
-                  className="flex-1 bg-bigas-blue rounded-lg text-sm py-2 font-medium"
+                  className="flex-1 btn-accent rounded-lg text-sm py-2"
                 >
                   Add
                 </button>
@@ -1203,11 +1233,18 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, mob
             <button
               type="button"
               onClick={() => setShowCreate(true)}
-              className="w-full text-sm py-2 rounded-xl border border-dashed border-border hover:bg-white min-h-[44px]"
+              className="w-full text-sm py-2 rounded-lg border border-dashed border-border hover:bg-elevated min-h-[44px] transition-colors duration-150"
             >
               + New board
             </button>
           )}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="lg:hidden w-full text-sm text-muted py-2 rounded-lg border border-border hover:bg-elevated min-h-[44px]"
+          >
+            Log out
+          </button>
         </div>
       </aside>
     </>
@@ -1228,6 +1265,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [pendingTicketKey, setPendingTicketKey] = useState(null)
   const [syncMessage, setSyncMessage] = useState('')
   const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
+  const optimisticTicketsRef = useRef([])
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
   const columns = activeBoard?.columns || ['To Do', 'In Progress', 'Review', 'Done']
@@ -1252,10 +1290,24 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     })
   }, [])
 
+  const trackOptimisticTicket = useCallback((ticket) => {
+    if (!ticket?.ticket_id) return
+    optimisticTicketsRef.current = upsertTicket(optimisticTicketsRef.current, ticket)
+    setTickets((prev) => upsertTicket(prev, ticket))
+  }, [])
+
   const loadTickets = useCallback(async () => {
     if (!activeBoardId) return
     const data = await fetchBoardTickets(activeBoardId)
-    setTickets(data.tickets || [])
+    const incoming = data.tickets || []
+    optimisticTicketsRef.current = optimisticTicketsRef.current.filter(
+      (ticket) => !incoming.some((item) => item.ticket_id === ticket.ticket_id),
+    )
+    const merged = optimisticTicketsRef.current.reduce(
+      (acc, ticket) => upsertTicket(acc, ticket),
+      incoming,
+    )
+    setTickets(merged)
   }, [activeBoardId])
 
   useEffect(() => {
@@ -1263,8 +1315,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }, [loadBoards])
 
   useEffect(() => {
+    optimisticTicketsRef.current = []
+  }, [activeBoardId])
+
+  useEffect(() => {
     loadTickets()
-    const id = setInterval(loadTickets, 5000)
+    const id = setInterval(() => loadTickets(), 5000)
     return () => clearInterval(id)
   }, [loadTickets])
 
@@ -1299,7 +1355,11 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   useEffect(() => {
     window.addEventListener('popstate', syncBoardStateFromUrl)
-    return () => window.removeEventListener('popstate', syncBoardStateFromUrl)
+    window.addEventListener(BOARD_URL_SYNC_EVENT, syncBoardStateFromUrl)
+    return () => {
+      window.removeEventListener('popstate', syncBoardStateFromUrl)
+      window.removeEventListener(BOARD_URL_SYNC_EVENT, syncBoardStateFromUrl)
+    }
   }, [syncBoardStateFromUrl])
 
   useEffect(() => {
@@ -1393,6 +1453,14 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       return null
     }
 
+    const revealCreatedTicket = (ticket) => {
+      if (!ticket?.ticket_id) return
+      trackOptimisticTicket(ticket)
+      if (!ticketMatchesObjectiveFilter(ticket, epicFilter)) {
+        clearObjectiveFilterFromUrl()
+      }
+    }
+
     if (modalTicket?.ticket_id) {
       await updateTicket(modalTicket.ticket_id, payload)
       if (files.length) {
@@ -1403,11 +1471,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       }
     } else {
       const data = await createTicket(activeBoardId, payload)
-      const created = data.ticket
-      if (created?.ticket_id && files.length) {
-        const uploadResult = await uploadPendingFiles(created.ticket_id)
+      const createdTicket = data.ticket
+      revealCreatedTicket(createdTicket)
+      if (createdTicket?.ticket_id && files.length) {
+        const uploadResult = await uploadPendingFiles(createdTicket.ticket_id)
         if (uploadResult?.failedFiles?.length) {
-          setModalTicket(created)
+          setModalTicket(createdTicket)
           setShowCreate(false)
           setCreateStatus(null)
           return uploadResult
@@ -1513,94 +1582,107 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row overflow-hidden bg-bg">
+    <div className="h-screen-safe flex flex-col lg:flex-row overflow-hidden bg-bg mobile-nav-offset">
       <BoardSidebar
         boards={boards}
         activeBoardId={activeBoardId}
         onSelect={setActiveBoardId}
         onCreate={handleCreateBoard}
         onDelete={handleDeleteBoard}
+        onLogout={onLogout}
         mobileOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-10 bg-bg/90 backdrop-blur-sm border-b border-border px-3 sm:px-4 py-3 flex items-center gap-2">
-          <SettingsButton onClick={onOpenSettings} />
-          <button
-            type="button"
-            className="lg:hidden p-2 min-w-[44px] min-h-[44px] border border-border rounded-xl"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="Open boards"
-          >
-            ☰
-          </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="font-bold truncate">{activeBoard?.name || 'Board'}</h1>
-            {activeBoard?.workflow_enabled && (
-              <p className="text-xs text-muted">
-                {syncMessage || 'AI workflow enabled'}
-              </p>
-            )}
-          </div>
-          {showEpicFilter && (
-            <select
-              value={epicFilter}
-              onChange={(e) => setEpicFilter(e.target.value)}
-              className="text-sm px-2 py-2 rounded-xl border border-border min-h-[44px] max-w-[160px] sm:max-w-[220px] bg-white"
-              aria-label="Filter by objective"
+        <header className="header-bar px-3 sm:px-4 py-3 flex flex-col gap-2 lg:flex-row lg:items-center">
+          <div className="flex items-center gap-2 min-w-0 lg:flex-1">
+            <SettingsButton onClick={onOpenSettings} />
+            <ThemeToggle />
+            <button
+              type="button"
+              className="lg:hidden p-2 min-w-[44px] min-h-[44px] border border-border rounded-lg bg-elevated"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open boards"
             >
-              <option value="">All tickets</option>
-              <option value="__none__">No objective</option>
-              {epicFilter.startsWith('kr:') && (
-                <option value={epicFilter}>
-                  KR · {krsById[epicFilter.slice(3)]?.title || epicFilter.slice(3)}
-                </option>
+              ☰
+            </button>
+            <div className="flex-1 min-w-0">
+              <h1 className="font-bold truncate">{activeBoard?.name || 'Board'}</h1>
+              {activeBoard?.workflow_enabled && (
+                <p className={`text-xs text-muted truncate ${syncMessage ? '' : 'hidden lg:block'}`}>
+                  {syncMessage || 'AI workflow enabled'}
+                </p>
               )}
-              {epicOptions.map((epic) => (
-                <option key={epic.key} value={epic.key}>
-                  {objectiveChipLabel(epic)}
-                </option>
-              ))}
-            </select>
-          )}
-          <button
-            type="button"
-            onClick={() => onSwitchView('objectives')}
-            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden sm:block"
-          >
-            Objectives
-          </button>
-          <button
-            type="button"
-            onClick={() => onSwitchView('chat')}
-            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden sm:block"
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            onClick={() => openCreate(columns[0])}
-            className="bg-bigas-blue text-bigas-black font-medium px-3 py-2 rounded-xl min-h-[44px] text-sm"
-          >
-            + Ticket
-          </button>
-          <button type="button" onClick={onLogout} className="text-sm text-muted px-2 min-h-[44px]">
-            Log out
-          </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 min-w-0">
+            {showEpicFilter && (
+              <select
+                value={epicFilter}
+                onChange={(e) => setEpicFilter(e.target.value)}
+                className="flex-1 min-w-0 text-sm lg:flex-none lg:max-w-[220px] input-field"
+                aria-label="Filter by objective"
+              >
+                <option value="">All tickets</option>
+                <option value="__none__">No objective</option>
+                {epicFilter.startsWith('kr:') && (
+                  <option value={epicFilter}>
+                    KR · {krsById[epicFilter.slice(3)]?.title || epicFilter.slice(3)}
+                  </option>
+                )}
+                {epicOptions.map((epic) => (
+                  <option key={epic.key} value={epic.key}>
+                    {objectiveChipLabel(epic)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={() => onSwitchView('objectives')}
+              className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
+            >
+              Objectives
+            </button>
+            <button
+              type="button"
+              onClick={() => onSwitchView('chat')}
+              className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              onClick={() => openCreate(columns[0])}
+              className="flex-shrink-0 btn-accent font-medium px-3 py-2 rounded-lg min-h-[44px] text-sm"
+            >
+              + Ticket
+            </button>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="hidden lg:inline-flex text-sm text-muted px-2 min-h-[44px] items-center"
+            >
+              Log out
+            </button>
+          </div>
         </header>
 
-        {/* Mobile: stacked columns */}
-        <div className="flex-1 overflow-y-auto lg:hidden p-3 space-y-4">
+        {/* Mobile: horizontal snap-scroll kanban */}
+        <div className="flex-1 overflow-x-auto overflow-y-hidden lg:hidden snap-x-mandatory scrollbar-hide flex gap-3 p-3">
           {columns.map((col) => {
             const colTickets = visibleTickets.filter((t) => t.status === col)
             return (
-              <section key={col} className="border border-border rounded-xl bg-surface/50">
-                <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between">
+              <section
+                key={col}
+                className="flex-shrink-0 w-[85vw] max-w-sm snap-start flex flex-col bg-surface rounded-lg border border-border max-h-full"
+              >
+                <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between flex-shrink-0">
                   <span className="truncate">{col}</span>
                   <span className="text-muted font-normal">{colTickets.length}</span>
                 </h3>
-                <div className="p-2 space-y-2">
+                <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
                   {colTickets.map((ticket) => (
                     <TicketCard
                       key={ticket.ticket_id}
@@ -1633,7 +1715,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
             return (
               <section
                 key={col}
-                className="group flex-shrink-0 w-72 flex flex-col bg-surface/60 rounded-xl border border-border"
+                className="group flex-shrink-0 w-72 flex flex-col bg-surface rounded-lg border border-border"
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => handleDrop(col)}
               >

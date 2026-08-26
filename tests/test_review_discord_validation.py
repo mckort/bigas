@@ -207,3 +207,120 @@ def test_discord_review_posted_message_includes_pr_title_as_link():
     ) in header
     assert "PR: https://github.com/mckort/bigas/pull/11" not in header
     assert body == "Looks good."
+
+
+@patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
+@patch("bigas.resources.cto.endpoints._maybe_auto_merge_pr", return_value={"skipped": True})
+@patch("bigas.resources.cto.endpoints._final_approval_after_merge", return_value={"skipped": True})
+@patch("bigas.resources.cto.endpoints.PRReviewService")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "Fix", "merged": False})
+@patch("bigas.resources.cto.endpoints.AutofixService")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto_chunks")
+def test_autofix_followup_rereviews_when_no_new_commit(
+    _chunks,
+    _discord,
+    mock_service,
+    _mock_pr,
+    mock_gh,
+    mock_review,
+    _merge,
+    _jira,
+    _usage,
+):
+    from bigas.llm.usage import TokenUsage
+    from bigas.resources.cto.pr_review.service import PRReviewResult
+
+    svc = mock_service.return_value
+    svc.poll_status.return_value = {
+        "done": True,
+        "ok": True,
+        "status": "FINISHED",
+        "agent_id": "bc-1",
+        "run_id": "run-1",
+        "agent_url": "https://cursor.com/agents/bc-1",
+        "result_text": "Logo is still used in index.html; no commit needed.",
+    }
+    svc.get_pr_head_commit.return_value = ("abc123", "[bigas-autofix] keep logo")
+    svc.fetch_pr_diff.return_value = "diff --git a/x b/x"
+    svc.count_autofix_commits.return_value = 1
+    mock_gh.return_value.get_marked_comment_body.return_value = (
+        "### Important\n- unused logo"
+    )
+    mock_gh.return_value.post_or_update_pr_comment.return_value = {
+        "html_url": "https://github.com/acme/app/pull/1#issuecomment-1"
+    }
+    mock_review.return_value.review.return_value = PRReviewResult(
+        text=(
+            "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+            "### Minor\nNone.\n\nReady to merge.\n"
+        ),
+        model="gemini-pro-latest",
+        usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+    )
+
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/autofix_followup",
+        json={
+            "repo": "acme/app",
+            "pr_number": 1,
+            "agent_id": "bc-1",
+            "baseline_head_sha": "abc123",
+            "finalize": True,
+            "github_token": "tok",
+            "cursor_api_key": "ck",
+        },
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    assert body.get("rereviewed") is True
+    assert body.get("fixes_pushed") is False
+    assert body.get("ready_to_merge") is True
+    mock_review.return_value.review.assert_called_once()
+
+
+@patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
+@patch("bigas.resources.cto.endpoints.PRReviewService")
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "Fix", "merged": False})
+@patch("bigas.resources.cto.endpoints.AutofixService")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+def test_autofix_followup_skips_rereview_when_agent_asks_confirmation(
+    _discord,
+    mock_service,
+    _mock_pr,
+    mock_review,
+    _usage,
+):
+    svc = mock_service.return_value
+    svc.poll_status.return_value = {
+        "done": True,
+        "ok": True,
+        "status": "FINISHED",
+        "agent_id": "bc-1",
+        "run_id": "run-1",
+        "agent_url": "https://cursor.com/agents/bc-1",
+        "result_text": "Proposed changes. Shall I proceed with implementing these?",
+    }
+    svc.get_pr_head_commit.return_value = ("abc123", "feat: original")
+
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/autofix_followup",
+        json={
+            "repo": "acme/app",
+            "pr_number": 1,
+            "agent_id": "bc-1",
+            "baseline_head_sha": "abc123",
+            "finalize": True,
+            "github_token": "tok",
+            "cursor_api_key": "ck",
+        },
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    assert body.get("rereviewed") is False
+    assert body.get("fixes_pushed") is False
+    assert body.get("asked_confirmation") is True
+    mock_review.return_value.review.assert_not_called()

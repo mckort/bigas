@@ -87,12 +87,12 @@ Polled by GitHub Actions after launch:
 
 - Not done yet: `{ "done": false, "status": "RUNNING", ... }`
 - Done + re-reviewed: `{ "done": true, "ok": true, "rereviewed": true, "ready_to_merge": true, "comment_url": "...", "auto_merge": { ... } }`
-- Done but no **new** `[bigas-autofix]` commit since launch (pass `baseline_head_sha` from `autofix_pr.head_sha`): Discord warning, `{ "fixes_pushed": false, "rereviewed": false }` — does **not** rewrite the PR review comment
+- Done but no **new** `[bigas-autofix]` commit since launch (pass `baseline_head_sha` from `autofix_pr.head_sha`): Discord notice, then **re-review anyway** so false-positive findings can be cleared (`{ "fixes_pushed": false, "rereviewed": true }`). If the agent stopped to ask for confirmation, skip re-review. After a no-push re-review that is still dirty, the Actions loop stops.
 - After max rounds without LGTM: `{ "loop_protection": true }` + Discord/Jira manual-handling notice
 
 Discord “round N/M” uses the number of `[bigas-autofix]` commits on the PR after a successful push (completed round), not Actions loop attempts that finished without commits.
 
-The autofix prompt instructs the agent **not** to ask for confirmation and to push fixes immediately.
+The autofix prompt instructs the agent **not** to ask for confirmation and to push fixes immediately. It also tells the agent to remove leftover dead/unused code from its own fixes (not a repo-wide cleanup).
 
 ## Guards
 
