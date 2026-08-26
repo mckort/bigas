@@ -65,7 +65,6 @@ body {
   position: sticky;
   bottom: 0;
   z-index: 10;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .snap-x-mandatory {

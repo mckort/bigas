@@ -469,6 +469,13 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
         </div>
         <button
           type="button"
+          onClick={() => onSwitchView('chat')}
+          className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
+        >
+          Chat
+        </button>
+        <button
+          type="button"
           onClick={() => onSwitchView('board')}
           className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
         >

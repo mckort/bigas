@@ -1627,6 +1627,20 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           )}
           <button
             type="button"
+            onClick={() => onSwitchView('objectives')}
+            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
+          >
+            Objectives
+          </button>
+          <button
+            type="button"
+            onClick={() => onSwitchView('chat')}
+            className="text-sm px-3 py-2 rounded-xl border border-border min-h-[44px] hidden lg:block"
+          >
+            Chat
+          </button>
+          <button
+            type="button"
             onClick={() => openCreate(columns[0])}
             className="bg-bigas-blue text-bigas-black font-medium px-3 py-2 rounded-xl min-h-[44px] text-sm"
           >
