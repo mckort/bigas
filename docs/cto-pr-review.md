@@ -15,7 +15,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, closed]
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 jobs:
   bigas:
