@@ -30,12 +30,3 @@ export function applyTheme(theme) {
   }
   return next
 }
-
-export function initTheme() {
-  return applyTheme(resolveTheme())
-}
-
-export function toggleTheme() {
-  const isDark = document.documentElement.classList.contains('dark')
-  return applyTheme(isDark ? 'light' : 'dark')
-}

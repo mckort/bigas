@@ -838,7 +838,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             <input
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full input-field"
+              className="mt-1 input-field"
             />
           </label>
           <label className="block text-sm">
@@ -847,7 +847,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={12}
-              className="mt-1 w-full input-field min-h-[12rem] sm:min-h-[16rem] lg:min-h-[20rem] resize-y"
+              className="mt-1 input-field min-h-[12rem] sm:min-h-[16rem] lg:min-h-[20rem] resize-y"
             />
           </label>
           <label className="block text-sm">
@@ -863,7 +863,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                   parent_kr_id: issue_type === 'Objective' || issue_type === 'Epic' ? '' : form.parent_kr_id,
                 })
               }}
-              className="mt-1 w-full input-field"
+              className="mt-1 input-field"
             >
               <option value="Task">Task</option>
               <option value="Bug">Bug</option>
@@ -885,7 +885,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                     value={form.okr_cycle}
                     onChange={(e) => setForm({ ...form, okr_cycle: e.target.value })}
                     placeholder="2026-Q3"
-                    className="mt-1 w-full input-field min-h-[40px]"
+                    className="mt-1 input-field min-h-[40px]"
                   />
                 </label>
                 <label className="block text-sm">
@@ -894,7 +894,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                     value={form.okr_owner}
                     onChange={(e) => setForm({ ...form, okr_owner: e.target.value })}
                     placeholder="Chief of Staff"
-                    className="mt-1 w-full input-field min-h-[40px]"
+                    className="mt-1 input-field min-h-[40px]"
                   />
                 </label>
               </div>
@@ -1002,7 +1002,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               <select
                 value={form.parent_key || ''}
                 onChange={(e) => setForm({ ...form, parent_key: e.target.value, parent_kr_id: '' })}
-                className="mt-1 w-full input-field"
+                className="mt-1 input-field"
               >
                 <option value="">None</option>
                 {selectableEpics.map((epic) => (
@@ -1018,7 +1018,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                 <select
                   value={form.parent_kr_id || ''}
                   onChange={(e) => setForm({ ...form, parent_kr_id: e.target.value })}
-                  className="mt-1 w-full input-field"
+                  className="mt-1 input-field"
                 >
                   <option value="">Whole objective</option>
                   {parentKrs.map((kr) => (
@@ -1036,7 +1036,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             <select
               value={form.status}
               onChange={(e) => setForm({ ...form, status: e.target.value })}
-              className="mt-1 w-full input-field"
+              className="mt-1 input-field"
             >
               {columns.map((col) => (
                 <option key={col} value={col}>
@@ -1050,7 +1050,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             <input
               value={form.assignee}
               onChange={(e) => setForm({ ...form, assignee: e.target.value })}
-              className="mt-1 w-full input-field"
+              className="mt-1 input-field"
             />
           </label>
           {board?.workflow_enabled && (
@@ -1060,7 +1060,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                 value={form.fix_version}
                 onChange={(e) => setForm({ ...form, fix_version: e.target.value })}
                 placeholder="e.g. v1.2.0"
-                className="mt-1 w-full input-field"
+                className="mt-1 input-field"
               />
             </label>
           )}
@@ -1621,7 +1621,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
               <select
                 value={epicFilter}
                 onChange={(e) => setEpicFilter(e.target.value)}
-                className="flex-1 min-w-0 text-sm px-2 py-2 rounded-lg border border-border min-h-[44px] lg:flex-none lg:max-w-[220px] bg-elevated input-field py-2"
+                className="flex-1 min-w-0 text-sm lg:flex-none lg:max-w-[220px] input-field"
                 aria-label="Filter by objective"
               >
                 <option value="">All tickets</option>

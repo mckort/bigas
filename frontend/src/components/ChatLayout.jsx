@@ -181,7 +181,7 @@ function ActionProposalCard({ message, onResolved }) {
             onChange={(e) => setDrafts((prev) => ({ ...prev, [action.id]: e.target.value }))}
             disabled={resolving}
             rows={8}
-            className="w-full rounded-lg border border-border bg-elevated px-3 py-2 text-sm text-text resize-y min-h-[8rem] disabled:opacity-50 input-field"
+            className="input-field text-sm resize-y min-h-[8rem] disabled:opacity-50"
           />
           <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap gap-2">
             <button
