@@ -49,6 +49,7 @@ class MarketingAnalyticsService:
                     else:
                         logger.warning(f"Filter field '{field}' not in dimension headers; skipping this filter.")
                 data["rows"] = filtered_rows
+                data["applied_filters"] = filters
                 return self.marketing_llm_service.format_response_obj(data, question)
             else:
                 # No filters, proceed as before

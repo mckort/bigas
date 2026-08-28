@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, Any
 import json
 import logging
-from bigas.resources.marketing.utils import extract_json_object, generate_basic_analysis
+from bigas.resources.marketing.utils import extract_json_object, format_empty_ga4_finding
 from bigas.llm.factory import get_llm_client
 
 logger = logging.getLogger(__name__)
@@ -142,9 +142,8 @@ class MarketingLLMService:
         from bigas.resources.marketing.utils import convert_ga4_response_to_dict
         analytics_data = convert_ga4_response_to_dict(response)
         
-        # Check if we have any data - fail properly instead of fallback response
-        if not analytics_data["rows"]:
-            raise ValueError(f"No GA4 data returned for question: '{question}'. Cannot provide analysis without real data.")
+        if not analytics_data.get("rows"):
+            return format_empty_ga4_finding(question, analytics_data)
         
         system_prompt = """You are an expert at explaining Google Analytics data in a clear and concise way.
         Given the raw analytics data and the original question, provide a natural language response that:
@@ -192,9 +191,8 @@ class MarketingLLMService:
     
     def format_response_obj(self, data: dict, question: str) -> str:
         """Format the analytics response from a dict into a natural language answer."""
-        # Check if we have any data after filtering - fail properly instead of fallback
         if not data.get("rows", []):
-            raise ValueError(f"No GA4 data remaining after filtering for question: '{question}'. Cannot provide analysis without real data.")
+            return format_empty_ga4_finding(question, data)
         
         # If we have data, provide a human-readable analysis
         num_rows = len(data["rows"])

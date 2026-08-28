@@ -719,6 +719,37 @@ def validate_ga4_metrics_dimensions(metrics: List[str], dimensions: List[str]) -
     
     return True, ""
 
+
+def format_empty_ga4_finding(question: str, data: Optional[Dict[str, Any]] = None) -> str:
+    """Turn an empty GA4 report into a usable finding instead of a hard error."""
+    question = (question or "").strip() or "this question"
+    filters = (data or {}).get("applied_filters") or []
+    filter_bits: List[str] = []
+    for item in filters:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field") or "").strip()
+        value = item.get("value")
+        if not field or value in (None, ""):
+            continue
+        operator = str(item.get("operator") or "equals").strip() or "equals"
+        filter_bits.append(f"{field} {operator} {value}")
+
+    lines = [f"GA4 returned no matching rows for: {question}"]
+    if filter_bits:
+        lines.append("Filters that matched nothing: " + "; ".join(filter_bits) + ".")
+    lines.append(
+        "This is a valid finding, not a query failure: the requested event or metric "
+        "did not appear in this GA4 property for the selected date range."
+    )
+    lines.append(
+        "If this is a GTM or key-event issue, next checks are: the tag fires in GTM Preview, "
+        "the event name matches exactly, the event is marked as a key event in GA4, "
+        "and it shows in GA4 DebugView."
+    )
+    return "\n".join(lines)
+
+
 def sanitize_error_message(error: str) -> str:
     """
     Remove sensitive information from error messages.
