@@ -120,11 +120,13 @@ It currently ships five specialists, reachable from the **[web chat](#chat-web-i
 
 | Specialist | What it does |
 |---|---|
-| **Chief of Staff** | Default chat agent across the whole Jira/GitHub portfolio: answers general questions, delegates to Marketing / Product / CTO / DevOps, can file Jira Task/Bug issues, and monitors progress |
-| **Senior Marketing Analyst** | GA4 web analytics (per site via `BIGAS_GA4_PROPERTY_MAP`) + paid ads (Google Ads, Meta, LinkedIn, Reddit) → weekly reports, portfolio reports, cross-platform budget analysis; can file marketing Jira issues |
-| **Product Manager** | Objectives + Kanban — quarterly OKRs on `/objectives`, AI research and design when you drag a card, Fix Version → release notes + blog/social, Done issues → team progress updates, weekly git activity → X post drafts with Discord approval; can create Jira Task/Bug issues |
-| **CTO** | GitHub PR diff → AI code review comment posted directly to the PR (optional autofix via Cursor cloud agents); website uptime/SSL monitoring → Discord; can file Jira follow-ups |
-| **DevOps** | Pre-flight deployment risk checks (migrations, config), trigger GitHub Actions deploy workflows (e.g. separate backend + web for vcfieldassistant), post-deploy HTTP health checks, **self-healing CI/CD** (failed workflow_run webhook → log analysis → hotfix PR on `bigas-hotfix/*`); can file Jira follow-ups |
+| **Chief of Staff** | Default chat agent: reasons through requests step by step, coordinates with specialists when their expertise adds value, takes action (files Jira issues, uses tools) rather than asking you to do it |
+| **Senior Marketing Analyst** | Deep expertise in GA4 analytics, paid ads (Google/Meta/LinkedIn/Reddit), trends and cross-platform insights; reasons about marketing questions and creates tracked follow-up work |
+| **Product Manager** | Expertise in product planning, Jira workflows, release notes, and stakeholder communication; reasons about product decisions and prioritization |
+| **CTO** | Technical expertise in code review, architecture, deployment debugging, and engineering operations; reasons through technical problems and takes action |
+| **DevOps** | Expertise in deployments (GitHub Actions), site health, incident response, and CI/CD; reasons about operational safety before taking action |
+
+All agents use a **reasoning-based approach**: they think step by step about what you're trying to accomplish, decide which tools or specialists would help, and take action. No rigid rules about who owns what — specialists are involved when their expertise genuinely improves the outcome.
 
 Two design decisions shape everything else in this document:
 
