@@ -34,152 +34,92 @@ from bigas.utils.mcp_client import MCPClient, MCPClientError
 
 MAX_AGENT_TOOL_ROUNDS = 10
 
-COWORKER_RULES = """
-You are a coworker, not a tool printer.
-- Answer from what you know when that is enough. Call tools only for live data or a side effect.
-- After you receive tool results, answer the question directly. Do not paste raw tool output as your reply.
-- You may call several tools, or the same tool again with different arguments, before answering.
-- lookup_jira accepts several issue keys or a range (BIG-15 to BIG-18). Use that for named-key status questions.
-- search_jira takes JQL. Use it when the user described a filter (status, type, text) without keys. Do not invent issue keys.
+REASONING_APPROACH = """
+Think step by step before acting:
+1. What is the user actually trying to accomplish? (Not just what they asked, but why)
+2. What information or actions are needed to help them?
+3. Which tools would provide that information or take that action?
+4. After getting results, what do they mean for the user's goal?
+
+Be a thoughtful collaborator:
+- Answer from knowledge when that's sufficient; use tools for live data or actions
+- Synthesize tool results into useful insights — don't dump raw output
+- When your reasoning would help the user, share it briefly
+- Take action rather than telling the user to do things you can do
 """.strip()
 
-MARKETING_TRACKING_RULES = """
-GA4 empty results are findings, not crashes.
-- If a GA4 tool says there are no matching rows, tell the user what is missing (event name, date range) and keep helping.
-- Never paste "Failed to process analytics question", "Cannot provide analysis without real data", or stack traces.
-- For GTM / key-event debugging, zero events in GA4 confirms the event is not arriving. Next: GTM Preview, exact event name, key-event marking, GA4 DebugView.
+ANALYTICS_GUIDANCE = """
+When working with analytics data:
+- Empty results are valid findings — they tell you something isn't tracked or configured
+- Reason about what the absence of data means for the user's question
+- Suggest concrete next steps for debugging (GTM Preview, event names, DebugView)
+- Never treat missing data as a failure — it's information to act on
 """.strip()
 
 logger = logging.getLogger(__name__)
 
-AGENT_TOOL_PREFIXES = {
+AGENT_TOOL_EXPERTISE = {
     "marketing": (
-        "fetch_analytics",
-        "fetch_custom",
-        "ask_analytics",
-        "analyze_trends",
-        "weekly_analytics",
-        "get_stored",
-        "get_latest",
-        "analyze_underperforming",
-        "cleanup_old",
-        "linkedin_ads",
-        "fetch_linkedin",
-        "reddit_",
-        "fetch_reddit",
-        "summarize_reddit",
-        "run_reddit",
-        "run_linkedin",
-        "run_google_ads",
-        "run_meta",
-        "run_cross_platform",
-        "get_job_",
+        "fetch_analytics", "fetch_custom", "ask_analytics", "analyze_trends",
+        "weekly_analytics", "get_stored", "get_latest", "analyze_underperforming",
+        "linkedin_ads", "fetch_linkedin", "reddit_", "fetch_reddit",
+        "run_reddit", "run_linkedin", "run_google_ads", "run_meta", "run_cross_platform",
     ),
     "product": (
-        "product_resource",
-        "create_release",
-        "progress_updates",
-        "generate_weekly_x",
-        "jira_status",
-        "weekly_okr",
+        "product_resource", "create_release", "progress_updates",
+        "generate_weekly_x", "jira_status", "weekly_okr",
     ),
     "cto": (
-        "review_and_comment",
-        "autofix",
-        "fix_failed",
-        "fetch_ai_usage",
-        "weekly_cto",
-        "website_monitor",
-        "run_qa",
+        "review_and_comment", "autofix", "fix_failed", "weekly_cto",
+        "website_monitor", "run_qa",
     ),
-    "cfo": (
-        "fetch_ai_usage",
-    ),
+    "cfo": ("fetch_ai_usage",),
     "devops": (
-        "check_deployment",
-        "trigger_deployment",
-        "get_deployment_status",
-        "check_website_health",
-        "fetch_github_action_logs",
-        "create_github_pr",
-        "fix_failed",
+        "check_deployment", "trigger_deployment", "get_deployment_status",
+        "check_website_health", "fetch_github_action_logs", "create_github_pr", "fix_failed",
     ),
 }
 
-DELEGATE_TOOL_DEFS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "delegate_to_marketing",
-            "description": "Delegate a marketing/analytics task to the Marketing agent (GA4, ads, trends).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "Clear task description for the marketing agent."},
+CONSULT_SPECIALIST_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "consult_specialist",
+        "description": (
+            "Involve a specialist when their domain expertise would genuinely improve the outcome. "
+            "Think about why this specialist's knowledge matters for this specific task.\n\n"
+            "Specialists:\n"
+            "- marketing: GA4 analytics, ad platforms, marketing trends\n"
+            "- product: Product planning, Jira workflows, stakeholder communication\n"
+            "- cto: Code review, architecture, deployment debugging\n"
+            "- cfo: AI/infrastructure costs, usage analysis\n"
+            "- devops: Deployments, site health, incident response"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "specialist": {
+                    "type": "string",
+                    "enum": ["marketing", "product", "cto", "cfo", "devops"],
+                    "description": "Which specialist to involve.",
                 },
-                "required": ["task"],
+                "task": {
+                    "type": "string",
+                    "description": "What you need the specialist to accomplish.",
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "Why this specialist's expertise is valuable for this task.",
+                },
             },
+            "required": ["specialist", "task", "reasoning"],
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "delegate_to_product",
-            "description": "Delegate a product management task (Jira, release notes, progress updates).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "Clear task description for the product agent."},
-                },
-                "required": ["task"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delegate_to_cto",
-            "description": "Delegate an engineering/CTO task (PR review, QA, failed-deploy hotfix, monitoring).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "Clear task description for the CTO agent."},
-                },
-                "required": ["task"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delegate_to_cfo",
-            "description": "Delegate an AI/GCP cost analysis task to the CFO (usage, Gemini spend, savings).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "Clear task description for the CFO agent."},
-                },
-                "required": ["task"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delegate_to_devops",
-            "description": "Delegate a DevOps task (deployment risk check, trigger GitHub Actions deploy, health check).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "Clear task description for the DevOps agent."},
-                },
-                "required": ["task"],
-            },
-        },
-    },
-]
+}
+
+DELEGATE_TOOL_DEFS = [CONSULT_SPECIALIST_TOOL]
 
 DELEGATE_MAP = {
+    "consult_specialist": None,
     "delegate_to_marketing": "marketing",
     "delegate_to_product": "product",
     "delegate_to_cto": "cto",
@@ -190,23 +130,23 @@ DELEGATE_MAP = {
 SPECIALIST_IDS = ("marketing", "product", "cto", "cfo", "devops")
 
 SPECIALIST_CAPABILITIES = (
-    "Specialists (always delegate domain work to them — they have the tools and will reply here):\n"
-    "- marketing: GA4, ads (Google/Meta/LinkedIn/Reddit), trends, weekly/portfolio reports.\n"
-    "- product: Jira release notes, progress updates, social drafts, board automation.\n"
-    "- cto: GitHub PR review, autofix, QA, failed-deploy hotfix, monitoring.\n"
-    "- cfo: AI/GCP cost, Gemini spend (Bigas + VC Field Assistant), fetch_ai_usage, savings.\n"
-    "- devops: production deploy via GitHub Actions (including manual trigger_deployment), "
-    "deploy status, site health, CI logs, hotfix PRs. vcfieldassistant/VFA is a DevOps deploy.\n"
-    "Every specialist and Chief of Staff can call lookup_jira, search_jira (JQL), and create_jira_issue (Task/Bug). "
-    "Look up Epics when needed, then decide whether the new work belongs under one or should be standalone. "
-    "Never tell the user to create the Jira issue themselves.\n"
+    "Specialist expertise (involve them when their domain knowledge would improve the outcome):\n"
+    "- marketing: Deep expertise in GA4 analytics, ad platforms (Google/Meta/LinkedIn/Reddit), "
+    "marketing trends, and performance analysis.\n"
+    "- product: Expertise in product planning, Jira workflows, release notes, and stakeholder communication.\n"
+    "- cto: Technical expertise in code review, architecture, QA, deployment debugging, and engineering operations.\n"
+    "- cfo: Expertise in AI/infrastructure costs, usage analysis, and efficiency optimization.\n"
+    "- devops: Expertise in deployments (GitHub Actions), site health, incident response, and CI/CD.\n\n"
+    "All agents can use any tool. Choose to involve a specialist based on whether their expertise "
+    "would genuinely help, not based on rigid ownership rules.\n"
 )
 
 # Shared with every specialist; COS may also call these without a handoff.
 SHARED_AGENT_TOOLS = frozenset({"create_jira_issue", "lookup_jira", "search_jira"})
 
-# Writes and heavy pipelines: if COS names these, rewrite to a specialist handoff.
-# Everything else in the MCP catalog is Chief-callable (read-only + create_jira_issue).
+# DEPRECATED: In the reasoning-based approach, the model decides when to involve
+# specialists rather than forcing delegation by tool name. Kept for backwards
+# compatibility with tests and documentation references.
 MUST_DELEGATE_TOOLS = {
     "trigger_deployment": "devops",
     "create_github_pr": "devops",
@@ -242,6 +182,7 @@ MUST_DELEGATE_TOOLS = {
     "reddit_exchange_code": "marketing",
 }
 
+
 def _resolve_delegate_target(raw: Optional[str]) -> Optional[str]:
     compact = re.sub(r"[\s\-]+", "_", (raw or "").strip().lower())
     if not compact:
@@ -255,27 +196,21 @@ def _resolve_delegate_target(raw: Optional[str]) -> Optional[str]:
     return None
 
 
-def _must_delegate_names() -> set:
-    return {name.lower() for name in MUST_DELEGATE_TOOLS}
-
-
 def _chief_callable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Chief may call any catalog tool that is not a write/pipeline handoff."""
-    blocked = _must_delegate_names()
-    shared = {name.lower() for name in SHARED_AGENT_TOOLS}
-    shared_out: List[Dict[str, Any]] = []
-    rest: List[Dict[str, Any]] = []
+    """Chief has access to all tools - model reasons about when to delegate.
+    
+    The reasoning-based approach trusts the model to decide when specialist
+    expertise would add value, rather than blocking tools by rule.
+    """
     seen = set()
+    result: List[Dict[str, Any]] = []
     for tool in tools:
         name = (tool.get("name") or "").lower()
-        if not name or name in seen or name in blocked:
+        if not name or name in seen:
             continue
         seen.add(name)
-        if name in shared:
-            shared_out.append(tool)
-        else:
-            rest.append(tool)
-    return shared_out + rest
+        result.append(tool)
+    return result
 
 
 def _chief_direct_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -298,76 +233,73 @@ def _mcp_tool_to_openai_def(tool: Dict[str, Any]) -> Dict[str, Any]:
 
 def _chief_native_extra() -> str:
     return (
-        "You are the Chief of Staff in the Bigas chat UI. "
-        "Answer general questions directly from knowledge when that is enough. "
-        "Call tools only when you need live data or a side effect.\n"
-        f"{SPECIALIST_CAPABILITIES}"
-        "Never say a specialist cannot do something listed above. Never 'virtually' delegate "
-        "or offer to build a tool that already exists — call delegate_to_* so the specialist "
-        "receives the task and replies in this thread.\n"
-        "For named Jira keys or ranges, call lookup_jira. "
-        "For filters without keys, write JQL and call search_jira. Do not invent issue keys. "
-        "You may file a Task/Bug with create_jira_issue. "
-        "After tools return, answer the user yourself. "
-        "Do NOT trigger deploys, autofix, weekly reports, or other specialist pipelines yourself.\n"
-        "Include project_key when the user named a product, site, or Jira key. "
-        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url."
+        "You are the Chief of Staff in the Bigas chat UI.\n\n"
+        "How to approach requests:\n"
+        "1. First understand what the user wants to accomplish\n"
+        "2. Reason about whether you can help directly or if a specialist's expertise would add value\n"
+        "3. Use tools when you need live data or to take action\n"
+        "4. Synthesize results into helpful responses\n\n"
+        f"{SPECIALIST_CAPABILITIES}\n"
+        "When involving specialists, use consult_specialist with clear reasoning about why their "
+        "expertise matters for this task.\n\n"
+        "Tool tips:\n"
+        "- lookup_jira: for specific issue keys or ranges\n"
+        "- search_jira: for JQL queries when filtering by status, type, etc.\n"
+        "- create_jira_issue: to file Tasks/Bugs — take action rather than asking the user to do it\n"
+        "- Include project_key when the user mentions a product or site\n"
+        "- For GitHub PRs, include repo and pr_number or pr_url"
     )
 
 
 def _specialist_native_extra(agent_id: Optional[str] = None) -> str:
     extra = (
-        "You are responding in the Bigas chat interface. "
-        "Call a tool when you need facts or a side effect; otherwise answer in your own words. "
-        "Never use a raw lookup dump as the final reply. "
-        "Include project_key when the user named a product, site, or Jira key. "
-        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
-        "(a github.com/.../pull/N link is enough). "
-        "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL. "
-        "Named Jira keys → lookup_jira. Filters without keys → search_jira with JQL. "
-        "To file work in Jira, call lookup_jira if you need Epic/parent context, then create_jira_issue. "
-        "Do not ask the user for an Epic key or to create the ticket. "
-        "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone."
+        "You are responding in the Bigas chat interface as a specialist.\n\n"
+        "How to approach requests:\n"
+        "1. Understand what the user is trying to accomplish in your domain\n"
+        "2. Reason about what information or actions would help\n"
+        "3. Use tools to gather data or take action\n"
+        "4. Synthesize results into actionable insights — don't dump raw output\n"
+        "5. Take action (create Jira issues, etc.) rather than asking the user to do it\n\n"
+        "Tool tips:\n"
+        "- Include project_key when the user mentions a product or site\n"
+        "- For GitHub PRs, include repo and pr_number or pr_url\n"
+        "- For Cursor autofix, include agent_id from cursor.com/agents/bc-... URLs\n"
+        "- lookup_jira: for specific issue keys; search_jira: for JQL filters\n"
+        "- create_jira_issue: look up Epic context first if needed, then create"
     )
     if (agent_id or "").strip().lower() == "marketing":
-        extra = f"{extra}\n{MARKETING_TRACKING_RULES}"
+        extra = f"{extra}\n\n{ANALYTICS_GUIDANCE}"
     return extra
 
 
 def _chief_routing_extra(tool_summary: str) -> str:
     return (
         f"{_chief_native_extra()}\n\n"
-        "If you should delegate, respond with ONLY:\n"
-        '{"action":"delegate","agent_id":"marketing|product|cto|cfo|devops","task":"<clear task>"}\n'
-        "If you should call a tool, respond with ONLY:\n"
+        "Response format (JSON):\n"
+        "To involve a specialist:\n"
+        '{"action":"consult","specialist":"marketing|product|cto|cfo|devops","task":"...","reasoning":"why their expertise helps"}\n'
+        "To call a tool:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
-        "Otherwise respond with ONLY:\n"
+        "To answer directly:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
-        f"Tools you may call directly:\n{tool_summary or '(none — delegate instead)'}"
+        f"Available tools:\n{tool_summary or '(none)'}"
     )
 
 
 def _specialist_json_extra(tool_summary: str, agent_id: Optional[str] = None) -> str:
     extra = (
-        "You are responding in the Bigas chat interface. "
-        "If you need facts from a backend tool, respond with ONLY a JSON object:\n"
+        "You are responding in the Bigas chat interface as a specialist.\n\n"
+        "Response format (JSON):\n"
+        "To call a tool:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
-        "You will see the tool result and then must answer (or call another tool). "
-        "Never use a raw lookup dump as the final reply. "
-        "Include project_key when the user named a product, site, or Jira key. "
-        "For GitHub PRs, pass repo as owner/repo and pr_number, or pass pr_url "
-        "(a github.com/.../pull/N link is enough). "
-        "For Cursor autofix follow-up, include agent_id from a cursor.com/agents/bc-... URL. "
-        "Named Jira keys → lookup_jira. Filters without keys → search_jira with JQL. "
-        "To file work in Jira, call lookup_jira if you need Epic/parent context, then create_jira_issue. "
-        "Do not ask the user for an Epic key or to create the ticket. "
-        "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone.\n"
-        "Otherwise respond with ONLY:\n"
+        "To answer directly:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
+        "After getting tool results, synthesize them into helpful insights.\n"
+        "Take action (create Jira issues, etc.) rather than asking the user to do it.\n\n"
         f"Available tools:\n{tool_summary}"
     )
     if (agent_id or "").strip().lower() == "marketing":
-        extra = f"{MARKETING_TRACKING_RULES}\n\n{extra}"
+        extra = f"{ANALYTICS_GUIDANCE}\n\n{extra}"
     return extra
 
 
@@ -389,28 +321,37 @@ def _dispatch_chief_tool(
     mcp_client: Optional[MCPClient],
     user_id: Optional[str] = None,
 ) -> Optional[str]:
-    """Run a COS tool call, rewriting specialist pipelines into a real handoff."""
+    """Run a COS tool call, handling specialist consultations when requested.
+    
+    In the reasoning-based approach, Chief can run any tool directly.
+    Specialist consultation happens when the model explicitly chooses to involve them
+    via consult_specialist or delegate_to_* tools.
+    """
     if not tool_name:
         return None
     if not isinstance(tool_args, dict):
         tool_args = {}
+    
     target = None
     if tool_name.startswith("__delegate__:"):
         target = tool_name.split(":", 1)[1]
+    elif tool_name == "consult_specialist":
+        target = _resolve_delegate_target(tool_args.get("specialist"))
     else:
         target = DELEGATE_MAP.get(tool_name) or _resolve_delegate_target(tool_name)
-        if not target:
-            target = MUST_DELEGATE_TOOLS.get(tool_name) or MUST_DELEGATE_TOOLS.get(
-                (tool_name or "").strip().lower()
-            )
+    
     if target:
         base_task = tool_args.get("task") or user_message
-        extra = {k: v for k, v in tool_args.items() if k != "task"}
+        reasoning = tool_args.get("reasoning") or ""
+        extra = {k: v for k, v in tool_args.items() if k not in ("task", "specialist", "reasoning")}
+        task_parts = [base_task]
+        if reasoning:
+            task_parts.append(f"Reasoning: {reasoning}")
         if extra:
-            task = f"{base_task}\n\nContext: {json.dumps(extra)}"
-        else:
-            task = base_task
+            task_parts.append(f"Context: {json.dumps(extra)}")
+        task = "\n\n".join(task_parts)
         return run_specialist_task(target, task, thread_id=thread_id, async_mode=True)
+    
     if mcp_client:
         return _run_tool_call(
             mcp_client,
@@ -434,23 +375,20 @@ def _mcp_client() -> MCPClient:
 
 
 def _filter_tools_for_agent(tools: List[Dict[str, Any]], agent_id: str) -> List[Dict[str, Any]]:
-    prefixes = AGENT_TOOL_PREFIXES.get(agent_id, ())
-    shared = {n.lower() for n in SHARED_AGENT_TOOLS}
-    shared_out: List[Dict[str, Any]] = []
-    domain_out: List[Dict[str, Any]] = []
+    """Return all tools for the agent - no longer filters by domain.
+    
+    The reasoning-based approach lets the model decide which tools to use
+    based on context, rather than hardcoded domain boundaries.
+    """
     seen = set()
+    result: List[Dict[str, Any]] = []
     for tool in tools:
         name = (tool.get("name") or "").lower()
         if not name or name in seen:
             continue
-        if name in shared:
-            shared_out.append(tool)
-            seen.add(name)
-            continue
-        if any(name.startswith(p.lower()) or p.lower() in name for p in prefixes):
-            domain_out.append(tool)
-            seen.add(name)
-    return shared_out + domain_out
+        seen.add(name)
+        result.append(tool)
+    return result
 
 
 def _tools_summary(tools: List[Dict[str, Any]], limit: int = 40) -> str:
@@ -615,7 +553,7 @@ def _agent_system_prompt(
     agent_id = (agent_id or agent_config.get("agent_id") or "").strip()
     if not agent_id or agent_id in JIRA_AWARE_AGENT_IDS:
         parts.append(JIRA_FORMATTING_RULES)
-    parts.append(COWORKER_RULES)
+    parts.append(REASONING_APPROACH)
     parts.append(extra)
     if agent_id:
         try:
@@ -739,27 +677,37 @@ def _select_tool_via_llm(
     if action.get("action") == "tool":
         return "", str(action.get("tool_name") or ""), action.get("arguments") or {}
 
-    if action.get("action") == "delegate" and agent_id == "chief":
-        target = _resolve_delegate_target(action.get("agent_id") or action.get("agent"))
+    if action.get("action") in ("delegate", "consult") and agent_id == "chief":
+        target = _resolve_delegate_target(
+            action.get("specialist") or action.get("agent_id") or action.get("agent")
+        )
         task = action.get("task") or user_message
+        reasoning = action.get("reasoning") or ""
         if not target:
             return (
-                "I need a specialist to handle that (marketing, product, CTO, or DevOps).",
+                "I need to specify which specialist to involve (marketing, product, cto, cfo, or devops).",
                 None,
                 None,
             )
-        return "", f"__delegate__:{target}", {"task": task}
+        return "", f"__delegate__:{target}", {"task": task, "reasoning": reasoning}
 
     return raw.strip(), None, None
 
 
 def _is_terminal_handoff(tool_name: Optional[str]) -> bool:
+    """Check if this tool call triggers a specialist handoff.
+    
+    In the reasoning-based approach, only explicit consultation requests
+    (consult_specialist, delegate_to_*, or __delegate__:) cause handoffs.
+    """
     name = (tool_name or "").strip()
     if name.startswith("__delegate__"):
         return True
+    if name == "consult_specialist":
+        return True
     if _resolve_delegate_target(name):
         return True
-    return name.lower() in MUST_DELEGATE_TOOLS
+    return False
 
 
 def _run_json_agent_loop(
