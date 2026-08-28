@@ -1054,6 +1054,54 @@ def test_humanize_tool_result_unwraps_error_after_prefix():
     assert humanize_tool_result(raw) == "No GA4 data returned"
 
 
+def test_friendly_analytics_empty_data_is_finding():
+    from bigas.agents.chief_of_staff import _friendly_analytics_tool_failure
+
+    out = _friendly_analytics_tool_failure(
+        "Failed to process analytics question: No GA4 data remaining after filtering "
+        "for question: 'Did we receive any outbound_store_click events?'. "
+        "Cannot provide analysis without real data."
+    )
+    assert out is not None
+    assert "valid finding" in out.lower()
+    assert "Failed to process" not in out
+
+
+def test_run_tool_call_rewrites_empty_ga4_error():
+    from bigas.agents.chief_of_staff import _run_tool_call
+
+    class FakeClient:
+        def call_tool(self, name, arguments):
+            return {
+                "is_error": True,
+                "text": json.dumps(
+                    {
+                        "error": (
+                            "Failed to process analytics question: No GA4 data remaining "
+                            "after filtering for question: 'outbound_store_click'. "
+                            "Cannot provide analysis without real data."
+                        )
+                    }
+                ),
+                "structured": None,
+            }
+
+    out = _run_tool_call(FakeClient(), "ask_analytics_question", {"question": "any events?"})
+    assert "valid finding" in out.lower()
+    assert "Failed to process" not in out
+
+
+def test_marketing_specialist_prompt_treats_empty_ga4_as_finding():
+    from bigas.agents.chief_of_staff import _specialist_native_extra, _specialist_json_extra
+
+    native = _specialist_native_extra("marketing")
+    json_extra = _specialist_json_extra("ask_analytics_question", agent_id="marketing")
+    for blob in (native, json_extra):
+        assert "empty results are findings" in blob.lower()
+        assert "Failed to process analytics question" in blob
+    assert "empty results are findings" not in _specialist_native_extra("product").lower()
+
+
 def test_humanize_tool_result_unwraps_indented_json():
     from bigas.agents.chief_of_staff import humanize_tool_result
 

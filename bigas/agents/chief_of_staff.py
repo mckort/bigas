@@ -43,6 +43,13 @@ You are a coworker, not a tool printer.
 - search_jira takes JQL. Use it when the user described a filter (status, type, text) without keys. Do not invent issue keys.
 """.strip()
 
+MARKETING_TRACKING_RULES = """
+GA4 empty results are findings, not crashes.
+- If a GA4 tool says there are no matching rows, tell the user what is missing (event name, date range) and keep helping.
+- Never paste "Failed to process analytics question", "Cannot provide analysis without real data", or stack traces.
+- For GTM / key-event debugging, zero events in GA4 confirms the event is not arriving. Next: GTM Preview, exact event name, key-event marking, GA4 DebugView.
+""".strip()
+
 logger = logging.getLogger(__name__)
 
 AGENT_TOOL_PREFIXES = {
@@ -308,8 +315,8 @@ def _chief_native_extra() -> str:
     )
 
 
-def _specialist_native_extra() -> str:
-    return (
+def _specialist_native_extra(agent_id: Optional[str] = None) -> str:
+    extra = (
         "You are responding in the Bigas chat interface. "
         "Call a tool when you need facts or a side effect; otherwise answer in your own words. "
         "Never use a raw lookup dump as the final reply. "
@@ -322,6 +329,9 @@ def _specialist_native_extra() -> str:
         "Do not ask the user for an Epic key or to create the ticket. "
         "Only set parent_epic_key when the new work belongs under that Epic; otherwise create it standalone."
     )
+    if (agent_id or "").strip().lower() == "marketing":
+        extra = f"{extra}\n{MARKETING_TRACKING_RULES}"
+    return extra
 
 
 def _chief_routing_extra(tool_summary: str) -> str:
@@ -337,8 +347,8 @@ def _chief_routing_extra(tool_summary: str) -> str:
     )
 
 
-def _specialist_json_extra(tool_summary: str) -> str:
-    return (
+def _specialist_json_extra(tool_summary: str, agent_id: Optional[str] = None) -> str:
+    extra = (
         "You are responding in the Bigas chat interface. "
         "If you need facts from a backend tool, respond with ONLY a JSON object:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
@@ -356,6 +366,9 @@ def _specialist_json_extra(tool_summary: str) -> str:
         '{"action":"answer","text":"<your reply>"}\n\n'
         f"Available tools:\n{tool_summary}"
     )
+    if (agent_id or "").strip().lower() == "marketing":
+        extra = f"{MARKETING_TRACKING_RULES}\n\n{extra}"
+    return extra
 
 
 def _list_chief_mcp_tools() -> Tuple[Optional[MCPClient], List[Dict[str, Any]]]:
@@ -528,13 +541,42 @@ def humanize_tool_result(payload: Any) -> Optional[str]:
     return humanize_tool_result(parsed)
 
 
+_ANALYTICS_EMPTY_RE = re.compile(
+    r"No GA4 data (returned|remaining after filtering)|Cannot provide analysis without real data",
+    re.I,
+)
+_ANALYTICS_FAILED_RE = re.compile(r"Failed to process analytics question", re.I)
+
+
+def _friendly_analytics_tool_failure(text: str) -> Optional[str]:
+    """Rewrite GA4 empty/crash tool errors into a finding the agent can use."""
+    blob = text or ""
+    if _ANALYTICS_EMPTY_RE.search(blob):
+        return (
+            "GA4 returned no matching rows for that query. "
+            "That is a valid finding (the event or metric is missing), not a crash. "
+            "Tell the user what was missing and continue troubleshooting tracking/GTM if that was the question."
+        )
+    if _ANALYTICS_FAILED_RE.search(blob):
+        return (
+            "The GA4 query could not be completed. "
+            "Do not paste this as the reply — summarize that the analytics lookup failed "
+            "and keep helping with tracking (event name, GTM Preview, GA4 DebugView, key-event marking)."
+        )
+    return None
+
+
 def _run_tool_call(client: MCPClient, tool_name: str, arguments: Dict[str, Any]) -> str:
     try:
         result = client.call_tool(tool_name, arguments)
         raw_text = result.get("text") or ""
         human = humanize_tool_result(raw_text) or humanize_tool_result(result.get("structured"))
+        text = human or raw_text.strip()
+        rewritten = _friendly_analytics_tool_failure(text)
+        if rewritten:
+            return rewritten
         if result.get("is_error"):
-            return human or raw_text.strip() or f"Something went wrong while running {tool_name}."
+            return text or f"Something went wrong while running {tool_name}."
         if human:
             return human
         if raw_text.strip():
@@ -544,7 +586,8 @@ def _run_tool_call(client: MCPClient, tool_name: str, arguments: Dict[str, Any])
             return json.dumps(leftover, ensure_ascii=False)
         return "Done."
     except MCPClientError as e:
-        return f"I couldn't complete that request ({tool_name}): {e}"
+        rewritten = _friendly_analytics_tool_failure(str(e))
+        return rewritten or f"I couldn't complete that request ({tool_name}): {e}"
     except Exception as e:
         logger.exception("Unexpected tool call failure")
         return f"Unexpected error calling {tool_name}: {e}"
@@ -663,7 +706,7 @@ def _select_tool_via_llm(
     extra = (
         _chief_routing_extra(tool_summary)
         if agent_id == "chief"
-        else _specialist_json_extra(tool_summary)
+        else _specialist_json_extra(tool_summary, agent_id=agent_id)
     )
     system = _agent_system_prompt(
         agent_config, extra, user_id=user_id, agent_id=agent_id
@@ -866,7 +909,7 @@ def _run_agent_with_tools(
 ) -> str:
     """Native tool loop first; JSON action loop if the provider rejects tools."""
     llm, _model = get_llm_client(feature="chat")
-    extra = _chief_native_extra() if agent_id == "chief" else _specialist_native_extra()
+    extra = _chief_native_extra() if agent_id == "chief" else _specialist_native_extra(agent_id)
     system = _agent_system_prompt(
         agent_config, extra, user_id=user_id, agent_id=agent_id
     )

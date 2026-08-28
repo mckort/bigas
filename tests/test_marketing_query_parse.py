@@ -88,3 +88,96 @@ def test_parse_query_raises_when_unparseable(monkeypatch):
         assert False, "expected ValueError"
     except ValueError as exc:
         assert "valid JSON" in str(exc)
+
+
+def test_format_empty_ga4_finding_includes_filters():
+    from bigas.resources.marketing.utils import format_empty_ga4_finding
+
+    text = format_empty_ga4_finding(
+        "Did we receive any 'outbound_store_click' events in the last 7 days?",
+        {
+            "applied_filters": [
+                {"field": "eventName", "operator": "equals", "value": "outbound_store_click"}
+            ]
+        },
+    )
+    assert "no matching rows" in text.lower()
+    assert "outbound_store_click" in text
+    assert "valid finding" in text.lower()
+    assert "GTM Preview" in text
+
+
+def test_format_response_obj_empty_rows_is_finding(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.marketing.marketing_llm_service.get_llm_client",
+        lambda **k: (_FakeLLM(""), "gemini-test"),
+    )
+    svc = MarketingLLMService("sk-test")
+    question = "Did we receive any 'outbound_store_click' events in the last 7 days?"
+    text = svc.format_response_obj(
+        {
+            "rows": [],
+            "applied_filters": [
+                {"field": "eventName", "operator": "equals", "value": "outbound_store_click"}
+            ],
+        },
+        question,
+    )
+    assert "Failed to process" not in text
+    assert "Cannot provide analysis" not in text
+    assert "outbound_store_click" in text
+
+
+class _FakeHeader:
+    def __init__(self, name):
+        self.name = name
+
+
+class _FakeGa4Response:
+    dimension_headers = [_FakeHeader("eventName")]
+    metric_headers = [_FakeHeader("eventCount")]
+    rows = []
+
+
+def test_format_response_empty_rows_is_finding(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.marketing.marketing_llm_service.get_llm_client",
+        lambda **k: (_FakeLLM(""), "gemini-test"),
+    )
+    svc = MarketingLLMService("sk-test")
+    text = svc.format_response(_FakeGa4Response(), "Any key events last 7 days?")
+    assert "no matching rows" in text.lower()
+    assert "valid finding" in text.lower()
+
+
+def test_answer_question_filtered_empty_is_finding(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.marketing.marketing_llm_service.get_llm_client",
+        lambda **k: (_FakeLLM(""), "gemini-test"),
+    )
+    from bigas.resources.marketing.service import MarketingAnalyticsService
+
+    svc = MarketingAnalyticsService.__new__(MarketingAnalyticsService)
+    svc.marketing_llm_service = MarketingLLMService("sk-test")
+    svc.ga4_service = type(
+        "GA4",
+        (),
+        {
+            "build_report_request": lambda *a, **k: object(),
+            "run_report": lambda *a, **k: _FakeGa4Response(),
+        },
+    )()
+    svc.marketing_llm_service.parse_query = lambda q: {
+        "metrics": ["eventCount"],
+        "dimensions": ["eventName"],
+        "filters": [{"field": "eventName", "operator": "equals", "value": "outbound_store_click"}],
+        "date_range": {"start_date": "7daysAgo", "end_date": "today"},
+    }
+
+    answer = svc.answer_question(
+        "123",
+        "Did we receive any 'outbound_store_click' events in the last 7 days?",
+    )
+    assert "Failed to process analytics question" not in answer
+    assert "outbound_store_click" in answer
+    assert "valid finding" in answer.lower()
