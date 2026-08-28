@@ -58,28 +58,6 @@ When working with analytics data:
 
 logger = logging.getLogger(__name__)
 
-AGENT_TOOL_EXPERTISE = {
-    "marketing": (
-        "fetch_analytics", "fetch_custom", "ask_analytics", "analyze_trends",
-        "weekly_analytics", "get_stored", "get_latest", "analyze_underperforming",
-        "linkedin_ads", "fetch_linkedin", "reddit_", "fetch_reddit",
-        "run_reddit", "run_linkedin", "run_google_ads", "run_meta", "run_cross_platform",
-    ),
-    "product": (
-        "product_resource", "create_release", "progress_updates",
-        "generate_weekly_x", "jira_status", "weekly_okr",
-    ),
-    "cto": (
-        "review_and_comment", "autofix", "fix_failed", "weekly_cto",
-        "website_monitor", "run_qa",
-    ),
-    "cfo": ("fetch_ai_usage",),
-    "devops": (
-        "check_deployment", "trigger_deployment", "get_deployment_status",
-        "check_website_health", "fetch_github_action_logs", "create_github_pr", "fix_failed",
-    ),
-}
-
 CONSULT_SPECIALIST_TOOL = {
     "type": "function",
     "function": {
@@ -141,9 +119,6 @@ SPECIALIST_CAPABILITIES = (
     "would genuinely help, not based on rigid ownership rules.\n"
 )
 
-# Shared with every specialist; COS may also call these without a handoff.
-SHARED_AGENT_TOOLS = frozenset({"create_jira_issue", "lookup_jira", "search_jira"})
-
 # DEPRECATED: In the reasoning-based approach, the model decides when to involve
 # specialists rather than forcing delegation by tool name. Kept for backwards
 # compatibility with tests and documentation references.
@@ -196,12 +171,8 @@ def _resolve_delegate_target(raw: Optional[str]) -> Optional[str]:
     return None
 
 
-def _chief_callable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Chief has access to all tools - model reasons about when to delegate.
-    
-    The reasoning-based approach trusts the model to decide when specialist
-    expertise would add value, rather than blocking tools by rule.
-    """
+def _dedupe_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return unique MCP tools by name (order preserved)."""
     seen = set()
     result: List[Dict[str, Any]] = []
     for tool in tools:
@@ -213,8 +184,9 @@ def _chief_callable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return result
 
 
-def _chief_direct_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return _chief_callable_tools(tools)
+def _chief_callable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Chief has access to all tools - model reasons about when to delegate."""
+    return _dedupe_tools(tools)
 
 
 def _mcp_tool_to_openai_def(tool: Dict[str, Any]) -> Dict[str, Any]:
@@ -287,20 +259,15 @@ def _chief_routing_extra(tool_summary: str) -> str:
 
 
 def _specialist_json_extra(tool_summary: str, agent_id: Optional[str] = None) -> str:
-    extra = (
-        "You are responding in the Bigas chat interface as a specialist.\n\n"
+    return (
+        f"{_specialist_native_extra(agent_id)}\n\n"
         "Response format (JSON):\n"
         "To call a tool:\n"
         '{"action":"tool","tool_name":"<name>","arguments":{...}}\n'
         "To answer directly:\n"
         '{"action":"answer","text":"<your reply>"}\n\n'
-        "After getting tool results, synthesize them into helpful insights.\n"
-        "Take action (create Jira issues, etc.) rather than asking the user to do it.\n\n"
         f"Available tools:\n{tool_summary}"
     )
-    if (agent_id or "").strip().lower() == "marketing":
-        extra = f"{ANALYTICS_GUIDANCE}\n\n{extra}"
-    return extra
 
 
 def _list_chief_mcp_tools() -> Tuple[Optional[MCPClient], List[Dict[str, Any]]]:
@@ -375,20 +342,8 @@ def _mcp_client() -> MCPClient:
 
 
 def _filter_tools_for_agent(tools: List[Dict[str, Any]], agent_id: str) -> List[Dict[str, Any]]:
-    """Return all tools for the agent - no longer filters by domain.
-    
-    The reasoning-based approach lets the model decide which tools to use
-    based on context, rather than hardcoded domain boundaries.
-    """
-    seen = set()
-    result: List[Dict[str, Any]] = []
-    for tool in tools:
-        name = (tool.get("name") or "").lower()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        result.append(tool)
-    return result
+    """Return all tools for the agent - no longer filters by domain."""
+    return _dedupe_tools(tools)
 
 
 def _tools_summary(tools: List[Dict[str, Any]], limit: int = 40) -> str:
