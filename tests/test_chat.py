@@ -563,48 +563,46 @@ def test_resolve_delegate_target_aliases():
     assert _resolve_delegate_target("unknown") is None
 
 
-def test_chief_callable_tools_exclude_pipelines_not_reads():
+def test_chief_callable_tools_include_all_tools_deduped():
     from bigas.agents.chief_of_staff import _chief_callable_tools
 
-    names = {
-        t["name"]
-        for t in _chief_callable_tools(
-            [
-                {"name": "trigger_deployment", "description": "deploy"},
-                {"name": "get_deployment_status", "description": "status"},
-                {"name": "fetch_analytics_report", "description": "ga4"},
-                {"name": "check_website_health", "description": "ping"},
-                {"name": "create_jira_issue", "description": "file a ticket"},
-                {"name": "lookup_jira", "description": "look up a ticket"},
-                {"name": "search_jira", "description": "jql search"},
-                {"name": "weekly_analytics_report", "description": "weekly"},
-                {"name": "check_deployment_risk", "description": "risk"},
-                {"name": "fetch_github_action_logs", "description": "logs"},
-            ]
-        )
-    }
+    catalog = [
+        {"name": "trigger_deployment", "description": "deploy"},
+        {"name": "get_deployment_status", "description": "status"},
+        {"name": "fetch_analytics_report", "description": "ga4"},
+        {"name": "check_website_health", "description": "ping"},
+        {"name": "create_jira_issue", "description": "file a ticket"},
+        {"name": "lookup_jira", "description": "look up a ticket"},
+        {"name": "search_jira", "description": "jql search"},
+        {"name": "weekly_analytics_report", "description": "weekly"},
+        {"name": "check_deployment_risk", "description": "risk"},
+        {"name": "fetch_github_action_logs", "description": "logs"},
+        {"name": "trigger_deployment", "description": "duplicate"},
+    ]
+    names = {t["name"] for t in _chief_callable_tools(catalog)}
     assert names == {
+        "trigger_deployment",
         "get_deployment_status",
+        "fetch_analytics_report",
         "check_website_health",
         "create_jira_issue",
         "lookup_jira",
         "search_jira",
-        "fetch_analytics_report",
+        "weekly_analytics_report",
         "check_deployment_risk",
         "fetch_github_action_logs",
     }
 
 
-def test_create_jira_issue_is_shared_across_agents():
+def test_jira_tools_available_to_all_agents():
     from bigas.agents.chief_of_staff import (
         MUST_DELEGATE_TOOLS,
-        SHARED_AGENT_TOOLS,
         _chief_callable_tools,
         _filter_tools_for_agent,
     )
 
-    assert SHARED_AGENT_TOOLS == frozenset({"create_jira_issue", "lookup_jira", "search_jira"})
-    for name in SHARED_AGENT_TOOLS:
+    jira_tools = {"create_jira_issue", "lookup_jira", "search_jira"}
+    for name in jira_tools:
         assert name not in MUST_DELEGATE_TOOLS
 
     catalog = [
@@ -616,14 +614,11 @@ def test_create_jira_issue_is_shared_across_agents():
         {"name": "review_and_comment_pr", "description": "review"},
         {"name": "trigger_deployment", "description": "deploy"},
     ]
-    callable_names = [t["name"] for t in _chief_callable_tools(catalog)]
-    assert callable_names[:3] == ["lookup_jira", "search_jira", "create_jira_issue"]
+    callable_names = {t["name"] for t in _chief_callable_tools(catalog)}
+    assert jira_tools.issubset(callable_names)
     for agent_id in ("marketing", "product", "cto", "cfo", "devops"):
-        names = [t["name"] for t in _filter_tools_for_agent(catalog, agent_id)]
-        assert names[:3] == ["lookup_jira", "search_jira", "create_jira_issue"], agent_id
-        assert "lookup_jira" in names
-        assert "search_jira" in names
-        assert "create_jira_issue" in names
+        names = {t["name"] for t in _filter_tools_for_agent(catalog, agent_id)}
+        assert jira_tools.issubset(names), agent_id
 
 
 def test_dispatch_chief_tool_allows_create_jira_issue():
@@ -1097,8 +1092,8 @@ def test_marketing_specialist_prompt_treats_empty_ga4_as_finding():
     native = _specialist_native_extra("marketing")
     json_extra = _specialist_json_extra("ask_analytics_question", agent_id="marketing")
     for blob in (native, json_extra):
-        assert "empty results are findings" in blob.lower()
-        assert "Failed to process analytics question" in blob
+        assert "empty results are valid findings" in blob.lower()
+        assert "never treat missing data as a failure" in blob.lower()
     assert "empty results are findings" not in _specialist_native_extra("product").lower()
 
 

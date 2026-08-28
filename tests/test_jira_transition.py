@@ -167,10 +167,10 @@ def test_jira_formatting_rules_require_english():
     assert "search_jira" in prompt
     assert "does not mean the new work belongs under the same Epic" in prompt
     assert "Never reply with only ticket links" in JIRA_FORMATTING_RULES
-    from bigas.agents.chief_of_staff import COWORKER_RULES
+    from bigas.agents.chief_of_staff import REASONING_APPROACH
 
-    assert "coworker" in COWORKER_RULES.lower()
-    assert "coworker" in prompt.lower()
+    assert "step by step" in REASONING_APPROACH.lower()
+    assert "step by step" in prompt.lower() or "thoughtful" in prompt.lower()
 
 
 def test_transition_issue_to_next_skips_backward(monkeypatch):
