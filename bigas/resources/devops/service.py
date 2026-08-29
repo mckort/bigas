@@ -128,8 +128,10 @@ def check_deployment_risk(
 
     backend_rel = client.latest_release_with_prefix(owner, name, "deploy-backend-")
     web_rel = client.latest_release_with_prefix(owner, name, "deploy-web-")
+    app_rel = client.latest_release_with_prefix(owner, name, "deploy-app-")
     prod_backend_tag = (backend_rel or {}).get("tag_name") if backend_rel else None
     prod_web_tag = (web_rel or {}).get("tag_name") if web_rel else None
+    prod_app_tag = (app_rel or {}).get("tag_name") if app_rel else None
 
     bases: List[tuple[str, str]] = []
     if explicit_base:
@@ -139,6 +141,8 @@ def check_deployment_risk(
             bases.append(("backend", str(prod_backend_tag)))
         if prod_web_tag:
             bases.append(("web", str(prod_web_tag)))
+        if prod_app_tag:
+            bases.append(("app", str(prod_app_tag)))
         if not bases:
             fallback = client.get_latest_release_tag(owner, name)
             if fallback and fallback != head:
@@ -219,6 +223,8 @@ def check_deployment_risk(
         version_bits.append(f"prod backend {prod_backend_tag}")
     if prod_web_tag:
         version_bits.append(f"prod web {prod_web_tag}")
+    if prod_app_tag:
+        version_bits.append(f"prod app {prod_app_tag}")
 
     summary_parts: List[str] = []
     if version_bits:
@@ -239,7 +245,13 @@ def check_deployment_risk(
     if risk_level != "low":
         summary_parts.append("Confirm with the user before deploying.")
 
-    base_ref_out = explicit_base or prod_backend_tag or prod_web_tag or (bases[0][1] if bases else None)
+    base_ref_out = (
+        explicit_base
+        or prod_backend_tag
+        or prod_web_tag
+        or prod_app_tag
+        or (bases[0][1] if bases else None)
+    )
 
     return {
         "status": "ok",
@@ -250,6 +262,7 @@ def check_deployment_risk(
         "head_ref": head,
         "prod_backend_tag": prod_backend_tag,
         "prod_web_tag": prod_web_tag,
+        "prod_app_tag": prod_app_tag,
         "total_files_changed": len(files),
         "risk_level": risk_level,
         "warnings": warnings,

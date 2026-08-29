@@ -401,8 +401,9 @@ def get_manifest():
                 "name": "trigger_deployment",
                 "description": (
                     "Trigger GitHub Actions deployment workflow(s) via workflow_dispatch. "
-                    "VFA runs separate backend and web workflows. GPWW/FYDA/REM/MYL dispatch "
-                    "deploy.yml on the VM infra repo when BIGAS_DEPLOY_REPO_MAP is set."
+                    "VFA runs separate backend and web workflows. BIG dispatches deploy.yml "
+                    "on mckort/bigas (Cloud Run). GPWW/FYDA/REM/MYL dispatch deploy.yml on "
+                    "the VM infra repo when BIGAS_DEPLOY_REPO_MAP is set."
                 ),
                 "path": "/mcp/tools/trigger_deployment",
                 "method": "POST",

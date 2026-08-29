@@ -36,6 +36,8 @@ DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
     "www.remotebrief.com": "REM",
     "mylifesdeed.com": "MYL",
     "www.mylifesdeed.com": "MYL",
+    "bigas.me": "BIG",
+    "www.bigas.me": "BIG",
 }
 
 

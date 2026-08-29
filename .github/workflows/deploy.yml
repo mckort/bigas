@@ -1,0 +1,93 @@
+# Production Cloud Run deploy (mcp-marketing on bigas.me).
+# Triggered by Bigas DevOps (`trigger_deployment`) via workflow_dispatch, or manually.
+#
+# One-time setup (from a machine with gcloud + gh, using local .env):
+#   ./scripts/setup-github-actions-deploy.sh
+#
+# GitHub Actions:
+#   Variables: GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOY_SERVICE_ACCOUNT
+#   Secrets:   BIGAS_DEPLOY_ENV  (contents of repo-root .env used by deploy.sh)
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: Skip docker build/push and reuse the image tag in BIGAS_DEPLOY_ENV
+        required: false
+        default: false
+        type: boolean
+      image_tag:
+        description: Override image tag (default is the git SHA)
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-cloud-run
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Require GitHub deploy config
+        env:
+          WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          DEPLOY_ENV: ${{ secrets.BIGAS_DEPLOY_ENV }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "$WIF" ]; then
+            echo "::error::Repository variable GCP_WORKLOAD_IDENTITY_PROVIDER is missing. Run ./scripts/setup-github-actions-deploy.sh"
+            missing=1
+          fi
+          if [ -z "$SA" ]; then
+            echo "::error::Repository variable GCP_DEPLOY_SERVICE_ACCOUNT is missing. Run ./scripts/setup-github-actions-deploy.sh"
+            missing=1
+          fi
+          if [ -z "$DEPLOY_ENV" ]; then
+            echo "::error::Repository secret BIGAS_DEPLOY_ENV is missing. Run ./scripts/setup-github-actions-deploy.sh"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Artifact Registry docker auth
+        run: gcloud auth configure-docker europe-north1-docker.pkg.dev --quiet
+
+      - name: Write deploy env and run script
+        env:
+          DEPLOY_ENV: ${{ secrets.BIGAS_DEPLOY_ENV }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+          SKIP_BUILD_INPUT: ${{ inputs.skip_build }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$DEPLOY_ENV" > .env
+          if [ -n "${IMAGE_TAG_INPUT:-}" ]; then
+            printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG_INPUT" >> .env
+          else
+            printf 'IMAGE_TAG=%s\n' "$GITHUB_SHA" >> .env
+          fi
+          if [ "$SKIP_BUILD_INPUT" = "true" ]; then
+            export SKIP_BUILD=true
+          fi
+          chmod +x ./deploy.sh ./scripts/record-prod-version.sh
+          ./deploy.sh
