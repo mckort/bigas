@@ -17,6 +17,9 @@ def test_manifest_includes_question_and_async_weekly():
     tools = {t["name"]: t for t in get_manifest()["tools"]}
     ask = tools["ask_analytics_question"]
     assert "question" in ask["parameters"]["required"]
+    assert "factual GA4" in ask["description"]
+    assert "Do not use this for strategy" in ask["description"]
+    assert "Not strategy" in ask["parameters"]["properties"]["question"]["description"]
     trends = tools["analyze_trends"]
     assert trends["parameters"]["properties"]["post_to_discord"]["default"] is False
     assert "weekly_analytics_report_async" in tools

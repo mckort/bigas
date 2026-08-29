@@ -108,6 +108,29 @@ def test_native_tool_loop_runs_then_answers():
     assert calls == [("search_jira", {"jql": "type = Bug"})]
 
 
+def test_native_tool_loop_passes_generation_kwargs():
+    from bigas.agents.chief_of_staff import _run_native_tool_loop
+
+    seen = []
+
+    class CaptureLLM:
+        def complete_detailed(self, messages, **kwargs):
+            seen.append(kwargs)
+            return LLMCompletion(text="Baseline is 120 sessions.")
+
+    result = _run_native_tool_loop(
+        CaptureLLM(),
+        [{"role": "user", "content": "how do we get to 1000 sessions?"}],
+        [],
+        run_tool=lambda name, args: "unused",
+        generation_kwargs={"temperature": 0.4, "max_tokens": 16384, "thinking_budget": 8192},
+    )
+    assert result == "Baseline is 120 sessions."
+    assert seen[0]["temperature"] == 0.4
+    assert seen[0]["max_tokens"] == 16384
+    assert seen[0]["thinking_budget"] == 8192
+
+
 def test_gemini_safe_schema_strips_unsupported_keywords():
     from bigas.llm.gemini_client import _gemini_safe_schema, _openai_tools_to_gemini_decls
 

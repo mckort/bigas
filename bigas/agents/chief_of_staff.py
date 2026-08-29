@@ -33,6 +33,8 @@ from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
 from bigas.utils.mcp_client import MCPClient, MCPClientError
 
 MAX_AGENT_TOOL_ROUNDS = 10
+MARKETING_CHAT_MAX_TOKENS = 16_384
+MARKETING_CHAT_THINKING_BUDGET = 8_192
 
 REASONING_APPROACH = """
 Think step by step before acting:
@@ -56,6 +58,39 @@ When working with analytics data:
 - Never treat missing data as a failure — it's information to act on
 """.strip()
 
+MARKETING_STRATEGY_RULES = """
+Growth and strategy briefs (traffic, SEO, content, social, customers, conversion):
+- You are a senior growth marketer. Reason from live evidence and established practice, not a generic checklist.
+- Jira is context, not the answer. Looking up an Epic/goal is fine; never end with only ticket links or a Move button. The plan is the reply. File tickets only after the brief, and only for concrete follow-up work.
+- Never send the user's whole strategy question to ask_analytics_question. That tool answers factual GA4 questions only (sessions last 28 days, sessions by source, landing pages, event counts). Ask several narrow questions if needed.
+- Before a growth plan, gather: (1) current sessions and sources, (2) top landing pages, (3) conversions you can measure (store clicks, meeting bookings, key events), (4) get_latest_report and/or analyze_underperforming_pages when those exist. Then write the brief yourself.
+- Structure: baseline vs the stated goal, the gap, 5–8 prioritized moves (impact × effort), what not to do given budget, and how to measure each move in GA4.
+- Do not paste a tool's concise summary as the final answer. Synthesize.
+""".strip()
+
+
+def _is_marketing_agent(agent_id: Optional[str]) -> bool:
+    return (agent_id or "").strip().lower() == "marketing"
+
+
+def _marketing_runtime_rules() -> str:
+    return f"{ANALYTICS_GUIDANCE}\n\n{MARKETING_STRATEGY_RULES}"
+
+
+def _chat_generation_kwargs(
+    agent_id: Optional[str] = None, model: str = ""
+) -> Dict[str, Any]:
+    """Token/thinking budget for chat turns. Marketing strategy needs room to reason."""
+    if not _is_marketing_agent(agent_id):
+        return {"temperature": 0.3}
+    kwargs: Dict[str, Any] = {
+        "temperature": 0.4,
+        "max_tokens": MARKETING_CHAT_MAX_TOKENS,
+    }
+    if (model or "").lower().startswith("gemini"):
+        kwargs["thinking_budget"] = MARKETING_CHAT_THINKING_BUDGET
+    return kwargs
+
 logger = logging.getLogger(__name__)
 
 CONSULT_SPECIALIST_TOOL = {
@@ -66,7 +101,7 @@ CONSULT_SPECIALIST_TOOL = {
             "Involve a specialist when their domain expertise would genuinely improve the outcome. "
             "Think about why this specialist's knowledge matters for this specific task.\n\n"
             "Specialists:\n"
-            "- marketing: GA4 analytics, ad platforms, marketing trends\n"
+            "- marketing: GA4, ads, and organic growth/SEO/content strategy grounded in data\n"
             "- product: Product planning, Jira workflows, stakeholder communication\n"
             "- cto: Code review, architecture, deployment debugging\n"
             "- cfo: AI/infrastructure costs, usage analysis\n"
@@ -109,8 +144,8 @@ SPECIALIST_IDS = ("marketing", "product", "cto", "cfo", "devops")
 
 SPECIALIST_CAPABILITIES = (
     "Specialist expertise (involve them when their domain knowledge would improve the outcome):\n"
-    "- marketing: Deep expertise in GA4 analytics, ad platforms (Google/Meta/LinkedIn/Reddit), "
-    "marketing trends, and performance analysis.\n"
+    "- marketing: Deep expertise in GA4, ads (Google/Meta/LinkedIn/Reddit), and organic "
+    "growth/SEO/content strategy grounded in that data.\n"
     "- product: Expertise in product planning, Jira workflows, release notes, and stakeholder communication.\n"
     "- cto: Technical expertise in code review, architecture, QA, deployment debugging, and engineering operations.\n"
     "- cfo: Expertise in AI/infrastructure costs, usage analysis, and efficiency optimization.\n"
@@ -239,8 +274,8 @@ def _specialist_native_extra(agent_id: Optional[str] = None) -> str:
         "- lookup_jira: for specific issue keys; search_jira: for JQL filters\n"
         "- create_jira_issue: look up Epic context first if needed, then create"
     )
-    if (agent_id or "").strip().lower() == "marketing":
-        extra = f"{extra}\n\n{ANALYTICS_GUIDANCE}"
+    if _is_marketing_agent(agent_id):
+        extra = f"{extra}\n\n{_marketing_runtime_rules()}"
     return extra
 
 
@@ -567,8 +602,8 @@ def _enrich_tool_args(
         args.setdefault("project_key", project)
         if "ask_analytics" in (tool_name or "").lower():
             args["question"] = scrub_analytics_question(args.get("question") or user_message, project)
-    if (tool_name or "").lower() == "create_jira_issue" and (
-        (caller_agent_id or "").strip().lower() == "marketing"
+    if (tool_name or "").lower() == "create_jira_issue" and _is_marketing_agent(
+        caller_agent_id
     ):
         args.setdefault("marketing", True)
     if (tool_name or "").lower() == "create_jira_issue" and user_id:
@@ -593,7 +628,7 @@ def _select_tool_via_llm(
     user_id: Optional[str] = None,
 ) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
     """Returns (response_text, tool_name, tool_args) — tool fields set if a tool should run."""
-    llm, _model = get_llm_client(feature="chat")
+    llm, model = get_llm_client(feature="chat")
     prompt_tools = _chief_callable_tools(tools) if agent_id == "chief" else tools
     tool_summary = _tools_summary(prompt_tools)
     extra = (
@@ -609,7 +644,7 @@ def _select_tool_via_llm(
     messages.append({"role": "user", "content": user_message})
 
     try:
-        raw = llm.complete(messages, temperature=0.2)
+        raw = llm.complete(messages, **_chat_generation_kwargs(agent_id, model))
     except Exception as exc:
         from bigas.llm.gemini_client import is_malformed_function_call
 
@@ -737,6 +772,7 @@ def _run_native_tool_loop(
     openai_tools: List[Dict[str, Any]],
     *,
     run_tool,
+    generation_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Provider-native function calling. Returns None if the first turn cannot start."""
     if not hasattr(llm, "complete_detailed"):
@@ -746,6 +782,8 @@ def _run_native_tool_loop(
     for _round in range(MAX_AGENT_TOOL_ROUNDS):
         try:
             kwargs: Dict[str, Any] = {"temperature": 0.3}
+            if generation_kwargs:
+                kwargs.update(generation_kwargs)
             if openai_tools:
                 kwargs["tools"] = openai_tools
                 kwargs["tool_choice"] = "auto"
@@ -811,7 +849,7 @@ def _run_agent_with_tools(
     user_id: Optional[str] = None,
 ) -> str:
     """Native tool loop first; JSON action loop if the provider rejects tools."""
-    llm, _model = get_llm_client(feature="chat")
+    llm, model = get_llm_client(feature="chat")
     extra = _chief_native_extra() if agent_id == "chief" else _specialist_native_extra(agent_id)
     system = _agent_system_prompt(
         agent_config, extra, user_id=user_id, agent_id=agent_id
@@ -822,7 +860,13 @@ def _run_agent_with_tools(
     openai_tools = list(extra_openai_tools or [])
     openai_tools.extend(_mcp_tool_to_openai_def(tool) for tool in tools)
     try:
-        native = _run_native_tool_loop(llm, messages, openai_tools, run_tool=run_tool)
+        native = _run_native_tool_loop(
+            llm,
+            messages,
+            openai_tools,
+            run_tool=run_tool,
+            generation_kwargs=_chat_generation_kwargs(agent_id, model),
+        )
         if native is not None:
             return native
         return _run_json_agent_loop(
@@ -979,7 +1023,7 @@ def run_specialist_task(
             )
 
         def _fallback_complete() -> str:
-            llm, _ = get_llm_client(feature="chat")
+            llm, model = get_llm_client(feature="chat")
             system = _agent_system_prompt(
                 agent_config, user_id=chat_user_id, agent_id=agent_id
             )
@@ -988,7 +1032,7 @@ def run_specialist_task(
                     {"role": "system", "content": system},
                     {"role": "user", "content": task},
                 ],
-                temperature=0.4,
+                **_chat_generation_kwargs(agent_id, model),
             )
 
         result = _run_agent_with_tools(
