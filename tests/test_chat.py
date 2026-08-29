@@ -1094,7 +1094,34 @@ def test_marketing_specialist_prompt_treats_empty_ga4_as_finding():
     for blob in (native, json_extra):
         assert "empty results are valid findings" in blob.lower()
         assert "never treat missing data as a failure" in blob.lower()
-    assert "empty results are findings" not in _specialist_native_extra("product").lower()
+        assert "senior growth marketer" in blob.lower()
+        assert "ask_analytics_question" in blob
+        assert "Jira is context, not the answer" in blob
+    product = _specialist_native_extra("product")
+    assert "empty results are findings" not in product.lower()
+    assert "senior growth marketer" not in product.lower()
+
+
+def test_chat_generation_kwargs_give_marketing_room_to_reason():
+    from bigas.agents.chief_of_staff import (
+        MARKETING_CHAT_MAX_TOKENS,
+        MARKETING_CHAT_THINKING_BUDGET,
+        _chat_generation_kwargs,
+    )
+
+    chief = _chat_generation_kwargs("chief", "gemini-3.1-pro-preview")
+    assert chief == {"temperature": 0.2}
+    assert "max_tokens" not in chief
+    assert "thinking_budget" not in chief
+
+    marketing = _chat_generation_kwargs("marketing", "gemini-3.1-pro-preview")
+    assert marketing["temperature"] == 0.4
+    assert marketing["max_tokens"] == MARKETING_CHAT_MAX_TOKENS
+    assert marketing["thinking_budget"] == MARKETING_CHAT_THINKING_BUDGET
+
+    gpt = _chat_generation_kwargs("marketing", "gpt-4.1")
+    assert gpt["max_tokens"] == MARKETING_CHAT_MAX_TOKENS
+    assert "thinking_budget" not in gpt
 
 
 def test_humanize_tool_result_unwraps_indented_json():
