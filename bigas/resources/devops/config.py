@@ -26,9 +26,10 @@ RISKY_PATH_PATTERNS: tuple[str, ...] = (
     "poetry.lock",
 )
 
-# Example defaults when BIGAS_DEPLOY_WORKFLOW_MAP is unset (vcfieldassistant uses two workflows).
+# Used when BIGAS_DEPLOY_WORKFLOW_MAP is unset or omits a project.
 DEFAULT_WORKFLOW_MAP: Dict[str, List[str]] = {
     "VFA": ["deploy-backend.yml", "deploy-web.yml"],
+    "BIG": ["deploy.yml"],
 }
 
 
@@ -47,10 +48,10 @@ class DeployTarget:
 
 
 def _workflow_map() -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {key: list(names) for key, names in DEFAULT_WORKFLOW_MAP.items()}
     raw = (os.environ.get("BIGAS_DEPLOY_WORKFLOW_MAP") or "").strip()
     if not raw:
-        return dict(DEFAULT_WORKFLOW_MAP)
-    out: Dict[str, List[str]] = {}
+        return out
     for part in raw.split("|"):
         item = part.strip()
         if not item or ":" not in item:

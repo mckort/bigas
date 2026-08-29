@@ -22,7 +22,7 @@ _POLL_TIMEOUT_SEC = 45 * 60
 
 _DEPLOY_START_RE = re.compile(
     r"\b(deploya|deployera|rulla\s+ut|starta\s+deploy|k[öo]r\s+deploy|"
-    r"deploy\s+(vfa|vcfield|backend|web|prod|production))\b"
+    r"deploy\s+(vfa|vcfield|bigas|big|backend|web|prod|production))\b"
     r"|^(deploy|ship)\b",
     re.I,
 )

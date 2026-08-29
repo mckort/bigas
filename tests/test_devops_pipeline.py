@@ -28,6 +28,8 @@ def test_deploy_start_intent():
     assert is_deploy_start("deploya vcfieldassistant")
     assert is_deploy_start("Deploy VFA please")
     assert is_deploy_start("deploy vcfieldassistant")
+    assert is_deploy_start("deploya bigas")
+    assert is_deploy_start("deploy bigas")
     assert not is_deploy_start("hur går deployen")
     assert not is_deploy_start("kolla status på run 123")
     assert is_confirm("ja")

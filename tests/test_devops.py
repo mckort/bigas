@@ -150,6 +150,42 @@ def test_resolve_deploy_target_from_site():
     assert any("vcfieldassistant.com" in u for u in target.site_urls)
 
 
+def test_resolve_deploy_target_bigas(monkeypatch):
+    monkeypatch.setenv(
+        "BIGAS_JIRA_PROJECT_REPO_MAP",
+        "VFA:mckort/vcfieldassistant,BIG:mckort/bigas",
+    )
+    monkeypatch.setenv(
+        "BIGAS_DEPLOY_WORKFLOW_MAP",
+        "VFA:deploy-backend.yml,deploy-web.yml|BIG:deploy.yml",
+    )
+    target = resolve_deploy_target(project_key="BIG")
+    assert target is not None
+    assert target.repo == "mckort/bigas"
+    assert target.dispatch_repo == "mckort/bigas"
+    assert target.workflows == ["deploy.yml"]
+    assert any("bigas.me" in u for u in target.site_urls)
+
+    from_text = resolve_deploy_target(site_or_text="deploya bigas")
+    assert from_text is not None
+    assert from_text.project_key == "BIG"
+
+
+def test_resolve_deploy_target_bigas_keeps_default_when_map_omits_it(monkeypatch):
+    monkeypatch.setenv(
+        "BIGAS_JIRA_PROJECT_REPO_MAP",
+        "VFA:mckort/vcfieldassistant,BIG:mckort/bigas",
+    )
+    monkeypatch.setenv(
+        "BIGAS_DEPLOY_WORKFLOW_MAP",
+        "VFA:deploy-backend.yml,deploy-web.yml|GPWW:deploy.yml",
+    )
+    target = resolve_deploy_target(project_key="BIG")
+    assert target is not None
+    assert target.repo == "mckort/bigas"
+    assert target.workflows == ["deploy.yml"]
+
+
 def test_check_deployment_risk_flags_migrations(monkeypatch):
     monkeypatch.setattr(
         "bigas.resources.devops.service._github_client",

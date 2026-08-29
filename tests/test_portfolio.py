@@ -43,6 +43,7 @@ def test_resolve_project_from_brand_and_repo(portfolio_env):
     assert resolve_project("review the roadpal PR") == "WAYW"
     assert resolve_project("VFA-12 is stuck") == "VFA"
     assert resolve_project("how is fyda.today doing") == "FYDA"
+    assert resolve_project("deploya bigas") == "BIG"
     assert resolve_project("hello") is None
 
 

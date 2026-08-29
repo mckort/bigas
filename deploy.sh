@@ -56,10 +56,15 @@ if [ -z "$IMAGE_NAME" ]; then
     exit 1
 fi
 
-if [ -z "$IMAGE_TAG" ]; then
-    echo "❌ Error: IMAGE_TAG environment variable is not set"
-    echo "Please set it in your .env file or export it in your shell"
-    exit 1
+DEPLOY_GIT_SHA="${DEPLOY_GIT_SHA:-${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}}"
+export DEPLOY_GIT_SHA
+if [ -z "${IMAGE_TAG:-}" ] || [ "$IMAGE_TAG" = "latest" ]; then
+    if [ -z "$DEPLOY_GIT_SHA" ]; then
+        echo "❌ Error: IMAGE_TAG is not set and git SHA could not be determined"
+        exit 1
+    fi
+    IMAGE_TAG="$DEPLOY_GIT_SHA"
+    echo "🏷️  IMAGE_TAG=latest/empty → using git SHA $IMAGE_TAG"
 fi
 
 # Optional Discord webhooks (marketing/product)
@@ -210,16 +215,20 @@ fi
 
 IMAGE="europe-north1-docker.pkg.dev/$GOOGLE_PROJECT_ID/$DOCKER_REPO/$IMAGE_NAME:$IMAGE_TAG"
 
-echo "🔨 Building Docker image..."
-docker build \
-  --build-arg VITE_FIREBASE_API_KEY="${VITE_FIREBASE_API_KEY:-}" \
-  --build-arg VITE_FIREBASE_AUTH_DOMAIN="${VITE_FIREBASE_AUTH_DOMAIN:-}" \
-  --build-arg VITE_FIREBASE_PROJECT_ID="${VITE_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID:-}}" \
-  -t $IMAGE_NAME:$IMAGE_TAG .
-docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE
+if [ "${SKIP_BUILD:-}" = "true" ]; then
+    echo "⏭️  SKIP_BUILD=true — reusing $IMAGE"
+else
+    echo "🔨 Building Docker image..."
+    docker build \
+      --build-arg VITE_FIREBASE_API_KEY="${VITE_FIREBASE_API_KEY:-}" \
+      --build-arg VITE_FIREBASE_AUTH_DOMAIN="${VITE_FIREBASE_AUTH_DOMAIN:-}" \
+      --build-arg VITE_FIREBASE_PROJECT_ID="${VITE_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID:-}}" \
+      -t $IMAGE_NAME:$IMAGE_TAG .
+    docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE
 
-echo "📤 Pushing image to Google Container Registry..."
-docker push $IMAGE
+    echo "📤 Pushing image to Artifact Registry..."
+    docker push $IMAGE
+fi
 
 echo "🚀 Deploying to Google Cloud Run..."
 # Use env-vars-file (YAML) so SECRET_MANAGER_SECRET_NAMES (value contains commas) is handled correctly
@@ -306,4 +315,12 @@ gcloud run deploy mcp-marketing \
     --timeout=900 \
     --env-vars-file="$ENV_VARS_FILE"
 
-echo "✅ Deployment completed successfully!" 
+echo "✅ Deployment completed successfully!"
+
+if [ -x "$(dirname "$0")/scripts/record-prod-version.sh" ]; then
+    "$(dirname "$0")/scripts/record-prod-version.sh" app || true
+elif [ -x "./scripts/record-prod-version.sh" ]; then
+    ./scripts/record-prod-version.sh app || true
+else
+    echo "⚠️  scripts/record-prod-version.sh missing — skipping version marker"
+fi 
