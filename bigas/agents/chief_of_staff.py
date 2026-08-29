@@ -113,10 +113,6 @@ Ops briefs:
 """.strip()
 
 
-def _is_marketing_agent(agent_id: Optional[str]) -> bool:
-    return (agent_id or "").strip().lower() == "marketing"
-
-
 def _marketing_runtime_rules() -> str:
     return f"{ANALYTICS_GUIDANCE}\n\n{MARKETING_STRATEGY_RULES}"
 
@@ -664,9 +660,9 @@ def _enrich_tool_args(
         args.setdefault("project_key", project)
         if "ask_analytics" in (tool_name or "").lower():
             args["question"] = scrub_analytics_question(args.get("question") or user_message, project)
-    if (tool_name or "").lower() == "create_jira_issue" and _is_marketing_agent(
-        caller_agent_id
-    ):
+    if (tool_name or "").lower() == "create_jira_issue" and (
+        caller_agent_id or ""
+    ).strip().lower() == "marketing":
         args.setdefault("marketing", True)
     if (tool_name or "").lower() == "create_jira_issue" and user_id:
         args.setdefault("user_id", user_id)
