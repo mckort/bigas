@@ -82,7 +82,7 @@ def _chat_generation_kwargs(
 ) -> Dict[str, Any]:
     """Token/thinking budget for chat turns. Marketing strategy needs room to reason."""
     if not _is_marketing_agent(agent_id):
-        return {"temperature": 0.3}
+        return {"temperature": 0.2}
     kwargs: Dict[str, Any] = {
         "temperature": 0.4,
         "max_tokens": MARKETING_CHAT_MAX_TOKENS,
@@ -626,6 +626,7 @@ def _select_tool_via_llm(
     history: List[Dict[str, str]],
     *,
     user_id: Optional[str] = None,
+    generation_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
     """Returns (response_text, tool_name, tool_args) — tool fields set if a tool should run."""
     llm, model = get_llm_client(feature="chat")
@@ -643,8 +644,13 @@ def _select_tool_via_llm(
     messages.extend(history[-10:])
     messages.append({"role": "user", "content": user_message})
 
+    chat_kwargs = (
+        generation_kwargs
+        if generation_kwargs is not None
+        else _chat_generation_kwargs(agent_id, model)
+    )
     try:
-        raw = llm.complete(messages, **_chat_generation_kwargs(agent_id, model))
+        raw = llm.complete(messages, **chat_kwargs)
     except Exception as exc:
         from bigas.llm.gemini_client import is_malformed_function_call
 
@@ -710,6 +716,7 @@ def _run_json_agent_loop(
     run_tool,
     fallback_complete=None,
     user_id: Optional[str] = None,
+    generation_kwargs: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Think → tool → observe → answer. User sees only the final answer."""
     observations: List[str] = []
@@ -727,7 +734,13 @@ def _run_json_agent_loop(
                 + "\n\n".join(observations)
             )
         text, tool_name, tool_args = _select_tool_via_llm(
-            agent_id, agent_config, prompt_message, tools, history, user_id=user_id
+            agent_id,
+            agent_config,
+            prompt_message,
+            tools,
+            history,
+            user_id=user_id,
+            generation_kwargs=generation_kwargs,
         )
         if tool_name and _is_terminal_handoff(tool_name):
             return run_tool(tool_name, tool_args or {}) or (text or "").strip() or "Done."
@@ -756,6 +769,7 @@ def _run_json_agent_loop(
             tools,
             history,
             user_id=user_id,
+            generation_kwargs=generation_kwargs,
         )
         if (text or "").strip():
             return text.strip()
@@ -878,6 +892,7 @@ def _run_agent_with_tools(
             run_tool=run_tool,
             fallback_complete=fallback_complete,
             user_id=user_id,
+            generation_kwargs=_chat_generation_kwargs(agent_id, model),
         )
     except Exception as exc:
         from bigas.llm.gemini_client import is_malformed_function_call

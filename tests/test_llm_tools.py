@@ -131,6 +131,48 @@ def test_native_tool_loop_passes_generation_kwargs():
     assert seen[0]["thinking_budget"] == 8192
 
 
+def test_json_agent_loop_passes_generation_kwargs(monkeypatch):
+    from bigas.agents.chief_of_staff import _run_json_agent_loop
+
+    seen = []
+
+    def fake_select(
+        agent_id,
+        agent_config,
+        user_message,
+        tools,
+        history,
+        *,
+        user_id=None,
+        generation_kwargs=None,
+    ):
+        seen.append(generation_kwargs)
+        return "Strategy complete.", None, None
+
+    monkeypatch.setattr(
+        "bigas.agents.chief_of_staff._select_tool_via_llm",
+        fake_select,
+    )
+
+    result = _run_json_agent_loop(
+        agent_id="marketing",
+        agent_config={"agent_id": "marketing", "system_prompt_goals": ""},
+        user_message="how do we get to 1000 sessions?",
+        tools=[],
+        history=[],
+        run_tool=lambda name, args: "unused",
+        generation_kwargs={
+            "temperature": 0.4,
+            "max_tokens": 16384,
+            "thinking_budget": 8192,
+        },
+    )
+    assert result == "Strategy complete."
+    assert seen[0]["temperature"] == 0.4
+    assert seen[0]["max_tokens"] == 16384
+    assert seen[0]["thinking_budget"] == 8192
+
+
 def test_gemini_safe_schema_strips_unsupported_keywords():
     from bigas.llm.gemini_client import _gemini_safe_schema, _openai_tools_to_gemini_decls
 

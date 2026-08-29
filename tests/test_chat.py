@@ -1110,7 +1110,7 @@ def test_chat_generation_kwargs_give_marketing_room_to_reason():
     )
 
     chief = _chat_generation_kwargs("chief", "gemini-3.1-pro-preview")
-    assert chief == {"temperature": 0.3}
+    assert chief == {"temperature": 0.2}
     assert "max_tokens" not in chief
     assert "thinking_budget" not in chief
 
