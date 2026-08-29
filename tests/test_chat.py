@@ -1100,27 +1100,45 @@ def test_marketing_specialist_prompt_treats_empty_ga4_as_finding():
     product = _specialist_native_extra("product")
     assert "empty results are findings" not in product.lower()
     assert "senior growth marketer" not in product.lower()
+    assert "now / next / later" in product
+    assert "Jira is context, not the answer" in product
 
 
-def test_chat_generation_kwargs_give_marketing_room_to_reason():
+def test_specialist_playbooks_are_role_specific():
+    from bigas.agents.chief_of_staff import _chief_native_extra, _specialist_native_extra
+
+    chief = _chief_native_extra()
+    assert "Involve a specialist only when" in chief
+    assert "senior growth marketer" not in chief.lower()
+
+    cto = _specialist_native_extra("cto")
+    assert "ship / fix first / blocked" in cto
+    assert "fetch_ai_usage" not in cto
+
+    cfo = _specialist_native_extra("cfo")
+    assert "fetch_ai_usage" in cfo
+    assert "Numbers first" in cfo
+
+    devops = _specialist_native_extra("devops")
+    assert "Deploy is a decision" in devops
+    assert "safe to ship" in devops
+
+
+def test_chat_generation_kwargs_give_every_agent_room_to_reason():
     from bigas.agents.chief_of_staff import (
-        MARKETING_CHAT_MAX_TOKENS,
-        MARKETING_CHAT_THINKING_BUDGET,
+        CHAT_MAX_TOKENS,
+        CHAT_THINKING_BUDGET,
         _chat_generation_kwargs,
     )
 
-    chief = _chat_generation_kwargs("chief", "gemini-3.1-pro-preview")
-    assert chief == {"temperature": 0.2}
-    assert "max_tokens" not in chief
-    assert "thinking_budget" not in chief
+    for agent_id in ("chief", "marketing", "product", "cto", "cfo", "devops"):
+        gemini = _chat_generation_kwargs(agent_id, "gemini-3.1-pro-preview")
+        assert gemini["temperature"] == 0.4
+        assert gemini["max_tokens"] == CHAT_MAX_TOKENS
+        assert gemini["thinking_budget"] == CHAT_THINKING_BUDGET
 
-    marketing = _chat_generation_kwargs("marketing", "gemini-3.1-pro-preview")
-    assert marketing["temperature"] == 0.4
-    assert marketing["max_tokens"] == MARKETING_CHAT_MAX_TOKENS
-    assert marketing["thinking_budget"] == MARKETING_CHAT_THINKING_BUDGET
-
-    gpt = _chat_generation_kwargs("marketing", "gpt-4.1")
-    assert gpt["max_tokens"] == MARKETING_CHAT_MAX_TOKENS
+    gpt = _chat_generation_kwargs("chief", "gpt-4.1")
+    assert gpt["max_tokens"] == CHAT_MAX_TOKENS
     assert "thinking_budget" not in gpt
 
 

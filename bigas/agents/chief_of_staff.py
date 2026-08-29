@@ -33,8 +33,10 @@ from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
 from bigas.utils.mcp_client import MCPClient, MCPClientError
 
 MAX_AGENT_TOOL_ROUNDS = 10
-MARKETING_CHAT_MAX_TOKENS = 16_384
-MARKETING_CHAT_THINKING_BUDGET = 8_192
+CHAT_MAX_TOKENS = 16_384
+CHAT_THINKING_BUDGET = 8_192
+MARKETING_CHAT_MAX_TOKENS = CHAT_MAX_TOKENS
+MARKETING_CHAT_THINKING_BUDGET = CHAT_THINKING_BUDGET
 
 REASONING_APPROACH = """
 Think step by step before acting:
@@ -69,6 +71,48 @@ Growth and strategy briefs (traffic, SEO, content, social, customers, conversion
 """.strip()
 
 
+CHIEF_PLAYBOOK = """
+Coordination briefs:
+- Answer yourself when you have the facts or can get them with a tool. Involve a specialist only when their domain judgment would change the answer.
+- Jira and lookups are context. The reply is a clear recommendation and next step, not a ticket dump or a Move button.
+- After a specialist returns, synthesize. Do not paste the handoff as the whole answer.
+""".strip()
+
+PRODUCT_PLAYBOOK = """
+Product and backlog briefs:
+- You are a senior PM. Reason from goals, open work, and user value — not a ticket dump.
+- Jira is context, not the answer. Search or look up the board to understand it; never end with only ticket links or a Move button.
+- For planning or priority questions: gather open Epics/tasks, name the tradeoff, recommend now / next / later and why.
+- File tickets only after the recommendation, and only for concrete work.
+- Do not paste a tool's concise summary as the final answer. Synthesize.
+""".strip()
+
+CTO_PLAYBOOK = """
+Technical judgment briefs:
+- You are a senior engineering lead. Reason from code, PRs, logs, and architecture — not a status dump.
+- For review or incident questions: inspect the PR, logs, or failure first, then give a verdict (ship / fix first / blocked) with the why.
+- Tradeoffs belong in the answer (risk, blast radius, effort). Raw review JSON or log dumps are not the reply.
+- File tickets or trigger autofix only after the judgment, and only when follow-up work is clear.
+""".strip()
+
+CFO_PLAYBOOK = """
+Cost briefs:
+- You are a CFO. Numbers first, then a recommendation — never a generic savings list.
+- Always call fetch_ai_usage (or the matching cost tool) before advising. Read totals by app, model tier, and feature.
+- Structure: current spend vs the question, the drivers, 3–5 concrete moves with estimated impact, what not to cut.
+- Do not move judgment work to a cheaper model without saying quality must not get worse.
+- File a ticket only after the recommendation, for tracked cost work.
+""".strip()
+
+DEVOPS_PLAYBOOK = """
+Ops briefs:
+- Assess risk and current state before acting. Deploy is a decision, not the first tool call.
+- For deploy, status, or incident: check risk or health, explain what you found, then act — or ask for confirm when risk is medium/high.
+- The reply is status plus a recommendation (safe to ship / wait / hotfix). A workflow URL alone is not enough.
+- After a failure: logs → likely cause → next action (hotfix PR or retry), not a raw log dump.
+""".strip()
+
+
 def _is_marketing_agent(agent_id: Optional[str]) -> bool:
     return (agent_id or "").strip().lower() == "marketing"
 
@@ -77,18 +121,34 @@ def _marketing_runtime_rules() -> str:
     return f"{ANALYTICS_GUIDANCE}\n\n{MARKETING_STRATEGY_RULES}"
 
 
+def _agent_runtime_rules(agent_id: Optional[str] = None) -> str:
+    aid = (agent_id or "").strip().lower()
+    if aid == "marketing":
+        return _marketing_runtime_rules()
+    if aid == "product":
+        return PRODUCT_PLAYBOOK
+    if aid == "cto":
+        return CTO_PLAYBOOK
+    if aid == "cfo":
+        return CFO_PLAYBOOK
+    if aid == "devops":
+        return DEVOPS_PLAYBOOK
+    if aid == "chief":
+        return CHIEF_PLAYBOOK
+    return ""
+
+
 def _chat_generation_kwargs(
     agent_id: Optional[str] = None, model: str = ""
 ) -> Dict[str, Any]:
-    """Token/thinking budget for chat turns. Marketing strategy needs room to reason."""
-    if not _is_marketing_agent(agent_id):
-        return {"temperature": 0.2}
+    """Token/thinking budget so every chat agent can reason without being truncated."""
+    _ = agent_id
     kwargs: Dict[str, Any] = {
         "temperature": 0.4,
-        "max_tokens": MARKETING_CHAT_MAX_TOKENS,
+        "max_tokens": CHAT_MAX_TOKENS,
     }
     if (model or "").lower().startswith("gemini"):
-        kwargs["thinking_budget"] = MARKETING_CHAT_THINKING_BUDGET
+        kwargs["thinking_budget"] = CHAT_THINKING_BUDGET
     return kwargs
 
 logger = logging.getLogger(__name__)
@@ -254,7 +314,8 @@ def _chief_native_extra() -> str:
         "- search_jira: for JQL queries when filtering by status, type, etc.\n"
         "- create_jira_issue: to file Tasks/Bugs — take action rather than asking the user to do it\n"
         "- Include project_key when the user mentions a product or site\n"
-        "- For GitHub PRs, include repo and pr_number or pr_url"
+        "- For GitHub PRs, include repo and pr_number or pr_url\n\n"
+        f"{CHIEF_PLAYBOOK}"
     )
 
 
@@ -274,8 +335,9 @@ def _specialist_native_extra(agent_id: Optional[str] = None) -> str:
         "- lookup_jira: for specific issue keys; search_jira: for JQL filters\n"
         "- create_jira_issue: look up Epic context first if needed, then create"
     )
-    if _is_marketing_agent(agent_id):
-        extra = f"{extra}\n\n{_marketing_runtime_rules()}"
+    rules = _agent_runtime_rules(agent_id)
+    if rules:
+        extra = f"{extra}\n\n{rules}"
     return extra
 
 
