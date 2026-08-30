@@ -1078,7 +1078,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
           {!isNew && <TicketComments ticketId={ticket.ticket_id} />}
           {saveError && <p className="text-xs text-red-600">{saveError}</p>}
         </div>
-        <div className="p-4 border-t border-border flex flex-col sm:flex-row gap-2">
+        <div className="p-4 modal-footer-safe border-t border-border flex flex-col sm:flex-row gap-2">
           {!isNew && (
             <button
               type="button"
