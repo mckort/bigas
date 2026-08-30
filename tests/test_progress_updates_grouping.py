@@ -7,6 +7,7 @@ from bigas.resources.product.progress_updates.prompts import (
     build_progress_updates_user_prompt,
 )
 from bigas.resources.product.progress_updates.service import (
+    MAX_PROGRESS_UPDATES_OUTPUT_TOKENS,
     ProgressUpdatesService,
     UNLABELED_GROUP,
     _aggregate_stats,
@@ -242,6 +243,7 @@ def test_progress_updates_service_groups_internal_board_by_label(monkeypatch):
     assert result["stats"]["by_label"]["turbine"] == 1
     assert result["stats"]["by_label"][UNLABELED_GROUP] == 1
     prompt = llm.complete.call_args.kwargs["messages"][1]["content"]
+    assert llm.complete.call_args.kwargs["max_tokens"] == MAX_PROGRESS_UPDATES_OUTPUT_TOKENS
     assert "### turbine" in prompt
     assert "### Unlabeled" in prompt
     assert "invent product-area" in prompt.lower()
