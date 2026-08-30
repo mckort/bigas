@@ -319,6 +319,40 @@ class FetchAiUsageTests(unittest.TestCase):
         self.assertIn("### Model", text)
         self.assertIn("180 words", text)
 
+    def test_cfo_analysis_complete_heuristic(self):
+        from bigas.resources.cto.usage.service import _cfo_analysis_looks_complete
+
+        self.assertTrue(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\n- Stay."
+            )
+        )
+        self.assertTrue(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\n- No changes needed"
+            )
+        )
+        self.assertTrue(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\n10. Keep current stack"
+            )
+        )
+        self.assertFalse(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\nThe model is performi"
+            )
+        )
+        self.assertFalse(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\n### Next section"
+            )
+        )
+        self.assertFalse(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n* List-price dropped, dominated by `cto_aut"
+            )
+        )
+
     def test_cfo_weekly_report_survives_llm_failure(self):
         report = {
             "days": 7,
