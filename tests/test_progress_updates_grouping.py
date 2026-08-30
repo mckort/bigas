@@ -247,3 +247,24 @@ def test_progress_updates_service_groups_internal_board_by_label(monkeypatch):
     assert "### turbine" in prompt
     assert "### Unlabeled" in prompt
     assert "invent product-area" in prompt.lower()
+
+
+def test_progress_updates_caps_max_tokens_for_legacy_openai_models(monkeypatch):
+    store = MemoryTicketStore()
+    board = store.create_board("u1", name="VFA Board", project_key="VFA")
+    ticket = store.create_ticket(board["board_id"], title="Ship feature")
+    store.update_ticket(ticket["ticket_id"], status="Done")
+
+    adapter = TicketJiraAdapter()
+    adapter._store = store
+    llm = MagicMock()
+    llm.complete.return_value = "Shipped feature."
+    monkeypatch.setattr(
+        "bigas.resources.product.progress_updates.service.get_llm_client",
+        lambda **_kwargs: (llm, "gpt-4"),
+    )
+
+    service = ProgressUpdatesService(jira_client=adapter, include_git=False)
+    service.run(days=60, project_keys=["VFA"])
+
+    assert llm.complete.call_args.kwargs["max_tokens"] == 4096
