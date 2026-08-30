@@ -16,7 +16,7 @@ Registered under domain `usage` (see `GET /mcp/providers`). **None are on by def
 |---|---|---|
 | `cursor` | Cursor Cloud Agents API (`List Agents` + `/usage`) | `CURSOR_API_KEY` |
 | `llm_logs` | Cloud Logging lines with `event: llm_usage` | Home project + `vcfieldassistant` (override with `BIGAS_LLM_USAGE_PROJECTS`). Runtime SA (`bigas-run`) needs `roles/logging.viewer` on **each** scanned project (home + VCFA). |
-| `gcp_billing` | Cloud Billing export in BigQuery (`gcp_billing` dataset) | Same project list as `llm_logs`. Runtime SA needs `bigquery.jobUser` + dataset read. Enable **Standard usage cost** export to `bigas-503008.gcp_billing` in [Billing export](https://console.cloud.google.com/billing/011097-9C6611-22F8ED/export?project=bigas-503008). EU dataset backfills current + previous month. Gemini on the invoice is `gcp.gemini_invoice` — do not add it to `llm_logs`. |
+| `gcp_billing` | Cloud Billing export in BigQuery (`gcp_billing` dataset) | Same project list as `llm_logs`. Runtime SA needs `bigquery.jobUser` + dataset read. Enable **Standard usage cost** export to `bigas-503008.gcp_billing` in [Billing export](https://console.cloud.google.com/billing/011097-9C6611-22F8ED/export?project=bigas-503008). If the preferred dataset is empty, Bigas also scans other datasets in the project for `gcp_billing_export_v1_*` tables. EU dataset backfills current + previous month. Gemini on the invoice is `gcp.gemini_invoice` — do not add it to `llm_logs`. |
 | `tavily` | VCFA Firestore `aiUsageDaily` shards (`byProvider.tavily` / `tavily.*` features) | `BIGAS_TAVILY_USAGE_PROJECT` (default `vcfieldassistant`). Runtime SA needs `roles/datastore.viewer` on that project. |
 
 To add another system, drop a `UsageProvider` subclass in `bigas/providers/usage/` and list its `name` in `BIGAS_USAGE_PROVIDERS`. See README [Plug in a usage source](../README.md#plug-in-a-usage-source).
@@ -97,14 +97,14 @@ Weekly:
 
 ```text
 **CFO: AI + cloud usage (last 7 days)**
-List-price (LLM + Cursor + Tavily): ~$12.34 · Events: 120
-GCP invoice: unavailable — Cloud Billing export table not found…
+List-price (LLM + Cursor + Tavily): ≈$12.34 · Events: 120
+GCP invoice: unavailable — enable [Standard usage cost export](https://console.cloud.google.com/billing/011097-9C6611-22F8ED/export?project=bigas-503008) to `bigas-503008.gcp_billing` (first rows can take a few hours).
 vs prior 7d: $10.10 → $12.34 (+22%)
-Top drivers: cto_pr_review 54% (~$6.66) · llm.living_analysis 18% (~$2.22) · …
+Top drivers: cto_pr_review 54% (≈$6.66) · llm.living_analysis 18% (≈$2.22) · …
 Apps: bigas $9.10 · vcfieldassistant $3.24
 
 By area:
-- Engineering (PR + autofix): ~$8.00 (65%)
+- Engineering (PR + autofix): ≈$8.00 (65%)
 …
 
 **CFO analysis**
