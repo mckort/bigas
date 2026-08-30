@@ -79,7 +79,7 @@ def format_cursor_usage_discord_lines(
     if token_line:
         lines.append(f"Cursor usage: {token_line}")
     if est_cost_usd is not None:
-        lines.append(f"Estimated list-price: ~${est_cost_usd:.4f} ({model})")
+        lines.append(f"Estimated list-price: {_approx_money(est_cost_usd, digits=4)} ({model})")
     elif token_line:
         lines.append(f"Estimated list-price: n/a (unknown model {model})")
     return lines
@@ -307,6 +307,31 @@ def _money(value: Optional[float], *, digits: int = 2) -> str:
     return f"${float(value):.{digits}f}"
 
 
+def _approx_money(value: Optional[float], *, digits: int = 2) -> str:
+    """List-price estimate marker that will not trigger markdown strikethrough.
+
+    Chat renders remark-gfm; a literal ASCII ``~`` before amounts pairs as
+    ``~…~`` strikethrough. Use the approximation sign instead.
+    """
+    money = _money(value, digits=digits)
+    if money == "n/a":
+        return money
+    return f"≈{money}"
+
+
+def _billing_export_console_url() -> str:
+    account = (os.environ.get("BIGAS_BILLING_ACCOUNT") or "011097-9C6611-22F8ED").strip()
+    project = (
+        os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCP_PROJECT")
+        or "bigas-503008"
+    ).strip()
+    return (
+        f"https://console.cloud.google.com/billing/{account}/export"
+        f"?project={project}"
+    )
+
+
 def _feature_bucket(feature: str) -> str:
     name = (feature or "").strip()
     for label, members in _FEATURE_BUCKET_RULES:
@@ -347,17 +372,26 @@ def _gcp_invoice_status(report: Dict[str, Any]) -> Tuple[str, Optional[str]]:
     ]
     gcp_errs = [e for e in gcp_errs if e]
     if gcp_errs:
-        short = gcp_errs[0]
-        if len(short) > 160:
-            short = short[:157].rstrip() + "…"
+        url = _billing_export_console_url()
+        dataset = (os.environ.get("BIGAS_GCP_BILLING_DATASET") or "gcp_billing").strip()
+        project = (
+            os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or os.environ.get("GCP_PROJECT")
+            or "bigas-503008"
+        ).strip()
         return (
-            f"GCP invoice: unavailable — {short}",
-            short,
+            f"GCP invoice: unavailable — enable "
+            f"[Standard usage cost export]({url}) to `{project}.{dataset}` "
+            f"(first rows can take a few hours).",
+            gcp_errs[0],
         )
     if invoice is None:
         return ("GCP invoice: n/a", None)
     if float(invoice) > 0:
-        return (f"GCP invoice (Cloud Billing export): ~{_money(invoice, digits=4)}", None)
+        return (
+            f"GCP invoice (Cloud Billing export): {_approx_money(invoice, digits=4)}",
+            None,
+        )
     return ("GCP invoice: $0.00 (no invoice rows in window)", None)
 
 
@@ -443,7 +477,7 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
     top3 = top_sorted[:3]
     drivers = (
         " · ".join(
-            f"{name} {_pct(cost, est_f)} (~{_money(cost)})" for name, cost in top3
+            f"{name} {_pct(cost, est_f)} ({_approx_money(cost)})" for name, cost in top3
         )
         if top3
         else "n/a"
@@ -452,7 +486,7 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
     lines: List[str] = [
         f"**Bigas AI + cloud usage (last {days} days)**",
         (
-            f"List-price (LLM + Cursor + Tavily): ~{_money(est_f)} · "
+            f"List-price (LLM + Cursor + Tavily): {_approx_money(est_f)} · "
             f"Events: {totals.get('events') or 0}"
             if est is not None
             else f"List-price (LLM + Cursor + Tavily): n/a · Events: {totals.get('events') or 0}"
@@ -476,14 +510,14 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         lines.append("")
         lines.append("By area:")
         for label, cost in buckets:
-            lines.append(f"- {label}: ~{_money(cost)} ({_pct(cost, est_f)})")
+            lines.append(f"- {label}: {_approx_money(cost)} ({_pct(cost, est_f)})")
 
     if by_provider:
         lines.append("")
         lines.append("By provider:")
         for name, cost in sorted(by_provider.items(), key=lambda kv: kv[1], reverse=True):
             lines.append(
-                f"- {name}: ~{_money(float(cost))} ({_pct(float(cost), est_f)})"
+                f"- {name}: {_approx_money(float(cost))} ({_pct(float(cost), est_f)})"
             )
 
     if top_sorted:
@@ -493,16 +527,16 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         for name, cost in shown:
             n = activity.get(name) or 0
             per = (cost / n) if n else None
-            per_txt = _money(per, digits=3) if per is not None else "n/a"
+            per_txt = _approx_money(per, digits=3) if per is not None else "n/a"
             lines.append(
-                f"- {name}: ~{_money(cost)} "
-                f"({_pct(cost, est_f)} · {n} · ~{per_txt}/call)"
+                f"- {name}: {_approx_money(cost)} "
+                f"({_pct(cost, est_f)} · {n} · {per_txt}/call)"
             )
         rest = top_sorted[_TOP_FEATURES:]
         if rest:
             rest_cost = sum(c for _, c in rest)
             lines.append(
-                f"- (+ {len(rest)} more features totaling ~{_money(rest_cost)})"
+                f"- (+ {len(rest)} more features totaling {_approx_money(rest_cost)})"
             )
 
     if by_model_tier:
@@ -512,7 +546,7 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
             by_model_tier.items(), key=lambda kv: kv[1], reverse=True
         ):
             lines.append(
-                f"- {name}: ~{_money(float(cost))} ({_pct(float(cost), est_f)})"
+                f"- {name}: {_approx_money(float(cost))} ({_pct(float(cost), est_f)})"
             )
 
     empty_fb = totals.get("empty_fallback_events") or 0
@@ -528,8 +562,8 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         lines.append("Top PRs by est. cost:")
         for i, row in enumerate(top_prs[:5], start=1):
             lines.append(
-                f"{i}. {row.get('pr_url')} — ~"
-                f"{_money(float(row.get('est_cost_usd') or 0), digits=4)}"
+                f"{i}. {row.get('pr_url')} — "
+                f"{_approx_money(float(row.get('est_cost_usd') or 0), digits=4)}"
             )
 
     other_errors = [
@@ -547,7 +581,7 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
     lines.append("")
     lines.append(
         "_List-price: Cursor, llm_logs, Tavily. "
-        "gcp_billing is the Cloud Billing invoice (~1 day lag). "
+        "gcp_billing is the Cloud Billing invoice (about 1 day lag). "
         "Do not add gcp.gemini_invoice to llm_logs Gemini._"
     )
     return "\n".join(lines)

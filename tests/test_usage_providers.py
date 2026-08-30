@@ -72,6 +72,8 @@ class DiscordFormatTests(unittest.TestCase):
         )
         self.assertTrue(any("Cursor usage:" in line for line in lines))
         self.assertTrue(any("0.4200" in line for line in lines))
+        self.assertTrue(any("≈$" in line for line in lines))
+        self.assertFalse(any("~$" in line for line in lines))
 
 
 class WeeklyReportTests(unittest.TestCase):
@@ -103,6 +105,8 @@ class WeeklyReportTests(unittest.TestCase):
         msg = format_weekly_cto_ai_report(report)
         self.assertIn("Bigas AI + cloud usage", msg)
         self.assertIn("$12.34", msg)
+        self.assertIn("≈$", msg)
+        self.assertNotIn("~$", msg)
         self.assertIn("Top drivers:", msg)
         self.assertIn("By area:", msg)
         self.assertIn("Engineering (PR + autofix)", msg)
@@ -126,8 +130,10 @@ class WeeklyReportTests(unittest.TestCase):
         }
         msg = format_weekly_cto_ai_report(report)
         self.assertIn("GCP invoice: unavailable", msg)
-        self.assertIn("export table not found", msg)
+        self.assertIn("Standard usage cost export", msg)
+        self.assertIn("console.cloud.google.com/billing/", msg)
         self.assertNotIn("Provider errors:", msg)
+        self.assertNotIn("~$", msg)
 
     def test_format_includes_wow_when_prior_present(self):
         report = {
@@ -638,6 +644,31 @@ class GcpBillingTests(unittest.TestCase):
         self.assertFalse(events[0].cost_estimate)
         self.assertEqual(events[0].meta["app"], "bigas")
         self.assertEqual(events[1].meta["app"], "vcfieldassistant")
+
+    @patch.dict(
+        "os.environ",
+        {
+            "GOOGLE_CLOUD_PROJECT": "demo-proj",
+            "BIGAS_USAGE_PROVIDERS": "gcp_billing",
+            "BIGAS_GCP_BILLING_DATASET": "gcp_billing",
+            "BIGAS_BILLING_ACCOUNT": "011097-9C6611-22F8ED",
+        },
+        clear=False,
+    )
+    def test_resolve_table_falls_back_to_other_dataset(self):
+        from bigas.providers.usage.gcp_billing import GcpBillingUsageProvider
+
+        provider = GcpBillingUsageProvider()
+        with patch.object(provider, "_list_table_ids", side_effect=lambda ds: (
+            [] if ds == "gcp_billing" else ["gcp_billing_export_v1_011097_9C6611_22F8ED"]
+        )), patch.object(
+            provider, "_list_dataset_ids", return_value=["gcp_billing", "billing_export"]
+        ):
+            table = provider._resolve_table()
+        self.assertEqual(
+            table,
+            "demo-proj.billing_export.gcp_billing_export_v1_011097_9C6611_22F8ED",
+        )
 
 
 class TavilyUsageTests(unittest.TestCase):

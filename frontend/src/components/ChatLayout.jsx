@@ -120,7 +120,10 @@ const chatMarkdownComponents = {
 
 function ChatMarkdown({ content }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>
+    <ReactMarkdown
+      remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
+      components={chatMarkdownComponents}
+    >
       {humanizeChatContent(content)}
     </ReactMarkdown>
   )
