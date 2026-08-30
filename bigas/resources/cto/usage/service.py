@@ -621,24 +621,58 @@ def analyze_weekly_ai_spend(report: Dict[str, Any]) -> Optional[str]:
     try:
         from bigas.llm.factory import get_llm_client
 
-        llm, _model = get_llm_client(feature="cfo_ai_usage")
-        text = (llm.complete(
-            [
-                {"role": "system", "content": (
-                    "You are a concise CFO for AI/GCP spend. Challenge the stack when "
-                    "a better cost/quality trade exists, but never recommend a change "
-                    "that would worsen living-analysis performance. "
-                    "Always complete all three sections within the word limit."
-                )},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=1_024,
-            temperature=0.3,
-        ) or "").strip()
+        llm, model = get_llm_client(feature="cfo_ai_usage")
+        messages = [
+            {"role": "system", "content": (
+                "You are a concise CFO for AI/GCP spend. Challenge the stack when "
+                "a better cost/quality trade exists, but never recommend a change "
+                "that would worsen living-analysis performance. "
+                "Always complete all three sections within the word limit."
+            )},
+            {"role": "user", "content": prompt},
+        ]
+        call_kwargs: Dict[str, Any] = {
+            "max_tokens": 4_096,
+            "temperature": 0.3,
+        }
+        # Gemini shares max_output_tokens between thinking and visible text.
+        if str(model or "").lower().startswith("gemini"):
+            call_kwargs["thinking_budget"] = 1_024
+
+        text = (llm.complete(messages, **call_kwargs) or "").strip()
+        if text and not _cfo_analysis_looks_complete(text):
+            # One retry with more output room and no thinking budget.
+            retry_kwargs = {"max_tokens": 4_096, "temperature": 0.2}
+            text2 = (llm.complete(messages, **retry_kwargs) or "").strip()
+            if text2 and (
+                _cfo_analysis_looks_complete(text2)
+                or len(text2) > len(text)
+            ):
+                text = text2
         return text or None
     except Exception:
         logger.warning("CFO weekly AI spend analysis failed", exc_info=True)
         return None
+
+
+def _cfo_analysis_looks_complete(text: str) -> bool:
+    low = (text or "").lower()
+    if "### drivers" not in low or "### savings" not in low or "### model" not in low:
+        return False
+    last = (text or "").rstrip().splitlines()[-1].strip() if text else ""
+    if not last:
+        return False
+    if last.count("`") % 2 == 1 or last.count("**") % 2 == 1:
+        return False
+    if last[-1] not in ".!?:;`\"')]":
+        # Heading-only last line is ok; mid-bullet cut is not.
+        if last.startswith("#"):
+            return False
+        if last.startswith(("-", "*", "•")) or (
+            len(last) > 2 and last[0].isdigit() and last[1] in ".)"
+        ):
+            return False
+    return True
 
 
 def build_weekly_cfo_ai_report(
