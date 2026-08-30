@@ -522,14 +522,24 @@ class StorageService:
                     # Extract page path and hostname from dimensions
                     dimension_values = row.get("dimension_values", [])
                     metric_values = row.get("metric_values", [])
-                    
-                    if dimension_values and len(dimension_values) > 0:
-                        # Extract page path
-                        page_path = dimension_values[page_path_index] if page_path_index is not None and page_path_index < len(dimension_values) else ""
-                        
-                        # Extract hostname (domain)
-                        hostname = dimension_values[host_name_index] if host_name_index is not None and host_name_index < len(dimension_values) else ""
-                        
+
+                    if not dimension_values:
+                        continue
+
+                    # Extract page path
+                    page_path = (
+                        dimension_values[page_path_index]
+                        if page_path_index is not None and page_path_index < len(dimension_values)
+                        else ""
+                    )
+
+                    # Extract hostname (domain)
+                    hostname = (
+                        dimension_values[host_name_index]
+                        if host_name_index is not None and host_name_index < len(dimension_values)
+                        else ""
+                    )
+
                     # Extract metrics by header name when possible (the templates may use keyEvents instead of conversions)
                     sessions = 0
                     key_events = 0
@@ -561,35 +571,36 @@ class StorageService:
                     # mirror it into conversions so older consumers don't show 0 incorrectly.
                     if conversions == 0 and key_events > 0:
                         conversions = key_events
-                        
-                        # Check if this page is underperforming (high traffic, low conversions)
-                        is_underperforming = row.get("underperforming", False)
-                        
-                        # Construct the full URL
-                        if page_path and hostname:
-                            # If page path starts with /, combine with hostname
-                            if page_path.startswith("/"):
-                                full_url = f"https://{hostname}{page_path}"
-                            else:
-                                # If page path is already a full URL, use it as is
-                                full_url = page_path
+
+                    # Always extract the page — underperforming pages typically have 0 key events,
+                    # so this must not be nested under the keyEvents > 0 back-compat branch above.
+                    is_underperforming = row.get("underperforming", False)
+
+                    # Construct the full URL
+                    if page_path and hostname:
+                        # If page path starts with /, combine with hostname
+                        if page_path.startswith("/"):
+                            full_url = f"https://{hostname}{page_path}"
                         else:
-                            # Fallback if we don't have hostname
-                            full_url = page_path if page_path else ""
-                        
-                        page_urls.append({
-                            "page_path": page_path,
-                            "hostname": hostname,
-                            "page_url": full_url,
-                            "sessions": sessions,
+                            # If page path is already a full URL, use it as is
+                            full_url = page_path
+                    else:
+                        # Fallback if we don't have hostname
+                        full_url = page_path if page_path else ""
+
+                    page_urls.append({
+                        "page_path": page_path,
+                        "hostname": hostname,
+                        "page_url": full_url,
+                        "sessions": sessions,
                         # Keep both fields to avoid confusion between GA4 "key events" and legacy "conversions".
                         "key_events": key_events,
                         "conversions": conversions,
                         "key_event_rate": (key_events / sessions * 100) if sessions > 0 else 0,
                         "conversion_rate": (conversions / sessions * 100) if sessions > 0 else 0,
-                            "is_underperforming": is_underperforming
-                        })
-                        
+                        "is_underperforming": is_underperforming,
+                    })
+
                 except (ValueError, IndexError, TypeError) as e:
                     logger.warning(f"Error extracting page URL from row: {e}")
                     continue
