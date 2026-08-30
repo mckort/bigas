@@ -22,6 +22,7 @@ from bigas.resources.cto.usage.service import (
     format_cursor_usage_discord_lines,
     format_weekly_cto_ai_report,
     build_weekly_cfo_ai_report,
+    enrich_with_prior_period,
     publish_weekly_cfo_ai_report,
 )
 
@@ -101,12 +102,76 @@ class WeeklyReportTests(unittest.TestCase):
         }
         msg = format_weekly_cto_ai_report(report)
         self.assertIn("Bigas AI + cloud usage", msg)
-        self.assertIn("$12.3400", msg)
+        self.assertIn("$12.34", msg)
+        self.assertIn("Top drivers:", msg)
+        self.assertIn("By area:", msg)
+        self.assertIn("Engineering (PR + autofix)", msg)
         self.assertIn("cursor:", msg)
-        self.assertIn("- cto_autofix: 2", msg)
-        self.assertIn("- cto_pr_review: 1", msg)
-        self.assertIn("- chat: 1", msg)
+        self.assertIn("Top features", msg)
+        self.assertIn("cto_autofix:", msg)
+        self.assertIn("cto_pr_review:", msg)
         self.assertIn("chat:", msg)
+        self.assertIn("/call)", msg)
+
+    def test_format_flags_gcp_billing_blocked(self):
+        report = {
+            "days": 7,
+            "totals": {"est_cost_usd": 1.0, "invoice_cost_usd": 0.0, "events": 1},
+            "errors": [
+                {
+                    "provider": "gcp_billing",
+                    "error": "Cloud Billing export table not found in bigas-503008.gcp_billing.",
+                }
+            ],
+        }
+        msg = format_weekly_cto_ai_report(report)
+        self.assertIn("GCP invoice: unavailable", msg)
+        self.assertIn("export table not found", msg)
+        self.assertNotIn("Provider errors:", msg)
+
+    def test_format_includes_wow_when_prior_present(self):
+        report = {
+            "days": 7,
+            "totals": {"est_cost_usd": 12.0, "events": 2, "by_feature": {}},
+            "prior_period": {"days": 7, "totals": {"est_cost_usd": 10.0}},
+        }
+        msg = format_weekly_cto_ai_report(report)
+        self.assertIn("vs prior 7d:", msg)
+        self.assertIn("+20%", msg)
+
+    def test_enrich_with_prior_period(self):
+        class FakeProvider:
+            name = "cursor"
+            display_name = "Fake"
+
+            def fetch_usage(self, *, start, end, feature_prefix=None):
+                # Prior window (before 2026-08-03) → cheaper; current window higher.
+                cost = 1.0 if end.day <= 3 else 2.0
+                return [
+                    UsageEvent(
+                        provider="cursor",
+                        source_id="bc-1",
+                        started_at=start.isoformat(),
+                        feature="cto_autofix",
+                        model="composer-2.5",
+                        est_cost_usd=cost,
+                    )
+                ]
+
+        now = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+        current = fetch_ai_usage(
+            days=7,
+            provider="all",
+            providers=[FakeProvider()],
+            now=now,
+        )
+        enriched = enrich_with_prior_period(current, providers=[FakeProvider()])
+        self.assertIn("prior_period", enriched)
+        self.assertEqual(enriched["totals"]["est_cost_usd"], 2.0)
+        self.assertEqual(enriched["prior_period"]["totals"]["est_cost_usd"], 1.0)
+        msg = format_weekly_cto_ai_report(enriched)
+        self.assertIn("vs prior 7d:", msg)
+        self.assertIn("+100%", msg)
 
 
 class FetchAiUsageTests(unittest.TestCase):
@@ -211,14 +276,17 @@ class FetchAiUsageTests(unittest.TestCase):
             "totals": {
                 "est_cost_usd": 5.0,
                 "events": 250,
+                "by_feature": {"chat": 3.0, "cto_pr_review": 2.0},
                 "activity_by_feature": {"chat": 200, "cto_pr_review": 50},
             },
             "events": [{"feature": "chat"}] * 200,
         }
         msg = format_weekly_cto_ai_report(report)
-        self.assertIn("LLM calls:", msg)
-        self.assertIn("- chat: 200", msg)
-        self.assertIn("- cto_pr_review: 50", msg)
+        self.assertIn("Top features", msg)
+        self.assertIn("chat:", msg)
+        self.assertIn("200", msg)
+        self.assertIn("cto_pr_review:", msg)
+        self.assertIn("50", msg)
 
     def test_cfo_weekly_report_appends_analysis(self):
         report = {
@@ -229,16 +297,16 @@ class FetchAiUsageTests(unittest.TestCase):
 
         class FakeLlm:
             def complete(self, messages, **kwargs):
-                return "Flash fallback waste is high. Watch Gemini 3 Flash."
+                return "### Drivers\n- Living analysis led spend.\n### Savings\n- Trim cadence.\n### Model\n- Stay on Pro for judgment."
 
         with patch(
             "bigas.llm.factory.get_llm_client",
             return_value=(FakeLlm(), "gemini-3.1-pro-preview"),
         ):
-            msg = build_weekly_cfo_ai_report(report)
+            msg = build_weekly_cfo_ai_report(report, include_prior_period=False)
         self.assertIn("CFO: AI + cloud usage", msg)
         self.assertIn("CFO analysis", msg)
-        self.assertIn("Gemini 3 Flash", msg)
+        self.assertIn("### Drivers", msg)
 
     def test_cfo_prompt_may_challenge_pro_if_quality_holds(self):
         from bigas.resources.cto.usage.service import CFO_WEEKLY_ANALYSIS_INSTRUCTIONS
@@ -246,7 +314,10 @@ class FetchAiUsageTests(unittest.TestCase):
         text = CFO_WEEKLY_ANALYSIS_INSTRUCTIONS
         self.assertIn("challenge keeping Gemini Pro", text)
         self.assertIn("must not get worse", text)
-        self.assertNotIn("that keep living-analysis judgment on Pro", text)
+        self.assertIn("### Drivers", text)
+        self.assertIn("### Savings", text)
+        self.assertIn("### Model", text)
+        self.assertIn("180 words", text)
 
     def test_cfo_weekly_report_survives_llm_failure(self):
         report = {
@@ -258,7 +329,7 @@ class FetchAiUsageTests(unittest.TestCase):
             "bigas.llm.factory.get_llm_client",
             side_effect=RuntimeError("no key"),
         ):
-            msg = build_weekly_cfo_ai_report(report)
+            msg = build_weekly_cfo_ai_report(report, include_prior_period=False)
         self.assertIn("CFO: AI + cloud usage", msg)
         self.assertNotIn("CFO analysis", msg)
 
