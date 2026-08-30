@@ -327,6 +327,26 @@ class FetchAiUsageTests(unittest.TestCase):
                 "### Drivers\n- A.\n### Savings\n- B.\n### Model\n- Stay."
             )
         )
+        self.assertTrue(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\n- No changes needed"
+            )
+        )
+        self.assertTrue(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\n10. Keep current stack"
+            )
+        )
+        self.assertFalse(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\nThe model is performi"
+            )
+        )
+        self.assertFalse(
+            _cfo_analysis_looks_complete(
+                "### Drivers\n- A.\n### Savings\n- B.\n### Model\n### Next section"
+            )
+        )
         self.assertFalse(
             _cfo_analysis_looks_complete(
                 "### Drivers\n* List-price dropped, dominated by `cto_aut"

@@ -640,7 +640,7 @@ def analyze_weekly_ai_spend(report: Dict[str, Any]) -> Optional[str]:
             call_kwargs["thinking_budget"] = 1_024
 
         text = (llm.complete(messages, **call_kwargs) or "").strip()
-        if text and not _cfo_analysis_looks_complete(text):
+        if not text or not _cfo_analysis_looks_complete(text):
             # One retry with more output room and no thinking budget.
             retry_kwargs = {"max_tokens": 4_096, "temperature": 0.2}
             text2 = (llm.complete(messages, **retry_kwargs) or "").strip()
@@ -664,15 +664,24 @@ def _cfo_analysis_looks_complete(text: str) -> bool:
         return False
     if last.count("`") % 2 == 1 or last.count("**") % 2 == 1:
         return False
-    if last[-1] not in ".!?:;`\"')]":
-        # Heading-only last line is ok; mid-bullet cut is not.
-        if last.startswith("#"):
-            return False
-        if last.startswith(("-", "*", "•")) or (
-            len(last) > 2 and last[0].isdigit() and last[1] in ".)"
-        ):
-            return False
-    return True
+    if last[-1] in ".!?:;`\"')]":
+        return True
+    # No ending punctuation — truncated unless a complete list item.
+    if last.startswith("#"):
+        return False  # Heading-only last line implies an empty section.
+    if last.startswith(("-", "*", "•")):
+        return True
+    i = 0
+    while i < len(last) and last[i].isdigit():
+        i += 1
+    if (
+        i > 0
+        and i < len(last)
+        and last[i] in ".)"
+        and (i + 1 == len(last) or last[i + 1].isspace())
+    ):
+        return True
+    return False
 
 
 def build_weekly_cfo_ai_report(
