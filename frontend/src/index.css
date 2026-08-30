@@ -154,6 +154,16 @@ body {
   }
 }
 
+.modal-footer-safe {
+  padding-bottom: calc(1rem + 3.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 640px) {
+  .modal-footer-safe {
+    padding-bottom: 1rem;
+  }
+}
+
 .composer-anchor {
   position: sticky;
   bottom: 0;
