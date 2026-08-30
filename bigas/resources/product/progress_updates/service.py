@@ -5,6 +5,7 @@ import logging
 import os
 
 from bigas.llm.factory import get_llm_client
+from bigas.llm.limits import cap_output_tokens
 
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 UNLABELED_GROUP = "Unlabeled"
 DEFAULT_IGNORE_LABELS = ("customer-request",)
 VALID_GROUP_BY = frozenset({"project", "label"})
+# Busy weeks need more than 2k output tokens; Discord chunking handles length at post time.
+MAX_PROGRESS_UPDATES_OUTPUT_TOKENS = 8192
 
 
 class ProgressUpdatesError(RuntimeError):
@@ -343,7 +346,9 @@ class ProgressUpdatesService:
                     {"role": "system", "content": PROGRESS_UPDATES_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=2000,
+                max_tokens=cap_output_tokens(
+                    self._model, MAX_PROGRESS_UPDATES_OUTPUT_TOKENS
+                ),
                 temperature=0.8,
             )
         except Exception as e:
