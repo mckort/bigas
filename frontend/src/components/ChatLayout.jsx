@@ -638,10 +638,12 @@ function unreadAgentIdSet(threads, lastOpened, activeAgentId) {
   return ids
 }
 
+const NEAR_BOTTOM_PX = 120
+
 function MobileAgentTabs({ agents, activeAgentId, onSelectAgent, unreadAgentIds }) {
   if (!agents.length) return null
   return (
-    <div className="lg:hidden border-b border-border bg-elevated">
+    <div className="lg:hidden flex-shrink-0 border-b border-border bg-elevated">
       <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2">
         {agents.map((agent) => {
           const isActive = activeAgentId === agent.agent_id
@@ -701,10 +703,31 @@ export default function ChatLayout({
   const [threads, setThreads] = useState([])
   const [lastOpened, setLastOpened] = useState(() => seedLastOpened(readLastOpened()))
   const bottomRef = useRef(null)
+  const messagesScrollRef = useRef(null)
+  const stickToBottomRef = useRef(true)
   const lastMsgTs = useRef('')
   const lastFeedTs = useRef('')
   const unreadChannelRef = useRef(null)
   const messagesThreadIdRef = useRef(null)
+
+  function isMessagesNearBottom() {
+    const el = messagesScrollRef.current
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+  }
+
+  function handleMessagesScroll() {
+    stickToBottomRef.current = isMessagesNearBottom()
+  }
+
+  function scrollMessagesToBottom() {
+    const el = messagesScrollRef.current
+    if (el) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
+    bottomRef.current?.scrollIntoView({ block: 'end' })
+  }
 
   const addPendingFiles = useCallback((files) => {
     const incoming = Array.from(files || []).filter(Boolean)
@@ -989,12 +1012,14 @@ export default function ChatLayout({
   useEffect(() => {
     setPendingFiles([])
     setAttachError('')
+    stickToBottomRef.current = true
   }, [threadId])
 
   const showTyping = waitingForReply || lastMessageIsInProgress(messages)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!stickToBottomRef.current) return
+    scrollMessagesToBottom()
   }, [messages, showTyping])
 
   useEffect(() => {
@@ -1115,6 +1140,7 @@ export default function ChatLayout({
     const text = (messageText ?? input).trim()
     const files = messageText ? [] : pendingFiles
     if ((!text && !files.length) || !threadId || sending) return
+    stickToBottomRef.current = true
     setSending(true)
     setWaitingForReply(true)
     const clientId = createClientMessageId()
@@ -1202,8 +1228,8 @@ export default function ChatLayout({
         unreadAgentIds={unreadAgentIds}
       />
 
-      <main className="flex-1 flex flex-col min-w-0 bg-bg">
-        <header className="header-bar flex items-center gap-3 px-4 py-3">
+      <main className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
+        <header className="header-bar flex items-center gap-3 px-4 py-3 flex-shrink-0">
           <SettingsButton onClick={onOpenSettings} />
           <ThemeToggle />
           <button
@@ -1276,7 +1302,11 @@ export default function ChatLayout({
           unreadAgentIds={unreadAgentIds}
         />
 
-        <div className="flex-1 overflow-y-auto scrollbar-thin">
+        <div
+          ref={messagesScrollRef}
+          onScroll={handleMessagesScroll}
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin"
+        >
           <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-5">
             {messages.length === 0 && !showTyping && (
               <div className="text-center py-12 sm:py-20 px-4">
@@ -1309,7 +1339,7 @@ export default function ChatLayout({
           </div>
         </div>
 
-        <div className="composer-anchor border-t border-border bg-elevated/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
+        <div className="composer-anchor flex-shrink-0 border-t border-border bg-elevated/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
           <form
             onSubmit={handleSend}
             className="max-w-3xl mx-auto"
