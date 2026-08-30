@@ -6,7 +6,7 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from bigas.providers.usage.base import UsageEvent, UsageProvider
 from bigas.resources.cto.autofix.cursor_client import (
@@ -285,43 +285,236 @@ def fetch_ai_usage(
     }
 
 
+# Feature → cost bucket for the executive rollup (unlisted → Ops / other).
+_FEATURE_BUCKET_RULES: Sequence[Tuple[str, Sequence[str]]] = (
+    ("Engineering (PR + autofix)", ("cto_pr_review", "cto_autofix")),
+    ("VCFA analysis", ("llm.living_analysis", "llm.analysis")),
+)
+_TAVILY_BUCKET = "Search (Tavily)"
+_OTHER_BUCKET = "Ops / chat / other"
+_TOP_FEATURES = 5
+
+
+def _pct(part: float, whole: float) -> str:
+    if whole <= 0:
+        return "n/a"
+    return f"{100.0 * part / whole:.0f}%"
+
+
+def _money(value: Optional[float], *, digits: int = 2) -> str:
+    if value is None:
+        return "n/a"
+    return f"${float(value):.{digits}f}"
+
+
+def _feature_bucket(feature: str) -> str:
+    name = (feature or "").strip()
+    for label, members in _FEATURE_BUCKET_RULES:
+        if name in members:
+            return label
+    if name.startswith("tavily"):
+        return _TAVILY_BUCKET
+    return _OTHER_BUCKET
+
+
+def _bucket_costs(by_feature: Dict[str, float]) -> List[Tuple[str, float]]:
+    buckets: Dict[str, float] = defaultdict(float)
+    for feature, cost in (by_feature or {}).items():
+        buckets[_feature_bucket(feature)] += float(cost or 0)
+    order = [
+        "Engineering (PR + autofix)",
+        "VCFA analysis",
+        _TAVILY_BUCKET,
+        _OTHER_BUCKET,
+    ]
+    rows = [(label, buckets[label]) for label in order if buckets.get(label)]
+    # Any unexpected labels last.
+    for label, cost in sorted(buckets.items(), key=lambda kv: kv[1], reverse=True):
+        if label not in order and cost:
+            rows.append((label, cost))
+    return rows
+
+
+def _gcp_invoice_status(report: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    """Return (status_line, short_blocker) for the GCP invoice row."""
+    totals = report.get("totals") or {}
+    invoice = totals.get("invoice_cost_usd")
+    errors = report.get("errors") or []
+    gcp_errs = [
+        str(err.get("error") or "").strip()
+        for err in errors
+        if isinstance(err, dict) and err.get("provider") == "gcp_billing"
+    ]
+    gcp_errs = [e for e in gcp_errs if e]
+    if gcp_errs:
+        short = gcp_errs[0]
+        if len(short) > 160:
+            short = short[:157].rstrip() + "…"
+        return (
+            f"GCP invoice: unavailable — {short}",
+            short,
+        )
+    if invoice is None:
+        return ("GCP invoice: n/a", None)
+    if float(invoice) > 0:
+        return (f"GCP invoice (Cloud Billing export): ~{_money(invoice, digits=4)}", None)
+    return ("GCP invoice: $0.00 (no invoice rows in window)", None)
+
+
+def _wow_line(report: Dict[str, Any]) -> Optional[str]:
+    prior = report.get("prior_period") or {}
+    prior_totals = prior.get("totals") if isinstance(prior, dict) else None
+    if not isinstance(prior_totals, dict):
+        return None
+    cur = (report.get("totals") or {}).get("est_cost_usd")
+    prev = prior_totals.get("est_cost_usd")
+    if cur is None or prev is None:
+        return None
+    cur_f = float(cur)
+    prev_f = float(prev)
+    days = int(report.get("days") or prior.get("days") or 7)
+    if prev_f <= 0:
+        return f"vs prior {days}d: {_money(prev_f)} → {_money(cur_f)} (n/a)"
+    delta_pct = 100.0 * (cur_f - prev_f) / prev_f
+    sign = "+" if delta_pct >= 0 else ""
+    return (
+        f"vs prior {days}d: {_money(prev_f)} → {_money(cur_f)} "
+        f"({sign}{delta_pct:.0f}%)"
+    )
+
+
+def enrich_with_prior_period(
+    report: Dict[str, Any],
+    *,
+    providers: Optional[Sequence[UsageProvider]] = None,
+) -> Dict[str, Any]:
+    """Attach the previous equal-length window for week-over-week context."""
+    if report.get("prior_period"):
+        return report
+    start_raw = report.get("start")
+    if not start_raw:
+        return report
+    try:
+        days = int(report.get("days") or 7)
+        start = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        prior = fetch_ai_usage(
+            days=days,
+            provider="all",
+            feature_prefix=None,
+            providers=providers,
+            now=start,
+        )
+        return {
+            **report,
+            "prior_period": {
+                "start": prior.get("start"),
+                "end": prior.get("end"),
+                "days": days,
+                "totals": prior.get("totals") or {},
+            },
+        }
+    except Exception:
+        logger.warning("Could not load prior-period usage for CFO report", exc_info=True)
+        return report
+
+
 def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
+    """Human-readable weekly usage brief: exec summary first, details below."""
     days = report.get("days") or 7
     totals = report.get("totals") or {}
     est = totals.get("est_cost_usd")
-    invoice = totals.get("invoice_cost_usd")
-    lines = [
+    est_f = float(est) if est is not None else 0.0
+    by_feature = {
+        str(k): float(v)
+        for k, v in (totals.get("by_feature") or {}).items()
+    }
+    activity = {
+        str(k): int(v)
+        for k, v in (totals.get("activity_by_feature") or {}).items()
+    }
+    by_provider = totals.get("by_provider") or {}
+    by_app = totals.get("by_app") or {}
+    by_model_tier = totals.get("by_model_tier") or {}
+
+    gcp_line, _gcp_blocker = _gcp_invoice_status(report)
+    top_sorted = sorted(by_feature.items(), key=lambda kv: kv[1], reverse=True)
+    top3 = top_sorted[:3]
+    drivers = (
+        " · ".join(
+            f"{name} {_pct(cost, est_f)} (~{_money(cost)})" for name, cost in top3
+        )
+        if top3
+        else "n/a"
+    )
+
+    lines: List[str] = [
         f"**Bigas AI + cloud usage (last {days} days)**",
         (
-            f"List-price (LLM + Cursor + Tavily): ~${float(est):.4f}"
+            f"List-price (LLM + Cursor + Tavily): ~{_money(est_f)} · "
+            f"Events: {totals.get('events') or 0}"
             if est is not None
-            else "List-price (LLM + Cursor + Tavily): n/a"
+            else f"List-price (LLM + Cursor + Tavily): n/a · Events: {totals.get('events') or 0}"
         ),
+        gcp_line,
     ]
-    if invoice:
-        lines.append(f"GCP invoice (Cloud Billing export): ~${float(invoice):.4f}")
-    lines.append(f"Events: {totals.get('events') or 0}")
-    by_provider = totals.get("by_provider") or {}
+    wow = _wow_line(report)
+    if wow:
+        lines.append(wow)
+    lines.append(f"Top drivers: {drivers}")
+
+    if by_app:
+        apps = " · ".join(
+            f"{name} {_money(cost)}"
+            for name, cost in sorted(by_app.items(), key=lambda kv: kv[1], reverse=True)
+        )
+        lines.append(f"Apps: {apps}")
+
+    buckets = _bucket_costs(by_feature)
+    if buckets:
+        lines.append("")
+        lines.append("By area:")
+        for label, cost in buckets:
+            lines.append(f"- {label}: ~{_money(cost)} ({_pct(cost, est_f)})")
+
     if by_provider:
+        lines.append("")
         lines.append("By provider:")
         for name, cost in sorted(by_provider.items(), key=lambda kv: kv[1], reverse=True):
-            lines.append(f"- {name}: ~${float(cost):.4f}")
-    by_feature = totals.get("by_feature") or {}
-    if by_feature:
-        lines.append("By feature:")
-        for name, cost in sorted(by_feature.items(), key=lambda kv: kv[1], reverse=True):
-            lines.append(f"- {name}: ~${float(cost):.4f}")
+            lines.append(
+                f"- {name}: ~{_money(float(cost))} ({_pct(float(cost), est_f)})"
+            )
 
-    by_app = totals.get("by_app") or {}
-    if by_app:
-        lines.append("By app:")
-        for name, cost in sorted(by_app.items(), key=lambda kv: kv[1], reverse=True):
-            lines.append(f"- {name}: ~${float(cost):.4f}")
-    by_model_tier = totals.get("by_model_tier") or {}
+    if top_sorted:
+        lines.append("")
+        lines.append("Top features (share · calls · $/call):")
+        shown = top_sorted[:_TOP_FEATURES]
+        for name, cost in shown:
+            n = activity.get(name) or 0
+            per = (cost / n) if n else None
+            per_txt = _money(per, digits=3) if per is not None else "n/a"
+            lines.append(
+                f"- {name}: ~{_money(cost)} "
+                f"({_pct(cost, est_f)} · {n} · ~{per_txt}/call)"
+            )
+        rest = top_sorted[_TOP_FEATURES:]
+        if rest:
+            rest_cost = sum(c for _, c in rest)
+            lines.append(
+                f"- (+ {len(rest)} more features totaling ~{_money(rest_cost)})"
+            )
+
     if by_model_tier:
-        lines.append("By model tier (judgment=Pro, helper=Flash):")
-        for name, cost in sorted(by_model_tier.items(), key=lambda kv: kv[1], reverse=True):
-            lines.append(f"- {name}: ~${float(cost):.4f}")
+        lines.append("")
+        lines.append("Model tier (judgment=Pro, helper=Flash):")
+        for name, cost in sorted(
+            by_model_tier.items(), key=lambda kv: kv[1], reverse=True
+        ):
+            lines.append(
+                f"- {name}: ~{_money(float(cost))} ({_pct(float(cost), est_f)})"
+            )
+
     empty_fb = totals.get("empty_fallback_events") or 0
     empty_rs = totals.get("empty_response_events") or 0
     if empty_fb or empty_rs:
@@ -329,26 +522,29 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
             f"Empty Pro responses: {empty_rs}; Flash fallbacks after Pro: {empty_fb}"
         )
 
-    activity_by_feature = totals.get("activity_by_feature") or {}
-    if activity_by_feature:
-        lines.append("LLM calls:")
-        for name, n in sorted(activity_by_feature.items(), key=lambda kv: kv[1], reverse=True):
-            lines.append(f"- {name}: {n}")
-
     top_prs = report.get("top_prs") or []
     if top_prs:
+        lines.append("")
         lines.append("Top PRs by est. cost:")
         for i, row in enumerate(top_prs[:5], start=1):
             lines.append(
-                f"{i}. {row.get('pr_url')} — ~${float(row.get('est_cost_usd') or 0):.4f}"
+                f"{i}. {row.get('pr_url')} — ~"
+                f"{_money(float(row.get('est_cost_usd') or 0), digits=4)}"
             )
 
-    errors = report.get("errors") or []
-    if errors:
-        lines.append("Provider errors:")
-        for err in errors[:5]:
+    other_errors = [
+        err
+        for err in (report.get("errors") or [])
+        if isinstance(err, dict) and err.get("provider") != "gcp_billing"
+    ]
+    # GCP already surfaced in the summary line; still list other provider failures.
+    if other_errors:
+        lines.append("")
+        lines.append("Other provider errors:")
+        for err in other_errors[:5]:
             lines.append(f"- {err.get('provider')}: {err.get('error')}")
 
+    lines.append("")
     lines.append(
         "_List-price: Cursor, llm_logs, Tavily. "
         "gcp_billing is the Cloud Billing invoice (~1 day lag). "
@@ -387,26 +583,27 @@ def _configured_stack_blurb() -> str:
 
 
 CFO_WEEKLY_ANALYSIS_INSTRUCTIONS = (
-    "You are the Bigas CFO. Write a concise weekly cost briefing in English.\n"
-    "Use only the usage numbers given.\n\n"
-    "Do two things:\n"
-    "1) Usage analysis — what drove cost (app, feature, Pro vs Flash), empty Pro/"
-    "Flash-fallback waste, Tavily search, and GCP invoice line items "
-    "(Firestore, Cloud Run, …). Give 2–4 concrete savings. "
+    "You are the Bigas CFO. Write a short weekly cost briefing in English.\n"
+    "Use only the usage numbers given. No preamble.\n\n"
+    "Use exactly these headings:\n"
+    "### Drivers\n"
+    "3 bullets: what drove list-price (app / feature / Pro vs Flash). "
+    "Mention GCP only if invoice rows exist or the report says invoice is unavailable.\n"
+    "### Savings\n"
+    "2–4 concrete actions with rough $ impact from the numbers "
+    "(e.g. cut PR-review volume, cadence, caching). "
     "List-price (llm_logs, Cursor, Tavily) is not the GCP invoice. "
-    "gcp.gemini_invoice is billed Gemini; do not add it to llm_logs Gemini.\n"
-    "2) Model landscape — for the models we run now, and other leading LLMs "
-    "(Gemini 2.5/3.x Pro+Flash, Claude, GPT, Cursor composer), note any recent "
-    "releases, price cuts, or quality jumps that could cut cost or improve "
-    "performance. You may challenge keeping Gemini Pro on living-analysis "
-    "judgment (thesis, moats, replicability, landscape, deal memo) if a cheaper "
-    "or newer model would match or beat that analysis quality. Any such "
-    "recommendation must state explicitly that living-analysis performance must "
-    "not get worse, and why you believe quality would hold or improve. "
-    "Do not suggest Flash (or similar) for that judgment work unless you can "
-    "argue quality would not drop. Flag uncertainty. Do not invent list prices. "
-    "End with stay / watch / switch recommendations.\n\n"
-    "Keep it under 400 words. Markdown with short headings. No preamble.\n"
+    "Do not add gcp.gemini_invoice to llm_logs Gemini.\n"
+    "### Model\n"
+    "1–3 bullets: stay / watch / switch for the stack we run "
+    "(Gemini 2.5/3.x Pro+Flash, Claude, GPT, Cursor composer). "
+    "You may challenge keeping Gemini Pro on living-analysis judgment "
+    "(thesis, moats, replicability, landscape, deal memo) if a cheaper or newer "
+    "model would match or beat that quality — state explicitly that living-analysis "
+    "performance must not get worse and why quality would hold. "
+    "Do not suggest Flash for judgment unless you can argue quality would not drop. "
+    "Flag uncertainty. Do not invent list prices.\n\n"
+    "Hard limit: 180 words total. Finish every section — never truncate mid-sentence.\n"
 )
 
 
@@ -430,11 +627,12 @@ def analyze_weekly_ai_spend(report: Dict[str, Any]) -> Optional[str]:
                 {"role": "system", "content": (
                     "You are a concise CFO for AI/GCP spend. Challenge the stack when "
                     "a better cost/quality trade exists, but never recommend a change "
-                    "that would worsen living-analysis performance."
+                    "that would worsen living-analysis performance. "
+                    "Always complete all three sections within the word limit."
                 )},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=2_048,
+            max_tokens=1_024,
             temperature=0.3,
         ) or "").strip()
         return text or None
@@ -443,20 +641,34 @@ def analyze_weekly_ai_spend(report: Dict[str, Any]) -> Optional[str]:
         return None
 
 
-def build_weekly_cfo_ai_report(report: Dict[str, Any]) -> str:
-    numbers = format_weekly_cto_ai_report(report).replace(
+def build_weekly_cfo_ai_report(
+    report: Dict[str, Any],
+    *,
+    include_prior_period: bool = True,
+    providers: Optional[Sequence[UsageProvider]] = None,
+) -> str:
+    enriched = (
+        enrich_with_prior_period(report, providers=providers)
+        if include_prior_period
+        else report
+    )
+    numbers = format_weekly_cto_ai_report(enriched).replace(
         "**Bigas AI + cloud usage",
         "**CFO: AI + cloud usage",
         1,
     )
-    analysis = analyze_weekly_ai_spend(report)
+    analysis = analyze_weekly_ai_spend(enriched)
     if not analysis:
         return numbers
     return f"{numbers}\n\n**CFO analysis**\n{analysis}"
 
 
 def publish_weekly_cfo_ai_report(message: str) -> None:
-    """Post the weekly AI cost briefing to the CFO chat thread (optional CFO Discord)."""
+    """Post the full weekly briefing to CFO chat (and Discord, chunked if needed).
+
+    Uses ``post_long_to_discord`` so chat gets the entire message once while
+    Discord receives newline-safe chunks under the 2k limit.
+    """
     from bigas.discord_webhook import post_long_to_discord
 
     webhook = (os.environ.get("DISCORD_WEBHOOK_URL_CFO") or "").strip()

@@ -104,7 +104,7 @@ Work lives on the native Kanban board (default, no Jira required) or on an exist
 
 1. Schedule `weekly_cto_ai_report` (or ask the CFO agent). Bigas rolls up whatever usage providers you enabled.
 2. Ask: *"What did we spend on AI last week?"* from the CFO thread.
-3. The briefing lands in the CFO chat thread, and optionally Discord via `DISCORD_WEBHOOK_URL_CFO`.
+3. The briefing lands in the CFO chat thread (full message via `post_long_to_discord`), and optionally Discord via `DISCORD_WEBHOOK_URL_CFO`. The report opens with list-price, GCP invoice status, week-over-week, and top drivers, then area/feature detail and a short CFO analysis.
 
 **Minimum env**
 

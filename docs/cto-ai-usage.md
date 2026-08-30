@@ -65,7 +65,7 @@ List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `composer-2.5`) wh
 }
 ```
 
-Aggregates all active usage providers **without** a feature prefix (Cursor autofix + every `llm_usage` feature), asks an LLM for a usage analysis and a model-landscape check (current stack plus leading Gemini/Claude/GPT/Cursor alternatives), and posts to the **CFO** chat thread by default. The analysis may challenge keeping Pro on living-analysis judgment only if quality would hold or improve — performance must not get worse. Optional `DISCORD_WEBHOOK_URL_CFO`. Does not post to the CTO thread.
+Aggregates all active usage providers **without** a feature prefix (Cursor autofix + every `llm_usage` feature), asks an LLM for a usage analysis and a model-landscape check (current stack plus leading Gemini/Claude/GPT/Cursor alternatives), and posts to the **CFO** chat thread by default. The numbers block leads with an executive summary (list-price, GCP invoice or blocked status, week-over-week vs the prior equal window, top drivers, apps), then area buckets, top features with share/calls/$/call, and top PRs. The analysis uses fixed headings (`Drivers` / `Savings` / `Model`, ≤180 words). Delivery uses `post_long_to_discord` so **chat gets the full message once** while Discord is chunked under the 2k limit. The analysis may challenge keeping Pro on living-analysis judgment only if quality would hold or improve — performance must not get worse. Optional `DISCORD_WEBHOOK_URL_CFO`. Does not post to the CTO thread.
 
 ## Cloud Scheduler example
 
@@ -96,14 +96,27 @@ Estimated list-price: ~$0.4200 (composer-2.5)
 Weekly:
 
 ```text
-**CFO: AI usage (last 7 days)**
-Estimated list-price total: ~$12.3400
+**CFO: AI + cloud usage (last 7 days)**
+List-price (LLM + Cursor + Tavily): ~$12.34 · Events: 120
+GCP invoice: unavailable — Cloud Billing export table not found…
+vs prior 7d: $10.10 → $12.34 (+22%)
+Top drivers: cto_pr_review 54% (~$6.66) · llm.living_analysis 18% (~$2.22) · …
+Apps: bigas $9.10 · vcfieldassistant $3.24
+
+By area:
+- Engineering (PR + autofix): ~$8.00 (65%)
 …
 
 **CFO analysis**
+### Drivers
+…
+### Savings
+…
+### Model
 …
 ```
 
+Posted via `post_long_to_discord` → full text once in the CFO chat thread; Discord receives newline-safe chunks.
 ## Limits
 
 - Cursor list has no date filter — providers page newest-first until `createdAt` is before the window.
