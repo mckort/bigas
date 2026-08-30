@@ -19,9 +19,16 @@ from bigas.providers.usage.llm_logs import _project_id, _usage_project_ids
 logger = logging.getLogger(__name__)
 
 _BQ_QUERIES_URL = "https://bigquery.googleapis.com/bigquery/v2/projects/{project}/queries"
+_BQ_DATASETS_URL = (
+    "https://bigquery.googleapis.com/bigquery/v2/projects/{project}/datasets"
+)
 _BQ_TABLES_URL = (
     "https://bigquery.googleapis.com/bigquery/v2/projects/{project}"
     "/datasets/{dataset}/tables"
+)
+_EXPORT_TABLE_PREFIXES = (
+    "gcp_billing_export_v1_",
+    "gcp_billing_export_resource_v1_",
 )
 
 _SERVICE_FEATURES: Tuple[Tuple[str, str], ...] = (
@@ -187,26 +194,64 @@ class GcpBillingUsageProvider(UsageProvider):
             return explicit.replace(":", ".")
         dataset = _dataset_id()
         suffix = _billing_account_table_suffix()
-        names = self._list_table_ids(dataset)
-        if suffix:
-            preferred = (
-                f"gcp_billing_export_v1_{suffix}",
-                f"gcp_billing_export_resource_v1_{suffix}",
-            )
-            for name in preferred:
-                if name in names:
-                    return f"{self._project}.{dataset}.{name}"
-        for name in names:
-            if name.startswith("gcp_billing_export_v1_") or name.startswith(
-                "gcp_billing_export_resource_v1_"
-            ):
-                return f"{self._project}.{dataset}.{name}"
+        found = self._find_export_table(dataset, suffix=suffix)
+        if found:
+            return found
+        # Export may have been pointed at another dataset in the same project.
+        for other in self._list_dataset_ids():
+            if other == dataset:
+                continue
+            found = self._find_export_table(other, suffix=suffix)
+            if found:
+                logger.info(
+                    "Using Cloud Billing export table %s (preferred dataset %s empty)",
+                    found,
+                    dataset,
+                )
+                return found
         raise RuntimeError(
             f"Cloud Billing export table not found in {self._project}.{dataset}. "
             "Enable Standard usage cost export to that dataset in Cloud Console "
             "(Billing → Billing export). First rows can take a few hours; EU "
             "datasets backfill the current and previous month."
         )
+
+    def _find_export_table(
+        self, dataset: str, *, suffix: Optional[str]
+    ) -> Optional[str]:
+        try:
+            names = self._list_table_ids(dataset)
+        except Exception as e:
+            logger.info(
+                "Could not list BigQuery dataset %s.%s: %s",
+                self._project,
+                dataset,
+                e,
+            )
+            return None
+        if suffix:
+            preferred = tuple(f"{prefix}{suffix}" for prefix in _EXPORT_TABLE_PREFIXES)
+            for name in preferred:
+                if name in names:
+                    return f"{self._project}.{dataset}.{name}"
+        for name in names:
+            if any(name.startswith(prefix) for prefix in _EXPORT_TABLE_PREFIXES):
+                return f"{self._project}.{dataset}.{name}"
+        return None
+
+    def _list_dataset_ids(self) -> List[str]:
+        url = _BQ_DATASETS_URL.format(project=self._project)
+        try:
+            payload = self._get_json(url)
+        except Exception as e:
+            logger.info("Could not list BigQuery datasets in %s: %s", self._project, e)
+            return []
+        ids: List[str] = []
+        for ds in payload.get("datasets") or []:
+            ref = (ds.get("datasetReference") or {}).get("datasetId")
+            if ref:
+                ids.append(str(ref))
+        return ids
 
     def _list_table_ids(self, dataset: str) -> List[str]:
         url = _BQ_TABLES_URL.format(project=self._project, dataset=dataset)
