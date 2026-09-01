@@ -486,7 +486,8 @@ class StorageService:
             logger.error(f"Error creating report summary: {e}")
             return {"error": str(e)}
     
-    def _extract_page_urls_from_raw_data(self, raw_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _extract_page_urls_from_raw_data(raw_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Extract page URLs and metrics from raw GA4 data.
         

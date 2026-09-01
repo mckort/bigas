@@ -288,3 +288,38 @@ def test_native_tool_loop_falls_back_when_first_turn_fails():
         )
         is None
     )
+
+
+def _fake_gemini_text_response(text: str = "ok"):
+    part = SimpleNamespace(text=text, function_call=None)
+    candidate = SimpleNamespace(
+        finish_reason="STOP",
+        content=SimpleNamespace(parts=[part]),
+        safety_ratings=None,
+    )
+    return SimpleNamespace(candidates=[candidate], usage_metadata=None)
+
+
+def test_gemini_maps_timeout_to_request_options():
+    from unittest.mock import MagicMock, patch
+
+    from bigas.llm.gemini_client import GeminiLLMClient
+
+    model = MagicMock()
+    model.generate_content.return_value = _fake_gemini_text_response("done")
+
+    with patch("bigas.llm.gemini_client.genai") as genai:
+        genai.GenerativeModel.return_value = model
+        client = GeminiLLMClient(api_key="test-key", model="gemini-test")
+
+    result = client.complete_detailed(
+        [{"role": "user", "content": "analyze this page"}],
+        max_tokens=800,
+        temperature=0.7,
+        timeout=30,
+    )
+
+    assert result.text == "done"
+    kwargs = model.generate_content.call_args.kwargs
+    assert "timeout" not in kwargs
+    assert kwargs["request_options"] == {"timeout": 30}
