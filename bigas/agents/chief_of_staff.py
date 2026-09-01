@@ -595,7 +595,7 @@ def _synthesize_human_reply(
 
 
 def _finalize_chat_reply(
-    text: str,
+    text: Optional[str],
     *,
     user_message: str,
     facts: str = "",
@@ -603,7 +603,7 @@ def _finalize_chat_reply(
     generation_kwargs: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Guarantee the user never receives a raw tool dump as the reply."""
-    candidate = (text or "").strip()
+    candidate = text.strip() if isinstance(text, str) else str(text or "").strip()
     if not looks_like_raw_tool_dump(candidate):
         return candidate
     rewritten = _synthesize_human_reply(
@@ -873,7 +873,7 @@ def _run_json_agent_loop(
     last_tool_text = ""
     history = history or []
 
-    def finish(candidate: str) -> str:
+    def finish(candidate: Optional[str]) -> str:
         return _finalize_chat_reply(
             candidate,
             user_message=user_message,
@@ -956,7 +956,7 @@ def _run_native_tool_loop(
     last_tool_text = ""
     question = latest_user_text(messages)
 
-    def finish(candidate: str) -> str:
+    def finish(candidate: Optional[str]) -> str:
         return _finalize_chat_reply(
             candidate,
             user_message=question,

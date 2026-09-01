@@ -42,7 +42,7 @@ _DUMP_KEY_HINT_RE = re.compile(
 
 def looks_like_raw_tool_dump(text: Optional[str]) -> bool:
     """True when a chat reply is (or is dominated by) raw tool JSON."""
-    blob = (text or "").strip()
+    blob = text.strip() if isinstance(text, str) else str(text or "").strip()
     if not blob:
         return False
     if blob.startswith("```"):
