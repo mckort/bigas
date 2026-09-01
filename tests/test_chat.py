@@ -708,6 +708,36 @@ def test_enrich_create_jira_issue_sets_marketing_for_marketing_agent():
     assert "marketing" not in product_args
 
 
+def test_enrich_chat_pipelines_default_to_silent():
+    from bigas.agents.chief_of_staff import _enrich_tool_args
+
+    x_args = _enrich_tool_args(
+        "generate_weekly_x_post",
+        {"days": 14, "project_key": "VFA"},
+        "what launched after 17 august",
+        caller_agent_id="product",
+    )
+    assert x_args["post_to_discord"] is False
+    assert x_args["post_to_chat"] is False
+
+    progress = _enrich_tool_args(
+        "progress_updates",
+        {"days": 16, "project_key": "VFA"},
+        "what launched after 17 august",
+        caller_agent_id="product",
+    )
+    assert progress["post_to_discord"] is False
+    assert progress["post_to_chat"] is False
+
+    explicit = _enrich_tool_args(
+        "generate_weekly_x_post",
+        {"days": 7, "post_to_discord": True, "post_to_chat": True},
+        "draft this week's x post",
+        caller_agent_id="product",
+    )
+    assert explicit["post_to_discord"] is True
+
+
 def test_dispatch_chief_tool_rejects_unauthorized_tool():
     from bigas.agents.chief_of_staff import _dispatch_chief_tool
 
@@ -1101,7 +1131,9 @@ def test_marketing_specialist_prompt_treats_empty_ga4_as_finding():
     assert "empty results are findings" not in product.lower()
     assert "senior growth marketer" not in product.lower()
     assert "now / next / later" in product
-    assert "Jira is context, not the answer" in product
+    assert "fetch_github_activity" in product
+    assert "generate_weekly_x_post" in product
+    assert "Jira/board is context, not the answer" in product
 
 
 def test_specialist_playbooks_are_role_specific():

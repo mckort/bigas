@@ -7,7 +7,7 @@ from urllib.parse import quote
 # Appended to every chat agent system prompt at runtime.
 JIRA_FORMATTING_RULES = """
 Jira ticket formatting (mandatory):
-- Always respond in English. Never use Swedish or any other language.
+- Reply in the user's language.
 - When you should file work in Jira or the internal Bigas board, call create_jira_issue yourself (Task or Bug only — never Epics). Never tell the user to create the issue themselves.
 - Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true.
 - Use lookup_jira when you need issue details or a project's open Epics. issue_key accepts several keys or a range (BIG-15 to BIG-18). Do not ask the user for an Epic key if you can look it up.
@@ -92,6 +92,8 @@ def _format_lookup_issue_line(
     if not key:
         return ""
     status = str(issue.get("status") or "").strip()
+    stamp = str(issue.get("done_at") or issue.get("updated") or issue.get("created") or "").strip()
+    date_bit = f" ({stamp[:10]})" if stamp else ""
     link = format_jira_issue_markdown(
         key=key,
         url=str(issue.get("url") or "").strip(),
@@ -99,10 +101,10 @@ def _format_lookup_issue_line(
         include_transition_button=include_transition_button,
     )
     if status and not include_transition_button:
-        return f"{link} — {status}"
+        return f"{link} — {status}{date_bit}"
     if status:
-        return f"{link}\nStatus: {status}"
-    return link
+        return f"{link}\nStatus: {status}{date_bit}"
+    return f"{link}{date_bit}"
 
 
 def _humanize_lookup_result(

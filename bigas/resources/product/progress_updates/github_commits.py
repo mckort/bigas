@@ -53,6 +53,13 @@ def normalize_commit(raw: Dict[str, Any], *, project_key: str, repo: str) -> Opt
     if isinstance(author_obj, dict):
         author = (author_obj.get("name") or "").strip()
     sha = (raw.get("sha") or "")[:8]
+    committed_at = ""
+    if isinstance(author_obj, dict):
+        committed_at = str(author_obj.get("date") or "").strip()
+    if not committed_at:
+        committer = commit.get("committer") or {}
+        if isinstance(committer, dict):
+            committed_at = str(committer.get("date") or "").strip()
     return {
         "project_key": project_key,
         "repo": repo,
@@ -60,6 +67,7 @@ def normalize_commit(raw: Dict[str, Any], *, project_key: str, repo: str) -> Opt
         "subject": subject,
         "message": message,
         "author": author,
+        "committed_at": committed_at,
         # Subject only: squash-merged feature PRs often keep [bigas-autofix]
         # in the body from earlier fixup commits.
         "is_autofix": bool(_AUTOFIX_MARKER_RE.search(subject)),

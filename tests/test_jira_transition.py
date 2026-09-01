@@ -147,11 +147,12 @@ def test_humanize_tool_result_prefers_jira_markdown():
     assert "bigas://" in text
 
 
-def test_jira_formatting_rules_require_english():
+def test_jira_formatting_rules_follow_user_language():
     from bigas.agents.chief_of_staff import _agent_system_prompt
     from bigas.chat.jira_formatting import JIRA_AWARE_AGENT_IDS
 
-    assert "Always respond in English" in JIRA_FORMATTING_RULES
+    assert "Reply in the user's language" in JIRA_FORMATTING_RULES
+    assert "Always respond in English" not in JIRA_FORMATTING_RULES
     assert "Never output raw JSON or HTML" in JIRA_FORMATTING_RULES
     assert "create_jira_issue" in JIRA_FORMATTING_RULES
     assert "Never tell the user to create the issue themselves" in JIRA_FORMATTING_RULES

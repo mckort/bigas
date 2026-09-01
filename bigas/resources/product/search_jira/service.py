@@ -102,7 +102,13 @@ class SearchJiraService:
         from bigas.tickets.config import use_internal_board
 
         if use_internal_board():
-            raise SearchJiraError("search_jira requires Jira Cloud")
+            from bigas.resources.product.search_jira.internal import search_internal_board
+
+            return search_internal_board(
+                jql=jql,
+                allowed_keys=allowed_project_keys(),
+                max_results=_clamp_max_results(max_results),
+            )
 
         scoped = scope_jql_to_portfolio(jql)
         limit = _clamp_max_results(max_results)
