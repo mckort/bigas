@@ -542,7 +542,7 @@ def search_jira():
     Request JSON:
       { "jql": "type = Bug AND text ~ \\"Stripe\\"", "max_results": 25 }
     """
-    data = request.json or {}
+    data = request.json if isinstance(request.json, dict) else {}
     jql = str(data.get("jql") or data.get("query") or "").strip()
     max_results = data.get("max_results", data.get("maxResults", 25))
     try:

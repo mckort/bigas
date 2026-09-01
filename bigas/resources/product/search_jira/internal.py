@@ -123,6 +123,12 @@ def _status_category(status: str) -> str:
     return "in progress"
 
 
+def _serialize_datetime(raw: Any) -> Any:
+    if isinstance(raw, datetime):
+        return raw.isoformat()
+    return raw
+
+
 def _ticket_stamp(ticket: Dict[str, Any], field: str) -> Optional[datetime]:
     raw = None
     if field == "created":
@@ -130,7 +136,7 @@ def _ticket_stamp(ticket: Dict[str, Any], field: str) -> Optional[datetime]:
     elif field == "updated":
         raw = ticket.get("updated_at") or ticket.get("created_at")
     elif field == "resolved":
-        raw = ticket.get("done_at") or ticket.get("updated_at")
+        raw = ticket.get("done_at")
     if raw is None:
         return None
     if isinstance(raw, datetime):
@@ -192,9 +198,9 @@ def compact_internal_ticket(ticket: Dict[str, Any], *, project_key: str = "") ->
         "project_key": proj,
         "url": ticket_url(key) if key else "",
         "labels": resolve_ticket_labels(ticket),
-        "created": ticket.get("created_at"),
-        "updated": ticket.get("updated_at"),
-        "done_at": ticket.get("done_at"),
+        "created": _serialize_datetime(ticket.get("created_at")),
+        "updated": _serialize_datetime(ticket.get("updated_at")),
+        "done_at": _serialize_datetime(ticket.get("done_at")),
     }
 
 
