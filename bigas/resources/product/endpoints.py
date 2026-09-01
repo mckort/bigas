@@ -32,6 +32,8 @@ from bigas.resources.product.jira_automation.service import (
     parse_automation_payload,
     verify_webhook_secret,
 )
+from bigas.resources.product.github_activity import fetch_github_activity
+from bigas.resources.product.progress_updates.github_commits import GitHubCommitsError
 from bigas.resources.product.progress_updates.service import ProgressUpdatesService, ProgressUpdatesError
 from bigas.chat.activity import post_to_agent_thread
 from bigas.resources.product.x_posts.service import (
@@ -494,6 +496,43 @@ def lookup_jira():
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route('/fetch_github_activity', methods=['POST'])
+@require_bigas_access_key
+def fetch_github_activity_endpoint():
+    """
+    Read-only GitHub commits and merged PRs since a date. Never posts to Discord/chat.
+
+    Request JSON:
+      { "project_key": "VFA", "since": "2026-08-17", "include_prs": true }
+      or { "repo": "mckort/vcfieldassistant", "days": 14 }
+    """
+    data = request.json or {}
+    project_key = str(data.get("project_key") or "").strip() or None
+    repo = str(data.get("repo") or "").strip() or None
+    since = str(data.get("since") or "").strip() or None
+    include_prs = True if data.get("include_prs") is None else bool(data.get("include_prs"))
+    days = data.get("days")
+    try:
+        result = fetch_github_activity(
+            project_key=project_key,
+            repo=repo,
+            since=since,
+            days=days,
+            include_prs=include_prs,
+        )
+        return jsonify(result)
+    except GitHubCommitsError as e:
+        msg = str(e)
+        status = 400 if any(
+            s in msg.lower()
+            for s in ["required", "invalid", "days must", "mapped"]
+        ) else 500
+        return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
+    except Exception as e:
+        logger.error("Error in fetch_github_activity", exc_info=True)
+        return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
+
+
 @product_bp.route('/search_jira', methods=['POST'])
 @require_bigas_access_key
 def search_jira():
@@ -503,7 +542,7 @@ def search_jira():
     Request JSON:
       { "jql": "type = Bug AND text ~ \\"Stripe\\"", "max_results": 25 }
     """
-    data = request.json or {}
+    data = request.json if isinstance(request.json, dict) else {}
     jql = str(data.get("jql") or data.get("query") or "").strip()
     max_results = data.get("max_results", data.get("maxResults", 25))
     try:
@@ -789,7 +828,11 @@ def get_manifest():
             },
             {
                 "name": "generate_weekly_x_post",
-                "description": "Draft a weekly X post per X account from the internal board, git activity, and Jira when configured. Only products with their own X account are included. Sends an approval link to marketing Discord and the Product Manager chat. Publishing happens only after a human approves or skips each account.",
+                "description": (
+                    "Draft a weekly X/Twitter post per X account from the board, git, and Jira when configured. "
+                    "Only use this when the user asked to draft or post a tweet. "
+                    "Not for answering what shipped — use fetch_github_activity and search_jira."
+                ),
                 "path": "/mcp/tools/generate_weekly_x_post",
                 "method": "POST",
                 "parameters": {
@@ -902,6 +945,44 @@ def get_manifest():
                         "project_key": {
                             "type": "string",
                             "description": "Project whose open Epics should be listed, e.g. GPWW.",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "fetch_github_activity",
+                "description": (
+                    "Read-only GitHub commits and merged PRs since a date (or last N days). "
+                    "Use this to answer what launched, shipped, or changed. "
+                    "Pass project_key (e.g. VFA) or repo (owner/repo). "
+                    "Does not post to Discord or chat."
+                ),
+                "path": "/mcp/tools/fetch_github_activity",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_key": {
+                            "type": "string",
+                            "description": "Jira/board project key, e.g. VFA. Resolves the mapped GitHub repo.",
+                        },
+                        "repo": {
+                            "type": "string",
+                            "description": "GitHub repository as owner/repo. Optional if project_key is mapped.",
+                        },
+                        "since": {
+                            "type": "string",
+                            "description": "ISO date (YYYY-MM-DD) to include activity on or after. Prefer this over days when the user named a date.",
+                        },
+                        "days": {
+                            "type": "integer",
+                            "description": "Lookback window in days if since is omitted (default 14).",
+                            "default": 14,
+                        },
+                        "include_prs": {
+                            "type": "boolean",
+                            "description": "Include merged pull requests (default true).",
+                            "default": True,
                         },
                     },
                 },

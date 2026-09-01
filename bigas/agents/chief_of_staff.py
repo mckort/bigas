@@ -42,12 +42,16 @@ REASONING_APPROACH = """
 Think step by step before acting:
 1. What is the user actually trying to accomplish? (Not just what they asked, but why)
 2. What information or actions are needed to help them?
-3. Which tools would provide that information or take that action?
+3. Which tools would provide that? Call several if the answer spans GitHub, the board, Jira, analytics, or logs.
 4. After getting results, what do they mean for the user's goal?
 
 Be a thoughtful collaborator:
 - Answer from knowledge when that's sufficient; use tools for live data or actions
-- Synthesize tool results into useful insights — don't dump raw output
+- Synthesize tool results into useful insights — don't dump raw JSON
+- Reply in the user's language
+- Prefer read-only lookups for questions. Do not run publishing pipelines
+  (generate_weekly_x_post, progress_updates, weekly_* reports) unless the user asked
+  to draft or post that artifact
 - When your reasoning would help the user, share it briefly
 - Take action rather than telling the user to do things you can do
 """.strip()
@@ -80,11 +84,12 @@ Coordination briefs:
 
 PRODUCT_PLAYBOOK = """
 Product and backlog briefs:
-- You are a senior PM. Reason from goals, open work, and user value — not a ticket dump.
-- Jira is context, not the answer. Search or look up the board to understand it; never end with only ticket links or a Move button.
+- You are a senior PM. Investigate like Cursor: parse the question (product, date, shipped vs in progress), then gather evidence from every relevant source before answering.
+- "What launched / shipped / is new after DATE" → call fetch_github_activity (commits and merged PRs; convert the date to since=YYYY-MM-DD) AND search_jira on the board (statusCategory = Done, project, updated/resolved >= that date). Synthesize user-facing changes; skip autofix and infra noise unless asked. Never use generate_weekly_x_post or progress_updates to answer that question.
+- Jira/board is context, not the answer. Search or look up work to understand it; never end with only ticket links or a Move button.
 - For planning or priority questions: gather open Epics/tasks, name the tradeoff, recommend now / next / later and why.
 - File tickets only after the recommendation, and only for concrete work.
-- Do not paste a tool's concise summary as the final answer. Synthesize.
+- Reply in the user's language. Do not paste a tool's JSON or concise summary as the final answer.
 """.strip()
 
 CTO_PLAYBOOK = """
@@ -307,7 +312,8 @@ def _chief_native_extra() -> str:
         "expertise matters for this task.\n\n"
         "Tool tips:\n"
         "- lookup_jira: for specific issue keys or ranges\n"
-        "- search_jira: for JQL queries when filtering by status, type, etc.\n"
+        "- search_jira: for JQL queries (works on the internal board and Jira Cloud)\n"
+        "- fetch_github_activity: commits and merged PRs since a date — use for what shipped\n"
         "- create_jira_issue: to file Tasks/Bugs — take action rather than asking the user to do it\n"
         "- Include project_key when the user mentions a product or site\n"
         "- For GitHub PRs, include repo and pr_number or pr_url\n\n"
@@ -328,7 +334,8 @@ def _specialist_native_extra(agent_id: Optional[str] = None) -> str:
         "- Include project_key when the user mentions a product or site\n"
         "- For GitHub PRs, include repo and pr_number or pr_url\n"
         "- For Cursor autofix, include agent_id from cursor.com/agents/bc-... URLs\n"
-        "- lookup_jira: for specific issue keys; search_jira: for JQL filters\n"
+        "- lookup_jira: for specific issue keys; search_jira: for JQL filters (internal board or Jira Cloud)\n"
+        "- fetch_github_activity: what shipped since a date (commits + merged PRs)\n"
         "- create_jira_issue: look up Epic context first if needed, then create"
     )
     rules = _agent_runtime_rules(agent_id)
@@ -439,7 +446,7 @@ def _filter_tools_for_agent(tools: List[Dict[str, Any]], agent_id: str) -> List[
     return _dedupe_tools(tools)
 
 
-def _tools_summary(tools: List[Dict[str, Any]], limit: int = 40) -> str:
+def _tools_summary(tools: List[Dict[str, Any]], limit: int = 80) -> str:
     lines = []
     for tool in tools[:limit]:
         name = tool.get("name", "")
@@ -673,6 +680,9 @@ def _enrich_tool_args(
         keys = parse_issue_keys(raw_key, args.get("issue_keys"), haystack)
         if keys and not raw_key:
             args["issue_key"] = ", ".join(keys)
+    if (tool_name or "").lower() in {"generate_weekly_x_post", "progress_updates"}:
+        args.setdefault("post_to_discord", False)
+        args.setdefault("post_to_chat", False)
     return args
 
 
