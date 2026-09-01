@@ -172,6 +172,8 @@ def test_jira_formatting_rules_follow_user_language():
 
     assert "step by step" in REASONING_APPROACH.lower()
     assert "step by step" in prompt.lower() or "thoughtful" in prompt.lower()
+    assert "human-friendly summary" in prompt
+    assert "The user never sees tool output" in prompt
 
 
 def test_transition_issue_to_next_skips_backward(monkeypatch):

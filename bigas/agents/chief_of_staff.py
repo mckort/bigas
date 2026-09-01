@@ -14,6 +14,12 @@ from bigas.chat.jira_formatting import (
     JIRA_FORMATTING_RULES,
     humanize_jira_tool_result,
 )
+from bigas.chat.reply_style import (
+    REPLY_STYLE,
+    latest_user_text,
+    looks_like_raw_tool_dump,
+    tool_facts_from_messages,
+)
 from bigas.github_refs import is_owner_repo, parse_cursor_agent_id, resolve_repo_and_pr
 from bigas.llm.factory import get_llm_client
 from bigas.portfolio import (
@@ -48,6 +54,7 @@ Think step by step before acting:
 Be a thoughtful collaborator:
 - Answer from knowledge when that's sufficient; use tools for live data or actions
 - Synthesize tool results into useful insights — don't dump raw JSON
+- Always use the default reply style (human-friendly markdown, never tool JSON)
 - Reply in the user's language
 - Prefer read-only lookups for questions. Do not run publishing pipelines
   (generate_weekly_x_post, progress_updates, weekly_* reports) unless the user asked
@@ -306,7 +313,7 @@ def _chief_native_extra() -> str:
         "1. First understand what the user wants to accomplish\n"
         "2. Reason about whether you can help directly or if a specialist's expertise would add value\n"
         "3. Use tools when you need live data or to take action\n"
-        "4. Synthesize results into helpful responses\n\n"
+        "4. Synthesize results into a human-friendly reply — never paste tool JSON\n\n"
         f"{SPECIALIST_CAPABILITIES}\n"
         "When involving specialists, use consult_specialist with clear reasoning about why their "
         "expertise matters for this task.\n\n"
@@ -328,7 +335,7 @@ def _specialist_native_extra(agent_id: Optional[str] = None) -> str:
         "1. Understand what the user is trying to accomplish in your domain\n"
         "2. Reason about what information or actions would help\n"
         "3. Use tools to gather data or take action\n"
-        "4. Synthesize results into actionable insights — don't dump raw output\n"
+        "4. Synthesize results into a human-friendly reply — don't dump raw output\n"
         "5. Take action (create Jira issues, etc.) rather than asking the user to do it\n\n"
         "Tool tips:\n"
         "- Include project_key when the user mentions a product or site\n"
@@ -534,6 +541,80 @@ def humanize_tool_result(payload: Any) -> Optional[str]:
     return humanize_tool_result(parsed)
 
 
+_RAW_DUMP_FALLBACK = (
+    "I gathered the data but couldn't format it. Ask me to summarize it."
+)
+
+
+def _synthesize_human_reply(
+    user_message: str,
+    facts: str,
+    *,
+    llm=None,
+    generation_kwargs: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Rewrite internal tool JSON into the user-facing chat reply."""
+    client = llm if llm is not None and hasattr(llm, "complete") else None
+    if client is None:
+        try:
+            client, _model = get_llm_client(feature="chat")
+        except Exception:
+            logger.exception("No LLM client available to humanize tool dump")
+            return ""
+    kwargs = {
+        "temperature": (generation_kwargs or {}).get("temperature", 0.4),
+        "max_tokens": (generation_kwargs or {}).get("max_tokens", CHAT_MAX_TOKENS),
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"{REPLY_STYLE}\n\n"
+                "You are rewriting internal tool data into the user-facing chat reply. "
+                "Reply in the user's language. Never output JSON."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{user_message}\n\n"
+                "Internal tool data (do not paste this):\n\n"
+                f"{facts}"
+            ),
+        },
+    ]
+    try:
+        raw = client.complete(messages, **kwargs)
+    except Exception:
+        logger.exception("Failed to humanize tool dump")
+        return ""
+    text = (raw or "").strip() if isinstance(raw, str) else str(raw or "").strip()
+    if not text or looks_like_raw_tool_dump(text):
+        return ""
+    return text
+
+
+def _finalize_chat_reply(
+    text: Optional[str],
+    *,
+    user_message: str,
+    facts: str = "",
+    llm=None,
+    generation_kwargs: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Guarantee the user never receives a raw tool dump as the reply."""
+    candidate = text.strip() if isinstance(text, str) else str(text or "").strip()
+    if not looks_like_raw_tool_dump(candidate):
+        return candidate
+    rewritten = _synthesize_human_reply(
+        user_message,
+        facts.strip() or candidate,
+        llm=llm,
+        generation_kwargs=generation_kwargs,
+    )
+    return rewritten or _RAW_DUMP_FALLBACK
+
+
 _ANALYTICS_EMPTY_RE = re.compile(
     r"No GA4 data (returned|remaining after filtering)|Cannot provide analysis without real data",
     re.I,
@@ -609,6 +690,7 @@ def _agent_system_prompt(
     if not agent_id or agent_id in JIRA_AWARE_AGENT_IDS:
         parts.append(JIRA_FORMATTING_RULES)
     parts.append(REASONING_APPROACH)
+    parts.append(REPLY_STYLE)
     parts.append(extra)
     if agent_id:
         try:
@@ -791,14 +873,22 @@ def _run_json_agent_loop(
     last_tool_text = ""
     history = history or []
 
+    def finish(candidate: Optional[str]) -> str:
+        return _finalize_chat_reply(
+            candidate,
+            user_message=user_message,
+            facts="\n\n".join(observations),
+            generation_kwargs=generation_kwargs,
+        )
+
     for _round in range(MAX_AGENT_TOOL_ROUNDS):
         prompt_message = user_message
         if observations:
             prompt_message = (
                 f"{user_message}\n\n"
-                "Tool results (facts for you). Answer the user's question now, "
-                "or call another tool if you still need data. "
-                "Do not paste this dump as your reply.\n\n"
+                "Tool results (facts for you). Answer the user's question now in the "
+                "default human-friendly reply style, or call another tool if you still "
+                "need data. Never paste JSON, commits, or this dump as your reply.\n\n"
                 + "\n\n".join(observations)
             )
         text, tool_name, tool_args = _select_tool_via_llm(
@@ -811,15 +901,17 @@ def _run_json_agent_loop(
             generation_kwargs=generation_kwargs,
         )
         if tool_name and _is_terminal_handoff(tool_name):
-            return run_tool(tool_name, tool_args or {}) or (text or "").strip() or "Done."
+            return finish(
+                run_tool(tool_name, tool_args or {}) or (text or "").strip() or "Done."
+            )
         if not tool_name:
             if (text or "").strip():
-                return text.strip()
+                return finish(text)
             if observations:
                 break
             if callable(fallback_complete):
-                return fallback_complete() or "I couldn't process that request."
-            return last_tool_text or "I couldn't process that request."
+                return finish(fallback_complete() or "I couldn't process that request.")
+            return finish(last_tool_text or "I couldn't process that request.")
         result = run_tool(tool_name, tool_args or {}) or "Done."
         last_tool_text = result
         observations.append(f"### {tool_name}\n{result}")
@@ -830,8 +922,9 @@ def _run_json_agent_loop(
             agent_config,
             (
                 f"{user_message}\n\n"
-                "You must answer now (action=answer). Use these tool results. "
-                "Do not call another tool.\n\n"
+                "You must answer now (action=answer) in the default human-friendly "
+                "reply style. Use these tool results. Do not call another tool. "
+                "Never paste JSON.\n\n"
                 + "\n\n".join(observations)
             ),
             tools,
@@ -840,12 +933,12 @@ def _run_json_agent_loop(
             generation_kwargs=generation_kwargs,
         )
         if (text or "").strip():
-            return text.strip()
+            return finish(text)
         if callable(fallback_complete):
             forced = fallback_complete()
             if (forced or "").strip():
-                return forced.strip()
-    return last_tool_text or "I couldn't process that request."
+                return finish(forced)
+    return finish(last_tool_text or "I couldn't process that request.")
 
 
 def _run_native_tool_loop(
@@ -861,6 +954,17 @@ def _run_native_tool_loop(
         return None
     first = True
     last_tool_text = ""
+    question = latest_user_text(messages)
+
+    def finish(candidate: Optional[str]) -> str:
+        return _finalize_chat_reply(
+            candidate,
+            user_message=question,
+            facts=tool_facts_from_messages(messages),
+            llm=llm,
+            generation_kwargs=generation_kwargs,
+        )
+
     for _round in range(MAX_AGENT_TOOL_ROUNDS):
         try:
             kwargs: Dict[str, Any] = {"temperature": 0.3}
@@ -897,7 +1001,9 @@ def _run_native_tool_loop(
             )
             for tc in completion.tool_calls:
                 if _is_terminal_handoff(tc.name):
-                    return run_tool(tc.name, tc.arguments or {}) or last_tool_text or "Done."
+                    return finish(
+                        run_tool(tc.name, tc.arguments or {}) or last_tool_text or "Done."
+                    )
                 result = run_tool(tc.name, tc.arguments or {}) or "Done."
                 last_tool_text = result
                 messages.append(
@@ -910,12 +1016,14 @@ def _run_native_tool_loop(
                 )
             continue
         if (completion.text or "").strip():
-            return completion.text.strip()
+            return finish(completion.text)
         # Empty native turn (including Gemini MALFORMED_FUNCTION_CALL) → JSON fallback.
         if first_turn:
             return None
         break
-    return last_tool_text or "I wasn't able to complete that request."
+    if not last_tool_text:
+        return "I wasn't able to complete that request."
+    return finish(last_tool_text)
 
 
 def _run_agent_with_tools(
