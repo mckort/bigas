@@ -303,7 +303,8 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `BIGAS_DEPLOY_WORKFLOW_MAP` | Optional `PROJECT:file.yml,file.yml` map (pipe between projects), e.g. `VFA:deploy-backend.yml,deploy-web.yml\|BIG:deploy.yml`. Workflows are dispatched on the product repo unless `BIGAS_DEPLOY_REPO_MAP` overrides it. Unset = VFA + BIG defaults |
 | `BIGAS_DEPLOY_REPO_MAP` | Optional `KEY:owner/repo` CSV. When set, `trigger_deployment` dispatches workflows on that repo instead of `BIGAS_JIRA_PROJECT_REPO_MAP`. Risk checks still compare the product repo. Used for VM sites (`mckort/gcp-single-vm-webstack`). |
 | `X_ACCOUNTS` | Comma-separated X handles for weekly community posts (optional). Credentials via `X_CREDENTIALS_JSON` (recommended for Secret Manager) or `X_API_KEY` / `X_ACCESS_TOKEN_<ACCOUNT>` |
-| `X_POST_SIGNING_SECRET` | HMAC secret for Approve/Decline links. Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` |
+| `X_ACCOUNT_PROJECT_MAP` | Optional `handle:PROJECT` CSV mapping X accounts to Jira keys (e.g. `bigasmyaiteam:BIG,vcfieldassistan:VFA`). Unset: match handles to portfolio aliases. Only mapped products get a draft. |
+| `X_POST_SIGNING_SECRET` | HMAC secret for Approve/Skip links. Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` |
 | `SERVER_URL` | Public Cloud Run URL (tests + Discord X-post approval links). `deploy.sh` injects it; not a secret |
 | `MONITOR_URLS` | Comma-separated list of URLs to monitor (e.g. `https://site1.com,https://site2.com`) |
 | `LINKEDIN_AD_ACCOUNT_URN` | Default LinkedIn ad account URN |
@@ -679,7 +680,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord and Product Manager chat |
-| `POST generate_weekly_x_post` | Last N days of git activity → X draft (major changes only) → Discord and Product Manager chat Approve/Decline |
+| `POST generate_weekly_x_post` | Last N days of internal-board Done + git (+ Jira if configured) → one X draft per mapped account → Discord and Product Manager chat Approve/Skip per account |
 | `POST weekly_okr_pulse` | Mechanical Monday OKR pulse from `/objectives` (KR health, pace, stale currents, unlinked Done with sample size, pending human gates) → Chief of Staff chat. Optional LLM comment cannot replace the counts |
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub. Details: [docs/cto-pr-review.md](docs/cto-pr-review.md) |
 | `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
