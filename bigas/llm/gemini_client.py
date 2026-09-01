@@ -352,6 +352,17 @@ class GeminiLLMClient(LLMClient):
             generation_config.update(extra_cfg)
         gen_cfg = generation_config if generation_config else None
 
+        # OpenAI-style timeout= is not a generate_content() kwarg. Gemini takes
+        # request_options={"timeout": seconds} instead.
+        timeout = kwargs.pop("timeout", None)
+        request_options = kwargs.pop("request_options", None)
+        if timeout is not None:
+            if not isinstance(request_options, dict):
+                request_options = {}
+            else:
+                request_options = dict(request_options)
+            request_options.setdefault("timeout", timeout)
+
         model_kwargs: Dict[str, Any] = {}
         if system_instruction:
             model_kwargs["system_instruction"] = system_instruction
@@ -363,12 +374,15 @@ class GeminiLLMClient(LLMClient):
             model = self._model
 
         def _call(active_model: Any, active_cfg: Any) -> Any:
+            call_kwargs = dict(kwargs)
+            if request_options:
+                call_kwargs["request_options"] = request_options
             if len(rest) == 1 and rest[0]["role"] == "user":
                 return active_model.generate_content(
                     _send_payload(rest[0]),
                     generation_config=active_cfg,
                     safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
-                    **kwargs,
+                    **call_kwargs,
                 )
             history = rest[:-1]
             chat = active_model.start_chat(history=history)
@@ -376,7 +390,7 @@ class GeminiLLMClient(LLMClient):
                 _send_payload(rest[-1]),
                 generation_config=active_cfg,
                 safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
-                **kwargs,
+                **call_kwargs,
             )
 
         try:
