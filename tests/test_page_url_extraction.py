@@ -6,8 +6,7 @@ from bigas.resources.marketing.storage_service import StorageService
 
 
 def _extract(raw_data):
-    service = StorageService.__new__(StorageService)
-    return service._extract_page_urls_from_raw_data(raw_data)
+    return StorageService._extract_page_urls_from_raw_data(raw_data)
 
 
 def test_extracts_zero_key_event_pages():

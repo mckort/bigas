@@ -361,7 +361,7 @@ class GeminiLLMClient(LLMClient):
                 request_options = {}
             else:
                 request_options = dict(request_options)
-            request_options.setdefault("timeout", timeout)
+            request_options["timeout"] = timeout
 
         model_kwargs: Dict[str, Any] = {}
         if system_instruction:
@@ -375,7 +375,7 @@ class GeminiLLMClient(LLMClient):
 
         def _call(active_model: Any, active_cfg: Any) -> Any:
             call_kwargs = dict(kwargs)
-            if request_options:
+            if request_options is not None:
                 call_kwargs["request_options"] = request_options
             if len(rest) == 1 and rest[0]["role"] == "user":
                 return active_model.generate_content(
