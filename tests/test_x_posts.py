@@ -22,10 +22,16 @@ from bigas.resources.product.x_posts.prompts import (
     build_x_posts_user_prompt,
     product_label_for_project_keys,
 )
+from bigas.resources.product.x_posts.accounts import (
+    parse_account_project_map,
+    project_keys_for_x_account,
+    resolve_account_projects,
+)
 from bigas.resources.product.x_posts.service import (
     XPostsError,
     XPostsService,
     _extract_json,
+    draft_posts,
     fallback_tweets_from_jira_features,
     format_discord_message,
 )
@@ -36,6 +42,19 @@ def _clear_x_env(monkeypatch):
     for key in list(__import__("os").environ):
         if key.startswith("X_") or key in {"BIGAS_ACCESS_KEYS", "JIRA_AUTOMATION_WEBHOOK_SECRET"}:
             monkeypatch.delenv(key, raising=False)
+
+
+def _creds(*names):
+    return {
+        name: XAccountCredentials(name, "k", "s", "t", "ts") for name in names
+    }
+
+
+def _patch_done(issues=None):
+    return patch(
+        "bigas.resources.product.x_posts.service.fetch_done_issues_for_projects",
+        return_value=list(issues or []),
+    )
 
 
 def test_parse_account_names_and_suffix():
@@ -66,6 +85,21 @@ def test_clamp_tweet():
     out = clamp_tweet(long)
     assert len(out) == 280
     assert out.endswith("…")
+
+
+def test_project_keys_for_x_account(monkeypatch):
+    _clear_x_env(monkeypatch)
+    assert project_keys_for_x_account("bigasmyaiteam") == ["BIG"]
+    assert project_keys_for_x_account("@vcfieldassistan") == ["VFA"]
+    assert project_keys_for_x_account("unknownhandle") == []
+    monkeypatch.setenv("X_ACCOUNT_PROJECT_MAP", "customacct:GPWW")
+    assert project_keys_for_x_account("customacct") == ["GPWW"]
+    assert parse_account_project_map("a:BIG+VFA,b:GPWW") == {
+        "a": ["BIG", "VFA"],
+        "b": ["GPWW"],
+    }
+    assert resolve_account_projects("bigasmyaiteam", explicit_keys=["VFA", "BIG"]) == ["BIG"]
+    assert resolve_account_projects("bigasmyaiteam", explicit_keys=["VFA"]) == []
 
 
 def test_load_per_account_env(monkeypatch):
@@ -144,9 +178,7 @@ def test_extract_json_and_skip_draft():
 
 def test_generate_skip_does_not_store():
     store = InMemoryDraftStore()
-    provider = XProvider(
-        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
-    )
+    provider = XProvider(credentials=_creds("bigasmyaiteam"))
     llm = SimpleNamespace(
         complete=lambda **_kwargs: json.dumps(
             {"skip": True, "reason": "Only minor bug fixes.", "tweets": []}
@@ -164,7 +196,7 @@ def test_generate_skip_does_not_store():
     ), patch(
         "bigas.resources.product.x_posts.service.project_repo_map_from_env",
         return_value={"BIG": "mckort/bigas"},
-    ):
+    ), _patch_done():
         result = service.generate(days=7, dry_run=False)
     assert result["skip"] is True
     assert store.load(result.get("draft_id") or "") is None
@@ -175,9 +207,7 @@ def test_generate_does_not_skip_when_model_lists_newsworthy_and_tweets(monkeypat
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
     monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
     store = InMemoryDraftStore()
-    provider = XProvider(
-        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
-    )
+    provider = XProvider(credentials=_creds("vcfieldassistan"))
     llm = SimpleNamespace(
         complete=lambda **_kwargs: json.dumps(
             {
@@ -200,7 +230,7 @@ def test_generate_does_not_skip_when_model_lists_newsworthy_and_tweets(monkeypat
     ), patch(
         "bigas.resources.product.x_posts.service.project_repo_map_from_env",
         return_value={"VFA": "mckort/vcfieldassistant"},
-    ):
+    ), _patch_done():
         result = service.generate(days=7, project_keys=["VFA"], dry_run=True)
     assert result["skip"] is False
     assert result["newsworthy"] == ["Add an articles of association section"]
@@ -211,9 +241,7 @@ def test_generate_stores_draft_and_review_url(monkeypatch):
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
     monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
     store = InMemoryDraftStore()
-    provider = XProvider(
-        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
-    )
+    provider = XProvider(credentials=_creds("bigasmyaiteam"))
     llm = SimpleNamespace(
         complete=lambda **_kwargs: json.dumps(
             {"skip": False, "reason": "", "tweets": ["We shipped weekly X posts."]}
@@ -231,11 +259,13 @@ def test_generate_stores_draft_and_review_url(monkeypatch):
     ), patch(
         "bigas.resources.product.x_posts.service.project_repo_map_from_env",
         return_value={"BIG": "mckort/bigas"},
-    ):
+    ), _patch_done():
         result = service.generate(days=7)
     assert result["skip"] is False
     draft_id = result["draft_id"]
     draft = store.load(draft_id)
+    assert draft["posts"][0]["account"] == "bigasmyaiteam"
+    assert draft["posts"][0]["tweets"] == ["We shipped weekly X posts."]
     assert draft["tweets"] == ["We shipped weekly X posts."]
     assert "/api/x-posts/" in result["review_url"]
     token = sign_draft_id(draft_id, secret="secret")
@@ -272,9 +302,7 @@ def test_generate_retries_when_jira_feature_commits_skipped(monkeypatch):
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
     monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
     store = InMemoryDraftStore()
-    provider = XProvider(
-        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
-    )
+    provider = XProvider(credentials=_creds("vcfieldassistan"))
     responses = [
         json.dumps({"newsworthy": [], "skip": True, "reason": "No substantial features.", "tweets": []}),
         json.dumps(
@@ -309,7 +337,7 @@ def test_generate_retries_when_jira_feature_commits_skipped(monkeypatch):
     ), patch(
         "bigas.resources.product.x_posts.service.project_repo_map_from_env",
         return_value={"VFA": "mckort/vcfieldassistant"},
-    ):
+    ), _patch_done():
         result = service.generate(days=7, project_keys=["VFA"], dry_run=True)
     assert result["skip"] is False
     assert result["jira_features"] == ["VFA-32"]
@@ -352,9 +380,7 @@ def test_generate_falls_back_when_model_skips_jira_features(monkeypatch):
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
     monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
     store = InMemoryDraftStore()
-    provider = XProvider(
-        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
-    )
+    provider = XProvider(credentials=_creds("bigasmyaiteam", "vcfieldassistan"))
     llm = SimpleNamespace(
         complete=lambda **_kwargs: json.dumps(
             {
@@ -398,26 +424,26 @@ def test_generate_falls_back_when_model_skips_jira_features(monkeypatch):
             "VFA": "mckort/vcfieldassistant",
             "BIG": "mckort/bigas",
         },
-    ):
+    ), _patch_done():
         result = service.generate(days=7, project_keys=["VFA", "BIG"], dry_run=False)
     assert result["skip"] is False
-    assert result["jira_features"] == ["VFA-33", "BIG-19"]
-    assert result["reason"] == "Fallback draft from shipped Jira features"
-    assert any("Business Intelligence" in t for t in result["tweets"])
-    assert any("chat UI" in t for t in result["tweets"])
+    by_account = {p["account"]: p for p in result["posts"]}
+    assert "Business Intelligence" in by_account["vcfieldassistan"]["tweets"][0]
+    assert "chat UI" in by_account["bigasmyaiteam"]["tweets"][0]
+    assert by_account["vcfieldassistan"]["jira_features"] == ["VFA-33"]
+    assert by_account["bigasmyaiteam"]["jira_features"] == ["BIG-19"]
     assert all("VFA-33" not in t and "BIG-19" not in t for t in result["tweets"])
     draft = store.load(result["draft_id"])
-    assert draft["tweets"] == result["tweets"]
-    assert "Approve" in format_discord_message(result)
+    assert [p["account"] for p in draft["posts"]] == ["bigasmyaiteam", "vcfieldassistan"]
+    assert "@bigasmyaiteam" in format_discord_message(result)
+    assert "@vcfieldassistan" in format_discord_message(result)
 
 
 def test_generate_omits_autofix_commits(monkeypatch):
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
     monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
     store = InMemoryDraftStore()
-    provider = XProvider(
-        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
-    )
+    provider = XProvider(credentials=_creds("vcfieldassistan"))
     captured = {}
 
     def fake_fetch(**kwargs):
@@ -444,7 +470,7 @@ def test_generate_omits_autofix_commits(monkeypatch):
     ), patch(
         "bigas.resources.product.x_posts.service.project_repo_map_from_env",
         return_value={"VFA": "mckort/vcfieldassistant"},
-    ):
+    ), _patch_done():
         result = service.generate(days=7, project_keys=["VFA"], dry_run=True)
     assert captured.get("exclude_autofix") is True
     assert result["skip"] is False
@@ -454,9 +480,7 @@ def test_generate_manual_tweets_skips_llm(monkeypatch):
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
     monkeypatch.setenv("BIGAS_PUBLIC_URL", "https://bigas.example")
     store = InMemoryDraftStore()
-    provider = XProvider(
-        credentials={"demo": XAccountCredentials("demo", "k", "s", "t", "ts")}
-    )
+    provider = XProvider(credentials=_creds("bigasmyaiteam"))
     service = XPostsService(x_provider=provider, draft_store=store)
     result = service.generate(
         days=7,
@@ -602,7 +626,8 @@ def test_hitl_http_approve_and_decline(monkeypatch):
         preview = client.get(f"/api/x-posts/hitl1?token={token}")
         assert preview.status_code == 200
         assert b"Approve and post" in preview.data
-        assert b"Decline" in preview.data
+        assert b"Skip" in preview.data
+        assert b"@demo" in preview.data
         assert b'<textarea' in preview.data
         assert b"Ship it" in preview.data
         # GET must not publish
@@ -614,20 +639,23 @@ def test_hitl_http_approve_and_decline(monkeypatch):
 
         empty = client.post(
             f"/api/x-posts/hitl1/approve?token={token}",
-            data={"tweets": "   "},
+            data={"tweets": "   ", "account": "demo"},
         )
         assert empty.status_code == 400
         assert store.load("hitl1") is not None
         assert fake_x.threads == []
 
-        missing = client.post(f"/api/x-posts/hitl1/approve?token={token}")
+        missing = client.post(
+            f"/api/x-posts/hitl1/approve?token={token}",
+            data={"account": "demo"},
+        )
         assert missing.status_code == 400
         assert store.load("hitl1") is not None
         assert fake_x.threads == []
 
         ok = client.post(
             f"/api/x-posts/hitl1/approve?token={token}",
-            data={"tweets": "Edited and approved"},
+            data={"tweets": "Edited and approved", "account": "demo"},
         )
         assert ok.status_code == 200
         assert b"Posted to X" in ok.data
@@ -644,9 +672,12 @@ def test_hitl_http_approve_and_decline(monkeypatch):
             },
         )
         token2 = sign_draft_id("hitl2", secret="secret")
-        declined = client.post(f"/api/x-posts/hitl2/decline?token={token2}")
+        declined = client.post(
+            f"/api/x-posts/hitl2/decline?token={token2}",
+            data={"account": "demo"},
+        )
         assert declined.status_code == 200
-        assert b"Draft declined" in declined.data
+        assert b"Draft skipped" in declined.data
         assert store.load("hitl2") is None
         assert len(fake_x.threads) == 1
 
@@ -655,20 +686,6 @@ class _BoomX(_FakeX):
     def post_thread(self, account, tweets):
         self.threads.append((account, tweets))
         raise RuntimeError("402 Payment Required")
-
-
-class _PartialMultiAccountX:
-    def __init__(self):
-        self.threads = []
-
-    def configured_accounts(self):
-        return ["first", "second"]
-
-    def post_thread(self, account, tweets):
-        self.threads.append((account, tweets))
-        if account == "second":
-            raise RuntimeError("402 Payment Required")
-        return ["11", "12"]
 
 
 def test_approve_deletes_draft_before_post_so_retry_cannot_duplicate():
@@ -699,39 +716,54 @@ def test_approve_deletes_draft_before_post_so_retry_cannot_duplicate():
     assert fake_x.threads == [("demo", ["Hello once"])]
 
 
-def test_approve_partial_multi_account_success():
+def test_approve_one_account_keeps_the_other():
     store = InMemoryDraftStore()
-    fake_x = _PartialMultiAccountX()
+    fake_x = _FakeX()
     service = XPostsService(x_provider=fake_x, draft_store=store)
     store.save(
         "partial",
         {
             "id": "partial",
-            "accounts": ["first", "second"],
-            "tweets": ["Hello", "World"],
+            "posts": [
+                {"account": "first", "tweets": ["Hello first"]},
+                {"account": "second", "tweets": ["Hello second"]},
+            ],
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
     )
-    result = service.approve("partial")
-    assert result["ok"] is False
-    assert result["posted"] == [
-        {
-            "account": "first",
-            "tweet_ids": ["11", "12"],
-            "urls": [
-                "https://x.com/first/status/11",
-                "https://x.com/first/status/12",
-            ],
-        }
-    ]
-    assert result["failed"] == [
-        {"account": "second", "error": "402 Payment Required"},
-    ]
+    result = service.approve("partial", account="first")
+    assert result["ok"] is True
+    assert result["remaining"] == ["second"]
+    assert fake_x.threads == [("first", ["Hello first"])]
+    leftover = store.load("partial")
+    assert [p["account"] for p in leftover["posts"]] == ["second"]
+
+    skipped = service.decline("partial", account="second")
+    assert skipped["remaining"] == []
     assert store.load("partial") is None
-    assert fake_x.threads == [
-        ("first", ["Hello", "World"]),
-        ("second", ["Hello", "World"]),
-    ]
+    assert len(fake_x.threads) == 1
+
+
+def test_approve_requires_account_when_multiple_pending():
+    store = InMemoryDraftStore()
+    service = XPostsService(x_provider=_FakeX(), draft_store=store)
+    store.save(
+        "multi",
+        {
+            "id": "multi",
+            "posts": [
+                {"account": "first", "tweets": ["A"]},
+                {"account": "second", "tweets": ["B"]},
+            ],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    try:
+        service.approve("multi")
+        assert False, "expected choose-account error"
+    except XPostsError as e:
+        assert "choose which account" in str(e).lower()
+    assert store.load("multi") is not None
 
 
 def test_post_thread_partial_tweet_failure():
@@ -767,36 +799,154 @@ def test_post_thread_partial_tweet_failure():
     assert len(calls) == 2
 
 
-def test_hitl_http_partial_post(monkeypatch):
+def test_hitl_http_approve_one_of_two(monkeypatch):
     monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
     store = InMemoryDraftStore()
-    fake_x = _PartialMultiAccountX()
+    fake_x = _FakeX()
     service = XPostsService(x_provider=fake_x, draft_store=store)
     store.save(
-        "partial-http",
+        "two",
         {
-            "id": "partial-http",
-            "accounts": ["first", "second"],
-            "tweets": ["Ship it"],
+            "id": "two",
+            "posts": [
+                {"account": "first", "tweets": ["Ship first"]},
+                {"account": "second", "tweets": ["Ship second"]},
+            ],
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
     )
-    token = sign_draft_id("partial-http", secret="secret")
+    token = sign_draft_id("two", secret="secret")
     app = Flask(__name__)
     app.register_blueprint(x_posts_bp)
     app.config["TESTING"] = True
     client = app.test_client()
     with patch("bigas.resources.product.x_posts.endpoints._service", return_value=service):
+        preview = client.get(f"/api/x-posts/two?token={token}")
+        assert b"@first" in preview.data
+        assert b"@second" in preview.data
         resp = client.post(
-            f"/api/x-posts/partial-http/approve?token={token}",
-            data={"tweets": "Ship it"},
+            f"/api/x-posts/two/approve?token={token}",
+            data={"tweets": "Ship first", "account": "first"},
         )
     assert resp.status_code == 200
-    assert b"Partially posted to X" in resp.data
-    assert b"https://x.com/first/status/11" in resp.data
+    assert b"Posted to @first" in resp.data
     assert b"@second" in resp.data
-    assert b"402 Payment Required" in resp.data
-    assert store.load("partial-http") is None
+    assert b"Ship second" in resp.data
+    assert fake_x.threads == [("first", ["Ship first"])]
+    leftover = store.load("two")
+    assert [p["account"] for p in leftover["posts"]] == ["second"]
+
+
+def test_draft_posts_legacy_payload():
+    posts = draft_posts(
+        {"accounts": ["one", "two"], "tweets": ["Shared copy"]}
+    )
+    assert posts == [
+        {"account": "one", "tweets": ["Shared copy"]},
+        {"account": "two", "tweets": ["Shared copy"]},
+    ]
+
+
+def test_generate_unmapped_account_errors():
+    store = InMemoryDraftStore()
+    provider = XProvider(credentials=_creds("notaproduct"))
+    service = XPostsService(x_provider=provider, draft_store=store)
+    try:
+        service.generate(days=7, dry_run=True)
+        assert False, "expected unmapped error"
+    except XPostsError as e:
+        assert "mapped" in str(e).lower()
+
+
+def test_generate_uses_board_done_tickets(monkeypatch):
+    monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
+    store = InMemoryDraftStore()
+    provider = XProvider(credentials=_creds("bigasmyaiteam"))
+    llm = SimpleNamespace(
+        complete=lambda **_kwargs: json.dumps(
+            {
+                "newsworthy": [],
+                "skip": True,
+                "reason": "No newsworthy user-facing changes this period.",
+                "tweets": [],
+            }
+        )
+    )
+    service = XPostsService(x_provider=provider, draft_store=store)
+    service._llm = llm
+    service._model = "test-model"
+    done = [
+        {
+            "key": "BIG-19",
+            "project_key": "BIG",
+            "summary": "Build ticket pipeline into chat UI",
+            "source": "board",
+            "sources": ["board"],
+        }
+    ]
+    with patch(
+        "bigas.resources.product.x_posts.service.fetch_commits_for_projects",
+        return_value={"by_project": {}, "stats": {"BIG": {"total": 0}}, "errors": []},
+    ), patch(
+        "bigas.resources.product.x_posts.service.format_commits_for_prompt",
+        return_value="(No git commit activity fetched.)",
+    ), patch(
+        "bigas.resources.product.x_posts.service.project_repo_map_from_env",
+        return_value={"BIG": "mckort/bigas"},
+    ), _patch_done(done):
+        result = service.generate(days=7, dry_run=True)
+    assert result["skip"] is False
+    assert result["posts"][0]["done_tickets"] == ["BIG-19"]
+    assert "chat UI" in result["tweets"][0]
+    assert "BIG-19" not in result["tweets"][0]
+
+
+def test_generate_writes_separate_posts_per_account(monkeypatch):
+    monkeypatch.setenv("X_POST_SIGNING_SECRET", "secret")
+    store = InMemoryDraftStore()
+    provider = XProvider(credentials=_creds("bigasmyaiteam", "vcfieldassistan"))
+
+    def complete(**kwargs):
+        text = kwargs["messages"][1]["content"]
+        if "VC Field Assistant" in text:
+            return json.dumps(
+                {
+                    "newsworthy": ["Pipeline column"],
+                    "skip": False,
+                    "reason": "",
+                    "tweets": ["VC Field Assistant now has a pending rejection column."],
+                }
+            )
+        return json.dumps(
+            {
+                "newsworthy": ["Dark mode"],
+                "skip": False,
+                "reason": "",
+                "tweets": ["Bigas got a visual upgrade with dark mode."],
+            }
+        )
+
+    service = XPostsService(x_provider=provider, draft_store=store)
+    service._llm = SimpleNamespace(complete=complete)
+    service._model = "test-model"
+    with patch(
+        "bigas.resources.product.x_posts.service.fetch_commits_for_projects",
+        return_value={"by_project": {}, "stats": {}, "errors": []},
+    ), patch(
+        "bigas.resources.product.x_posts.service.format_commits_for_prompt",
+        return_value="- tweak",
+    ), patch(
+        "bigas.resources.product.x_posts.service.project_repo_map_from_env",
+        return_value={"BIG": "mckort/bigas", "VFA": "mckort/vcfieldassistant"},
+    ), _patch_done():
+        result = service.generate(days=7, dry_run=True)
+    by_account = {p["account"]: p for p in result["posts"]}
+    assert by_account["bigasmyaiteam"]["tweets"] == [
+        "Bigas got a visual upgrade with dark mode."
+    ]
+    assert by_account["vcfieldassistan"]["tweets"] == [
+        "VC Field Assistant now has a pending rejection column."
+    ]
 
 
 def test_cleanup_expired_drafts_keeps_fresh_ones():

@@ -6,6 +6,8 @@ from typing import Any, Dict, List
 from urllib.parse import urlencode
 
 from bigas.providers.notifications.x import TWEET_MAX_CHARS
+from bigas.resources.product.x_posts.prompts import product_label_for_project_keys
+from bigas.resources.product.x_posts.service import draft_posts
 
 
 def _page(title: str, body: str) -> str:
@@ -29,6 +31,10 @@ def _page(title: str, body: str) -> str:
       padding: 1.5rem 1.25rem 2.5rem;
     }}
     h1 {{ font-size: 1.35rem; margin: 0 0 0.75rem; }}
+    h2 {{
+      font-size: 1.15rem;
+      margin: 0 0 0.2rem;
+    }}
     p, li {{ line-height: 1.45; }}
     .card {{
       background: #15202b;
@@ -37,6 +43,13 @@ def _page(title: str, body: str) -> str:
       padding: 1rem 1.1rem;
       margin: 1rem 0;
       white-space: pre-wrap;
+    }}
+    .account-card {{
+      background: #15202b;
+      border: 1px solid #38444d;
+      border-radius: 12px;
+      padding: 1rem 1.1rem 1.15rem;
+      margin: 1.15rem 0;
     }}
     label {{
       display: block;
@@ -51,7 +64,7 @@ def _page(title: str, body: str) -> str:
       padding: 0.9rem 1rem;
       border: 1px solid #38444d;
       border-radius: 12px;
-      background: #15202b;
+      background: #0f1419;
       color: #e7e9ea;
       font: inherit;
       line-height: 1.45;
@@ -65,6 +78,19 @@ def _page(title: str, body: str) -> str:
     }}
     .count.over {{ color: #f4212e; }}
     .muted {{ color: #8b98a5; font-size: 0.95rem; }}
+    .notice {{
+      background: #052e16;
+      border: 1px solid #166534;
+      color: #86efac;
+      border-radius: 12px;
+      padding: 0.75rem 1rem;
+      margin: 0 0 1rem;
+    }}
+    .notice.warn {{
+      background: #422006;
+      border-color: #a16207;
+      color: #fde68a;
+    }}
     .actions {{
       display: flex;
       flex-direction: column;
@@ -96,37 +122,74 @@ def _page(title: str, body: str) -> str:
 """
 
 
-def preview_page(draft: Dict[str, Any], *, action_base: str, token: str) -> str:
-    accounts = ", ".join(str(a) for a in (draft.get("accounts") or []))
-    tweets: List[str] = [str(t) for t in (draft.get("tweets") or [])] or [""]
-    editors = []
-    numbered = len(tweets) > 1
-    for i, tweet in enumerate(tweets, start=1):
+def _tweet_editors(account: str, tweets: List[str]) -> str:
+    values = tweets or [""]
+    numbered = len(values) > 1
+    blocks = []
+    safe_account = html.escape(account)
+    for i, tweet in enumerate(values, start=1):
+        field_id = f"tweet-{safe_account}-{i}"
         label = f"Tweet {i}" if numbered else "Tweet"
-        editors.append(
+        blocks.append(
             f"""
-      <label for="tweet-{i}">{html.escape(label)}</label>
-      <textarea id="tweet-{i}" name="tweets" maxlength="{TWEET_MAX_CHARS}" rows="6">{html.escape(tweet)}</textarea>
-      <p class="count" data-count-for="tweet-{i}">{len(tweet)} / {TWEET_MAX_CHARS}</p>"""
+      <label for="{field_id}">{html.escape(label)}</label>
+      <textarea id="{field_id}" name="tweets" maxlength="{TWEET_MAX_CHARS}" rows="6">{html.escape(tweet)}</textarea>
+      <p class="count" data-count-for="{field_id}">{len(tweet)} / {TWEET_MAX_CHARS}</p>"""
         )
+    return "".join(blocks)
+
+
+def preview_page(
+    draft: Dict[str, Any],
+    *,
+    action_base: str,
+    token: str,
+    notice: str = "",
+    notice_kind: str = "ok",
+) -> str:
+    posts = draft_posts(draft)
     query = urlencode({"token": token})
     approve_url = f"{action_base}/approve?{query}"
     decline_url = f"{action_base}/decline?{query}"
+    cards = []
+    for post in posts:
+        account = str(post.get("account") or "").strip()
+        tweets = [str(t) for t in (post.get("tweets") or [])] or [""]
+        keys = post.get("project_keys") or []
+        label = product_label_for_project_keys(keys) if keys else ""
+        subtitle = ""
+        if label and label != "the product":
+            subtitle = f'<p class="muted">{html.escape(label)}</p>'
+        cards.append(
+            f"""
+    <section class="account-card">
+      <h2>@{html.escape(account)}</h2>
+      {subtitle}
+      <form method="post" action="{html.escape(approve_url)}">
+        <input type="hidden" name="account" value="{html.escape(account)}">
+        {_tweet_editors(account, tweets)}
+        <div class="actions">
+          <button class="approve" type="submit">Approve and post</button>
+        </div>
+      </form>
+      <form method="post" action="{html.escape(decline_url)}">
+        <input type="hidden" name="account" value="{html.escape(account)}">
+        <div class="actions">
+          <button class="decline" type="submit">Skip</button>
+        </div>
+      </form>
+    </section>"""
+        )
+    notice_html = ""
+    if notice:
+        kind = "warn" if notice_kind == "warn" else "ok"
+        notice_html = f'<p class="notice {kind}">{html.escape(notice)}</p>'
+    heading = "Approve X posts" if len(posts) != 1 else "Approve X post"
     body = f"""
-    <h1>Approve X post?</h1>
-    <p class="muted">Accounts: {html.escape(accounts or "(none)")}</p>
-    <form method="post" action="{html.escape(approve_url)}">
-      {''.join(editors)}
-      <p class="muted">Edit the text if needed, then approve to publish to the accounts above. Decline deletes this draft from storage.</p>
-      <div class="actions">
-        <button class="approve" type="submit">Approve and post</button>
-      </div>
-    </form>
-    <form method="post" action="{html.escape(decline_url)}">
-      <div class="actions">
-        <button class="decline" type="submit">Decline</button>
-      </div>
-    </form>
+    <h1>{html.escape(heading)}</h1>
+    {notice_html}
+    <p class="muted">Each post is for one X account. Edit if needed, then approve or skip that account. Skip deletes only that draft.</p>
+      {''.join(cards) or '<p class="muted">No pending posts.</p>'}
     <script>
       const maxChars = {TWEET_MAX_CHARS};
       document.querySelectorAll("textarea[name=tweets]").forEach((el) => {{
@@ -143,7 +206,7 @@ def preview_page(draft: Dict[str, Any], *, action_base: str, token: str) -> str:
       }});
     </script>
     """
-    return _page("Approve X post", body)
+    return _page(heading, body)
 
 
 def success_page(*, title: str, message: str, extra: str = "") -> str:

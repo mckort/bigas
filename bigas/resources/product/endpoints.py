@@ -309,9 +309,10 @@ def weekly_okr_pulse():
 @product_bp.route('/generate_weekly_x_post', methods=['POST'])
 def generate_weekly_x_post():
     """
-    Draft a weekly X post from recent git activity, store it, and send an
+    Draft a weekly X post per configured account from the internal board,
+    git activity, and Jira (when credentials exist). Store it and send an
     approval link to marketing Discord and the Product Manager chat thread.
-    Publishing happens only after a human approves.
+    Publishing happens only after a human approves or skips each account.
 
     Request JSON (all optional):
       {
@@ -788,7 +789,7 @@ def get_manifest():
             },
             {
                 "name": "generate_weekly_x_post",
-                "description": "Draft a weekly X post from recent git merges, filter out minor fixes, and send an approval link to marketing Discord and the Product Manager chat. Publishing happens only after a human approves or declines.",
+                "description": "Draft a weekly X post per X account from the internal board, git activity, and Jira when configured. Only products with their own X account are included. Sends an approval link to marketing Discord and the Product Manager chat. Publishing happens only after a human approves or skips each account.",
                 "path": "/mcp/tools/generate_weekly_x_post",
                 "method": "POST",
                 "parameters": {

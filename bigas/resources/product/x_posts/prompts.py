@@ -5,16 +5,16 @@ import json
 from typing import Any, Dict, Optional, Sequence
 
 X_POSTS_SYSTEM_PROMPT = """You are a product marketer writing public updates for X (Twitter).
-You read a week's git commits and decide whether customers of the product would care.
+You read a week's shipped tickets (internal board, and Jira when available) plus git commits, and decide whether customers of this one product would care.
 
 Do this in order:
-1. Read the entire commit list. Do not judge the week from volume, from Fix/Harden/Align prefixes, or from the first few lines.
+1. Read the shipped tickets and the entire commit list. Do not judge the week from volume, from Fix/Harden/Align prefixes, or from the first few lines.
 2. Extract customer-relevant product improvements: a change a customer would notice in the product itself (new capability, new or improved workflow, analysis quality, signup/billing they use, visible product UI). Paraphrase each in plain language.
 3. Ignore internals even if they are numerous: CI, lockfiles, type pins, review tooling, layout spacing, copy nits, refactors with no user impact, comments about omitted autofix.
-4. Commits whose subject contains a Jira issue key for this product (for example VFA-32) are shipped features: a Jira ticket was created, developed, and merged. Always treat those as newsworthy.
-5. If the extracted list is empty and there are no Jira-key feature commits, skip. If either has items, draft tweets about those. A mixed week of chores plus real product changes is still a draft week.
+4. Tickets moved to Done and commits whose subject contains this product's issue key (for example VFA-32) are shipped features. Always treat those as newsworthy.
+5. If the extracted list is empty and there are no shipped tickets or Jira-key feature commits, skip. If either has items, draft tweets about those. A mixed week of chores plus real product changes is still a draft week.
 6. Do not invent features or metrics. Do not include Jira keys, commit SHAs, PR numbers, or personal names in the tweets.
-7. Name the product in the tweet when it is provided.
+7. Name the product in the tweet when it is provided. Write only for this product's community — do not mention other brands.
 8. Each tweet must be at most 280 characters. Prefer one tweet; at most 5.
 9. Return ONLY valid JSON matching the requested schema.
 """
@@ -59,32 +59,41 @@ def build_x_posts_user_prompt(
     git_stats: dict,
     product_label: str = "the product",
     jira_features_text: str = "",
+    done_issues_text: str = "",
 ) -> str:
     product = (product_label or "the product").strip() or "the product"
     stats: Dict[str, Any] = git_stats if isinstance(git_stats, dict) else {}
     jira_text = (jira_features_text or "").strip()
+    done_text = (done_issues_text or "").strip()
+    has_shipped = bool(jira_text or done_text)
+    extra_sections = ""
+    if done_text:
+        extra_sections += f"""
+Shipped tickets from the internal board and Jira (deduped). Treat every item as newsworthy. Do not skip.
+{done_text}
+"""
     if jira_text:
-        jira_section = f"""
+        extra_sections += f"""
 Shipped Jira features (commit subject contains this product's issue key, e.g. VFA-12). These were created as Jira features, then developed and merged. Treat every item as newsworthy. Do not skip.
 {jira_text}
 """
+    if has_shipped:
         skip_rule = (
-            "skip MUST be false because shipped Jira features are listed. "
+            "skip MUST be false because shipped tickets or Jira features are listed. "
             "Draft tweets covering those features (and any other customer-relevant items). "
             f"Mention {product}."
         )
     else:
-        jira_section = ""
         skip_rule = (
             "Fill newsworthy first. Set skip=true only if newsworthy is empty. "
             "If newsworthy is not empty, skip must be false and tweets must cover those improvements. "
             f"Mention {product}."
         )
-    return f"""Draft an X update for {product}'s community from git activity in the last {days} days.
+    return f"""Draft an X update for {product}'s community from shipped tickets and git activity in the last {days} days.
 
 Autofix/automation commits are already omitted. Git stats (JSON):
 {json.dumps(stats)}
-{jira_section}
+{extra_sections}
 Commits on default branches (mixed product work and internals — you must filter):
 {git_commits_text}
 
