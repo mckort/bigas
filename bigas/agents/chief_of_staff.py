@@ -238,6 +238,7 @@ MUST_DELEGATE_TOOLS = {
     "weekly_cto_ai_report": "cfo",
     "fetch_ai_usage": "cfo",
     "create_release_notes": "product",
+    "cherry_pick_hotfix": "product",
     "progress_updates": "product",
     "generate_weekly_x_post": "product",
     "jira_status_automation": "product",

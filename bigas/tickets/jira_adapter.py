@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from bigas.jira_exceptions import JiraError
+from bigas.resources.product.release_workflow import active_fix_version_from_env
 from bigas.tickets.constants import next_column
 from bigas.tickets.store import get_ticket_store
 
@@ -49,6 +50,7 @@ class TicketJiraAdapter:
 
         labels = resolve_ticket_labels(ticket)
         assignee = (ticket.get("assignee") or "").strip()
+        fix_version = (ticket.get("fix_version") or "").strip() or None
         return {
             "key": ticket["key"],
             "fields": {
@@ -63,6 +65,7 @@ class TicketJiraAdapter:
                 "assignee": {"displayName": assignee} if assignee else None,
                 "resolutiondate": (ticket.get("done_at") or "").strip() or None,
                 "updated": ticket.get("updated_at") or ticket.get("created_at"),
+                "fixVersions": [{"name": fix_version}] if fix_version else [],
             },
         }
 
@@ -189,6 +192,38 @@ class TicketJiraAdapter:
                 continue
             out.append(self._format_issue(ticket))
         return out
+
+    def ensure_issue_fix_version(
+        self,
+        issue_key: str,
+        *,
+        project_key: Optional[str] = None,
+    ) -> Optional[str]:
+        """Assign BIGAS_PROJECT_ACTIVE_FIX_VERSION when ticket has no fix_version."""
+        ticket = self._ticket(issue_key)
+        if not ticket:
+            raise JiraError(f"Ticket {issue_key} not found")
+
+        existing = (ticket.get("fix_version") or "").strip()
+        if existing:
+            return existing
+
+        board = self._board(ticket)
+        proj = (
+            (project_key or "").strip().upper()
+            or (board.get("project_key") if board else None)
+            or ticket.get("project_key")
+            or ""
+        ).strip().upper()
+        if not proj and issue_key and "-" in issue_key:
+            proj = issue_key.split("-", 1)[0].upper()
+
+        active = active_fix_version_from_env(proj)
+        if not active:
+            return None
+
+        self._store.update_ticket(ticket["ticket_id"], fix_version=active)
+        return active
 
     def add_comment(self, issue_key: str, body_text: str) -> Dict[str, Any]:
         ticket = self._ticket(issue_key)

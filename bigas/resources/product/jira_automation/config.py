@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
+
+from bigas.resources.product.release_workflow import (
+    project_branch_mapping_from_env,
+    resolve_automerge_branch,
+)
 
 
 # Handler names used by the router
@@ -122,6 +127,7 @@ class JiraAutomationConfig:
     daily_quota: int
     default_base_branch: str
     repo_base_branches: Dict[str, str]
+    project_branch_map: Dict[str, str]
     discord_pm_env: str
     discord_cto_env: str
 
@@ -167,6 +173,7 @@ class JiraAutomationConfig:
             repo_base_branches=_parse_repo_base_branch_map(
                 os.environ.get("BIGAS_JIRA_REPO_BASE_BRANCH_MAP")
             ),
+            project_branch_map=project_branch_mapping_from_env(),
             discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
             discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
         )
@@ -183,6 +190,23 @@ class JiraAutomationConfig:
         if r and r in self.repo_base_branches:
             return self.repo_base_branches[r]
         return self.default_base_branch
+
+    def automerge_branch_for_project(
+        self,
+        project_key: str,
+        repo: str,
+        *,
+        labels: Optional[Iterable[str]] = None,
+    ) -> str:
+        """PR / implement base branch from project mapping (staging vs main)."""
+        return resolve_automerge_branch(
+            project_key=project_key,
+            repo=repo,
+            labels=labels,
+            project_branch_map=self.project_branch_map,
+            repo_base_branches=self.repo_base_branches,
+            default_base_branch=self.default_base_branch,
+        )
 
     def is_project_allowed(self, project_key: str) -> bool:
         return (project_key or "").strip().upper() in self.allowed_projects

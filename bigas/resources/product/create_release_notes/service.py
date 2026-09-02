@@ -5,10 +5,18 @@ import json
 import os
 import re
 import logging
+from datetime import date
 
 from bigas.llm.factory import get_llm_client
 
-from bigas.resources.product.create_release_notes.jira_client import JiraClient, JiraConfig, JiraError
+from bigas.resources.product.create_release_notes.jira_client import (
+    JiraClient,
+    JiraConfig,
+    JiraError,
+    normalize_project_keys,
+)
+from bigas.resources.product.github_release import GitHubReleaseError, create_github_release
+from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 from bigas.resources.product.create_release_notes.prompts import (
     RELEASE_NOTES_SYSTEM_PROMPT,
     build_release_notes_user_prompt,
@@ -182,6 +190,10 @@ class CreateReleaseNotesService:
         fix_version: str,
         jql_extra: str = "",
         project_keys: Optional[Any] = None,
+        create_github_release_flag: bool = False,
+        mark_released: bool = False,
+        github_repo: Optional[str] = None,
+        release_target_ref: Optional[str] = None,
     ) -> Dict[str, Any]:
         _validate_fix_version(fix_version)
 
@@ -357,5 +369,93 @@ class CreateReleaseNotesService:
         result["blog_markdown"] = blog_markdown
         result["issues_included"] = llm_issues
 
+        release_meta = self._maybe_publish_release(
+            fix_version=fix_version,
+            project_keys=project_keys,
+            result=result,
+            create_github_release_flag=create_github_release_flag,
+            mark_released=mark_released,
+            github_repo=github_repo,
+            release_target_ref=release_target_ref,
+        )
+        if release_meta:
+            result["release_publish"] = release_meta
+
         return result
+
+    def _maybe_publish_release(
+        self,
+        *,
+        fix_version: str,
+        project_keys: Optional[Any],
+        result: Dict[str, Any],
+        create_github_release_flag: bool,
+        mark_released: bool,
+        github_repo: Optional[str],
+        release_target_ref: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        if not create_github_release_flag and not mark_released:
+            return None
+
+        keys = normalize_project_keys(project_keys) if project_keys is not None else list(
+            self._jira._config.project_keys
+        )
+        project_key = keys[0] if keys else ""
+        repo = (github_repo or "").strip()
+        if not repo and project_key:
+            try:
+                cfg = JiraAutomationConfig.from_env()
+                repo = cfg.repo_for_project(project_key) or ""
+            except Exception:
+                repo = ""
+
+        out: Dict[str, Any] = {"project_key": project_key, "github_repo": repo or None}
+
+        if create_github_release_flag:
+            token = (os.environ.get("GITHUB_TOKEN") or "").strip()
+            if not token:
+                raise ReleaseNotesError(
+                    "GITHUB_TOKEN is required when create_github_release is true"
+                )
+            if not repo or "/" not in repo:
+                raise ReleaseNotesError(
+                    "github_repo or a mapped JIRA project is required for GitHub release"
+                )
+            owner, name = repo.split("/", 1)
+            title = result.get("release_title") or f"Release {fix_version}"
+            body = (
+                result.get("customer_markdown")
+                or result.get("blog_markdown")
+                or ""
+            )
+            try:
+                gh_release = create_github_release(
+                    token=token,
+                    owner=owner.strip(),
+                    repo=name.strip(),
+                    fix_version=fix_version,
+                    title=title,
+                    body=body,
+                    target_commitish=release_target_ref,
+                )
+            except GitHubReleaseError as exc:
+                raise ReleaseNotesError(str(exc)) from exc
+            out["github_release"] = {
+                "tag_name": gh_release.get("tag_name"),
+                "html_url": gh_release.get("html_url"),
+                "name": gh_release.get("name"),
+            }
+
+        if mark_released and project_key:
+            try:
+                marked = self._jira.mark_fix_version_released(
+                    project_key=project_key,
+                    version_name=fix_version,
+                    release_date=date.today().isoformat(),
+                )
+                out["jira_fix_version_released"] = marked
+            except JiraError as exc:
+                raise ReleaseNotesError(str(exc)) from exc
+
+        return out
 

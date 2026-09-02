@@ -123,12 +123,20 @@ def create_release_notes():
     fix_version = data.get("fix_version")
     jql_extra = (data.get("jql_extra") or "").strip()
     project_keys = _project_keys_from_request(data)
+    create_github_release_flag = request_flag(data, "create_github_release")
+    mark_released = request_flag(data, "mark_released")
+    github_repo = (data.get("github_repo") or "").strip() or None
+    release_target_ref = (data.get("release_target_ref") or "").strip() or None
     try:
         service = CreateReleaseNotesService()
         result = service.create(
             fix_version=fix_version,
             jql_extra=jql_extra,
             project_keys=project_keys,
+            create_github_release_flag=create_github_release_flag,
+            mark_released=mark_released,
+            github_repo=github_repo,
+            release_target_ref=release_target_ref,
         )
 
         # Optional: post the release notes to the product Discord channel
@@ -184,6 +192,54 @@ def create_release_notes():
         return jsonify({"error": sanitize_error_message(msg)}), status
     except Exception as e:
         logger.error("Error in create_release_notes", exc_info=True)
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
+@product_bp.route('/cherry_pick_hotfix', methods=['POST'])
+def cherry_pick_hotfix():
+    """
+    Cherry-pick a merged staging PR for a Jira issue onto main.
+
+    Request JSON:
+      {
+        "issue_key": "VFA-123",
+        "repo": "mckort/vcfieldassistant",
+        "staging_branch": "staging",
+        "production_branch": "main",
+        "use_workflow": true
+      }
+
+    Chat: `@bigas hotfix VFA-123`
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(data, required_fields=["issue_key"])
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    from bigas.resources.product.hotfix.service import HotfixError, HotfixService
+
+    try:
+        service = HotfixService()
+        result = service.cherry_pick_to_main(
+            issue_key=str(data.get("issue_key") or ""),
+            repo=(data.get("repo") or "").strip() or None,
+            staging_branch=(data.get("staging_branch") or "").strip() or None,
+            production_branch=(data.get("production_branch") or "").strip() or None,
+            use_workflow=request_flag(data, "use_workflow", default=True),
+        )
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL_CTO") or os.environ.get(
+            "DISCORD_WEBHOOK_URL_PRODUCT"
+        )
+        if webhook_url and result.get("pr_url"):
+            _post_to_discord(
+                webhook_url,
+                f"**Hotfix PR opened** `{result.get('issue_key')}`\n{result.get('pr_url')}",
+            )
+        return jsonify(result)
+    except HotfixError as e:
+        return jsonify({"error": sanitize_error_message(str(e))}), 400
+    except Exception as e:
+        logger.error("Error in cherry_pick_hotfix", exc_info=True)
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 
@@ -740,7 +796,7 @@ def get_manifest():
             },
             {
                 "name": "create_release_notes",
-                "description": "Query Jira by Fix Version and generate multi-channel release notes.",
+                "description": "Query Jira by Fix Version and generate multi-channel release notes. Optionally create a semver GitHub Release (vX.Y.Z) and mark the Fix Version released in Jira.",
                 "path": "/mcp/tools/create_release_notes",
                 "method": "POST",
                 "parameters": {
@@ -753,10 +809,49 @@ def get_manifest():
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "Optional Jira project keys override (e.g. [\"VFA\",\"WAYW\"]). Defaults to JIRA_PROJECT_KEY env (supports comma-separated)."
-                        }
+                        },
+                        "create_github_release": {
+                            "type": "boolean",
+                            "description": "When true, create GitHub Release tag v{fix_version} on the mapped product repo",
+                            "default": False,
+                        },
+                        "mark_released": {
+                            "type": "boolean",
+                            "description": "When true, mark the Fix Version as released in Jira",
+                            "default": False,
+                        },
+                        "github_repo": {
+                            "type": "string",
+                            "description": "Optional owner/repo override for GitHub release (defaults to BIGAS_JIRA_PROJECT_REPO_MAP)",
+                        },
+                        "release_target_ref": {
+                            "type": "string",
+                            "description": "Optional git ref/SHA for the GitHub release tag (default: repo default branch HEAD)",
+                        },
                     },
                     "required": ["fix_version"]
                 }
+            },
+            {
+                "name": "cherry_pick_hotfix",
+                "description": "Cherry-pick a merged staging PR for a Jira issue onto main and open a hotfix PR. Chat: @bigas hotfix VFA-123",
+                "path": "/mcp/tools/cherry_pick_hotfix",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_key": {"type": "string", "description": "Jira issue key, e.g. VFA-123"},
+                        "repo": {"type": "string", "description": "Optional owner/repo override"},
+                        "staging_branch": {"type": "string", "description": "Staging branch (default from PROJECT_BRANCH_MAPPING)"},
+                        "production_branch": {"type": "string", "description": "Production branch (default main or repo map)"},
+                        "use_workflow": {
+                            "type": "boolean",
+                            "description": "Try workflow_dispatch cherry_pick.yml first (falls back to GitHub API)",
+                            "default": True,
+                        },
+                    },
+                    "required": ["issue_key"],
+                },
             },
             {
                 "name": "progress_updates",
