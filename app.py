@@ -217,6 +217,8 @@ def create_app():
             or path.startswith("/api/tickets/")
             or path == "/api/objectives"
             or path.startswith("/api/objectives/")
+            or path == "/api/projects"
+            or path.startswith("/api/projects/")
             or path.startswith("/api/agents")
             or path.startswith("/api/feed")
             or path.startswith("/api/auth/")
