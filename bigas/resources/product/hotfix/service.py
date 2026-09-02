@@ -7,18 +7,12 @@ import re
 from typing import Any, Dict, Optional
 
 from bigas.resources.devops.github_actions import GitHubActionsClient, GitHubActionsError
-from bigas.resources.product.hotfix.cherry_pick import (
-    CherryPickError,
-    cherry_pick_commit_to_branch,
-    find_merged_pr_for_issue,
-    open_pull_request,
-)
+from bigas.resources.product.hotfix.cherry_pick import find_merged_pr_for_issue
 from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 from bigas.resources.product.release_workflow import (
     project_branch_mapping_from_env,
     resolve_production_branch,
 )
-from bigas.tickets.config import jira_configured
 
 logger = logging.getLogger(__name__)
 
@@ -113,65 +107,37 @@ class HotfixService:
         if not merge_sha:
             raise HotfixError(f"Merged PR for {key} has no merge_commit_sha")
 
-        if use_workflow:
-            dispatched = self._try_dispatch_workflow(
-                owner=owner,
-                repo=name,
-                ref=production,
-                issue_key=key,
-                merge_sha=merge_sha,
-                production_branch=production,
+        if not use_workflow:
+            raise HotfixError(
+                f"Cherry-pick requires the {_CHERRY_PICK_WORKFLOW} GitHub Actions workflow"
             )
-            if dispatched:
-                return {
-                    "ok": True,
-                    "mode": "workflow_dispatch",
-                    "issue_key": key,
-                    "repo": mapped_repo,
-                    "staging_branch": staging,
-                    "production_branch": production,
-                    "source_pr_url": source_pr_url,
-                    "source_pr_number": pr_number,
-                    "merge_commit_sha": merge_sha,
-                    **dispatched,
-                }
 
-        hotfix_branch = f"hotfix/{key.lower()}"
-        branch, commit_sha = cherry_pick_commit_to_branch(
-            token=token,
+        dispatched = self._try_dispatch_workflow(
             owner=owner,
             repo=name,
-            merge_commit_sha=merge_sha,
-            target_branch=production,
-            new_branch=hotfix_branch,
+            ref=production,
+            issue_key=key,
+            merge_sha=merge_sha,
+            production_branch=production,
         )
-        pr_url = open_pull_request(
-            token=token,
-            owner=owner,
-            repo=name,
-            head_branch=branch,
-            base_branch=production,
-            title=f"Hotfix: {key}",
-            body=(
-                f"Jira: {key}\n\n"
-                f"Cherry-picked from staging PR #{pr_number} ({source_pr_url}).\n"
-                f"Merge commit: `{merge_sha}`\n\n"
-                "Opened by Bigas hotfix automation."
-            ),
-        )
+        if not dispatched:
+            raise HotfixError(
+                f"Could not dispatch {_CHERRY_PICK_WORKFLOW} on {mapped_repo} "
+                f"(ref `{production}`). Copy the workflow into the repo and ensure "
+                "it exists on the production branch."
+            )
+
         return {
             "ok": True,
-            "mode": "github_api",
+            "mode": "workflow_dispatch",
             "issue_key": key,
             "repo": mapped_repo,
             "staging_branch": staging,
             "production_branch": production,
-            "hotfix_branch": branch,
-            "commit_sha": commit_sha,
-            "pr_url": pr_url,
             "source_pr_url": source_pr_url,
             "source_pr_number": pr_number,
             "merge_commit_sha": merge_sha,
+            **dispatched,
         }
 
     def _try_dispatch_workflow(

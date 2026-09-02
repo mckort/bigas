@@ -408,7 +408,7 @@ Some products (e.g. VC Field Assistant) accumulate features on **`staging`** whi
 | `@bigas hotfix VFA-123` / `POST cherry_pick_hotfix` | Cherry-picks a merged staging PR onto `main` and opens a hotfix PR |
 | `create_release_notes` + `create_github_release: true` + `mark_released: true` | Semver GitHub Release (`v1.0.0`) plus mark the Fix Version released in Jira |
 
-Copy [`.github/workflows/cherry_pick.yml`](.github/workflows/cherry_pick.yml) into product repos that use staging. Bigas tries `workflow_dispatch` first, then falls back to the GitHub Git API.
+Copy [`.github/workflows/cherry_pick.yml`](.github/workflows/cherry_pick.yml) into product repos that use staging. Bigas dispatches that workflow via `workflow_dispatch` (a real `git cherry-pick` in CI).
 
 Two more Product tools round out the flow once you're shipping regularly:
 

@@ -846,7 +846,7 @@ def get_manifest():
                         "production_branch": {"type": "string", "description": "Production branch (default main or repo map)"},
                         "use_workflow": {
                             "type": "boolean",
-                            "description": "Try workflow_dispatch cherry_pick.yml first (falls back to GitHub API)",
+                            "description": "Must be true; dispatches cherry_pick.yml via workflow_dispatch",
                             "default": True,
                         },
                     },

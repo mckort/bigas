@@ -46,17 +46,44 @@ def test_find_merged_pr_missing_raises(mock_request):
         )
 
 
-@patch("bigas.resources.product.hotfix.service.open_pull_request")
-@patch("bigas.resources.product.hotfix.service.cherry_pick_commit_to_branch")
+@patch("bigas.resources.product.hotfix.cherry_pick._request")
+def test_find_merged_pr_paginates(mock_request):
+    page1 = [
+        {
+            "number": i,
+            "merged_at": "2026-01-01T00:00:00Z",
+            "title": f"Unrelated PR {i}",
+            "body": "",
+            "head": {"ref": f"feature/unrelated-{i}"},
+        }
+        for i in range(100)
+    ]
+    page2 = [
+        {
+            "number": 105,
+            "merged_at": "2026-01-02T00:00:00Z",
+            "merge_commit_sha": "def456",
+            "title": "VFA-42: Fix export",
+            "html_url": "https://github.com/acme/app/pull/105",
+            "body": "",
+            "head": {"ref": "feature/vfa-42"},
+        }
+    ]
+    mock_request.side_effect = [page1, page2]
+    pr = find_merged_pr_for_issue(
+        token="tok",
+        owner="acme",
+        repo="app",
+        issue_key="VFA-42",
+        base_branch="staging",
+    )
+    assert pr["number"] == 105
+    assert mock_request.call_count == 2
+
+
 @patch("bigas.resources.product.hotfix.service.find_merged_pr_for_issue")
 @patch("bigas.resources.product.hotfix.service._github_token", return_value="tok")
-def test_hotfix_service_api_fallback(
-    _token,
-    mock_find,
-    mock_cherry,
-    mock_open_pr,
-    monkeypatch,
-):
+def test_hotfix_service_dispatches_workflow(_token, mock_find, monkeypatch):
     monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
     monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
@@ -65,17 +92,53 @@ def test_hotfix_service_api_fallback(
         "merge_commit_sha": "deadbeef",
         "html_url": "https://github.com/mckort/vcfieldassistant/pull/5",
     }
-    mock_cherry.return_value = ("hotfix/vfa-1", "cafebabe")
-    mock_open_pr.return_value = "https://github.com/mckort/vcfieldassistant/pull/6"
+
+    service = HotfixService()
+    with patch.object(
+        service,
+        "_try_dispatch_workflow",
+        return_value={"workflow": "cherry_pick.yml", "workflow_ref": "main"},
+    ):
+        result = service.cherry_pick_to_main(issue_key="VFA-1")
+
+    assert result["ok"] is True
+    assert result["mode"] == "workflow_dispatch"
+    assert result["workflow"] == "cherry_pick.yml"
+
+
+@patch("bigas.resources.product.hotfix.service.find_merged_pr_for_issue")
+@patch("bigas.resources.product.hotfix.service._github_token", return_value="tok")
+def test_hotfix_service_requires_workflow(_token, mock_find, monkeypatch):
+    monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    mock_find.return_value = {
+        "number": 5,
+        "merge_commit_sha": "deadbeef",
+        "html_url": "https://github.com/mckort/vcfieldassistant/pull/5",
+    }
+
+    service = HotfixService()
+    with pytest.raises(HotfixError, match="cherry_pick.yml"):
+        service.cherry_pick_to_main(issue_key="VFA-1", use_workflow=False)
+
+
+@patch("bigas.resources.product.hotfix.service.find_merged_pr_for_issue")
+@patch("bigas.resources.product.hotfix.service._github_token", return_value="tok")
+def test_hotfix_service_workflow_dispatch_failure(_token, mock_find, monkeypatch):
+    monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    mock_find.return_value = {
+        "number": 5,
+        "merge_commit_sha": "deadbeef",
+        "html_url": "https://github.com/mckort/vcfieldassistant/pull/5",
+    }
 
     service = HotfixService()
     with patch.object(service, "_try_dispatch_workflow", return_value=None):
-        result = service.cherry_pick_to_main(issue_key="VFA-1", use_workflow=False)
-
-    assert result["ok"] is True
-    assert result["mode"] == "github_api"
-    assert result["pr_url"].endswith("/pull/6")
-    mock_cherry.assert_called_once()
+        with pytest.raises(HotfixError, match="Could not dispatch"):
+            service.cherry_pick_to_main(issue_key="VFA-1")
 
 
 def test_hotfix_same_branch_rejected(monkeypatch):
