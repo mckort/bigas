@@ -84,6 +84,17 @@ def test_board_spa_and_api_bypass_access_key(client, monkeypatch):
     allowed = client.get("/api/boards", headers=_auth_headers())
     assert allowed.status_code == 200
 
+    unauth_releases = client.get("/api/projects/VFA/releases")
+    assert unauth_releases.status_code == 401
+    releases_body = unauth_releases.get_json()
+    releases_detail = (
+        releases_body.get("detail", "") if isinstance(releases_body, dict) else str(releases_body or "")
+    )
+    assert "access key" not in releases_detail.lower()
+
+    allowed_releases = client.get("/api/projects/VFA/releases", headers=_auth_headers())
+    assert allowed_releases.status_code == 200
+
 
 def test_internal_board_default_without_jira():
     assert not jira_configured()
