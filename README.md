@@ -84,7 +84,7 @@ That control plane is a **goal-oriented engine**. You set the quarter's Objectiv
 Work lives on the native Kanban board (default, no Jira required) or on an existing Jira board.
 
 1. Drag a card to **Done** → Product posts a progress update.
-2. Set a **Fix Version** on release issues → release notes plus a blog/social draft.
+2. Assign tickets to a **board Release** (e.g. `0.9.0`) → Ship or a versioned prod deploy cuts GitHub `v0.9.0` and leftover open cards move to the next minor. Then `create_release_notes` drafts blog/social copy for that version.
 3. Ask in chat: *"Draft a tweet about this week's shipped work"* → edit and approve from the Product thread.
 4. Optional: weekly git activity → X draft with Discord approve/decline links.
 
@@ -297,7 +297,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
 | `PROJECT_BRANCH_MAPPING` | Per-project automerge target, e.g. `VFA:staging,DEFAULT:main`. Issues with a `hotfix` label target the production branch instead. Works with Jira and the internal `/board`. |
-| `BIGAS_PROJECT_ACTIVE_FIX_VERSION` | When Jira is not configured, auto-assign this fix version on implement, e.g. `VFA:0.9.0,BIG:1.0.0` |
+| `BIGAS_PROJECT_ACTIVE_FIX_VERSION` | Fallback only. Prefer **Releases** on `/board` (BIG-43). Used when a project has no default unreleased board version, e.g. `VFA:0.9.0,BIG:1.0.0` |
 | `GITHUB_TOKEN` | GitHub token — PR review, Jira AI repo context, DevOps workflow dispatch (needs Actions write), and self-healing CI PR creation |
 | `GITHUB_WEBHOOK_SECRET` | Shared secret for GitHub `workflow_run` webhooks (`X-Hub-Signature-256`). Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` if unset |
 | `ENABLE_SELF_HEALING_CI` | When `true` (default), process failed GitHub Actions runs and open hotfix PRs. Set `false` to disable |
@@ -396,6 +396,27 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/jira_status_automation
 
 For the exact column names, the project → repo mapping, the Jira Automation rule JSON, and the daily AI-run quota, see **[docs/jira-automation.md](docs/jira-automation.md)**.
 
+### Board releases on the internal board (BIG-43)
+
+Production versions live on **`/board` → Releases** (per project: VFA, BIG, …), not in Cloud Run env. Create `0.9.0` there when you start collecting work for that cut. The board starts empty — nothing is backfilled.
+
+**Versioning** is `X.Y.Z`: `X` is a major, `Y` is the product release, `Z` is bugfix only. Several unreleased versions can exist at once. Mark one **default** if new Implement work should get it automatically; otherwise leave the ticket version empty and pick it on the card.
+
+Each card shows its release. The ticket field is a dropdown of project versions.
+
+**Closing a version** happens when you **Ship** it on the board, or when a **successful prod deploy** runs on that semver tag (`v0.9.0` / `release_version=0.9.0`). A normal deploy of `main` does **not** close a version (VFA deploys often; that would kill the active cut).
+
+On close Bigas:
+
+1. Creates GitHub Release `vX.Y.Z` on the mapped product repo if it is missing (`GITHUB_TOKEN` + `BIGAS_JIRA_PROJECT_REPO_MAP`).
+2. Marks the board release as released.
+3. Moves **open** tickets still on that exact version to the **next product minor** (`0.9.0` / `0.9.1` → `0.10.0`; after `1.0.0` → `1.1.0`). Creates that minor if needed. Done tickets stay on the shipped version.
+4. Posts the moved keys to the **DevOps** chat thread.
+
+Deleting a release on the board (including a released one) only removes the board record. **GitHub is the source of truth** for shipped tags.
+
+`BIGAS_PROJECT_ACTIVE_FIX_VERSION` is a fallback when the board has no default unreleased version (Jira Cloud still uses its own Fix Versions).
+
 ### Staging branch, fix versions, and hotfixes (BIG-42)
 
 Some products (e.g. VC Field Assistant) accumulate features on **`staging`** while **`main`** stays production-ready:
@@ -403,10 +424,10 @@ Some products (e.g. VC Field Assistant) accumulate features on **`staging`** whi
 | Setting | Purpose |
 |---|---|
 | `PROJECT_BRANCH_MAPPING=VFA:staging,DEFAULT:main` | Cursor implement + fallback PRs target `staging` for VFA; other projects stay on `main` |
-| Jira Fix Version (or `BIGAS_PROJECT_ACTIVE_FIX_VERSION` on the internal board) | Active unreleased version (e.g. `0.9.0`) — assigned automatically when implement starts |
+| Board **Releases** (or Jira Fix Version) | Active unreleased version — default on the board, or `BIGAS_PROJECT_ACTIVE_FIX_VERSION` as fallback |
 | `hotfix` Jira/board label | Routes that issue's PR straight to `main`, skipping staging |
 | `@bigas hotfix VFA-123` / `POST cherry_pick_hotfix` | Cherry-picks a merged staging PR onto `main` and opens a hotfix PR |
-| `create_release_notes` + `create_github_release: true` + `mark_released: true` | Semver GitHub Release (`v1.0.0`) plus mark the Fix Version released in Jira |
+| `create_release_notes` + `create_github_release: true` + `mark_released: true` | Semver GitHub Release plus mark the version released (board carry-forward + Jira when configured) |
 
 Copy [`.github/workflows/cherry_pick.yml`](.github/workflows/cherry_pick.yml) into product repos that use staging. Bigas dispatches that workflow via `workflow_dispatch` (a real `git cherry-pick` in CI).
 
@@ -699,7 +720,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST lookup_jira` | Look up one or more Jira issues (including parent Epic) and/or list open Epics. Accepts a range such as `BIG-15 to BIG-18`. Shared by every chat agent. Does not decide whether a new ticket should use that parent |
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
-| `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy; optional semver GitHub Release and Jira “released” |
+| `POST create_release_notes` | Board/Jira Fix Version → release notes + blog draft + social copy; optional semver GitHub Release and mark released (board carry-forward) |
 | `POST cherry_pick_hotfix` | Cherry-pick a merged staging PR to `main` and open a hotfix PR (`@bigas hotfix ISSUE-KEY`) |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord and Product Manager chat |
 | `POST generate_weekly_x_post` | Last N days of internal-board Done + git (+ Jira if configured) → one X draft per mapped account → Discord and Product Manager chat Approve/Skip per account |
@@ -721,7 +742,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST check_website_health` | HTTP GET health check on a live site URL |
 | `POST fetch_github_action_logs` | Download and parse failed job logs from a workflow run (zip with size threshold, or per-job fallback) |
 | `POST create_github_pr` | Create a `bigas-hotfix/*` branch with file changes and open a pull request |
-| `POST github_workflow_run` | GitHub webhook for `workflow_run` failures → autonomous hotfix PR. See [self-healing walkthrough](#walkthrough-self-healing-cicd-failed-github-actions--hotfix-pr) |
+| `POST github_workflow_run` | GitHub webhook: failed `workflow_run` → hotfix PR; successful deploy on a semver tag also closes that board Release. See [self-healing walkthrough](#walkthrough-self-healing-cicd-failed-github-actions--hotfix-pr) |
 | `POST self_healing_ci_job` | Poll an async self-healing job by `job_id` |
 
 ---
