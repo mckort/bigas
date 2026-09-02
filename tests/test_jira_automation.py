@@ -940,6 +940,7 @@ def test_handle_event_failure_clears_idempotency_and_quota(monkeypatch):
         daily_quota=5,
         default_base_branch="main",
         repo_base_branches={"mckort/vcfieldassistant": "main"},
+        project_branch_map={"DEFAULT": "main"},
         discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
         discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
     )
@@ -994,6 +995,7 @@ def _automation_cfg(**overrides):
         daily_quota=5,
         default_base_branch="main",
         repo_base_branches={"mckort/bigas": "main", "mckort/vcfieldassistant": "main"},
+        project_branch_map={"DEFAULT": "main"},
         discord_pm_env="DISCORD_WEBHOOK_URL_PRODUCT",
         discord_cto_env="DISCORD_WEBHOOK_URL_CTO",
     )

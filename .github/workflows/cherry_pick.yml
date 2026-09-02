@@ -1,0 +1,72 @@
+# Cherry-pick a staging merge commit onto main and open a hotfix PR (BIG-42).
+# Copy this workflow to product repos that use staging → main releases.
+# Triggered by Bigas `POST /mcp/tools/cherry_pick_hotfix` or manually.
+name: Cherry pick hotfix
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_key:
+        description: Jira issue key (e.g. VFA-123)
+        required: true
+        type: string
+      commit_sha:
+        description: Merge commit SHA from the staging PR
+        required: true
+        type: string
+      production_branch:
+        description: Production branch (default main)
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cherry-pick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Cherry-pick onto production branch
+        env:
+          ISSUE_KEY: ${{ inputs.issue_key }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          PRODUCTION_BRANCH: ${{ inputs.production_branch }}
+        run: |
+          set -euo pipefail
+          git fetch origin "${PRODUCTION_BRANCH}"
+          git checkout "origin/${PRODUCTION_BRANCH}"
+          BRANCH="hotfix/${ISSUE_KEY,,}"
+          git checkout -b "${BRANCH}"
+          git cherry-pick "${COMMIT_SHA}"
+          git push -u origin "${BRANCH}"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_KEY: ${{ inputs.issue_key }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          PRODUCTION_BRANCH: ${{ inputs.production_branch }}
+        run: |
+          set -euo pipefail
+          BRANCH="hotfix/${ISSUE_KEY,,}"
+          gh pr create \
+            --base "${PRODUCTION_BRANCH}" \
+            --head "${BRANCH}" \
+            --title "Hotfix: ${ISSUE_KEY}" \
+            --body "Jira: ${ISSUE_KEY}
+
+          Cherry-picked merge commit \`${COMMIT_SHA}\` from staging.
+
+          Opened by Bigas cherry_pick workflow."

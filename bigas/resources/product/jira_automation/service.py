@@ -214,7 +214,7 @@ class JiraAutomationService:
         try:
             issue = self._jira.get_issue(
                 issue_key,
-                fields=["summary", "issuetype", "status", "description", "project"],
+                fields=["summary", "issuetype", "status", "description", "project", "labels"],
             )
         except JiraError as e:
             raise JiraAutomationError(f"Failed to load {issue_key}: {e}") from e
@@ -315,10 +315,16 @@ class JiraAutomationService:
                     f"Repo: `{repo}` · model: `{result.get('model')}`"
                 )
             else:
+                issue_fields = issue.get("fields") or {}
+                issue_labels = issue_fields.get("labels") or []
                 result = ImplementHandler(jira=self._jira).run(
                     issue_key=issue_key,
                     repo=repo,
-                    base_branch=self._config.base_branch_for_repo(repo),
+                    base_branch=self._config.automerge_branch_for_project(
+                        project_key,
+                        repo,
+                        labels=issue_labels,
+                    ),
                 )
                 label = issue_discord_label(issue_key, result.get("summary"))
                 agent_url = result.get("agent_url") or ""

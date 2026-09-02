@@ -27,6 +27,7 @@ from bigas.resources.product.jira_automation.comments import (
     issue_discord_label,
 )
 from bigas.tickets.attachments import attachments_text_for_issue
+from bigas.resources.product.fix_version import ensure_active_fix_version
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 from bigas.resources.product.jira_automation.description import (
     PLAN_HEADING,
@@ -422,12 +423,23 @@ class ImplementHandler:
 
         fields = issue.get("fields") or {}
         summary = (fields.get("summary") or "").strip()
+        project = fields.get("project") if isinstance(fields.get("project"), dict) else {}
+        project_key = (project.get("key") or "").strip().upper()
+        if not project_key and issue_key and "-" in issue_key:
+            project_key = issue_key.split("-", 1)[0].upper()
+        labels = fields.get("labels") or []
         description_plain = adf_to_plain_text(fields.get("description"))
         brief = extract_brief(description_plain) or description_plain or summary
         research = extract_section(description_plain, RESEARCH_HEADING)
         plan = extract_section(description_plain, PLAN_HEADING)
-        workstream = resolve_workstream(fields.get("labels") or [])
+        workstream = resolve_workstream(labels)
         build_prompt = implement_prompt_for(workstream)
+
+        fix_version = ensure_active_fix_version(
+            self._jira,
+            issue_key=issue_key,
+            project_key=project_key,
+        )
 
         try:
             raw_comments = self._jira.list_comments(issue_key, max_results=50)
@@ -488,6 +500,10 @@ class ImplementHandler:
             f"{BIGAS_COMMENT_MARKER} Implementation started via Cursor cloud agent "
             f"(workstream={workstream}).{skip_note}\n"
             f"Repo: `{repo}` (base `{base_branch}`)\n"
+        )
+        if fix_version:
+            comment += f"Fix version: `{fix_version}`\n"
+        comment += (
             f"Agent: {agent_url or agent_id}\n"
             f"agent_id={agent_id} run_id={run_id}\n"
             f"Left in In Progress (AI) until the PR is merged."
@@ -542,6 +558,7 @@ class ImplementHandler:
             "repo": repo,
             "workstream": workstream,
             "base_branch": base_branch,
+            "fix_version": fix_version,
             "agent_id": agent_id,
             "agent_url": agent_url,
             "run_id": run_id,

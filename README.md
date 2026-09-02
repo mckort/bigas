@@ -296,6 +296,8 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `USE_INTERNAL_BOARD` | `true` (default when Jira is unset) uses the native board; set `false` to require external Jira |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
+| `PROJECT_BRANCH_MAPPING` | Per-project automerge target, e.g. `VFA:staging,DEFAULT:main`. Issues with a `hotfix` label target the production branch instead. Works with Jira and the internal `/board`. |
+| `BIGAS_PROJECT_ACTIVE_FIX_VERSION` | When Jira is not configured, auto-assign this fix version on implement, e.g. `VFA:0.9.0,BIG:1.0.0` |
 | `GITHUB_TOKEN` | GitHub token — PR review, Jira AI repo context, DevOps workflow dispatch (needs Actions write), and self-healing CI PR creation |
 | `GITHUB_WEBHOOK_SECRET` | Shared secret for GitHub `workflow_run` webhooks (`X-Hub-Signature-256`). Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` if unset |
 | `ENABLE_SELF_HEALING_CI` | When `true` (default), process failed GitHub Actions runs and open hotfix PRs. Set `false` to disable |
@@ -394,13 +396,32 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/jira_status_automation
 
 For the exact column names, the project → repo mapping, the Jira Automation rule JSON, and the daily AI-run quota, see **[docs/jira-automation.md](docs/jira-automation.md)**.
 
+### Staging branch, fix versions, and hotfixes (BIG-42)
+
+Some products (e.g. VC Field Assistant) accumulate features on **`staging`** while **`main`** stays production-ready:
+
+| Setting | Purpose |
+|---|---|
+| `PROJECT_BRANCH_MAPPING=VFA:staging,DEFAULT:main` | Cursor implement + fallback PRs target `staging` for VFA; other projects stay on `main` |
+| Jira Fix Version (or `BIGAS_PROJECT_ACTIVE_FIX_VERSION` on the internal board) | Active unreleased version (e.g. `0.9.0`) — assigned automatically when implement starts |
+| `hotfix` Jira/board label | Routes that issue's PR straight to `main`, skipping staging |
+| `@bigas hotfix VFA-123` / `POST cherry_pick_hotfix` | Cherry-picks a merged staging PR onto `main` and opens a hotfix PR |
+| `create_release_notes` + `create_github_release: true` + `mark_released: true` | Semver GitHub Release (`v1.0.0`) plus mark the Fix Version released in Jira |
+
+Copy [`.github/workflows/cherry_pick.yml`](.github/workflows/cherry_pick.yml) into product repos that use staging. Bigas dispatches that workflow via `workflow_dispatch` (a real `git cherry-pick` in CI).
+
 Two more Product tools round out the flow once you're shipping regularly:
 
 ```bash
 # Fix Version → release notes + blog draft + social copy (X, LinkedIn, Facebook, Instagram)
 curl -X POST https://your-service-url.a.run.app/mcp/tools/create_release_notes \
   -H "Content-Type: application/json" \
-  -d '{"fix_version": "1.2.0"}'
+  -d '{"fix_version": "1.2.0", "create_github_release": true, "mark_released": true, "project_key": "VFA"}'
+
+# Cherry-pick one staging fix to main (after merge on staging)
+curl -X POST https://your-service-url.a.run.app/mcp/tools/cherry_pick_hotfix \
+  -H "Content-Type: application/json" \
+  -d '{"issue_key": "VFA-123"}'
 ```
 
 `progress_updates` does the same for issues moved to Done in the last N days, posting a team progress summary to Discord and — when chat is enabled — the Product Manager thread.
@@ -678,7 +699,8 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST lookup_jira` | Look up one or more Jira issues (including parent Epic) and/or list open Epics. Accepts a range such as `BIG-15 to BIG-18`. Shared by every chat agent. Does not decide whether a new ticket should use that parent |
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
-| `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy |
+| `POST create_release_notes` | Jira Fix Version → release notes + blog draft + social copy; optional semver GitHub Release and Jira “released” |
+| `POST cherry_pick_hotfix` | Cherry-pick a merged staging PR to `main` and open a hotfix PR (`@bigas hotfix ISSUE-KEY`) |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord and Product Manager chat |
 | `POST generate_weekly_x_post` | Last N days of internal-board Done + git (+ Jira if configured) → one X draft per mapped account → Discord and Product Manager chat Approve/Skip per account |
 | `POST weekly_okr_pulse` | Mechanical Monday OKR pulse from `/objectives` (KR health, pace, stale currents, unlinked Done with sample size, pending human gates) → Chief of Staff chat. Optional LLM comment cannot replace the counts |

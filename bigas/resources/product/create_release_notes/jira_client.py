@@ -271,6 +271,112 @@ class JiraClient:
             return override
         return list(self._config.project_keys)
 
+    def list_project_versions(self, project_key: str) -> List[Dict[str, Any]]:
+        """Return all fix versions for a Jira project."""
+        key = (project_key or "").strip().upper()
+        if not key:
+            raise JiraError("project_key is required")
+        url = f"{self._config.base_url}/rest/api/3/project/{key}/versions"
+        data = self._request_with_retry_429("GET", url)
+        return list(data) if isinstance(data, list) else []
+
+    def get_active_fix_version(self, project_key: str) -> Optional[Dict[str, Any]]:
+        """
+        Return the earliest unreleased fix version for a project, or None.
+
+        Sorts by releaseDate when set, otherwise by startDate, otherwise name.
+        """
+        versions = self.list_project_versions(project_key)
+        unreleased = [v for v in versions if not v.get("released")]
+        if not unreleased:
+            return None
+
+        def sort_key(item: Dict[str, Any]) -> tuple:
+            release_date = (item.get("releaseDate") or "").strip()
+            start_date = (item.get("startDate") or "").strip()
+            name = (item.get("name") or "").strip()
+            return (release_date or start_date or "9999-12-31", name)
+
+        unreleased.sort(key=sort_key)
+        return unreleased[0]
+
+    def ensure_issue_fix_version(
+        self,
+        issue_key: str,
+        *,
+        project_key: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Assign the active unreleased fix version when the issue has none.
+
+        Returns the fix version name applied, or None when skipped.
+        """
+        key = (issue_key or "").strip()
+        if not key:
+            raise JiraError("issue_key is required")
+
+        issue = self.get_issue(key, fields=["fixVersions", "project"])
+        fields = issue.get("fields") or {}
+        existing = fields.get("fixVersions") or []
+        if existing:
+            first = existing[0]
+            if isinstance(first, dict):
+                return (first.get("name") or "").strip() or None
+            return str(first).strip() or None
+
+        proj = (project_key or "").strip().upper()
+        if not proj:
+            project = fields.get("project") if isinstance(fields.get("project"), dict) else {}
+            proj = str(project.get("key") or "").strip().upper()
+        if not proj:
+            raise JiraError(f"Could not resolve project for {key}")
+
+        active = self.get_active_fix_version(proj)
+        if not active:
+            return None
+
+        version_id = str(active.get("id") or "").strip()
+        version_name = (active.get("name") or "").strip()
+        if not version_id or not version_name:
+            return None
+
+        url = f"{self._config.base_url}/rest/api/3/issue/{key}"
+        payload = {"fields": {"fixVersions": [{"id": version_id}]}}
+        self._request_with_retry_429("PUT", url, json=payload, expect_json=False)
+        return version_name
+
+    def mark_fix_version_released(
+        self,
+        *,
+        project_key: str,
+        version_name: str,
+        release_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Mark a project fix version as released in Jira."""
+        proj = (project_key or "").strip().upper()
+        name = (version_name or "").strip()
+        if not proj or not name:
+            raise JiraError("project_key and version_name are required")
+
+        match = None
+        for version in self.list_project_versions(proj):
+            if (version.get("name") or "").strip() == name:
+                match = version
+                break
+        if not match:
+            raise JiraError(f"Fix version {name!r} not found in project {proj}")
+
+        version_id = str(match.get("id") or "").strip()
+        if not version_id:
+            raise JiraError(f"Fix version {name!r} has no id")
+
+        url = f"{self._config.base_url}/rest/api/3/version/{version_id}"
+        body: Dict[str, Any] = {"released": True}
+        if release_date:
+            body["releaseDate"] = release_date
+        self._request_with_retry_429("PUT", url, json=body, expect_json=False)
+        return {"ok": True, "project_key": proj, "version_name": name, "version_id": version_id}
+
     def search_issues_by_fix_version(
         self,
         *,

@@ -122,10 +122,20 @@ class InternalTicketAutomation:
                 )
                 self._notify_cto(issue_key, result, self._config.status_design_approval)
             else:
+                ticket = self._adapter._ticket(issue_key)
+                labels = []
+                if ticket:
+                    from bigas.tickets.labels import resolve_ticket_labels
+
+                    labels = resolve_ticket_labels(ticket)
                 result = ImplementHandler(jira=jira).run(
                     issue_key=issue_key,
                     repo=repo,
-                    base_branch=self._config.base_branch_for_repo(repo),
+                    base_branch=self._config.automerge_branch_for_project(
+                        project_key,
+                        repo,
+                        labels=labels,
+                    ),
                 )
                 self._notify_cto_implement(issue_key, result, repo)
             return {"ok": True, "handler": handler, "issue_key": issue_key, **(result or {})}
