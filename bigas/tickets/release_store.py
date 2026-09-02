@@ -23,7 +23,7 @@ def _sort_releases(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         released = 1 if item.get("released") else 0
         return (released, parsed)
 
-    return sorted(items, key=key)
+    return sorted(items, key=key, reverse=True)
 
 
 def _compose_release(
@@ -198,12 +198,12 @@ class FirestoreReleaseStore:
         name: str,
         is_default: bool = False,
     ) -> Dict[str, Any]:
+        from google.cloud import firestore
+
         proj = (project_key or "").strip().upper()
         if not proj:
             raise ValueError("project_key is required")
         normalized = normalize_version_name(name)
-        if self.get_release_by_name(proj, normalized):
-            raise ValueError(f"Release {normalized} already exists for {proj}")
         release_id = str(uuid.uuid4())
         item = _compose_release(
             release_id=release_id,
@@ -211,10 +211,31 @@ class FirestoreReleaseStore:
             name=normalized,
             is_default=bool(is_default),
         )
-        if is_default:
-            self._clear_default(proj)
-        self._col.document(release_id).set(item)
-        return item
+
+        @firestore.transactional
+        def _create(transaction):
+            docs = list(
+                self._col.where("project_key", "==", proj)
+                .where("name", "==", normalized)
+                .limit(1)
+                .stream(transaction=transaction)
+            )
+            if docs:
+                raise ValueError(f"Release {normalized} already exists for {proj}")
+            if is_default:
+                for doc in self._col.where("project_key", "==", proj).where(
+                    "is_default", "==", True
+                ).stream(transaction=transaction):
+                    if doc.exists:
+                        transaction.update(
+                            doc.reference,
+                            {"is_default": False, "updated_at": _utcnow_iso()},
+                        )
+            transaction.set(self._col.document(release_id), item)
+            return item
+
+        transaction = self._db.transaction()
+        return _create(transaction)
 
     def _clear_default(self, project_key: str) -> None:
         for item in self.list_releases(project_key):

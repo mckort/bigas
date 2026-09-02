@@ -15,11 +15,13 @@ os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 from bigas.tickets import store as ticket_store_module
 from bigas.tickets.release_store import get_release_store, reset_release_store_for_tests
 from bigas.tickets.releases import (
+    ReleaseError,
     close_release,
     close_release_from_deploy_ref,
     create_release,
     delete_release,
     maybe_close_board_release_from_workflow,
+    ship_release,
 )
 from bigas.tickets.semver import next_product_release, version_from_git_ref
 from bigas.tickets.store import get_ticket_store
@@ -93,12 +95,72 @@ def test_close_moves_open_tickets_to_next_minor(monkeypatch):
 
 
 def test_close_from_semver_deploy_ref(monkeypatch):
-    monkeypatch.setattr("bigas.tickets.releases._publish_github_release", lambda *a, **k: None)
+    publish_calls = []
+    monkeypatch.setattr(
+        "bigas.tickets.releases._publish_github_release",
+        lambda *a, **k: publish_calls.append((a, k)) or None,
+    )
     monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", lambda *a, **k: None)
     create_release("VFA", name="0.9.0")
     assert close_release_from_deploy_ref("VFA", "main") is None
     closed = close_release_from_deploy_ref("VFA", "v0.9.0")
     assert closed["release"]["released"] is True
+    assert publish_calls == []
+
+
+def test_close_release_already_released_skips_github(monkeypatch):
+    publish_calls = []
+    monkeypatch.setattr(
+        "bigas.tickets.releases._publish_github_release",
+        lambda *a, **k: publish_calls.append(1),
+    )
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", lambda *a, **k: None)
+    create_release("VFA", name="0.9.0")
+    close_release("VFA", "0.9.0", create_github=False)
+    result = close_release("VFA", "0.9.0", create_github=True)
+    assert result["already_released"] is True
+    assert publish_calls == []
+
+
+def test_list_releases_newest_first():
+    create_release("VFA", name="0.9.0")
+    create_release("VFA", name="0.10.0")
+    create_release("VFA", name="0.8.0")
+    names = [item["name"] for item in get_release_store().list_releases("VFA")]
+    assert names == ["0.10.0", "0.9.0", "0.8.0"]
+
+
+def test_ship_release_retries_deploy_after_partial_failure(monkeypatch):
+    publish_calls = []
+    deploy_calls = []
+
+    def _publish(*args, **kwargs):
+        publish_calls.append(1)
+        return {"tag_name": "v0.9.0", "html_url": "https://github.example/release"}
+
+    def _deploy(**kwargs):
+        deploy_calls.append(kwargs)
+        if len(deploy_calls) == 1:
+            from bigas.resources.devops.service import DevOpsError
+
+            raise DevOpsError("deploy failed")
+        return {"workflow_run_id": 42}
+
+    monkeypatch.setattr("bigas.tickets.releases._publish_github_release", _publish)
+    monkeypatch.setattr("bigas.resources.devops.service.trigger_deployment", _deploy)
+    create_release("VFA", name="0.9.0")
+
+    with pytest.raises(ReleaseError, match="deploy failed"):
+        ship_release("VFA", "0.9.0")
+
+    assert len(publish_calls) == 1
+    assert len(deploy_calls) == 1
+
+    result = ship_release("VFA", "0.9.0")
+    assert len(publish_calls) == 1
+    assert len(deploy_calls) == 2
+    assert result["deploy"]["workflow_run_id"] == 42
+    assert result["github_release"]["tag_name"] == "v0.9.0"
 
 
 def test_adapter_prefers_board_default_over_env(monkeypatch):

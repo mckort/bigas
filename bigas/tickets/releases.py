@@ -193,23 +193,18 @@ def close_release(
     if not item:
         raise ReleaseError(f"Release {name} not found for {proj}")
 
-    gh_release = None
-    if create_github:
-        gh_release = _publish_github_release(proj, name, target_ref=target_ref)
-
     if item.get("released"):
         return {
             "release": item,
             "already_released": True,
             "moved": [],
             "next_version": None,
-            "github_release": {
-                "tag_name": (gh_release or {}).get("tag_name"),
-                "html_url": (gh_release or {}).get("html_url"),
-            }
-            if gh_release
-            else None,
+            "github_release": None,
         }
+
+    gh_release = None
+    if create_github:
+        gh_release = _publish_github_release(proj, name, target_ref=target_ref)
 
     tag_name = None
     try:
@@ -294,7 +289,7 @@ def close_release_from_deploy_ref(
     if not get_release_store().get_release_by_name(proj, version):
         return None
     try:
-        return close_release(proj, version, target_ref=ref, create_github=True)
+        return close_release(proj, version, target_ref=ref, create_github=False)
     except ReleaseError as exc:
         logger.warning("Could not close %s %s after deploy: %s", proj, version, exc)
         return None
@@ -319,13 +314,18 @@ def ship_release(
     if item.get("released"):
         raise ReleaseError(f"{name} is already released")
 
-    tag_name = normalize_semver_tag(name)
-    gh_release = _publish_github_release(proj, name, target_ref=target_ref)
-    if gh_release:
-        get_release_store().update_release(
-            item["release_id"],
-            git_tag=gh_release.get("tag_name") or tag_name,
-        )
+    tag_name = (item.get("git_tag") or "").strip() or normalize_semver_tag(name)
+    gh_release = None
+    if (item.get("git_tag") or "").strip():
+        gh_release = {"tag_name": tag_name}
+    else:
+        gh_release = _publish_github_release(proj, name, target_ref=target_ref)
+        if gh_release:
+            tag_name = gh_release.get("tag_name") or tag_name
+            get_release_store().update_release(
+                item["release_id"],
+                git_tag=tag_name,
+            )
 
     deploy_result = None
     if deploy:
