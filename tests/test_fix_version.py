@@ -7,6 +7,7 @@ import pytest
 
 from bigas.resources.product.fix_version import ensure_active_fix_version
 from bigas.tickets.jira_adapter import TicketJiraAdapter
+from bigas.tickets.release_store import reset_release_store_for_tests
 
 
 def test_ensure_active_fix_version_jira_client():
@@ -19,6 +20,7 @@ def test_ensure_active_fix_version_jira_client():
 
 
 def test_ticket_adapter_assigns_active_fix_version(monkeypatch):
+    reset_release_store_for_tests()
     monkeypatch.setenv("BIGAS_PROJECT_ACTIVE_FIX_VERSION", "VFA:0.9.0")
     store = TicketJiraAdapter()._store
     board = store.create_board("dev-user", name="VFA Board", project_key="VFA")

@@ -472,3 +472,96 @@ def okr_demo_seed():
             "dashboard": build_okr_dashboard(store, user_id=user_id),
         }
     ), 201
+
+
+def _user_can_access_project(user_id: str, project_key: str) -> bool:
+    from bigas.tickets.store import get_ticket_store
+
+    proj = (project_key or "").strip().upper()
+    if not proj:
+        return False
+    store = get_ticket_store()
+    return any(board.get("project_key") == proj for board in store.list_boards(user_id))
+
+
+@tickets_bp.route("/api/projects/<project_key>/releases", methods=["GET", "POST"])
+@require_chat_auth
+def project_releases(project_key: str):
+    from bigas.tickets.releases import ReleaseError, create_release, list_releases
+
+    user_id = g.chat_user["uid"]
+    proj = (project_key or "").strip().upper()
+    if not _user_can_access_project(user_id, proj):
+        return jsonify({"error": "Board not found"}), 404
+    if request.method == "GET":
+        return jsonify({"releases": list_releases(proj)})
+
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    try:
+        release = create_release(
+            proj,
+            name=name,
+            is_default=bool(body.get("is_default")),
+        )
+    except ReleaseError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"release": release}), 201
+
+
+@tickets_bp.route(
+    "/api/projects/<project_key>/releases/<release_id>",
+    methods=["DELETE", "PUT"],
+)
+@require_chat_auth
+def project_release_detail(project_key: str, release_id: str):
+    from bigas.tickets.releases import ReleaseError, delete_release, set_default_release
+
+    user_id = g.chat_user["uid"]
+    proj = (project_key or "").strip().upper()
+    if not _user_can_access_project(user_id, proj):
+        return jsonify({"error": "Board not found"}), 404
+    if request.method == "DELETE":
+        if delete_release(proj, release_id):
+            return jsonify({"ok": True})
+        return jsonify({"error": "Release not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    if "is_default" not in body:
+        return jsonify({"error": "is_default is required"}), 400
+    try:
+        release = set_default_release(proj, release_id, bool(body.get("is_default")))
+    except ReleaseError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"release": release})
+
+
+@tickets_bp.route(
+    "/api/projects/<project_key>/releases/<release_id>/ship",
+    methods=["POST"],
+)
+@require_chat_auth
+def project_release_ship(project_key: str, release_id: str):
+    from bigas.tickets.release_store import get_release_store
+    from bigas.tickets.releases import ReleaseError, ship_release
+
+    user_id = g.chat_user["uid"]
+    proj = (project_key or "").strip().upper()
+    if not _user_can_access_project(user_id, proj):
+        return jsonify({"error": "Board not found"}), 404
+    item = get_release_store().get_release(release_id)
+    if not item or (item.get("project_key") or "").upper() != proj:
+        return jsonify({"error": "Release not found"}), 404
+    body = request.get_json(silent=True) or {}
+    try:
+        result = ship_release(
+            proj,
+            item["name"],
+            target_ref=(body.get("target_ref") or "").strip() or None,
+            deploy=body.get("deploy", True),
+        )
+    except ReleaseError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result)

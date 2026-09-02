@@ -255,3 +255,35 @@ export async function seedOkrDemo(force = false) {
     body: JSON.stringify({ force }),
   })
 }
+
+export async function fetchProjectReleases(projectKey) {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectKey)}/releases`)
+}
+
+export async function createProjectRelease(projectKey, payload) {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectKey)}/releases`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteProjectRelease(projectKey, releaseId) {
+  return apiFetch(
+    `/api/projects/${encodeURIComponent(projectKey)}/releases/${encodeURIComponent(releaseId)}`,
+    { method: 'DELETE' },
+  )
+}
+
+export async function updateProjectRelease(projectKey, releaseId, payload) {
+  return apiFetch(
+    `/api/projects/${encodeURIComponent(projectKey)}/releases/${encodeURIComponent(releaseId)}`,
+    { method: 'PUT', body: JSON.stringify(payload) },
+  )
+}
+
+export async function shipProjectRelease(projectKey, releaseId, payload = {}) {
+  return apiFetch(
+    `/api/projects/${encodeURIComponent(projectKey)}/releases/${encodeURIComponent(releaseId)}/ship`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+}
