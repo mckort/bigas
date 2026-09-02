@@ -193,13 +193,89 @@ class TicketJiraAdapter:
             out.append(self._format_issue(ticket))
         return out
 
+    def list_project_versions(self, project_key: str) -> List[Dict[str, Any]]:
+        from bigas.tickets.release_store import get_release_store
+
+        items = get_release_store().list_releases(project_key)
+        return [
+            {
+                "id": item.get("release_id"),
+                "name": item.get("name"),
+                "released": bool(item.get("released")),
+                "releaseDate": item.get("released_at"),
+            }
+            for item in items
+        ]
+
+    def get_active_fix_version(self, project_key: str) -> Optional[Dict[str, Any]]:
+        from bigas.tickets.releases import default_fix_version
+
+        name = default_fix_version(project_key)
+        if not name:
+            return None
+        return {"name": name, "released": False}
+
+    def search_issues_by_fix_version(
+        self,
+        *,
+        fix_version: str,
+        jql_extra: str = "",
+        project_keys: Optional[List[str]] = None,
+        fields: Optional[List[str]] = None,
+        max_results_per_page: int = 50,
+        max_pages: int = 50,
+    ) -> List[Dict[str, Any]]:
+        del jql_extra, fields, max_results_per_page, max_pages
+        wanted = (fix_version or "").strip()
+        keys = [
+            str(k).strip().upper()
+            for k in (project_keys or [])
+            if str(k).strip()
+        ]
+        tickets: List[Dict[str, Any]] = []
+        for key in keys:
+            tickets.extend(self._store.list_tickets_by_project(key))
+        out = []
+        for ticket in tickets:
+            if (ticket.get("fix_version") or "").strip() != wanted:
+                continue
+            out.append(self._format_issue(ticket))
+        return out
+
+    def mark_fix_version_released(
+        self,
+        *,
+        project_key: str,
+        version_name: str,
+        release_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        del release_date
+        from bigas.tickets.releases import ReleaseError, close_release
+
+        try:
+            result = close_release(
+                project_key,
+                version_name,
+                create_github=False,
+            )
+        except ReleaseError as exc:
+            raise JiraError(str(exc)) from exc
+        return {
+            "ok": True,
+            "project_key": (project_key or "").strip().upper(),
+            "version_name": version_name,
+            "moved": result.get("moved") or [],
+        }
+
     def ensure_issue_fix_version(
         self,
         issue_key: str,
         *,
         project_key: Optional[str] = None,
     ) -> Optional[str]:
-        """Assign BIGAS_PROJECT_ACTIVE_FIX_VERSION when ticket has no fix_version."""
+        """Assign the board default (or env fallback) when ticket has no fix_version."""
+        from bigas.tickets.releases import default_fix_version
+
         ticket = self._ticket(issue_key)
         if not ticket:
             raise JiraError(f"Ticket {issue_key} not found")
@@ -218,7 +294,7 @@ class TicketJiraAdapter:
         if not proj and issue_key and "-" in issue_key:
             proj = issue_key.split("-", 1)[0].upper()
 
-        active = active_fix_version_from_env(proj)
+        active = default_fix_version(proj) or active_fix_version_from_env(proj)
         if not active:
             return None
 

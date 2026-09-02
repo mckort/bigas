@@ -2,16 +2,21 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import {
   addTicketComment,
   createBoard,
+  createProjectRelease,
   createTicket,
   deleteBoard,
+  deleteProjectRelease,
   deleteTicket,
   deleteTicketAttachment,
   fetchBoardJiraSyncStatus,
   fetchBoards,
   fetchBoardTickets,
+  fetchProjectReleases,
   fetchTicket,
   fetchTicketAttachmentBlob,
   fetchTicketByKey,
+  shipProjectRelease,
+  updateProjectRelease,
   updateTicket,
   uploadTicketAttachment,
 } from '../lib/api'
@@ -301,6 +306,14 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
         <div className="flex items-center gap-1.5 min-w-0">
           <TicketAiMark status={ticket.status} />
           <span className="text-[11px] font-mono text-muted truncate">{ticket.key}</span>
+          {ticket.fix_version && (
+            <span
+              className="text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted flex-shrink-0 font-mono"
+              title={`Release ${ticket.fix_version}`}
+            >
+              {ticket.fix_version}
+            </span>
+          )}
           {isObjective(ticket) && (
             <span className="chip-accent flex-shrink-0">
               Objective
@@ -796,14 +809,14 @@ function TicketComments({ ticketId }) {
   )
 }
 
-function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, initialParentKrId, epics, saveError, onSaveError, onClose, onSave, onDelete }) {
+function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, initialParentKrId, epics, releases, saveError, onSaveError, onClose, onSave, onDelete }) {
   const labelEditorRef = useRef(null)
   const [form, setForm] = useState({
     title: ticket?.title || '',
     description: ticket?.description || '',
     status: ticket?.status || initialStatus || columns[0] || 'To Do',
     assignee: ticket?.assignee || '',
-    fix_version: ticket?.fix_version || '',
+    fix_version: ticket?.fix_version || (releases || []).find((item) => item.is_default && !item.released)?.name || '',
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
     parent_key: ticket ? ticketParentKey(ticket) : (initialParentKey || ''),
@@ -1055,13 +1068,25 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
           </label>
           {board?.workflow_enabled && (
             <label className="block text-sm">
-              <span className="text-muted text-xs">Fix version</span>
-              <input
+              <span className="text-muted text-xs">Release</span>
+              <select
                 value={form.fix_version}
                 onChange={(e) => setForm({ ...form, fix_version: e.target.value })}
-                placeholder="e.g. v1.2.0"
                 className="mt-1 input-field"
-              />
+              >
+                <option value="">None</option>
+                {(releases || []).map((release) => (
+                  <option key={release.release_id || release.name} value={release.name}>
+                    {release.name}
+                    {release.released ? ' (released)' : ''}
+                    {release.is_default ? ' · default' : ''}
+                  </option>
+                ))}
+                {form.fix_version &&
+                  !(releases || []).some((release) => release.name === form.fix_version) && (
+                    <option value={form.fix_version}>{form.fix_version}</option>
+                  )}
+              </select>
             </label>
           )}
           <LabelEditorWithRef
@@ -1251,6 +1276,178 @@ function BoardSidebar({ boards, activeBoardId, onSelect, onCreate, onDelete, onL
   )
 }
 
+function ReleasesPanel({ projectKey, releases, onClose, onChanged }) {
+  const [name, setName] = useState('')
+  const [makeDefault, setMakeDefault] = useState(false)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const unreleased = (releases || []).filter((item) => !item.released)
+  const released = (releases || []).filter((item) => item.released)
+
+  const run = async (fn) => {
+    setBusy(true)
+    setError('')
+    try {
+      await fn()
+      await onChanged()
+    } catch (err) {
+      setError(err.message || 'Request failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 modal-overlay" onClick={onClose} aria-hidden="true" />
+      <div className="relative bg-elevated w-full sm:max-w-lg rounded-t-xl sm:rounded-xl shadow-card max-h-[90vh] flex flex-col">
+        <div className="p-4 border-b border-border flex items-center justify-between">
+          <h3 className="font-semibold">Releases · {projectKey}</h3>
+          <button type="button" onClick={onClose} className="p-2 min-w-[44px] min-h-[44px]" aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <div className="p-4 overflow-y-auto flex-1 space-y-4">
+          <form
+            className="space-y-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!name.trim()) return
+              run(async () => {
+                await createProjectRelease(projectKey, {
+                  name: name.trim(),
+                  is_default: makeDefault,
+                })
+                setName('')
+                setMakeDefault(false)
+              })
+            }}
+          >
+            <label className="block text-sm">
+              <span className="text-muted text-xs">New version (X.Y.Z)</span>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="0.10.0"
+                className="mt-1 input-field"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={makeDefault}
+                onChange={(e) => setMakeDefault(e.target.checked)}
+              />
+              Default for new implement
+            </label>
+            <button
+              type="submit"
+              disabled={busy || !name.trim()}
+              className="btn-accent px-3 py-2 rounded-lg text-sm min-h-[44px] disabled:opacity-50"
+            >
+              Create
+            </button>
+          </form>
+
+          <section>
+            <h4 className="text-xs uppercase tracking-wide text-muted mb-2">Unreleased</h4>
+            {unreleased.length === 0 && <p className="text-sm text-muted">None yet.</p>}
+            <ul className="space-y-2">
+              {unreleased.map((release) => (
+                <li
+                  key={release.release_id}
+                  className="border border-border rounded-lg p-3 flex flex-col gap-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-sm">
+                      {release.name}
+                      {release.is_default ? ' · default' : ''}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="text-xs px-2 py-1 rounded-lg border border-border min-h-[32px]"
+                        onClick={() =>
+                          run(() =>
+                            updateProjectRelease(projectKey, release.release_id, {
+                              is_default: !release.is_default,
+                            }),
+                          )
+                        }
+                      >
+                        {release.is_default ? 'Unset default' : 'Make default'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="text-xs px-2 py-1 rounded-lg border border-border min-h-[32px]"
+                        onClick={() => {
+                          if (!window.confirm(`Ship ${release.name}? This creates a GitHub release and deploys that tag.`)) {
+                            return
+                          }
+                          run(() => shipProjectRelease(projectKey, release.release_id))
+                        }}
+                      >
+                        Ship
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="text-xs text-red-600 px-2 py-1 min-h-[32px]"
+                        onClick={() => {
+                          if (!window.confirm(`Delete ${release.name} from the board? GitHub is left unchanged.`)) {
+                            return
+                          }
+                          run(() => deleteProjectRelease(projectKey, release.release_id))
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section>
+            <h4 className="text-xs uppercase tracking-wide text-muted mb-2">Released</h4>
+            {released.length === 0 && <p className="text-sm text-muted">None yet.</p>}
+            <ul className="space-y-2">
+              {released.map((release) => (
+                <li
+                  key={release.release_id}
+                  className="border border-border rounded-lg p-3 flex items-center justify-between gap-2"
+                >
+                  <span className="font-mono text-sm">
+                    {release.name}
+                    {release.git_tag ? ` · ${release.git_tag}` : ''}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="text-xs text-red-600 px-2 py-1 min-h-[32px]"
+                    onClick={() => {
+                      if (!window.confirm(`Delete ${release.name} from the board? GitHub keeps the release.`)) {
+                        return
+                      }
+                      run(() => deleteProjectRelease(projectKey, release.release_id))
+                    }}
+                  >
+                    Delete
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchView, onOpenSettings, boardRefreshKey = 0 }) {
   const [boards, setBoards] = useState([])
   const [activeBoardId, setActiveBoardId] = useState(null)
@@ -1265,6 +1462,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [pendingTicketKey, setPendingTicketKey] = useState(null)
   const [syncMessage, setSyncMessage] = useState('')
   const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
+  const [versionFilter, setVersionFilter] = useState('')
+  const [releases, setReleases] = useState([])
+  const [showReleases, setShowReleases] = useState(false)
   const optimisticTicketsRef = useRef([])
 
   const activeBoard = boards.find((b) => b.board_id === activeBoardId)
@@ -1274,7 +1474,11 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const krsById = Object.fromEntries(
     tickets.flatMap((ticket) => keyResultsOf(ticket).filter((kr) => kr.id).map((kr) => [kr.id, kr])),
   )
-  const visibleTickets = tickets.filter((ticket) => ticketMatchesObjectiveFilter(ticket, epicFilter))
+  const visibleTickets = tickets.filter((ticket) => {
+    if (!ticketMatchesObjectiveFilter(ticket, epicFilter)) return false
+    if (!versionFilter) return true
+    return (ticket.fix_version || '') === versionFilter
+  })
   const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
   const loadBoards = useCallback(async () => {
@@ -1295,6 +1499,20 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     optimisticTicketsRef.current = upsertTicket(optimisticTicketsRef.current, ticket)
     setTickets((prev) => upsertTicket(prev, ticket))
   }, [])
+
+  const loadReleases = useCallback(async () => {
+    const projectKey = activeBoard?.project_key
+    if (!projectKey) {
+      setReleases([])
+      return
+    }
+    try {
+      const data = await fetchProjectReleases(projectKey)
+      setReleases(data.releases || [])
+    } catch {
+      setReleases([])
+    }
+  }, [activeBoard?.project_key])
 
   const loadTickets = useCallback(async () => {
     if (!activeBoardId) return
@@ -1320,15 +1538,17 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   useEffect(() => {
     loadTickets()
+    loadReleases()
     const id = setInterval(() => loadTickets(), 5000)
     return () => clearInterval(id)
-  }, [loadTickets])
+  }, [loadTickets, loadReleases])
 
   useEffect(() => {
     if (!boardRefreshKey) return
     loadBoards()
     loadTickets()
-  }, [boardRefreshKey, loadBoards, loadTickets])
+    loadReleases()
+  }, [boardRefreshKey, loadBoards, loadTickets, loadReleases])
 
   useEffect(() => {
     if (!activeBoardId) return
@@ -1617,6 +1837,30 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
             </div>
           </div>
           <div className="flex items-center gap-2 min-w-0">
+            {activeBoard?.project_key && (
+              <button
+                type="button"
+                onClick={() => setShowReleases(true)}
+                className="text-sm btn-secondary px-3 py-2 min-h-[44px]"
+              >
+                Releases
+              </button>
+            )}
+            {releases.length > 0 && (
+              <select
+                value={versionFilter}
+                onChange={(e) => setVersionFilter(e.target.value)}
+                className="flex-1 min-w-0 text-sm lg:flex-none lg:max-w-[140px] input-field"
+                aria-label="Filter by release"
+              >
+                <option value="">All releases</option>
+                {releases.map((release) => (
+                  <option key={release.release_id} value={release.name}>
+                    {release.name}
+                  </option>
+                ))}
+              </select>
+            )}
             {showEpicFilter && (
               <select
                 value={epicFilter}
@@ -1759,11 +2003,20 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           initialParentKey={parentKeyFromFilter(epicFilter, tickets)}
           initialParentKrId={parentKrIdFromFilter(epicFilter)}
           epics={epicOptions}
+          releases={releases}
           saveError={modalSaveError}
           onSaveError={setModalSaveError}
           onClose={closeModal}
           onSave={handleSave}
           onDelete={handleDeleteTicket}
+        />
+      )}
+      {showReleases && activeBoard?.project_key && (
+        <ReleasesPanel
+          projectKey={activeBoard.project_key}
+          releases={releases}
+          onClose={() => setShowReleases(false)}
+          onChanged={loadReleases}
         />
       )}
     </div>

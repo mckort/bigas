@@ -242,6 +242,20 @@ def github_workflow_run_webhook():
     if event and event != "workflow_run":
         return jsonify({"ok": True, "ignored": True, "reason": f"event:{event}"}), 200
 
+    try:
+        from bigas.tickets.releases import maybe_close_board_release_from_workflow
+
+        closed = maybe_close_board_release_from_workflow(
+            payload if isinstance(payload, dict) else {}
+        )
+        if closed and not closed.get("already_released"):
+            logger.info(
+                "Closed board release after deploy: %s",
+                (closed.get("release") or {}).get("name"),
+            )
+    except Exception:
+        logger.exception("Board release close from workflow_run failed")
+
     should_run, reason = should_process_workflow_run(payload if isinstance(payload, dict) else {})
     if not should_run:
         return jsonify({"ok": True, "ignored": True, "reason": reason}), 200

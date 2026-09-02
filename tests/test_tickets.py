@@ -26,6 +26,7 @@ from bigas.tickets.jira_import import sync_jira_board
 from bigas.tickets.labels import normalize_label, normalize_labels
 from bigas.tickets.service import comment_author_name, dispatch_ticket_status_automation
 from bigas.tickets.attachments import reset_attachment_blob_store_for_tests, set_image_describer
+from bigas.tickets.release_store import reset_release_store_for_tests
 from bigas.tickets.store import get_ticket_store
 
 _JIRA_ENV_KEYS = (
@@ -43,10 +44,12 @@ def _force_internal_board(monkeypatch):
     for key in _JIRA_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     ticket_store_module._store = None
+    reset_release_store_for_tests()
     reset_attachment_blob_store_for_tests()
     set_image_describer(None)
     yield
     ticket_store_module._store = None
+    reset_release_store_for_tests()
     reset_attachment_blob_store_for_tests()
     set_image_describer(None)
 

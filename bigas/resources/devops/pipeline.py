@@ -300,6 +300,31 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
             log_repo=repo,
         )
     else:
+        if not failed_runs:
+            try:
+                from bigas.tickets.releases import close_release_from_deploy_ref
+
+                closed = close_release_from_deploy_ref(
+                    poll.get("project_key") or poll.get("release_project_key"),
+                    starting_ref,
+                )
+                if closed and not closed.get("already_released"):
+                    moved = closed.get("moved") or []
+                    nxt = closed.get("next_version")
+                    if moved:
+                        _post(
+                            thread_id,
+                            f"**{closed['release'].get('name')} released.** "
+                            f"{len(moved)} open ticket(s) moved to {nxt}.",
+                        )
+                    else:
+                        _post(
+                            thread_id,
+                            f"**{closed['release'].get('name')} released.** "
+                            "No open tickets needed to move.",
+                        )
+            except Exception:
+                logger.exception("Board release close after deploy failed")
         _complete_pipeline_progress(thread_id)
 
 
@@ -498,6 +523,7 @@ def run_chat_deploy_pipeline(
                 "failed_runs": [],
                 "done_run_ids": [],
                 "ref": result.get("ref") or risk.get("head_ref") or "main",
+                "project_key": key,
             },
         )
         return {
