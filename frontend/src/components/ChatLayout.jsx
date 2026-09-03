@@ -608,7 +608,6 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
         if (cancelled) return
         const unreleased = (res.releases || [])
           .filter((item) => !item.released)
-          .slice()
           .sort((a, b) =>
             String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true }),
           )
@@ -672,26 +671,24 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
                   </option>
                 ))}
             </select>
-            <select
+            <input
               value={version}
               onChange={(e) => setVersion(e.target.value)}
-              disabled={disabled || releasesLoading || Boolean(releasesError) || releases.length === 0}
-              className="input-field text-xs min-h-[36px] min-w-[7.5rem] py-1"
+              list="prepare-deploy-versions"
+              placeholder={releasesLoading ? 'Loading…' : '0.1.0'}
+              disabled={disabled}
+              className="input-field text-xs min-h-[36px] w-[5.5rem] py-1"
               aria-label="Release version"
-            >
-              {releasesLoading && <option value="">Loading…</option>}
-              {!releasesLoading && releasesError && <option value="">Failed to load</option>}
-              {!releasesLoading && !releasesError && releases.length === 0 && (
-                <option value="">No unreleased</option>
-              )}
-              {!releasesLoading &&
-                releases.map((release) => (
-                  <option key={release.release_id || release.name} value={release.name}>
-                    {release.name}
-                    {release.is_default ? ' · default' : ''}
-                  </option>
-                ))}
-            </select>
+            />
+            <datalist id="prepare-deploy-versions">
+              {releases.map((release) => (
+                <option
+                  key={release.release_id || release.name}
+                  value={release.name}
+                  label={release.is_default ? `${release.name} · default` : release.name}
+                />
+              ))}
+            </datalist>
             <button
               type="submit"
               disabled={disabled || !projectKey || !version.trim()}
