@@ -30,8 +30,10 @@ from bigas.resources.marketing.meta_ads_portfolio_service import (
     run_meta_campaign_portfolio,
 )
 from bigas.resources.marketing.utils import (
+    STRATEGY_ANALYTICS_REJECT,
     convert_metric_name,
     convert_dimension_name,
+    is_strategy_analytics_question,
     process_ga_response,
     get_date_range_strings,
     validate_date_range,
@@ -1280,6 +1282,9 @@ def ask_analytics_question():
     # Validate question length
     if len(question) > 500:
         return jsonify({"error": "Question too long (max 500 characters)"}), 400
+
+    if is_strategy_analytics_question(question):
+        return jsonify({"error": STRATEGY_ANALYTICS_REJECT}), 400
 
     property_id, project_key, ga4_error = resolve_ga4_property(
         question,

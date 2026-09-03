@@ -1,8 +1,17 @@
 """Marketing NL query parsing and MCP-facing flags."""
 from __future__ import annotations
 
+import sys
+
+import pytest
+
 from bigas.resources.marketing.marketing_llm_service import MarketingLLMService
-from bigas.resources.marketing.utils import extract_json_object, request_flag
+from bigas.resources.marketing.utils import (
+    STRATEGY_ANALYTICS_REJECT,
+    extract_json_object,
+    is_strategy_analytics_question,
+    request_flag,
+)
 
 
 def test_extract_json_object_from_markdown_fence():
@@ -39,6 +48,47 @@ print("not json")
 Use this: {"metrics": ["sessions"], "dimensions": ["country"]}"""
     parsed = extract_json_object(raw)
     assert parsed == {"metrics": ["sessions"], "dimensions": ["country"]}
+
+
+def test_is_strategy_analytics_question_rejects_briefs_not_metrics():
+    brief = (
+        "Review GPWW-17 (10 paying customers before the end of the year) and "
+        "provide a concrete organic growth, SEO, and content strategy to increase "
+        "website sessions and /store pageviews without using paid ads. "
+        "Look at GA4 data if needed to see current baseline."
+    )
+    assert is_strategy_analytics_question(brief) is True
+    assert is_strategy_analytics_question("Sessions last 28 days") is False
+    assert is_strategy_analytics_question(
+        "Sessions last 90 days by sessionDefaultChannelGroup"
+    ) is False
+    assert is_strategy_analytics_question("SEO traffic last 30 days") is False
+    assert is_strategy_analytics_question("How is inbound traffic going recently?") is False
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="marketing endpoints need Python 3.10+")
+def test_ask_analytics_endpoint_rejects_strategy_brief():
+    from flask import Flask
+
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    client = app.test_client()
+    resp = client.post(
+        "/mcp/tools/ask_analytics_question",
+        json={
+            "question": (
+                "Provide a concrete organic growth, SEO, and content strategy "
+                "to increase website sessions without using paid ads."
+            ),
+            "project_key": "GPWW",
+        },
+    )
+    assert resp.status_code == 400
+    error = (resp.get_json() or {}).get("error") or ""
+    assert "factual GA4" in error
+    assert STRATEGY_ANALYTICS_REJECT[:40] in error
 
 
 def test_request_flag_defaults_and_strings():
