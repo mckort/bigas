@@ -203,6 +203,9 @@ def create_app():
         return (
             path in public_paths
             or path == "/"
+            or path == "/login"
+            or path.startswith("/login/")
+            or path == "/robots.txt"
             or path == "/board"
             or path.startswith("/board/")
             or path == "/objectives"

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Login from './components/Login'
+import Landing from './components/Landing'
 import ChatLayout from './components/ChatLayout'
 import BoardLayout from './components/BoardLayout'
 import ObjectivesLayout from './components/ObjectivesLayout'
@@ -8,25 +9,50 @@ import MobileNav from './components/MobileNav'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 
+function currentPath() {
+  return window.location.pathname || '/'
+}
+
 function isBoardPath(path) {
   return path === '/board' || path.startsWith('/board/')
 }
 
-function initialView() {
-  const path = window.location.pathname || ''
+function isObjectivesPath(path) {
+  return path === '/objectives' || path.startsWith('/objectives/')
+}
+
+function isLoginPath(path) {
+  return path === '/login' || path.startsWith('/login/')
+}
+
+function isAppPath(path) {
+  return isBoardPath(path) || isObjectivesPath(path)
+}
+
+function initialView(path = currentPath()) {
   if (isBoardPath(path)) return 'board'
-  if (path.startsWith('/objectives')) return 'objectives'
+  if (isObjectivesPath(path)) return 'objectives'
   return 'chat'
 }
 
 export default function App() {
   const [ready, setReady] = useState(false)
   const [user, setUser] = useState(null)
-  const [view, setView] = useState(initialView)
+  const [view, setView] = useState(() => initialView())
+  const [locationPath, setLocationPath] = useState(currentPath)
   const [discussContext, setDiscussContext] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [agentsRefreshKey, setAgentsRefreshKey] = useState(0)
   const [boardRefreshKey, setBoardRefreshKey] = useState(0)
+
+  const syncPath = (path, { replace = false } = {}) => {
+    const next = path || '/'
+    if (`${currentPath()}${window.location.search}` !== next) {
+      if (replace) window.history.replaceState({}, '', next)
+      else window.history.pushState({}, '', next)
+    }
+    setLocationPath(next.split('?')[0] || '/')
+  }
 
   useEffect(() => {
     let unsub = () => {}
@@ -48,6 +74,20 @@ export default function App() {
     }
   }, [user])
 
+  useEffect(() => {
+    if (!ready || user) return
+    if (isAppPath(locationPath)) {
+      syncPath('/login', { replace: true })
+    }
+  }, [ready, user, locationPath])
+
+  useEffect(() => {
+    if (user && isLoginPath(locationPath)) {
+      syncPath('/', { replace: true })
+      setView('chat')
+    }
+  }, [user, locationPath])
+
   const switchView = (next) => {
     setView(next)
     const path = next === 'board' ? '/board' : next === 'objectives' ? '/objectives' : '/'
@@ -59,10 +99,15 @@ export default function App() {
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
       window.history.pushState({}, '', nextUrl)
     }
+    setLocationPath(path)
   }
 
   useEffect(() => {
-    const onPop = () => setView(initialView())
+    const onPop = () => {
+      const path = currentPath()
+      setLocationPath(path)
+      setView(initialView(path))
+    }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
@@ -82,7 +127,19 @@ export default function App() {
   }
 
   if (!user) {
-    return <Login onLoggedIn={() => setUser({ email: 'signed-in' })} />
+    if (isLoginPath(locationPath) || isAppPath(locationPath)) {
+      return (
+        <Login
+          onLoggedIn={() => {
+            setUser({ email: 'signed-in' })
+            syncPath('/', { replace: true })
+            setView('chat')
+          }}
+          onBack={() => syncPath('/')}
+        />
+      )
+    }
+    return <Landing onSignIn={() => syncPath('/login')} />
   }
 
   const openSettings = () => setSettingsOpen(true)
@@ -93,6 +150,7 @@ export default function App() {
   const handleLogout = () => {
     logout()
     setUser(null)
+    syncPath('/')
   }
 
   return (

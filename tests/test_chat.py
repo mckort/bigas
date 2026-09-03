@@ -1411,6 +1411,23 @@ def test_favicon_is_served_without_auth():
     assert "png" in (logo.content_type or "")
 
 
+def test_robots_txt_hides_app_routes():
+    from flask import Flask
+
+    from bigas.resources.chat.endpoints import chat_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(chat_bp)
+    client = app.test_client()
+    resp = client.get("/robots.txt")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Allow: /" in body
+    assert "Disallow: /login" in body
+    assert "Disallow: /board" in body
+    assert "Disallow: /objectives" in body
+
+
 def test_logo_bypasses_restricted_access():
     from flask import Flask, jsonify, request
 

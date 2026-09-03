@@ -1,14 +1,34 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { loginEmail, loginGoogle, logout, isDevMode } from '../lib/auth'
 import { verifyAuth } from '../lib/api'
 import ThemeToggle from './ThemeToggle'
 
-export default function Login({ onLoggedIn }) {
+export default function Login({ onLoggedIn, onBack }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('bigas-dev-token')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const dev = isDevMode()
+
+  useEffect(() => {
+    const previousTitle = document.title
+    document.title = 'Sign in — Bigas'
+    let meta = document.querySelector('meta[name="robots"]')
+    const created = !meta
+    if (!meta) {
+      meta = document.createElement('meta')
+      meta.setAttribute('name', 'robots')
+      document.head.appendChild(meta)
+    }
+    const previous = meta.getAttribute('content')
+    meta.setAttribute('content', 'noindex, nofollow')
+    return () => {
+      document.title = previousTitle
+      if (created) meta.remove()
+      else if (previous != null) meta.setAttribute('content', previous)
+      else meta.remove()
+    }
+  }, [])
 
   async function finishLogin() {
     await verifyAuth()
@@ -107,6 +127,21 @@ export default function Login({ onLoggedIn }) {
           >
             Continue with Google
           </button>
+        )}
+
+        {onBack && (
+          <p className="text-center mt-6">
+            <a
+              href="/"
+              className="text-sm text-muted hover:text-text"
+              onClick={(e) => {
+                e.preventDefault()
+                onBack()
+              }}
+            >
+              Back to Bigas
+            </a>
+          </p>
         )}
       </div>
     </div>
