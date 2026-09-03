@@ -13,6 +13,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 ## Table of contents
 
 - [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
+- [Add capabilities one at a time](#add-capabilities-one-at-a-time)
 - [One founder, one project or several](#one-founder-one-project-or-several)
 - [What is Bigas?](#what-is-bigas)
 - [Why Google Cloud Run?](#why-google-cloud-run)
@@ -57,11 +58,87 @@ The setup wizard configures:
 | `CHAT_ENABLED` | `true` | Web chat UI at `/` |
 | LLM key | Gemini or OpenAI | Required — powers all agents |
 
-Optional integrations (GitHub, Jira, GA4, Discord) are offered during setup; skip them to explore the chat UI first. Re-run `python scripts/setup.py` anytime to add specialists.
+Optional integrations are offered during setup; skip them to explore chat, `/board`, and `/objectives` first. The **native Kanban board is the default** — Jira is never required. Re-run `python scripts/setup.py` anytime, or add keys by hand, following [Add capabilities one at a time](#add-capabilities-one-at-a-time).
 
 **Without Docker:** after `python scripts/setup.py`, build the frontend once (`cd frontend && npm install && npm run build && cd ..`), then `python run_core.py`.
 
 For production on Google Cloud Run, see [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server).
+
+---
+
+## Add capabilities one at a time
+
+Quickstart is chat plus Bigas's **own board** at `/board` and Objectives at `/objectives`. You do not need Jira — or any other SaaS — to start. Everything below is optional. Add **one** step, restart (`docker compose up`), try the prompt, then the next. Re-run `python scripts/setup.py` or paste the keys into `.env`.
+
+**The board:** `/board` is the default work surface (set automatically when Jira env vars are unset). Connect Jira later only if you already run Jira and want Bigas to drive that board instead (`JIRA_*` plus `USE_INTERNAL_BOARD=false`). Same columns, same drag-to-AI loop, either way.
+
+### 1. Development workflow
+
+**Value:** Cards on `/board` become pull requests. The CTO reviews diffs, can loop autofix, and can open a hotfix when CI fails. You stay the merge gate.
+
+**Need:**
+
+- `GITHUB_TOKEN` — repo read/write (PR comments; implement fallback)
+- `CURSOR_API_KEY` — drag a card to **In Progress (AI)** and get a PR
+- In the product repo: copy [`docs/pr-review.caller.yml`](docs/pr-review.caller.yml) and set `BIGAS_URL` + `BIGAS_API_KEY`
+
+**Optional:** `DISCORD_WEBHOOK_URL_CTO`. Map a board project to a repo with `BIGAS_JIRA_PROJECT_REPO_MAP` when you have more than one repo (the name is historical — it works for the internal board too).
+
+**Try:** open a PR, or on `/board` write a short Brief and drag to **In Progress (AI)**. In the CTO thread: *"Summarize my open PRs and flag blockers."*
+
+Details: [from board card to merged PR](#walkthrough-from-jira-card-to-merged-pr), [from PR to ready to merge](#walkthrough-from-pr-to-ready-to-merge).
+
+**Later:** DevOps — `BIGAS_DEPLOY_WORKFLOW_MAP` so chat can trigger the same GitHub Actions deploy you already run by hand.
+
+### 2. CPO — product direction
+
+**Value:** The quarter has a scoreboard. You name the Objective; Key Results hold the numbers; board cards link to a KR. The Product Manager researches, plans, writes progress updates and release notes. Agents do not start work because a KR is red — you still drag.
+
+**Need:** step 1 (so planned work can ship). `/objectives` and `/board` already work after quickstart — **no extra key, and no Jira**, for the native board.
+
+**Optional:**
+
+- `DISCORD_WEBHOOK_URL_PRODUCT` — research, progress, release notes
+- `BIGAS_PROJECT_ACTIVE_FIX_VERSION` — auto-assign a version on implement (internal board)
+- Jira (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY`) — **only if you already use Jira** and want that board instead of `/board`
+
+**Try:** open `/objectives`, write the quarter in plain language, drag to **Research and describe (AI)**. In the Product thread: *"What should we ship this week to move the KRs?"*
+
+Details: [from quarterly Objective to shipped work](#walkthrough-from-quarterly-objective-to-shipped-work).
+
+### 3. Marketing
+
+**Value:** A weekly read on the site — traffic, pages that are dying, and (if you add ads) spend across Google, Meta, LinkedIn, and Reddit — in the Marketing Analyst thread instead of four dashboards.
+
+**Need:**
+
+- `GA4_PROPERTY_ID`
+- `GOOGLE_PROJECT_ID`
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL` with **Marketer** on that GA4 property
+
+**Optional:** `DISCORD_WEBHOOK_URL_MARKETING`. Ad tokens (LinkedIn / Reddit / Meta / Google Ads) for cross-platform spend. `TARGET_KEYWORDS` for SEO. `X_ACCOUNTS` + credentials for approve/decline drafts.
+
+**Try:** in the Marketing thread: *"How did the site do last week?"* Then: *"Run a cross-platform marketing analysis"* once ads are connected.
+
+Details: [GA4 setup](#ga4-setup).
+
+### 4. Finance
+
+**Value:** One weekly briefing of AI and cloud spend — list-price vs invoice, week-over-week, top drivers — from the CFO. You see whether Cursor, the LLM, and GCP are worth it before the bill surprises you.
+
+**Need:** `BIGAS_USAGE_PROVIDERS` listing the sources you actually have. After step 1 the cheap start is `cursor` (same `CURSOR_API_KEY`).
+
+**Then add, when you have them:**
+
+- `llm_logs` — Cloud Logging `event: llm_usage` (needs GCP)
+- `gcp_billing` — BigQuery billing export
+- `tavily` — if that product is in the portfolio
+
+**Optional:** `DISCORD_WEBHOOK_URL_CFO` (the report always lands in the CFO thread).
+
+**Try:** in the CFO thread: *"What did we spend on AI last week?"*
+
+Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md).
 
 ---
 
@@ -81,7 +158,7 @@ That control plane is a **goal-oriented engine**. You set the quarter's Objectiv
 
 **During the week you ship**
 
-Work lives on the native Kanban board (default, no Jira required) or on an existing Jira board.
+Work lives on Bigas's native Kanban board at `/board` by default. Jira is optional — connect it only if you already have a Jira board you want to keep.
 
 1. Drag a card to **Done** → Product posts a progress update.
 2. Assign tickets to a **board Release** (e.g. `0.9.0`) → Ship or a versioned prod deploy cuts GitHub `v0.9.0` and leftover open cards move to the next minor. Then `create_release_notes` drafts blog/social copy for that version.
@@ -106,15 +183,7 @@ Work lives on the native Kanban board (default, no Jira required) or on an exist
 2. Ask: *"What did we spend on AI last week?"* from the CFO thread.
 3. The briefing lands in the CFO chat thread (full message via `post_long_to_discord`), and optionally Discord via `DISCORD_WEBHOOK_URL_CFO`. The report opens with list-price, GCP invoice status, week-over-week, and top drivers, then area/feature detail and a short CFO analysis.
 
-**Minimum env**
-
-| You want | Env |
-|---|---|
-| Chat + agents | LLM key (Gemini or OpenAI) |
-| Board + AI implement columns | `GITHUB_TOKEN`. Native board is default; `JIRA_*` only if you already have Jira. |
-| Analytics | `GA4_PROPERTY_ID`, `GOOGLE_PROJECT_ID`, ad-platform tokens, `DISCORD_WEBHOOK_URL_MARKETING` |
-| Autonomous PR autofix | `CURSOR_API_KEY` |
-| AI / cloud cost rollup | `BIGAS_USAGE_PROVIDERS` (e.g. `cursor,llm_logs`) |
+Keys for each capability: [Add capabilities one at a time](#add-capabilities-one-at-a-time). Chat needs only an LLM key. The board is built in. Jira is optional.
 
 ---
 
@@ -362,7 +431,7 @@ Humans decide. Agents execute the work you put in front of them. The Objective i
 
 ## Walkthrough: from Jira card to merged PR
 
-This is the flow that makes the **Product Manager** and **CTO** specialists work together: dragging a Jira card triggers AI research, then AI design, then an AI-implemented pull request — with a human approval gate between every AI step.
+This is the flow that makes the **Product Manager** and **CTO** specialists work together: dragging a card triggers AI research, then AI design, then an AI-implemented pull request — with a human approval gate between every AI step. The default board is Bigas's own Kanban at `/board`. Jira is optional: same columns and the same drag if you already have a Jira project (`JIRA_*`, `USE_INTERNAL_BOARD=false`).
 
 Say you write a card with just a **Brief** — a couple of sentences on what you want and why — and drag it into the first AI column.
 
