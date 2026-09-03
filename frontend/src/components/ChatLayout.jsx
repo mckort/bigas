@@ -671,24 +671,27 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
                   </option>
                 ))}
             </select>
-            <input
+            {/* Closed list: a datalist prefilled with the default hides older cuts (e.g. 0.1.0). */}
+            <select
               value={version}
               onChange={(e) => setVersion(e.target.value)}
-              list="prepare-deploy-versions"
-              placeholder={releasesLoading ? 'Loading…' : '0.1.0'}
-              disabled={disabled}
-              className="input-field text-xs min-h-[36px] w-[5.5rem] py-1"
+              disabled={disabled || releasesLoading || Boolean(releasesError) || releases.length === 0}
+              className="input-field text-xs min-h-[36px] min-w-[7.5rem] py-1"
               aria-label="Release version"
-            />
-            <datalist id="prepare-deploy-versions">
-              {releases.map((release) => (
-                <option
-                  key={release.release_id || release.name}
-                  value={release.name}
-                  label={release.is_default ? `${release.name} · default` : release.name}
-                />
-              ))}
-            </datalist>
+            >
+              {releasesLoading && <option value="">Loading…</option>}
+              {!releasesLoading && releasesError && <option value="">Failed to load</option>}
+              {!releasesLoading && !releasesError && releases.length === 0 && (
+                <option value="">No unreleased</option>
+              )}
+              {!releasesLoading &&
+                releases.map((release) => (
+                  <option key={release.release_id || release.name} value={release.name}>
+                    {release.name}
+                    {release.is_default ? ' · default' : ''}
+                  </option>
+                ))}
+            </select>
             <button
               type="submit"
               disabled={disabled || !projectKey || !version.trim()}
