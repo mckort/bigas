@@ -1283,7 +1283,7 @@ def ask_analytics_question():
     if len(question) > 500:
         return jsonify({"error": "Question too long (max 500 characters)"}), 400
 
-    if is_strategy_analytics_question(question):
+    if is_strategy_analytics_question(str(question)):
         return jsonify({"error": STRATEGY_ANALYTICS_REJECT}), 400
 
     property_id, project_key, ga4_error = resolve_ga4_property(

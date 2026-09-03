@@ -87,7 +87,7 @@ _STRATEGY_PHRASES = (
 
 _STRATEGY_BRIEF_RE = re.compile(
     r"\b(provide|review|recommend|propose|draft|create)\b.{0,60}\b(strategy|plan|brief)\b",
-    re.I,
+    re.I | re.DOTALL,
 )
 
 
