@@ -640,12 +640,6 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
     setOpen(false)
   }
 
-  function handleShortcutKeyDown(e) {
-    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
-    e.preventDefault()
-    handleGo()
-  }
-
   return (
     <div className="mb-2">
       {!open ? (
@@ -664,7 +658,6 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             <select
               value={projectKey}
               onChange={(e) => setProjectKey(e.target.value)}
-              onKeyDown={handleShortcutKeyDown}
               disabled={disabled || projectsLoading || Boolean(projectsError)}
               className="input-field text-xs min-h-[36px] w-[8.5rem] py-1"
               aria-label="Project"
@@ -685,7 +678,6 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             <select
               value={version}
               onChange={(e) => setVersion(e.target.value)}
-              onKeyDown={handleShortcutKeyDown}
               disabled={disabled || releasesLoading || Boolean(releasesError) || releases.length === 0}
               className="input-field text-xs min-h-[36px] min-w-[7.5rem] py-1"
               aria-label="Release version"
