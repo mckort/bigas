@@ -612,7 +612,6 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true }),
           )
         setReleases(unreleased)
-        setVersion((current) => pickDefaultRelease(unreleased, current))
       })
       .catch((err) => {
         if (!cancelled) {
@@ -628,6 +627,11 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
       cancelled = true
     }
   }, [projectKey, releasesRetryKey])
+
+  useEffect(() => {
+    if (releasesLoading || releasesError || releases.length === 0) return
+    setVersion((current) => pickDefaultRelease(releases, current))
+  }, [releases, releasesLoading, releasesError])
 
   function handleGo(e) {
     e.preventDefault()
@@ -684,6 +688,14 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
               {!releasesLoading && !releasesError && releases.length === 0 && (
                 <option value="">No unreleased</option>
               )}
+              {!releasesLoading &&
+                !releasesError &&
+                releases.length > 0 &&
+                !releases.some((release) => release.name === version) && (
+                  <option value="" disabled>
+                    Select version…
+                  </option>
+                )}
               {!releasesLoading &&
                 releases.map((release) => (
                   <option key={release.release_id || release.name} value={release.name}>
