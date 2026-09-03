@@ -35,7 +35,7 @@ import {
   ticketParentKey,
   ticketParentKrId,
 } from '../lib/okr'
-import { isDoneStatus, isRecentDone, ticketSearchKey, ticketVisibleOnBoard } from '../lib/boardFilters'
+import { isDoneStatus, ticketSearchKey, ticketVisibleOnBoard } from '../lib/boardFilters'
 import { ticketFixVersion, ticketMatchesReleaseFilter } from '../lib/releases'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
@@ -1532,9 +1532,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       showOlderDone,
     }),
   )
-  const hiddenDoneCount = filteredTickets.filter(
-    (ticket) => isDoneStatus(ticket.status) && !isRecentDone(ticket),
-  ).length
+  const hiddenDoneCount =
+    filteredTickets.filter((ticket) => isDoneStatus(ticket.status)).length -
+    visibleTickets.filter((ticket) => isDoneStatus(ticket.status)).length
   const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
   const loadBoards = useCallback(async () => {
