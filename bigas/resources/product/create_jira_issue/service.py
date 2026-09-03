@@ -45,6 +45,7 @@ class CreateJiraIssueService:
         marketing: bool = False,
         parent_epic_key: Optional[str] = None,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Dict[str, Any]:
         from bigas.tickets.config import use_internal_board
 
@@ -72,22 +73,27 @@ class CreateJiraIssueService:
             from bigas.tickets.service import TicketService
 
             epic = normalize_parent_epic_key(parent_epic_key, project_key=proj)
-            ticket = TicketService().create_ticket_for_project(
-                proj,
-                title=title,
-                description=body,
-                issue_type=itype,
-                marketing=marketing,
-                labels=[_MARKETING_LABEL] if marketing else None,
-                parent_key=epic,
-                user_id=user_id,
-            )
+            try:
+                ticket = TicketService().create_ticket_for_project(
+                    proj,
+                    title=title,
+                    description=body,
+                    issue_type=itype,
+                    marketing=marketing,
+                    labels=[_MARKETING_LABEL] if marketing else None,
+                    parent_key=epic,
+                    user_id=user_id,
+                    status=(status or "").strip() or "To Do",
+                )
+            except ValueError as exc:
+                raise CreateJiraIssueError(str(exc)) from exc
             out: Dict[str, Any] = {
                 "ok": True,
                 "key": ticket.get("key"),
                 "url": ticket.get("url"),
                 "summary": ticket.get("title") or title,
                 "issue_type": itype,
+                "status": ticket.get("status"),
                 "project_key": proj,
                 "source": "internal_board",
             }
@@ -119,6 +125,19 @@ class CreateJiraIssueService:
                 "issue_type": itype,
                 "project_key": proj,
             }
+            wanted = (status or "").strip()
+            if wanted:
+                from bigas.tickets.constants import resolve_column_status
+
+                resolved = resolve_column_status(wanted, project_key=proj) or wanted
+                try:
+                    client.transition_issue(
+                        result.get("key") or "",
+                        to_status_name=resolved,
+                    )
+                    out["status"] = resolved
+                except JiraError as exc:
+                    raise CreateJiraIssueError(_format_jira_error(exc, project_key=proj)) from exc
             if labels:
                 out["labels"] = labels
             if result.get("parent_dropped"):

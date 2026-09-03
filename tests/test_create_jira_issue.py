@@ -194,6 +194,10 @@ def test_manifest_includes_create_jira_issue():
     parent_desc = params["properties"]["parent_epic_key"]["description"].lower()
     assert "omit" in parent_desc
     assert "standalone" in parent_desc
+    assert "status" in params["properties"]
+    update = tools["update_ticket"]
+    assert update["path"] == "/mcp/tools/update_ticket"
+    assert set(update["parameters"]["required"]) == {"issue_key", "status"}
     lookup = tools["lookup_jira"]
     assert lookup["path"] == "/mcp/tools/lookup_jira"
     assert "parent" in lookup["description"].lower()

@@ -8,7 +8,13 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from bigas.tickets.constants import AI_TRIGGER_STATUSES, columns_for_board, next_column
+from bigas.tickets.constants import (
+    AI_TRIGGER_STATUSES,
+    columns_for_board,
+    next_column,
+    resolve_column_status,
+    unknown_column_error,
+)
 from bigas.tickets.labels import resolve_ticket_labels
 from bigas.tickets.store import get_ticket_store
 
@@ -547,6 +553,12 @@ class TicketService:
             )
         from bigas.tickets.releases import default_fix_version
 
+        resolved = (status or "").strip() or "To Do"
+        if resolved != "To Do":
+            mapped = resolve_column_status(resolved, project_key=project_key)
+            if not mapped:
+                raise ValueError(unknown_column_error(resolved, project_key=project_key))
+            resolved = mapped
         ticket = self._store.create_ticket(
             board["board_id"],
             title=title,
@@ -558,10 +570,40 @@ class TicketService:
             parent_kr_id=parent_kr_id,
             user_id=uid,
             key=key,
-            status=status,
+            status=resolved,
             fix_version=default_fix_version(project_key),
         )
         return ticket_to_api(ticket)
+
+    def set_status(self, issue_key: str, status: str) -> Dict[str, Any]:
+        """Move a ticket to a board column. Accepts aliases like 'Final Review'."""
+        key = (issue_key or "").strip().upper()
+        raw = (status or "").strip()
+        if not key:
+            raise ValueError("issue_key is required")
+        if not raw:
+            raise ValueError("status is required")
+        ticket = self._store.get_ticket_by_key(key)
+        if not ticket:
+            raise ValueError(f"Ticket {key} not found")
+        board = self._store.get_board(ticket.get("board_id") or "")
+        proj = (board or {}).get("project_key") or ticket.get("project_key")
+        resolved = resolve_column_status(raw, project_key=proj)
+        if not resolved:
+            raise ValueError(unknown_column_error(raw, project_key=proj))
+        old_status = ticket.get("status") or ""
+        if resolved == old_status:
+            return ticket_to_api(ticket)
+        owner = (board or {}).get("user_id") or _sync_user_id()
+        updated = self.update_ticket(
+            ticket["ticket_id"],
+            user_id=owner,
+            previous_status=old_status,
+            status=resolved,
+        )
+        if not updated:
+            raise ValueError(f"Ticket {key} not found")
+        return updated
 
     def transition_to_next(self, issue_key: str) -> Dict[str, Any]:
         from bigas.tickets.jira_adapter import TicketJiraAdapter

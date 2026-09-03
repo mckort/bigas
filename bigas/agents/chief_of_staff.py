@@ -323,7 +323,8 @@ def _chief_native_extra() -> str:
         "- lookup_jira: for specific issue keys or ranges\n"
         "- search_jira: for JQL queries (works on the internal board and Jira Cloud)\n"
         "- fetch_github_activity: commits and merged PRs since a date — use for what shipped\n"
-        "- create_jira_issue: to file Tasks/Bugs — take action rather than asking the user to do it\n"
+        "- create_jira_issue: to file Tasks/Bugs — take action rather than asking the user to do it. Pass status to set the column (e.g. Final Review).\n"
+        "- update_ticket: move an existing ticket to a column (issue_key + status)\n"
         "- Include project_key when the user mentions a product or site\n"
         "- For GitHub PRs, include repo and pr_number or pr_url\n\n"
         f"{CHIEF_PLAYBOOK}"
@@ -345,7 +346,8 @@ def _specialist_native_extra(agent_id: Optional[str] = None) -> str:
         "- For Cursor autofix, include agent_id from cursor.com/agents/bc-... URLs\n"
         "- lookup_jira: for specific issue keys; search_jira: for JQL filters (internal board or Jira Cloud)\n"
         "- fetch_github_activity: what shipped since a date (commits + merged PRs)\n"
-        "- create_jira_issue: look up Epic context first if needed, then create"
+        "- create_jira_issue: look up Epic context first if needed, then create. Pass status to set the column.\n"
+        "- update_ticket: move an existing ticket (issue_key + status, e.g. Final Review)"
     )
     rules = _agent_runtime_rules(agent_id)
     if rules:

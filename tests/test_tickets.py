@@ -75,6 +75,13 @@ def test_board_spa_and_api_bypass_access_key(client, monkeypatch):
     assert page.status_code != 401
     assert page.get_json() is None or "access key" not in str(page.get_json()).lower()
 
+    login = client.get("/login")
+    assert login.status_code != 401
+
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200
+    assert b"Disallow: /login" in robots.data
+
     unauth_api = client.get("/api/boards")
     assert unauth_api.status_code == 401
     body = unauth_api.get_json()
@@ -202,6 +209,80 @@ def test_create_jira_issue_uses_internal_board(client):
     assert data["ok"] is True
     assert data["source"] == "internal_board"
     assert data["key"].startswith("BIG-")
+    assert data.get("status") == "To Do"
+
+
+def test_create_jira_issue_sets_column(client):
+    resp = client.post(
+        "/mcp/tools/create_jira_issue",
+        data=json.dumps(
+            {
+                "project_key": "VFA",
+                "summary": "Show last seen",
+                "description": "Admin last API activity",
+                "status": "Final Review",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["status"] == "Final approval (manual)"
+
+    lookup = client.post(
+        "/mcp/tools/lookup_jira",
+        data=json.dumps({"issue_key": data["key"]}),
+        content_type="application/json",
+    )
+    assert lookup.get_json()["issue"]["status"] == "Final approval (manual)"
+
+
+def test_update_ticket_sets_column(client):
+    created = client.post(
+        "/mcp/tools/create_jira_issue",
+        data=json.dumps(
+            {
+                "project_key": "VFA",
+                "summary": "Move me",
+                "description": "Needs Final Review",
+            }
+        ),
+        content_type="application/json",
+    )
+    key = created.get_json()["key"]
+    moved = client.post(
+        "/mcp/tools/update_ticket",
+        data=json.dumps({"issue_key": key, "status": "Final Review"}),
+        content_type="application/json",
+    )
+    assert moved.status_code == 200
+    body = moved.get_json()
+    assert body["ok"] is True
+    assert body["status"] == "Final approval (manual)"
+    assert body["key"] == key
+
+
+def test_update_ticket_rejects_unknown_column(client):
+    created = client.post(
+        "/mcp/tools/create_jira_issue",
+        data=json.dumps(
+            {
+                "project_key": "VFA",
+                "summary": "Bad column",
+                "description": "Should stay in To Do",
+            }
+        ),
+        content_type="application/json",
+    )
+    key = created.get_json()["key"]
+    moved = client.post(
+        "/mcp/tools/update_ticket",
+        data=json.dumps({"issue_key": key, "status": "Not a column"}),
+        content_type="application/json",
+    )
+    assert moved.status_code == 400
+    assert "unknown column" in moved.get_json()["error"].lower()
 
 
 def test_lookup_internal_ticket(client):

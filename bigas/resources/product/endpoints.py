@@ -15,6 +15,10 @@ from bigas.resources.product.create_jira_issue.service import (
     CreateJiraIssueError,
     CreateJiraIssueService,
 )
+from bigas.resources.product.update_ticket import (
+    UpdateTicketError,
+    UpdateTicketService,
+)
 from bigas.resources.product.create_jira_issue.lookup import (
     LookupJiraError,
     LookupJiraService,
@@ -457,12 +461,14 @@ def create_jira_issue():
         "description": "Task description (markdown supported)",
         "issue_type": "Task",
         "marketing": false,
-        "parent_epic_key": "BIG-10"
+        "parent_epic_key": "BIG-10",
+        "status": "Final Review"
       }
 
     Returns { "ok": true, "key": "BIG-42", "url": "https://..." } on success.
     Set marketing=true for marketing-related tickets (adds the Jira label "marketing").
     Optional parent_epic_key links the new Task/Bug to a goal Epic (never creates Epics).
+    Optional status sets the board column (aliases like "Final Review" work).
     """
     data = request.json or {}
     is_valid, error_msg = validate_request_data(
@@ -476,6 +482,7 @@ def create_jira_issue():
     marketing = request_flag(data, "marketing", False)
     parent_epic_key = str(data.get("parent_epic_key") or "").strip() or None
     user_id = str(data.get("user_id") or "").strip() or None
+    status = str(data.get("status") or "").strip() or None
 
     try:
         service = CreateJiraIssueService()
@@ -487,6 +494,7 @@ def create_jira_issue():
             marketing=marketing,
             parent_epic_key=parent_epic_key,
             user_id=user_id,
+            status=status,
         )
         return jsonify(result)
     except CreateJiraIssueError as e:
@@ -498,11 +506,56 @@ def create_jira_issue():
                 "must be one of",
                 "not found",
                 "not accessible",
+                "unknown column",
             ]
         ) else 500
         return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
     except Exception as e:
         logger.error("Error in create_jira_issue", exc_info=True)
+        return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
+
+
+@product_bp.route('/update_ticket', methods=['POST'])
+@require_bigas_access_key
+def update_ticket():
+    """
+    Move an existing ticket to a board column (or Jira status).
+
+    Request JSON:
+      {
+        "issue_key": "VFA-48",
+        "status": "Final Review"
+      }
+    """
+    data = request.json or {}
+    is_valid, error_msg = validate_request_data(
+        data,
+        required_fields=["issue_key", "status"],
+    )
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    try:
+        result = UpdateTicketService().update(
+            issue_key=str(data.get("issue_key") or ""),
+            status=str(data.get("status") or ""),
+            user_id=str(data.get("user_id") or "").strip() or None,
+        )
+        return jsonify(result)
+    except UpdateTicketError as e:
+        msg = str(e)
+        status = 400 if any(
+            s in msg.lower()
+            for s in [
+                "required",
+                "unknown column",
+                "not found",
+                "not accessible",
+            ]
+        ) else 500
+        return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
+    except Exception as e:
+        logger.error("Error in update_ticket", exc_info=True)
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
@@ -959,11 +1012,13 @@ def get_manifest():
             {
                 "name": "create_jira_issue",
                 "description": (
-                    "Create a new Jira issue in the specified project. "
-                    "Available to every chat agent and MCP client. "
+                    "Create a ticket on the internal board (or Jira if that is the ticket source). "
+                    "The tool name is historical. Available to every chat agent and MCP client. "
                     "Returns the issue key (e.g. BIG-42) and browse URL. "
                     "For marketing-related tickets (website, SEO, content, ads), set marketing=true "
-                    "to add the Jira label \"marketing\" (no other labels are needed)."
+                    "to add the label \"marketing\" (no other labels are needed). "
+                    "Optional status sets the board column (e.g. \"Final Review\" or "
+                    "\"Final approval (manual)\")."
                 ),
                 "path": "/mcp/tools/create_jira_issue",
                 "method": "POST",
@@ -1004,8 +1059,42 @@ def get_manifest():
                                 "Do not pass a Task/Bug key or guess a parent."
                             ),
                         },
+                        "status": {
+                            "type": "string",
+                            "description": (
+                                "Optional board column. Default To Do. Accepts exact names or aliases "
+                                "such as Final Review → Final approval (manual)."
+                            ),
+                        },
                     },
                     "required": ["project_key", "summary", "description"],
+                },
+            },
+            {
+                "name": "update_ticket",
+                "description": (
+                    "Move an existing internal-board (or Jira) ticket to a column. "
+                    "Use for Final Review / Final approval (manual) and other columns. "
+                    "Accepts aliases like Final Review."
+                ),
+                "path": "/mcp/tools/update_ticket",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_key": {
+                            "type": "string",
+                            "description": "Ticket key, e.g. VFA-48",
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": (
+                                "Board column. Accepts exact names or aliases "
+                                "such as Final Review → Final approval (manual)."
+                            ),
+                        },
+                    },
+                    "required": ["issue_key", "status"],
                 },
             },
             {
