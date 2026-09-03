@@ -178,13 +178,15 @@ def test_create_jira_issue_wraps_jira_error(monkeypatch):
         )
 
 
-def test_manifest_includes_create_jira_issue():
+def test_manifest_includes_create_ticket():
     from bigas.resources.product.endpoints import get_manifest
 
     tools = {t["name"]: t for t in get_manifest()["tools"]}
-    assert "create_jira_issue" in tools
-    tool = tools["create_jira_issue"]
-    assert tool["path"] == "/mcp/tools/create_jira_issue"
+    assert "create_jira_issue" not in tools
+    assert "lookup_jira" not in tools
+    assert "search_jira" not in tools
+    tool = tools["create_ticket"]
+    assert tool["path"] == "/mcp/tools/create_ticket"
     params = tool["parameters"]
     assert set(params["required"]) == {"project_key", "summary", "description"}
     assert params["properties"]["issue_type"]["default"] == "Task"
@@ -198,14 +200,14 @@ def test_manifest_includes_create_jira_issue():
     update = tools["update_ticket"]
     assert update["path"] == "/mcp/tools/update_ticket"
     assert set(update["parameters"]["required"]) == {"issue_key", "status"}
-    lookup = tools["lookup_jira"]
-    assert lookup["path"] == "/mcp/tools/lookup_jira"
+    lookup = tools["lookup_ticket"]
+    assert lookup["path"] == "/mcp/tools/lookup_ticket"
     assert "parent" in lookup["description"].lower()
     assert "standalone" in lookup["description"].lower()
     assert "range" in lookup["description"].lower()
     assert "issue_keys" in lookup["parameters"]["properties"]
-    search = tools["search_jira"]
-    assert search["path"] == "/mcp/tools/search_jira"
+    search = tools["search_tickets"]
+    assert search["path"] == "/mcp/tools/search_tickets"
     assert search["parameters"]["required"] == ["jql"]
     assert "jql" in search["description"].lower()
 
@@ -226,11 +228,11 @@ def test_create_jira_issue_endpoint_validation(client, monkeypatch):
 
     monkeypatch.setattr(CreateJiraIssueService, "create", lambda self, **kw: fake_create(**kw))
 
-    resp = client.post("/mcp/tools/create_jira_issue", json={})
+    resp = client.post("/mcp/tools/create_ticket", json={})
     assert resp.status_code == 400
 
     resp = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         json={
             "project_key": "BIG",
             "summary": "Title",
@@ -258,11 +260,11 @@ def test_create_jira_issue_requires_access_key_in_restricted_mode(client, monkey
         "summary": "Title",
         "description": "Body",
     }
-    denied = client.post("/mcp/tools/create_jira_issue", json=payload)
+    denied = client.post("/mcp/tools/create_ticket", json=payload)
     assert denied.status_code == 401
 
     allowed = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         json=payload,
         headers={"X-Bigas-Access-Key": "scheduler-key"},
     )
@@ -271,7 +273,7 @@ def test_create_jira_issue_requires_access_key_in_restricted_mode(client, monkey
 
 def test_create_jira_issue_endpoint_rejects_invalid_issue_type(client):
     resp = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         json={
             "project_key": "BIG",
             "summary": "Title",
@@ -293,7 +295,7 @@ def test_create_jira_issue_endpoint_coerces_types(client, monkeypatch):
     monkeypatch.setattr(CreateJiraIssueService, "create", fake_create)
 
     resp = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         json={
             "project_key": "BIG",
             "summary": "Title",
@@ -305,6 +307,20 @@ def test_create_jira_issue_endpoint_coerces_types(client, monkeypatch):
     assert resp.status_code == 200
     assert captured["issue_type"] == "Task"
     assert captured["marketing"] is False
+
+
+def test_create_jira_issue_path_still_works_as_alias(client, monkeypatch):
+    monkeypatch.setattr(
+        CreateJiraIssueService,
+        "create",
+        lambda self, **kw: {"ok": True, "key": "BIG-3", "url": "https://x/browse/BIG-3"},
+    )
+    resp = client.post(
+        "/mcp/tools/create_jira_issue",
+        json={"project_key": "BIG", "summary": "Title", "description": "Body"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["key"] == "BIG-3"
 
 
 def test_create_jira_issue_accepts_case_insensitive_issue_type(monkeypatch):

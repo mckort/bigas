@@ -445,7 +445,7 @@ Say you write a card with just a **Brief** — a couple of sentences on what you
 
 Every AI step lands in a column with **"(manual)"** in the name — cards do not advance without a human drag. Merging the PR stays manual unless you enable `BIGAS_CTO_AUTO_MERGE` (see [cto-autofix.md](docs/cto-autofix.md)).
 
-**From chat:** agents read your ask, call tools for facts, then answer — they do not paste a raw lookup as the reply. Any specialist or Chief of Staff can look up Jira issues/Epics with `lookup_jira` (one key, several keys, or a range like `BIG-15 to BIG-18`) and create a Task/Bug with `create_jira_issue` (Marketing sets `marketing=true`). Parent is optional: link an Epic only when the new work belongs under that goal; otherwise create a standalone ticket. When discussing a ticket, the reply includes the ticket title as a Markdown link and a **Move to next column** button as a footer. Clicking it advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
+**From chat:** agents read your ask, call tools for facts, then answer — they do not paste a raw lookup as the reply. Any specialist or Chief of Staff can look up tickets/Epics with `lookup_ticket` (one key, several keys, or a range like `BIG-15 to BIG-18`) and create a Task/Bug with `create_ticket` (Marketing sets `marketing=true`). Parent is optional: link an Epic only when the new work belongs under that goal; otherwise create a standalone ticket. When discussing a ticket, the reply includes the ticket title as a Markdown link and a **Move to next column** button as a footer. Clicking it advances the issue one workflow step (same as dragging on the board) and logs the move in the chat **Activity** sidebar.
 
 **Prompt workstream:** by default Bigas uses **product** Research/Design/Implement prompts. Add the Jira label `marketing` on website/SEO/content issues to switch to marketing-oriented prompts (audience, copy, SEO, site files in the repo).
 
@@ -786,8 +786,10 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 
 | Endpoint | Description |
 |---|---|
-| `POST create_jira_issue` | Create a Jira Task or Bug in a project; returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket |
-| `POST lookup_jira` | Look up one or more Jira issues (including parent Epic) and/or list open Epics. Accepts a range such as `BIG-15 to BIG-18`. Shared by every chat agent. Does not decide whether a new ticket should use that parent |
+| `POST create_ticket` | Create a Task or Bug on the internal board (or Jira); returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket. Optional `status` sets the column. Alias: `create_jira_issue` |
+| `POST lookup_ticket` | Look up one or more tickets (including parent Epic) and/or list open Epics. Accepts a range such as `BIG-15 to BIG-18`. Shared by every chat agent. Does not decide whether a new ticket should use that parent. Alias: `lookup_jira` |
+| `POST search_tickets` | Search the board (or Jira) with JQL. Alias: `search_jira` |
+| `POST update_ticket` | Move an existing ticket to a board column (`issue_key` + `status`) |
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Board/Jira Fix Version → release notes + blog draft + social copy; optional semver GitHub Release and mark released (board carry-forward) |

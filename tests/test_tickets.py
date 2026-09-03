@@ -194,7 +194,7 @@ def test_drag_to_done_sets_done_at(client):
 
 def test_create_jira_issue_uses_internal_board(client):
     resp = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         data=json.dumps(
             {
                 "project_key": "BIG",
@@ -214,7 +214,7 @@ def test_create_jira_issue_uses_internal_board(client):
 
 def test_create_jira_issue_sets_column(client):
     resp = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         data=json.dumps(
             {
                 "project_key": "VFA",
@@ -231,7 +231,7 @@ def test_create_jira_issue_sets_column(client):
     assert data["status"] == "Final approval (manual)"
 
     lookup = client.post(
-        "/mcp/tools/lookup_jira",
+        "/mcp/tools/lookup_ticket",
         data=json.dumps({"issue_key": data["key"]}),
         content_type="application/json",
     )
@@ -240,7 +240,7 @@ def test_create_jira_issue_sets_column(client):
 
 def test_update_ticket_sets_column(client):
     created = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         data=json.dumps(
             {
                 "project_key": "VFA",
@@ -265,7 +265,7 @@ def test_update_ticket_sets_column(client):
 
 def test_update_ticket_rejects_unknown_column(client):
     created = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         data=json.dumps(
             {
                 "project_key": "VFA",
@@ -287,7 +287,7 @@ def test_update_ticket_rejects_unknown_column(client):
 
 def test_lookup_internal_ticket(client):
     create = client.post(
-        "/mcp/tools/create_jira_issue",
+        "/mcp/tools/create_ticket",
         data=json.dumps(
             {
                 "project_key": "VFA",
@@ -299,7 +299,7 @@ def test_lookup_internal_ticket(client):
     )
     key = create.get_json()["key"]
     lookup = client.post(
-        "/mcp/tools/lookup_jira",
+        "/mcp/tools/lookup_ticket",
         data=json.dumps({"issue_key": key}),
         content_type="application/json",
     )
