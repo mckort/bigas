@@ -25,7 +25,8 @@ def setup_function():
 def test_release_cut_includes_final_approval():
     assert is_in_release_cut("Done") is True
     assert is_in_release_cut("Final approval (manual)") is True
-    assert is_in_release_cut("final approval") is True
+    assert is_in_release_cut("final approval", project_key="VFA") is True
+    assert is_in_release_cut("Final Review", project_key="VFA") is True
     assert is_in_release_cut("To Do") is False
     assert is_in_release_cut("In Progress (AI)") is False
 

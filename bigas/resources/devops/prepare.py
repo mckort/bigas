@@ -117,7 +117,7 @@ def format_version_ticket_report(
     in_cut: List[Dict[str, Any]] = []
     open_tickets: List[Dict[str, Any]] = []
     for ticket in items:
-        if is_in_release_cut(ticket.get("status") or ""):
+        if is_in_release_cut(ticket.get("status") or "", project_key=project_key):
             in_cut.append(ticket)
         else:
             open_tickets.append(ticket)
@@ -217,7 +217,7 @@ def format_git_reconcile_report(
                     break
             if not found:
                 reason = f"{keys[0]} has no board ticket"
-            elif is_in_release_cut(found.get("status") or ""):
+            elif is_in_release_cut(found.get("status") or "", project_key=key):
                 assigned = (found.get("fix_version") or "").strip() or "unassigned"
                 other_version = assigned
                 reason = f"{found.get('key')} is on {assigned}, not {version}"
@@ -270,7 +270,7 @@ def format_git_reconcile_report(
             "matched": [],
             "missing_from_git": [],
             "extra_commits": [],
-            "needs_confirm": False,
+            "needs_confirm": bool(errors),
             "errors": list(errors or []),
         }
 
@@ -299,6 +299,8 @@ def format_git_reconcile_report(
             status = (ticket.get("status") or "").strip()
             label = f"{tkey} ({status})" if status else tkey
             lines.append(f"- {label}: {title}" if title else f"- {label}")
+        if len(missing) > 20:
+            lines.append(f"- …and {len(missing) - 20} more")
 
     if extra:
         lines.append("")

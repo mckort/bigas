@@ -197,7 +197,7 @@ def test_git_reconcile_skips_match_when_compare_fails():
         commits=[],
         errors=["GitHub auth failed"],
     )
-    assert report["needs_confirm"] is False
+    assert report["needs_confirm"] is True
     assert report["missing_from_git"] == []
     assert "Skipping ticket" in report["text"]
 
@@ -417,6 +417,71 @@ def test_prepare_asks_when_extra_commits_lack_tickets(monkeypatch):
     assert "yes" in blob.lower()
 
 
+def test_prepare_asks_when_git_compare_fails(monkeypatch):
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Show last API activity",
+        user_id="dev-user",
+        key="VFA-48",
+        fix_version="0.1.0",
+        status="Final approval (manual)",
+    )
+    create_release("VFA", name="0.1.0")
+
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    triggered = {"called": False}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("GitHub auth failed")),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: triggered.update(called=True) or {},
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.1.0",
+    )
+    assert triggered["called"] is False
+    assert result["status"] == "complete"
+    pending = chat.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert pending and pending.get("kind") == "prepare"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "Skipping ticket" in blob
+    assert "yes" in blob.lower()
+
+
+def test_git_reconcile_truncates_missing_list():
+    in_cut = [
+        {
+            "key": f"VFA-{idx}",
+            "title": f"Ticket {idx}",
+            "status": "Done",
+        }
+        for idx in range(25)
+    ]
+    report = format_git_reconcile_report(
+        project_key="VFA",
+        version="0.1.0",
+        in_cut=in_cut,
+        compared=["deploy-web-abc → staging"],
+        commits=[],
+    )
+    assert report["needs_confirm"] is True
+    assert len(report["missing_from_git"]) == 25
+    assert "…and 5 more" in report["text"]
+
+
 def test_prepare_autodeploys_on_low_risk_without_open_tickets(monkeypatch):
     store = get_ticket_store()
     board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
@@ -439,6 +504,21 @@ def test_prepare_autodeploys_on_low_risk_without_open_tickets(monkeypatch):
         lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
     )
     monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [
+                {
+                    "sha": "abc1234deadbeef",
+                    "message": "VFA-10: Done feature",
+                    "subject": "VFA-10: Done feature",
+                }
+            ],
+            "compared": ["deploy-backend-old → staging"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
 
     def _trigger(**kwargs):
         triggered["called"] = True

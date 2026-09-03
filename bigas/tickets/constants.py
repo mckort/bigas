@@ -41,11 +41,11 @@ RELEASE_CUT_STATUSES = frozenset(
 )
 
 
-def is_in_release_cut(status: str) -> bool:
+def is_in_release_cut(status: str, *, project_key: Optional[str] = None) -> bool:
     raw = (status or "").strip()
     if raw in RELEASE_CUT_STATUSES:
         return True
-    resolved = resolve_column_status(raw, project_key="X")
+    resolved = resolve_column_status(raw, project_key=project_key)
     return bool(resolved and resolved in RELEASE_CUT_STATUSES)
 
 

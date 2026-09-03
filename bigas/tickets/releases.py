@@ -95,7 +95,7 @@ def _open_tickets_on_version(project_key: str, version: str) -> List[Dict[str, A
     return [
         ticket
         for ticket in tickets_on_version(project_key, version)
-        if not is_in_release_cut(ticket.get("status") or "")
+        if not is_in_release_cut(ticket.get("status") or "", project_key=project_key)
     ]
 
 
