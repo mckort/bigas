@@ -60,6 +60,53 @@ def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+STRATEGY_ANALYTICS_REJECT = (
+    "This is a strategy/SEO/growth brief, not a factual GA4 question. "
+    "Ask 1–3 narrow questions instead (e.g. 'Sessions last 28 days', "
+    "'Sessions last 90 days by sessionDefaultChannelGroup', "
+    "'Top landing pages last 90 days', "
+    "'screenPageViews for pagePath containing /store last 90 days') "
+    "then write the plan yourself. Do not retry this same brief."
+)
+
+_STRATEGY_PHRASES = (
+    "organic growth",
+    "content strategy",
+    "seo strategy",
+    "growth strategy",
+    "growth plan",
+    "how do we grow",
+    "how can we grow",
+    "without using paid",
+    "without paid ads",
+    "provide a concrete",
+    "write a plan",
+    "prioritized moves",
+    "look at ga4 data if needed",
+)
+
+_STRATEGY_BRIEF_RE = re.compile(
+    r"\b(provide|review|recommend|propose|draft|create)\b.{0,60}\b(strategy|plan|brief)\b",
+    re.I | re.DOTALL,
+)
+
+
+def is_strategy_analytics_question(question: str) -> bool:
+    """True when the text is a growth/SEO brief, not a single GA4 metric ask."""
+    text = (question or "").strip()
+    if not text:
+        return False
+    lower = text.lower()
+    if any(phrase in lower for phrase in _STRATEGY_PHRASES):
+        return True
+    if _STRATEGY_BRIEF_RE.search(text):
+        return True
+    strategy_tokens = ("strategy", "seo", "content", "increase", "customers", "ads")
+    if len(text) >= 180 and sum(1 for token in strategy_tokens if token in lower) >= 3:
+        return True
+    return False
+
+
 def parse_timeout_seconds(
     data: Dict[str, Any],
     default: int = 600,

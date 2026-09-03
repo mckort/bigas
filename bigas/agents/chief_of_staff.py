@@ -29,6 +29,10 @@ from bigas.portfolio import (
     resolve_project,
     scrub_analytics_question,
 )
+from bigas.resources.marketing.utils import (
+    STRATEGY_ANALYTICS_REJECT,
+    is_strategy_analytics_question,
+)
 from bigas.resources.devops.pipeline import (
     clear_stale_pending_deploy,
     is_deploy_start,
@@ -77,6 +81,7 @@ Growth and strategy briefs (traffic, SEO, content, social, customers, conversion
 - You are a senior growth marketer. Reason from live evidence and established practice, not a generic checklist.
 - Jira is context, not the answer. Looking up an Epic/goal is fine; never end with only ticket links or a Move button. The plan is the reply. File tickets only after the brief, and only for concrete follow-up work.
 - Never send the user's whole strategy question to ask_analytics_question. That tool answers factual GA4 questions only (sessions last 28 days, sessions by source, landing pages, event counts). Ask several narrow questions if needed.
+- If ask_analytics_question rejects the text as a strategy brief or times out, do not retry that same text and do not paste the error. Ask 1–3 narrow factual questions, or write the growth plan from get_latest_report / what you already know.
 - Before a growth plan, gather: (1) current sessions and sources, (2) top landing pages, (3) conversions you can measure (store clicks, meeting bookings, key events), (4) get_latest_report and/or analyze_underperforming_pages when those exist. Then write the brief yourself.
 - Structure: baseline vs the stated goal, the gap, 5–8 prioritized moves (impact × effort), what not to do given budget, and how to measure each move in GA4.
 - Do not paste a tool's concise summary as the final answer. Synthesize.
@@ -624,6 +629,11 @@ _ANALYTICS_EMPTY_RE = re.compile(
     re.I,
 )
 _ANALYTICS_FAILED_RE = re.compile(r"Failed to process analytics question", re.I)
+_ANALYTICS_TIMEOUT_RE = re.compile(r"timed out after \d+s", re.I)
+_ANALYTICS_STRATEGY_RE = re.compile(
+    r"strategy/SEO/growth brief|not a factual GA4|write the plan yourself",
+    re.I,
+)
 
 
 def _friendly_analytics_tool_failure(text: str) -> Optional[str]:
@@ -635,6 +645,20 @@ def _friendly_analytics_tool_failure(text: str) -> Optional[str]:
             "That is a valid finding (the event or metric is missing), not a crash. "
             "Tell the user what was missing and continue troubleshooting tracking/GTM if that was the question."
         )
+    if _ANALYTICS_STRATEGY_RE.search(blob) or is_strategy_analytics_question(blob):
+        return (
+            "ask_analytics_question cannot answer strategy or SEO briefs. "
+            "Ask 1–3 narrow factual questions (sessions last 28 days, sessions by channel, "
+            "top landing pages, /store page views, key events) or write the growth plan "
+            "from get_latest_report / what you already know. Do not retry the same brief "
+            "and do not paste this as the user-facing reply."
+        )
+    if _ANALYTICS_TIMEOUT_RE.search(blob):
+        return (
+            "The GA4 lookup timed out. Do not retry the same question. "
+            "Ask a narrower factual question, or write the growth plan from "
+            "get_latest_report / what you already know. Do not paste the timeout as the reply."
+        )
     if _ANALYTICS_FAILED_RE.search(blob):
         return (
             "The GA4 query could not be completed. "
@@ -645,6 +669,10 @@ def _friendly_analytics_tool_failure(text: str) -> Optional[str]:
 
 
 def _run_tool_call(client: MCPClient, tool_name: str, arguments: Dict[str, Any]) -> str:
+    if "ask_analytics" in (tool_name or "").lower() and is_strategy_analytics_question(
+        str((arguments or {}).get("question") or "")
+    ):
+        return _friendly_analytics_tool_failure(STRATEGY_ANALYTICS_REJECT) or STRATEGY_ANALYTICS_REJECT
     try:
         result = client.call_tool(tool_name, arguments)
         raw_text = result.get("text") or ""
@@ -751,8 +779,15 @@ def _enrich_tool_args(
         args["agent_id"] = agent_id
     if project:
         args.setdefault("project_key", project)
-        if "ask_analytics" in (tool_name or "").lower():
-            args["question"] = scrub_analytics_question(args.get("question") or user_message, project)
+    if "ask_analytics" in (tool_name or "").lower():
+        raw_question = str(args.get("question") or "").strip()
+        source = raw_question or (user_message or "")
+        if is_strategy_analytics_question(source):
+            args["question"] = source
+        elif project:
+            args["question"] = scrub_analytics_question(source, project)
+        elif source:
+            args["question"] = source
     if (tool_name or "").lower() in {"create_ticket", "create_jira_issue"} and (
         caller_agent_id or ""
     ).strip().lower() == "marketing":

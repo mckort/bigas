@@ -1092,6 +1092,52 @@ def test_friendly_analytics_empty_data_is_finding():
     assert "Failed to process" not in out
 
 
+def test_run_tool_call_rejects_strategy_brief_without_http():
+    from bigas.agents.chief_of_staff import _run_tool_call
+
+    class FakeClient:
+        def call_tool(self, name, arguments):
+            raise AssertionError("strategy briefs must not hit GA4")
+
+    out = _run_tool_call(
+        FakeClient(),
+        "ask_analytics_question",
+        {
+            "question": (
+                "Review GPWW-17 and provide a concrete organic growth, SEO, "
+                "and content strategy to increase website sessions"
+            )
+        },
+    )
+    assert "cannot answer strategy" in out.lower()
+    assert "do not retry" in out.lower()
+
+
+def test_friendly_analytics_timeout_is_recoverable():
+    from bigas.agents.chief_of_staff import _friendly_analytics_tool_failure
+
+    out = _friendly_analytics_tool_failure(
+        "I couldn't complete that request (ask_analytics_question): "
+        "Tool call timed out after 300s"
+    )
+    assert out is not None
+    assert "timed out" in out.lower()
+    assert "do not paste" in out.lower()
+    assert "write the growth plan" in out.lower()
+
+
+def test_enrich_does_not_scrub_strategy_brief_into_ga4_query():
+    from bigas.agents.chief_of_staff import _enrich_tool_args
+
+    brief = (
+        "Review GPWW-17 and provide a concrete organic growth, SEO, and "
+        "content strategy to increase website sessions without using paid ads."
+    )
+    args = _enrich_tool_args("ask_analytics_question", {}, brief)
+    assert args["question"] == brief
+    assert args.get("project_key") == "GPWW"
+
+
 def test_run_tool_call_rewrites_empty_ga4_error():
     from bigas.agents.chief_of_staff import _run_tool_call
 
@@ -1127,6 +1173,7 @@ def test_marketing_specialist_prompt_treats_empty_ga4_as_finding():
         assert "senior growth marketer" in blob.lower()
         assert "ask_analytics_question" in blob
         assert "Jira is context, not the answer" in blob
+        assert "times out" in blob.lower()
     product = _specialist_native_extra("product")
     assert "empty results are findings" not in product.lower()
     assert "senior growth marketer" not in product.lower()
