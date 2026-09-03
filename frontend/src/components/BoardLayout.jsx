@@ -35,7 +35,7 @@ import {
   ticketParentKey,
   ticketParentKrId,
 } from '../lib/okr'
-import { isDoneStatus, ticketSearchKey, ticketVisibleOnBoard } from '../lib/boardFilters'
+import { isDoneStatus, isRecentDone, ticketSearchKey, ticketVisibleOnBoard } from '../lib/boardFilters'
 import { ticketFixVersion, ticketMatchesReleaseFilter } from '../lib/releases'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
@@ -1505,6 +1505,8 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
   const [versionFilter, setVersionFilter] = useState('')
   const [ticketSearch, setTicketSearch] = useState('')
+  const [searchBusy, setSearchBusy] = useState(false)
+  const [searchError, setSearchError] = useState('')
   const [showOlderDone, setShowOlderDone] = useState(false)
   const [releases, setReleases] = useState([])
   const [showReleases, setShowReleases] = useState(false)
@@ -1532,17 +1534,13 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   )
   const hiddenDoneCount = filteredTickets.filter((ticket) => {
     if (!isDoneStatus(ticket.status)) return false
-    const matched = ticketVisibleOnBoard(ticket, {
+    if (!ticketVisibleOnBoard(ticket, {
       search: ticketSearch,
       versionFilter,
       showOlderDone: true,
-    })
-    const recent = ticketVisibleOnBoard(ticket, {
-      search: ticketSearch,
-      versionFilter,
-      showOlderDone: false,
-    })
-    return matched && !recent
+    })) return false
+    if (ticketSearch.trim() || versionFilter) return false
+    return !isRecentDone(ticket)
   }).length
   const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
@@ -1600,6 +1598,8 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   useEffect(() => {
     optimisticTicketsRef.current = []
     setTicketSearch('')
+    setSearchBusy(false)
+    setSearchError('')
     setShowOlderDone(false)
   }, [activeBoardId])
 
@@ -1707,18 +1707,27 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     if (!key) return
     const local = tickets.find((ticket) => String(ticket.key || '').toUpperCase() === key)
     if (local) {
+      setSearchError('')
       setModalTicket(local)
       return
     }
+    if (searchBusy) return
+    setSearchBusy(true)
+    setSearchError('')
     try {
       const data = await fetchTicketByKey(key)
-      if (!data.ticket) return
+      if (!data.ticket) {
+        setSearchError(`Ticket ${key} not found`)
+        return
+      }
       if (data.ticket.board_id && data.ticket.board_id !== activeBoardId) {
         setActiveBoardId(data.ticket.board_id)
       }
       setModalTicket(data.ticket)
-    } catch {
-      /* ticket not found or forbidden */
+    } catch (err) {
+      setSearchError(err.message || `Could not load ticket ${key}`)
+    } finally {
+      setSearchBusy(false)
     }
   }
 
@@ -2006,13 +2015,20 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
             <input
               type="search"
               value={ticketSearch}
-              onChange={(e) => setTicketSearch(e.target.value)}
+              onChange={(e) => {
+                setTicketSearch(e.target.value)
+                if (searchError) setSearchError('')
+              }}
               onKeyDown={handleSearchKeyDown}
               placeholder="Search tickets"
-              className="input-field text-sm"
+              disabled={searchBusy}
+              aria-busy={searchBusy}
+              className="input-field text-sm disabled:opacity-50"
             />
           </label>
-          {ticketSearch.trim() && visibleTickets.length === 0 && (
+          {searchBusy && <p className="text-sm text-muted">Searching…</p>}
+          {searchError && <p className="text-sm text-red-600">{searchError}</p>}
+          {!searchBusy && ticketSearch.trim() && visibleTickets.length === 0 && !searchError && (
             <p className="text-sm text-muted">No tickets match that search.</p>
           )}
         </header>

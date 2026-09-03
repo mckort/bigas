@@ -33,7 +33,7 @@ export function ticketMatchesSearch(ticket, query) {
     ticket?.description,
     ticket?.assignee,
     ticketFixVersion(ticket),
-    ticketLabels(ticket).join(' '),
+    (ticketLabels(ticket) || []).join(' '),
   ]
     .map((value) => String(value || '').toLowerCase())
     .join('\n')
