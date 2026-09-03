@@ -21,12 +21,10 @@ def use_internal_board() -> bool:
     """
     Use the native Bigas Kanban board instead of Jira.
 
-    Default: internal board when Jira is not configured, or when
-    USE_INTERNAL_BOARD=true is set explicitly.
+    Default is the internal board, even when Jira env vars are present.
+    Set USE_INTERNAL_BOARD=false to drive an external Jira project instead.
     """
     flag = (os.environ.get("USE_INTERNAL_BOARD") or "").strip().lower()
-    if flag in ("1", "true", "yes"):
-        return True
     if flag in ("0", "false", "no"):
         return False
-    return not jira_configured()
+    return True

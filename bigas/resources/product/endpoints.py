@@ -64,14 +64,14 @@ _JIRA_AI_JOBS_LOCK = threading.Lock()
 
 def _jira_webhook_disabled_response():
     """404 the Jira Automation webhook unless Jira credentials are configured."""
-    from bigas.tickets.config import jira_configured
+    from bigas.tickets.config import jira_configured, use_internal_board
 
-    if jira_configured():
+    if jira_configured() and not use_internal_board():
         return None
     return jsonify(
         {
             "error": "Jira webhook disabled",
-            "reason": "Jira is not configured",
+            "reason": "Internal board is the ticket source",
         }
     ), 404
 
@@ -1115,9 +1115,9 @@ def get_manifest():
             },
         ]
     }
-    from bigas.tickets.config import jira_configured
+    from bigas.tickets.config import jira_configured, use_internal_board
 
-    if jira_configured():
+    if jira_configured() and not use_internal_board():
         manifest["tools"].extend(
             [
                 {

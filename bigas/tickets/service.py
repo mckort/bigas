@@ -545,6 +545,8 @@ class TicketService:
             board = self._store.create_board(
                 uid, name=f"{project_key} Board", project_key=project_key
             )
+        from bigas.tickets.releases import default_fix_version
+
         ticket = self._store.create_ticket(
             board["board_id"],
             title=title,
@@ -557,6 +559,7 @@ class TicketService:
             user_id=uid,
             key=key,
             status=status,
+            fix_version=default_fix_version(project_key),
         )
         return ticket_to_api(ticket)
 

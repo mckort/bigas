@@ -6,7 +6,7 @@ import logging
 from flask import Blueprint, g, jsonify, request
 
 from bigas.chat.auth import require_chat_auth
-from bigas.tickets.config import jira_configured
+from bigas.tickets.config import jira_configured, use_internal_board
 from bigas.tickets.constants import columns_for_board
 from bigas.tickets.attachments import AttachmentError
 from bigas.tickets.service import (
@@ -30,7 +30,7 @@ def boards():
         return jsonify(
             {
                 "boards": service.list_boards(user_id),
-                "jira_import_available": jira_configured(),
+                "jira_import_available": jira_configured() and not use_internal_board(),
             }
         )
 
@@ -126,6 +126,8 @@ def board_sync_jira(board_id: str):
     board = store.get_board(board_id)
     if not board or board.get("user_id") != user_id:
         return jsonify({"error": "Board not found"}), 404
+    if use_internal_board():
+        return jsonify({"error": "Jira sync is disabled. This board is internal-only."}), 400
     if not store.try_begin_jira_sync(board_id, user_id=user_id):
         return jsonify({"ok": False, "status": "running", "error": "Jira sync already in progress"}), 409
 

@@ -22,6 +22,15 @@ from bigas.resources.product.create_jira_issue.service import (
 from bigas.resources.product.create_release_notes.jira_client import JiraError
 
 
+@pytest.fixture(autouse=True)
+def _force_external_jira(monkeypatch):
+    monkeypatch.setenv("USE_INTERNAL_BOARD", "false")
+    monkeypatch.setenv("JIRA_BASE_URL", "https://example.atlassian.net")
+    monkeypatch.setenv("JIRA_EMAIL", "dev@example.com")
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "BIG")
+
+
 def test_format_jira_error_project_not_found():
     err = JiraError('Jira API error 404: {"errorMessages":["Project not found"]}')
     assert "BIG" in _format_jira_error(err, project_key="BIG")
