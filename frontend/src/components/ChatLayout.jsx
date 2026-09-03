@@ -606,7 +606,12 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
     fetchProjectReleases(projectKey)
       .then((res) => {
         if (cancelled) return
-        const unreleased = (res.releases || []).filter((item) => !item.released)
+        const unreleased = (res.releases || [])
+          .filter((item) => !item.released)
+          .slice()
+          .sort((a, b) =>
+            String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true }),
+          )
         setReleases(unreleased)
         setVersion((current) => pickDefaultRelease(unreleased, current))
       })
@@ -667,20 +672,26 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
                   </option>
                 ))}
             </select>
-            <input
+            <select
               value={version}
               onChange={(e) => setVersion(e.target.value)}
-              list="prepare-deploy-versions"
-              placeholder={releasesLoading ? 'Loading…' : '0.1.0'}
-              disabled={disabled}
-              className="input-field text-xs min-h-[36px] w-[5.5rem] py-1"
+              disabled={disabled || releasesLoading || Boolean(releasesError) || releases.length === 0}
+              className="input-field text-xs min-h-[36px] min-w-[7.5rem] py-1"
               aria-label="Release version"
-            />
-            <datalist id="prepare-deploy-versions">
-              {releases.map((release) => (
-                <option key={release.release_id || release.name} value={release.name} />
-              ))}
-            </datalist>
+            >
+              {releasesLoading && <option value="">Loading…</option>}
+              {!releasesLoading && releasesError && <option value="">Failed to load</option>}
+              {!releasesLoading && !releasesError && releases.length === 0 && (
+                <option value="">No unreleased</option>
+              )}
+              {!releasesLoading &&
+                releases.map((release) => (
+                  <option key={release.release_id || release.name} value={release.name}>
+                    {release.name}
+                    {release.is_default ? ' · default' : ''}
+                  </option>
+                ))}
+            </select>
             <button
               type="submit"
               disabled={disabled || !projectKey || !version.trim()}
