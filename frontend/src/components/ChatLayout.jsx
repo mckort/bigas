@@ -11,6 +11,7 @@ import {
   fetchAgents,
   fetchChatProjects,
   fetchChatAttachmentBlob,
+  fetchProjectReleases,
   fetchFeed,
   fetchMessages,
   fetchThreads,
@@ -543,11 +544,18 @@ const STARTER_PROMPTS = [
   },
 ]
 
+function pickDefaultRelease(releases, current) {
+  if (current && releases.some((item) => item.name === current)) return current
+  return releases.find((item) => item.is_default)?.name || releases[0]?.name || ''
+}
+
 function PrepareDeployShortcut({ disabled, onSubmit }) {
   const [open, setOpen] = useState(false)
   const [projects, setProjects] = useState([])
-  const [projectKey, setProjectKey] = useState('VFA')
+  const [projectKey, setProjectKey] = useState('')
   const [version, setVersion] = useState('')
+  const [releases, setReleases] = useState([])
+  const [releasesLoading, setReleasesLoading] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -557,23 +565,54 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
         const items = res.projects || []
         setProjects(items)
         setProjectKey((current) =>
-          items.some((item) => item.key === current) ? current : items[0]?.key || 'VFA',
+          items.some((item) => item.key === current) ? current : items[0]?.key || '',
         )
       })
       .catch(() => {
-        if (!cancelled) setProjects([{ key: 'VFA', name: 'VC Field Assistant' }])
+        if (!cancelled) {
+          setProjects([])
+          setProjectKey('')
+        }
       })
     return () => {
       cancelled = true
     }
   }, [])
 
+  useEffect(() => {
+    if (!projectKey) {
+      setReleases([])
+      setVersion('')
+      return undefined
+    }
+    let cancelled = false
+    setReleasesLoading(true)
+    fetchProjectReleases(projectKey)
+      .then((res) => {
+        if (cancelled) return
+        const unreleased = (res.releases || []).filter((item) => !item.released)
+        setReleases(unreleased)
+        setVersion((current) => pickDefaultRelease(unreleased, current))
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setReleases([])
+          setVersion('')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setReleasesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectKey])
+
   function handleGo(e) {
     e.preventDefault()
     const ver = version.trim()
     if (!projectKey || !ver || disabled) return
     onSubmit(`prepare deploy ${projectKey} ${ver}`)
-    setVersion('')
     setOpen(false)
   }
 
@@ -597,24 +636,34 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             className="input-field text-xs min-h-[36px] w-[8.5rem] py-1"
             aria-label="Project"
           >
-            {(projects.length ? projects : [{ key: 'VFA', name: 'VC Field Assistant' }]).map(
-              (item) => (
-                <option key={item.key} value={item.key}>
-                  {item.name ? `${item.key} - ${item.name}` : item.key}
-                </option>
-              ),
-            )}
+            {projects.length === 0 && <option value="">No deploy targets</option>}
+            {projects.map((item) => (
+              <option key={item.key} value={item.key}>
+                {item.name ? `${item.key} - ${item.name}` : item.key}
+              </option>
+            ))}
           </select>
-          <input
+          <select
             value={version}
             onChange={(e) => setVersion(e.target.value)}
-            placeholder="0.1.0"
-            className="input-field text-xs min-h-[36px] w-[5.5rem] py-1"
+            disabled={disabled || releasesLoading || releases.length === 0}
+            className="input-field text-xs min-h-[36px] min-w-[7.5rem] py-1"
             aria-label="Release version"
-          />
+          >
+            {releases.length === 0 ? (
+              <option value="">{releasesLoading ? 'Loading…' : 'No unreleased'}</option>
+            ) : (
+              releases.map((release) => (
+                <option key={release.release_id || release.name} value={release.name}>
+                  {release.name}
+                  {release.is_default ? ' · default' : ''}
+                </option>
+              ))
+            )}
+          </select>
           <button
             type="submit"
-            disabled={disabled || !version.trim()}
+            disabled={disabled || !projectKey || !version.trim()}
             className="btn-primary text-xs min-h-[36px] px-3 py-1"
           >
             Go

@@ -260,6 +260,23 @@ def test_prepare_confirm_deploys_main(monkeypatch):
     assert poll.get("ref") == "main"
 
 
+def test_list_shortcut_projects_only_deploy_targets(monkeypatch):
+    monkeypatch.setenv("JIRA_PROJECT_KEYS", "VFA,WAYW,BIG")
+    monkeypatch.setenv(
+        "BIGAS_DEPLOY_WORKFLOW_MAP",
+        "VFA:deploy-backend.yml,deploy-web.yml|BIG:deploy.yml",
+    )
+    monkeypatch.setenv(
+        "BIGAS_JIRA_PROJECT_REPO_MAP",
+        "VFA:mckort/vcfieldassistant,WAYW:mckort/roadpal,BIG:mckort/bigas",
+    )
+    from bigas.resources.devops.prepare import list_shortcut_projects
+
+    keys = [item["key"] for item in list_shortcut_projects()]
+    assert keys == ["VFA", "BIG"]
+    assert "WAYW" not in keys
+
+
 def test_prepare_requires_project_and_version():
     chat = get_chat_store()
     thread = chat.create_thread("user-1", "devops")
