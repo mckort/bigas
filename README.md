@@ -1,9 +1,9 @@
-# Bigas — Modular MCP Server for Your Virtual AI Team
+# Bigas — Virtual HQ for Solo Founders
 
 <div align="center">
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
-  <strong>A brand-aligned web chat with your virtual AI team — a goal-oriented engine where you and the agents work side by side, on one project or several.</strong>
+  <strong>You and your AI team, working side by side toward the same goals.</strong>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
