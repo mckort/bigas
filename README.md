@@ -38,27 +38,39 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 ## What is Bigas?
 
-**Bigas** (Latin for *team*) is an open-source MCP server that gives a solo founder or small team a virtual staff across **marketing, product, engineering, and finance** — without hiring anyone. Chat and the Kanban board are how work moves. **Objectives** are why: humans and AI agents work side by side until the quarter's Key Results move.
+**Bigas** (Latin for *team*) is an open-source virtual HQ for a solo founder or small team. You set quarterly **Objectives**, ship work on a built-in **board** with Jira-like workflows, and talk to a virtual staff in **chat** — marketing, product, engineering, and finance, without hiring anyone.
 
-It currently ships six specialists, reachable from the **[web chat](#chat-web-interface)** at `/` (Chief of Staff by default, or talk to any specialist directly):
+Three surfaces, one story:
+
+| Surface | Where | Role |
+|---|---|---|
+| **Objectives** | `/objectives` | The quarter's scoreboard. You name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story. |
+| **Board** | `/board` | The default work surface: tickets, columns, releases, and a human-gated AI workflow (research → plan → implement). Jira is optional — connect it only if you already run a Jira board you want to keep. |
+| **Chat** | `/` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |
+
+It currently ships six specialists:
 
 | Specialist | What it does |
 |---|---|
-| **Chief of Staff** | Default chat agent: reasons through requests step by step, coordinates with specialists when their expertise adds value, takes action (files Jira issues, uses tools) rather than asking you to do it |
+| **Chief of Staff** | Default chat agent: reasons through requests step by step, coordinates with specialists when their expertise adds value, takes action rather than asking you to do it |
 | **Senior Marketing Analyst** | Deep expertise in GA4 analytics, paid ads (Google/Meta/LinkedIn/Reddit), trends and cross-platform insights; reasons about marketing questions and creates tracked follow-up work |
-| **Product Manager** | Expertise in product planning, Jira workflows, release notes, and stakeholder communication; reasons about product decisions and prioritization |
+| **Product Manager** | Expertise in product planning, board/Jira workflows, release notes, and stakeholder communication; reasons about product decisions and prioritization |
 | **CTO** | Technical expertise in code review, architecture, deployment debugging, and engineering operations; reasons through technical problems and takes action |
 | **CFO** | Expertise in AI and GCP cost, usage analysis, and efficiency; reasons from numbers first (`fetch_ai_usage`, weekly `weekly_cto_ai_report`) and can file tracked follow-up work |
 | **DevOps** | Expertise in deployments (GitHub Actions), site health, incident response, and CI/CD; reasons about operational safety before taking action |
 
 All agents use a **reasoning-based approach**: they think step by step about what you're trying to accomplish, decide which tools or specialists would help, and take action. No rigid rules about who owns what — specialists are involved when their expertise genuinely improves the outcome.
 
+Humans decide. Agents execute the work you put in front of them. Cards do not auto-advance, and agents do not start work because a Key Result is off track — you still drag.
+
 Two design decisions shape everything else in this document:
 
-1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler, Firebase Auth, Firestore), Discord, and Jira/GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
+1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler, Firebase Auth, Firestore), Discord, and GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
 2. **It's modular.** Marketing, Product, CTO, and DevOps are independent resource packages. CFO is a chat specialist on top of the usage/cost providers (`BIGAS_USAGE_PROVIDERS`). Ads/finance/analytics/notification integrations are *providers* discovered at startup — enable one by setting its env vars, add a new one (e.g. TikTok Ads, QuickBooks, Slack) by dropping in a file, no core changes required. See [Modular architecture: providers](#modular-architecture-providers).
 
-Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord. When the agent chat UI is enabled, the same output also lands in the matching specialist thread and the activity feed. You can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler. Chat is optional: Firebase Auth and Firestore are only for persistent production chat — run without them via in-memory storage locally, or set `CHAT_ENABLED=false` for Discord/MCP only. When chat is on, open the deployed Cloud Run URL in a browser to use the UI.
+The same specialists and tools are also reachable over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler. Results can land in Discord as well as the matching chat thread. MCP is supported; it is not the product. Chat needs only an LLM key. The board and Objectives are built in.
+
+When chat is enabled, open the app URL in a browser. Firebase Auth and Firestore are only for persistent production chat — run without them via in-memory storage locally, or set `CHAT_ENABLED=false` for Discord/HTTP/MCP only.
 
 ---
 
