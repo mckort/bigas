@@ -35,6 +35,7 @@ import {
   ticketParentKey,
   ticketParentKrId,
 } from '../lib/okr'
+import { isDoneStatus, ticketSearchKey, ticketVisibleOnBoard } from '../lib/boardFilters'
 import { ticketFixVersion, ticketMatchesReleaseFilter } from '../lib/releases'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
@@ -49,6 +50,27 @@ const AI_WORKING_STATUSES = new Set([
 
 function isTodoColumn(col) {
   return String(col || '').trim().toLowerCase() === 'to do'
+}
+
+function ColumnHeading({ col, visibleCount, hiddenDoneCount, showOlderDone, searchActive, onToggleOlder }) {
+  const showOlderToggle = isDoneStatus(col) && !searchActive && (hiddenDoneCount > 0 || showOlderDone)
+  return (
+    <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between flex-shrink-0 gap-2">
+      <span className="truncate">{col}</span>
+      <span className="flex items-center gap-2 flex-shrink-0">
+        <span className="text-muted font-normal">{visibleCount}</span>
+        {showOlderToggle && (
+          <button
+            type="button"
+            onClick={onToggleOlder}
+            className="text-[11px] font-normal text-muted hover:text-text"
+          >
+            {showOlderDone ? 'Hide older' : `${hiddenDoneCount} older`}
+          </button>
+        )}
+      </span>
+    </h3>
+  )
 }
 
 const BOARD_FILTER_QUERY_KEYS = ['kr', 'objective', 'ticket']
@@ -1482,6 +1504,10 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [syncMessage, setSyncMessage] = useState('')
   const [epicFilter, setEpicFilter] = useState(() => filterFromQuery(boardQuery()))
   const [versionFilter, setVersionFilter] = useState('')
+  const [ticketSearch, setTicketSearch] = useState('')
+  const [searchBusy, setSearchBusy] = useState(false)
+  const [searchError, setSearchError] = useState('')
+  const [showOlderDone, setShowOlderDone] = useState(false)
   const [releases, setReleases] = useState([])
   const [showReleases, setShowReleases] = useState(false)
   const optimisticTicketsRef = useRef([])
@@ -1493,10 +1519,22 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const krsById = Object.fromEntries(
     tickets.flatMap((ticket) => keyResultsOf(ticket).filter((kr) => kr.id).map((kr) => [kr.id, kr])),
   )
-  const visibleTickets = tickets.filter((ticket) => {
+  const filteredTickets = tickets.filter((ticket) => {
+    const exactKey = ticketSearchKey(ticketSearch)
+    if (exactKey && String(ticket.key || '').toUpperCase() === exactKey) return true
     if (!ticketMatchesObjectiveFilter(ticket, epicFilter)) return false
     return ticketMatchesReleaseFilter(ticket, versionFilter)
   })
+  const visibleTickets = filteredTickets.filter((ticket) =>
+    ticketVisibleOnBoard(ticket, {
+      search: ticketSearch,
+      versionFilter,
+      showOlderDone,
+    }),
+  )
+  const hiddenDoneCount =
+    filteredTickets.filter((ticket) => isDoneStatus(ticket.status)).length -
+    visibleTickets.filter((ticket) => isDoneStatus(ticket.status)).length
   const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
   const loadBoards = useCallback(async () => {
@@ -1552,6 +1590,10 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   useEffect(() => {
     optimisticTicketsRef.current = []
+    setTicketSearch('')
+    setSearchBusy(false)
+    setSearchError('')
+    setShowOlderDone(false)
   }, [activeBoardId])
 
   useEffect(() => {
@@ -1650,6 +1692,36 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const handleStatusChange = async (ticket, status) => {
     await updateTicket(ticket.ticket_id, { status })
     await loadTickets()
+  }
+
+  const handleSearchKeyDown = async (event) => {
+    if (event.key !== 'Enter') return
+    const key = ticketSearchKey(ticketSearch)
+    if (!key) return
+    const local = tickets.find((ticket) => String(ticket.key || '').toUpperCase() === key)
+    if (local) {
+      setSearchError('')
+      setModalTicket(local)
+      return
+    }
+    if (searchBusy) return
+    setSearchBusy(true)
+    setSearchError('')
+    try {
+      const data = await fetchTicketByKey(key)
+      if (!data.ticket) {
+        setSearchError(`Ticket ${key} not found`)
+        return
+      }
+      if (data.ticket.board_id && data.ticket.board_id !== activeBoardId) {
+        setActiveBoardId(data.ticket.board_id)
+      }
+      setModalTicket(data.ticket)
+    } catch (err) {
+      setSearchError(err.message || `Could not load ticket ${key}`)
+    } finally {
+      setSearchBusy(false)
+    }
   }
 
   const handleDrop = async (status) => {
@@ -1833,9 +1905,10 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       />
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="header-bar px-3 sm:px-4 py-3 flex flex-col gap-2 lg:flex-row lg:items-center">
-          <div className="flex items-center gap-2 min-w-0 lg:flex-1">
-            <SettingsButton onClick={onOpenSettings} />
+        <header className="header-bar px-3 sm:px-4 py-3 flex flex-col gap-2">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+            <div className="flex items-center gap-2 min-w-0 lg:flex-1">
+              <SettingsButton onClick={onOpenSettings} />
             <ThemeToggle />
             <button
               type="button"
@@ -1929,6 +2002,28 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
               Log out
             </button>
           </div>
+          </div>
+          <label className="block w-full min-w-0">
+            <span className="sr-only">Search tickets</span>
+            <input
+              type="search"
+              value={ticketSearch}
+              onChange={(e) => {
+                setTicketSearch(e.target.value)
+                if (searchError) setSearchError('')
+              }}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="Search tickets"
+              disabled={searchBusy}
+              aria-busy={searchBusy}
+              className="input-field text-sm disabled:opacity-50"
+            />
+          </label>
+          {searchBusy && <p className="text-sm text-muted">Searching…</p>}
+          {searchError && <p className="text-sm text-red-600">{searchError}</p>}
+          {!searchBusy && ticketSearch.trim() && visibleTickets.length === 0 && !searchError && (
+            <p className="text-sm text-muted">No tickets match that search.</p>
+          )}
         </header>
 
         {/* Mobile: horizontal snap-scroll kanban */}
@@ -1940,10 +2035,14 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                 key={col}
                 className="flex-shrink-0 w-[85vw] max-w-sm snap-start flex flex-col bg-surface rounded-lg border border-border max-h-full"
               >
-                <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between flex-shrink-0">
-                  <span className="truncate">{col}</span>
-                  <span className="text-muted font-normal">{colTickets.length}</span>
-                </h3>
+                <ColumnHeading
+                  col={col}
+                  visibleCount={colTickets.length}
+                  hiddenDoneCount={hiddenDoneCount}
+                  showOlderDone={showOlderDone}
+                  searchActive={Boolean(ticketSearch.trim() || versionFilter)}
+                  onToggleOlder={() => setShowOlderDone((current) => !current)}
+                />
                 <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
                   {colTickets.map((ticket) => (
                     <TicketCard
@@ -1982,10 +2081,14 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => handleDrop(col)}
               >
-                <h3 className="px-3 py-2 text-sm font-semibold border-b border-border flex justify-between">
-                  <span className="truncate">{col}</span>
-                  <span className="text-muted font-normal">{colTickets.length}</span>
-                </h3>
+                <ColumnHeading
+                  col={col}
+                  visibleCount={colTickets.length}
+                  hiddenDoneCount={hiddenDoneCount}
+                  showOlderDone={showOlderDone}
+                  searchActive={Boolean(ticketSearch.trim() || versionFilter)}
+                  onToggleOlder={() => setShowOlderDone((current) => !current)}
+                />
                 <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[120px]">
                   {colTickets.map((ticket) => (
                     <TicketCard
