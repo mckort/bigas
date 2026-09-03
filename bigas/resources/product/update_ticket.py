@@ -53,7 +53,7 @@ class UpdateTicketService:
             from bigas.tickets.service import TicketService
 
             try:
-                updated = TicketService().set_status(key, raw)
+                updated = TicketService().set_status(key, raw, user_id=user_id)
             except ValueError as exc:
                 raise UpdateTicketError(str(exc)) from exc
             return {

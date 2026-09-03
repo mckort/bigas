@@ -575,7 +575,13 @@ class TicketService:
         )
         return ticket_to_api(ticket)
 
-    def set_status(self, issue_key: str, status: str) -> Dict[str, Any]:
+    def set_status(
+        self,
+        issue_key: str,
+        status: str,
+        *,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Move a ticket to a board column. Accepts aliases like 'Final Review'."""
         key = (issue_key or "").strip().upper()
         raw = (status or "").strip()
@@ -594,10 +600,10 @@ class TicketService:
         old_status = ticket.get("status") or ""
         if resolved == old_status:
             return ticket_to_api(ticket)
-        owner = (board or {}).get("user_id") or _sync_user_id()
+        actor = user_id or (board or {}).get("user_id") or _sync_user_id()
         updated = self.update_ticket(
             ticket["ticket_id"],
-            user_id=owner,
+            user_id=actor,
             previous_status=old_status,
             status=resolved,
         )

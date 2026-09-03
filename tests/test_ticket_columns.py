@@ -82,3 +82,40 @@ def test_update_rejects_unknown_column():
         assert "unknown column" in str(exc).lower()
     else:
         raise AssertionError("expected UpdateTicketError")
+
+
+def test_update_passes_user_id_to_set_status(monkeypatch):
+    captured = {}
+
+    class FakeTicketService:
+        def set_status(self, issue_key, status, *, user_id=None):
+            captured["issue_key"] = issue_key
+            captured["status"] = status
+            captured["user_id"] = user_id
+            return {
+                "key": issue_key,
+                "url": f"/board?ticket={issue_key}",
+                "title": "Moved",
+                "status": "In Progress",
+            }
+
+    monkeypatch.setattr(
+        "bigas.tickets.service.TicketService",
+        FakeTicketService,
+    )
+    monkeypatch.setattr(
+        "bigas.tickets.config.use_internal_board",
+        lambda: True,
+    )
+
+    result = UpdateTicketService().update(
+        issue_key="VFA-99",
+        status="In Progress",
+        user_id="agent-user-1",
+    )
+    assert result["ok"] is True
+    assert captured == {
+        "issue_key": "VFA-99",
+        "status": "In Progress",
+        "user_id": "agent-user-1",
+    }
