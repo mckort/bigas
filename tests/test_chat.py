@@ -571,9 +571,9 @@ def test_chief_callable_tools_include_all_tools_deduped():
         {"name": "get_deployment_status", "description": "status"},
         {"name": "fetch_analytics_report", "description": "ga4"},
         {"name": "check_website_health", "description": "ping"},
-        {"name": "create_jira_issue", "description": "file a ticket"},
-        {"name": "lookup_jira", "description": "look up a ticket"},
-        {"name": "search_jira", "description": "jql search"},
+        {"name": "create_ticket", "description": "file a ticket"},
+        {"name": "lookup_ticket", "description": "look up a ticket"},
+        {"name": "search_tickets", "description": "jql search"},
         {"name": "weekly_analytics_report", "description": "weekly"},
         {"name": "check_deployment_risk", "description": "risk"},
         {"name": "fetch_github_action_logs", "description": "logs"},
@@ -585,9 +585,9 @@ def test_chief_callable_tools_include_all_tools_deduped():
         "get_deployment_status",
         "fetch_analytics_report",
         "check_website_health",
-        "create_jira_issue",
-        "lookup_jira",
-        "search_jira",
+        "create_ticket",
+        "lookup_ticket",
+        "search_tickets",
         "weekly_analytics_report",
         "check_deployment_risk",
         "fetch_github_action_logs",
@@ -601,15 +601,15 @@ def test_jira_tools_available_to_all_agents():
         _filter_tools_for_agent,
     )
 
-    jira_tools = {"create_jira_issue", "lookup_jira", "search_jira"}
+    jira_tools = {"create_ticket", "lookup_ticket", "search_tickets"}
     for name in jira_tools:
         assert name not in MUST_DELEGATE_TOOLS
 
     catalog = [
         {"name": "fetch_analytics_report", "description": "ga4"},
-        {"name": "lookup_jira", "description": "look up a ticket"},
-        {"name": "search_jira", "description": "jql search"},
-        {"name": "create_jira_issue", "description": "file a ticket"},
+        {"name": "lookup_ticket", "description": "look up a ticket"},
+        {"name": "search_tickets", "description": "jql search"},
+        {"name": "create_ticket", "description": "file a ticket"},
         {"name": "create_release_notes", "description": "notes"},
         {"name": "review_and_comment_pr", "description": "review"},
         {"name": "trigger_deployment", "description": "deploy"},
@@ -639,13 +639,13 @@ def test_dispatch_chief_tool_allows_create_jira_issue():
             return {"is_error": False, "text": "", "structured": payload}
 
     result = _dispatch_chief_tool(
-        "create_jira_issue",
+        "create_ticket",
         {"project_key": "GPWW", "summary": "Fix tracking", "description": "GA4 key events"},
         user_message="create a GPWW ticket for tracking",
         thread_id="thread-1",
         mcp_client=FakeMcp(),
     )
-    assert called["name"] == "create_jira_issue"
+    assert called["name"] == "create_ticket"
     assert called["args"]["project_key"] == "GPWW"
     assert "GPWW-9" in (result or "")
 
@@ -666,13 +666,13 @@ def test_dispatch_chief_tool_allows_read_tools():
             }
 
     result = _dispatch_chief_tool(
-        "search_jira",
+        "search_tickets",
         {"jql": "type = Bug AND text ~ \"Stripe\""},
         user_message="open stripe bugs",
         thread_id="thread-1",
         mcp_client=FakeMcp(),
     )
-    assert called["name"] == "search_jira"
+    assert called["name"] == "search_tickets"
     assert "No matching issues" in (result or "")
 
 
@@ -680,7 +680,7 @@ def test_enrich_lookup_jira_extracts_range_from_message():
     from bigas.agents.chief_of_staff import _enrich_tool_args
 
     args = _enrich_tool_args(
-        "lookup_jira",
+        "lookup_ticket",
         {},
         "which of the BIG-15 to BIG-18 have already been done?",
         caller_agent_id="product",
@@ -692,7 +692,7 @@ def test_enrich_create_jira_issue_sets_marketing_for_marketing_agent():
     from bigas.agents.chief_of_staff import _enrich_tool_args
 
     args = _enrich_tool_args(
-        "create_jira_issue",
+        "create_ticket",
         {"project_key": "GPWW", "summary": "CTA", "description": "Fix homepage CTA"},
         "create a GPWW ticket",
         caller_agent_id="marketing",
@@ -700,7 +700,7 @@ def test_enrich_create_jira_issue_sets_marketing_for_marketing_agent():
     assert args["marketing"] is True
 
     product_args = _enrich_tool_args(
-        "create_jira_issue",
+        "create_ticket",
         {"project_key": "GPWW", "summary": "CTA", "description": "Fix homepage CTA"},
         "create a GPWW ticket",
         caller_agent_id="product",
@@ -1000,7 +1000,7 @@ def test_specialist_loop_answers_after_lookup(monkeypatch):
     def fake_select(*_args, **_kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            return "", "lookup_jira", {"issue_key": "BIG-15 to BIG-18"}
+            return "", "lookup_ticket", {"issue_key": "BIG-15 to BIG-18"}
         return (
             "BIG-16 and BIG-18 are Done. BIG-15 is To Do. BIG-17 is In Progress.",
             None,
@@ -1009,10 +1009,10 @@ def test_specialist_loop_answers_after_lookup(monkeypatch):
 
     class FakeClient:
         def list_tools(self):
-            return [{"name": "lookup_jira", "description": "look up tickets"}]
+            return [{"name": "lookup_ticket", "description": "look up tickets"}]
 
         def call_tool(self, name, args):
-            assert name == "lookup_jira"
+            assert name == "lookup_ticket"
             assert "BIG-15" in str(args.get("issue_key") or "")
             return {
                 "is_error": False,
