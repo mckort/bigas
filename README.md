@@ -12,10 +12,10 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 
 ## Table of contents
 
-- [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
-- [Add capabilities one at a time](#add-capabilities-one-at-a-time)
-- [One founder, one project or several](#one-founder-one-project-or-several)
 - [What is Bigas?](#what-is-bigas)
+- [One founder, one project or several](#one-founder-one-project-or-several)
+- [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
+- [Add capabilities based on your needs](#add-capabilities-based-on-your-needs)
 - [Why Google Cloud Run?](#why-google-cloud-run)
 - [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server)
 - [Environment variables](#environment-variables)
@@ -33,6 +33,77 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [Security](#security)
 - [Contributing](#contributing)
 - [License](#license)
+
+---
+
+## What is Bigas?
+
+**Bigas** (Latin for *team*) is an open-source MCP server that gives a solo founder or small team a virtual staff across **marketing, product, engineering, and finance** — without hiring anyone. Chat and the Kanban board are how work moves. **Objectives** are why: humans and AI agents work side by side until the quarter's Key Results move.
+
+It currently ships six specialists, reachable from the **[web chat](#chat-web-interface)** at `/` (Chief of Staff by default, or talk to any specialist directly):
+
+| Specialist | What it does |
+|---|---|
+| **Chief of Staff** | Default chat agent: reasons through requests step by step, coordinates with specialists when their expertise adds value, takes action (files Jira issues, uses tools) rather than asking you to do it |
+| **Senior Marketing Analyst** | Deep expertise in GA4 analytics, paid ads (Google/Meta/LinkedIn/Reddit), trends and cross-platform insights; reasons about marketing questions and creates tracked follow-up work |
+| **Product Manager** | Expertise in product planning, Jira workflows, release notes, and stakeholder communication; reasons about product decisions and prioritization |
+| **CTO** | Technical expertise in code review, architecture, deployment debugging, and engineering operations; reasons through technical problems and takes action |
+| **CFO** | Expertise in AI and GCP cost, usage analysis, and efficiency; reasons from numbers first (`fetch_ai_usage`, weekly `weekly_cto_ai_report`) and can file tracked follow-up work |
+| **DevOps** | Expertise in deployments (GitHub Actions), site health, incident response, and CI/CD; reasons about operational safety before taking action |
+
+All agents use a **reasoning-based approach**: they think step by step about what you're trying to accomplish, decide which tools or specialists would help, and take action. No rigid rules about who owns what — specialists are involved when their expertise genuinely improves the outcome.
+
+Two design decisions shape everything else in this document:
+
+1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler, Firebase Auth, Firestore), Discord, and Jira/GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
+2. **It's modular.** Marketing, Product, CTO, and DevOps are independent resource packages. CFO is a chat specialist on top of the usage/cost providers (`BIGAS_USAGE_PROVIDERS`). Ads/finance/analytics/notification integrations are *providers* discovered at startup — enable one by setting its env vars, add a new one (e.g. TikTok Ads, QuickBooks, Slack) by dropping in a file, no core changes required. See [Modular architecture: providers](#modular-architecture-providers).
+
+Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord. When the agent chat UI is enabled, the same output also lands in the matching specialist thread and the activity feed. You can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler. Chat is optional: Firebase Auth and Firestore are only for persistent production chat — run without them via in-memory storage locally, or set `CHAT_ENABLED=false` for Discord/MCP only. When chat is on, open the deployed Cloud Run URL in a browser to use the UI.
+
+---
+
+## One founder, one project or several
+
+Bigas is for the person who is product, marketing, and engineering at once — on a single product or across a whole portfolio. You do not pick a role. You connect the tools you already use; the virtual team covers the rest of the week.
+
+Chat is the control plane. Chief of Staff sees everything you have connected; Marketing, Product, CTO, CFO, and DevOps each keep their own thread so you can jump in without reconstructing context.
+
+That control plane is a **goal-oriented engine**. You set the quarter's Objectives; Key Results are the scoreboard; the board is where you and the AI team work side by side until those numbers move.
+
+**This quarter you set the aim**
+
+1. Open **Objectives** at `/objectives` — not a report, the shared scoreboard the team works toward.
+2. Each Objective has Key Results you own. Tasks on the board link to a KR, so shipping a card and moving a number are the same story.
+3. You approve, drag, and sign off `current`. Agents research, plan, and implement the work you put in front of them. Nobody auto-starts an AI task because a KR is off track.
+
+**During the week you ship**
+
+Work lives on Bigas's native Kanban board at `/board` by default. Jira is optional — connect it only if you already have a Jira board you want to keep.
+
+1. Drag a card to **Done** → Product posts a progress update.
+2. Assign tickets to a **board Release** (e.g. `0.9.0`) → Ship or a versioned prod deploy cuts GitHub `v0.9.0` and leftover open cards move to the next minor. Then `create_release_notes` drafts blog/social copy for that version.
+3. Ask in chat: *"Draft a tweet about this week's shipped work"* → edit and approve from the Product thread.
+4. Optional: weekly git activity → X draft with Discord approve/decline links.
+
+**While that ships, you keep the code moving**
+
+1. Open a PR → `review_and_comment_pr` (or ask the CTO agent). Bigas reads the diff and posts an architecture-focused review on the PR.
+2. Failed CI? Self-healing can open a hotfix PR; add `CURSOR_API_KEY` for autonomous autofix.
+3. Ask: *"Summarize my open PRs and flag blockers"* from the CTO thread.
+
+**Once a week you look across your site — or every site**
+
+1. Schedule `weekly_analytics_report` and portfolio reports via Cloud Scheduler (or ask in chat).
+2. Ask: *"Run a cross-platform marketing analysis"* → spend compared across Google, Meta, LinkedIn, and Reddit.
+3. Reports land in Discord **and** the Marketing Analyst thread for async review.
+
+**Once a week you look at spend**
+
+1. Schedule `weekly_cto_ai_report` (or ask the CFO agent). Bigas rolls up whatever usage providers you enabled.
+2. Ask: *"What did we spend on AI last week?"* from the CFO thread.
+3. The briefing lands in the CFO chat thread (full message via `post_long_to_discord`), and optionally Discord via `DISCORD_WEBHOOK_URL_CFO`. The report opens with list-price, GCP invoice status, week-over-week, and top drivers, then area/feature detail and a short CFO analysis.
+
+Keys for each capability: [Add capabilities based on your needs](#add-capabilities-based-on-your-needs). Chat needs only an LLM key. The board is built in. Jira is optional.
 
 ---
 
@@ -58,7 +129,7 @@ The setup wizard configures:
 | `CHAT_ENABLED` | `true` | Web chat UI at `/` |
 | LLM key | Gemini or OpenAI | Required — powers all agents |
 
-Optional integrations are offered during setup; skip them to explore chat, `/board`, and `/objectives` first. The **native Kanban board is the default** — Jira is never required. Re-run `python scripts/setup.py` anytime, or add keys by hand, following [Add capabilities one at a time](#add-capabilities-one-at-a-time).
+Optional integrations are offered during setup; skip them to explore chat, `/board`, and `/objectives` first. The **native Kanban board is the default** — Jira is never required. Re-run `python scripts/setup.py` anytime, or add keys by hand, following [Add capabilities based on your needs](#add-capabilities-based-on-your-needs).
 
 **Without Docker:** after `python scripts/setup.py`, build the frontend once (`cd frontend && npm install && npm run build && cd ..`), then `python run_core.py`.
 
@@ -66,7 +137,7 @@ For production on Google Cloud Run, see [Tutorial: deploy your first Bigas serve
 
 ---
 
-## Add capabilities one at a time
+## Add capabilities based on your needs
 
 Quickstart is chat plus Bigas's **own board** at `/board` and Objectives at `/objectives`. You do not need Jira — or any other SaaS — to start. Everything below is optional. Add **one** step, restart (`docker compose up`), try the prompt, then the next. Re-run `python scripts/setup.py` or paste the keys into `.env`.
 
@@ -139,78 +210,6 @@ Details: [GA4 setup](#ga4-setup).
 **Try:** in the CFO thread: *"What did we spend on AI last week?"*
 
 Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md).
-
----
-
-## One founder, one project or several
-
-Bigas is for the person who is product, marketing, and engineering at once — on a single product or across a whole portfolio. You do not pick a role. You connect the tools you already use; the virtual team covers the rest of the week.
-
-Chat is the control plane. Chief of Staff sees everything you have connected; Marketing, Product, CTO, CFO, and DevOps each keep their own thread so you can jump in without reconstructing context.
-
-That control plane is a **goal-oriented engine**. You set the quarter's Objectives; Key Results are the scoreboard; the board is where you and the AI team work side by side until those numbers move.
-
-**This quarter you set the aim**
-
-1. Open **Objectives** at `/objectives` — not a report, the shared scoreboard the team works toward.
-2. Each Objective has Key Results you own. Tasks on the board link to a KR, so shipping a card and moving a number are the same story.
-3. You approve, drag, and sign off `current`. Agents research, plan, and implement the work you put in front of them. Nobody auto-starts an AI task because a KR is off track.
-
-**During the week you ship**
-
-Work lives on Bigas's native Kanban board at `/board` by default. Jira is optional — connect it only if you already have a Jira board you want to keep.
-
-1. Drag a card to **Done** → Product posts a progress update.
-2. Assign tickets to a **board Release** (e.g. `0.9.0`) → Ship or a versioned prod deploy cuts GitHub `v0.9.0` and leftover open cards move to the next minor. Then `create_release_notes` drafts blog/social copy for that version.
-3. Ask in chat: *"Draft a tweet about this week's shipped work"* → edit and approve from the Product thread.
-4. Optional: weekly git activity → X draft with Discord approve/decline links.
-
-**While that ships, you keep the code moving**
-
-1. Open a PR → `review_and_comment_pr` (or ask the CTO agent). Bigas reads the diff and posts an architecture-focused review on the PR.
-2. Failed CI? Self-healing can open a hotfix PR; add `CURSOR_API_KEY` for autonomous autofix.
-3. Ask: *"Summarize my open PRs and flag blockers"* from the CTO thread.
-
-**Once a week you look across your site — or every site**
-
-1. Schedule `weekly_analytics_report` and portfolio reports via Cloud Scheduler (or ask in chat).
-2. Ask: *"Run a cross-platform marketing analysis"* → spend compared across Google, Meta, LinkedIn, and Reddit.
-3. Reports land in Discord **and** the Marketing Analyst thread for async review.
-
-**Once a week you look at spend**
-
-1. Schedule `weekly_cto_ai_report` (or ask the CFO agent). Bigas rolls up whatever usage providers you enabled.
-2. Ask: *"What did we spend on AI last week?"* from the CFO thread.
-3. The briefing lands in the CFO chat thread (full message via `post_long_to_discord`), and optionally Discord via `DISCORD_WEBHOOK_URL_CFO`. The report opens with list-price, GCP invoice status, week-over-week, and top drivers, then area/feature detail and a short CFO analysis.
-
-Keys for each capability: [Add capabilities one at a time](#add-capabilities-one-at-a-time). Chat needs only an LLM key. The board is built in. Jira is optional.
-
----
-
-
-## What is Bigas?
-
-**Bigas** (Latin for *team*) is an open-source MCP server that gives a solo founder or small team a virtual staff across **marketing, product, engineering, and finance** — without hiring anyone. Chat and the Kanban board are how work moves. **Objectives** are why: humans and AI agents work side by side until the quarter's Key Results move.
-
-It currently ships six specialists, reachable from the **[web chat](#chat-web-interface)** at `/` (Chief of Staff by default, or talk to any specialist directly):
-
-| Specialist | What it does |
-|---|---|
-| **Chief of Staff** | Default chat agent: reasons through requests step by step, coordinates with specialists when their expertise adds value, takes action (files Jira issues, uses tools) rather than asking you to do it |
-| **Senior Marketing Analyst** | Deep expertise in GA4 analytics, paid ads (Google/Meta/LinkedIn/Reddit), trends and cross-platform insights; reasons about marketing questions and creates tracked follow-up work |
-| **Product Manager** | Expertise in product planning, Jira workflows, release notes, and stakeholder communication; reasons about product decisions and prioritization |
-| **CTO** | Technical expertise in code review, architecture, deployment debugging, and engineering operations; reasons through technical problems and takes action |
-| **CFO** | Expertise in AI and GCP cost, usage analysis, and efficiency; reasons from numbers first (`fetch_ai_usage`, weekly `weekly_cto_ai_report`) and can file tracked follow-up work |
-| **DevOps** | Expertise in deployments (GitHub Actions), site health, incident response, and CI/CD; reasons about operational safety before taking action |
-
-All agents use a **reasoning-based approach**: they think step by step about what you're trying to accomplish, decide which tools or specialists would help, and take action. No rigid rules about who owns what — specialists are involved when their expertise genuinely improves the outcome.
-
-Two design decisions shape everything else in this document:
-
-1. **It's opinionated, out of the box.** Bigas assumes Google Cloud (Cloud Run, GA4, GCS, Cloud Scheduler, Firebase Auth, Firestore), Discord, and Jira/GitHub, so a new deployment has almost nothing to decide — just fill in `.env` and run `./deploy.sh`. Nothing here is required to use *those specific* products elsewhere: the Flask app is a normal container that runs anywhere Docker runs, and the [provider architecture](#modular-architecture-providers) lets you swap or add data sources without touching existing code.
-2. **It's modular.** Marketing, Product, CTO, and DevOps are independent resource packages. CFO is a chat specialist on top of the usage/cost providers (`BIGAS_USAGE_PROVIDERS`). Ads/finance/analytics/notification integrations are *providers* discovered at startup — enable one by setting its env vars, add a new one (e.g. TikTok Ads, QuickBooks, Slack) by dropping in a file, no core changes required. See [Modular architecture: providers](#modular-architecture-providers).
-
-Bigas talks to your data sources, does the analysis with an LLM (OpenAI or Gemini), and pushes results to Discord. When the agent chat UI is enabled, the same output also lands in the matching specialist thread and the activity feed. You can call any tool directly over HTTP, from any MCP client (Claude, Cursor, etc.), or on a schedule via Cloud Scheduler. Chat is optional: Firebase Auth and Firestore are only for persistent production chat — run without them via in-memory storage locally, or set `CHAT_ENABLED=false` for Discord/MCP only. When chat is on, open the deployed Cloud Run URL in a browser to use the UI.
 
 ---
 
