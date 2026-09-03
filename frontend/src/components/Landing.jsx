@@ -17,7 +17,7 @@ function GitHubIcon() {
 export default function Landing({ onSignIn }) {
   useEffect(() => {
     const previousTitle = document.title
-    document.title = 'Bigas — a virtual AI team for solo founders'
+    document.title = 'Bigas — Virtual HQ for Solo Founders'
     return () => {
       document.title = previousTitle
     }
