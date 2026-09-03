@@ -606,7 +606,11 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
     fetchProjectReleases(projectKey)
       .then((res) => {
         if (cancelled) return
-        const unreleased = (res.releases || []).filter((item) => !item.released)
+        const unreleased = (res.releases || [])
+          .filter((item) => !item.released)
+          .sort((a, b) =>
+            String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true }),
+          )
         setReleases(unreleased)
         setVersion((current) => pickDefaultRelease(unreleased, current))
       })
@@ -678,7 +682,11 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             />
             <datalist id="prepare-deploy-versions">
               {releases.map((release) => (
-                <option key={release.release_id || release.name} value={release.name} />
+                <option
+                  key={release.release_id || release.name}
+                  value={release.name}
+                  label={release.is_default ? `${release.name} · default` : release.name}
+                />
               ))}
             </datalist>
             <button
