@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from bigas.jira_exceptions import JiraError
 from bigas.resources.product.release_workflow import active_fix_version_from_env
 from bigas.tickets.constants import next_column
+from bigas.tickets.semver import versions_match
 from bigas.tickets.store import get_ticket_store
 
 
@@ -237,7 +238,7 @@ class TicketJiraAdapter:
             tickets.extend(self._store.list_tickets_by_project(key))
         out = []
         for ticket in tickets:
-            if (ticket.get("fix_version") or "").strip() != wanted:
+            if not versions_match(ticket.get("fix_version"), wanted):
                 continue
             out.append(self._format_issue(ticket))
         return out

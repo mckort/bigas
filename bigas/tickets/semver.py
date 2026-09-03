@@ -25,6 +25,25 @@ def normalize_version_name(name: str) -> str:
     return f"{int(match.group('major'))}.{int(match.group('minor'))}.{int(match.group('patch'))}"
 
 
+def canonical_version_name(name: str) -> str:
+    """Best-effort compare key: 0.1.0 and v0.1.0 become the same string."""
+    text = (name or "").strip()
+    if not text:
+        return ""
+    try:
+        return normalize_version_name(text)
+    except SemverError:
+        if len(text) > 1 and text[0] in "vV" and text[1].isdigit():
+            return text[1:]
+        return text
+
+
+def versions_match(left: str, right: str) -> bool:
+    a = canonical_version_name(left)
+    b = canonical_version_name(right)
+    return a == b
+
+
 def parse_semver(name: str) -> Tuple[int, int, int]:
     normalized = normalize_version_name(name)
     major, minor, patch = normalized.split(".")

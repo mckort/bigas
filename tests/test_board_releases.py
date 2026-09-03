@@ -23,7 +23,8 @@ from bigas.tickets.releases import (
     maybe_close_board_release_from_workflow,
     ship_release,
 )
-from bigas.tickets.semver import next_product_release, version_from_git_ref
+from bigas.tickets.semver import next_product_release, version_from_git_ref, versions_match
+from bigas.tickets.service import ticket_to_api
 from bigas.tickets.store import get_ticket_store
 from bigas.tickets.jira_adapter import TicketJiraAdapter
 
@@ -43,6 +44,14 @@ def test_semver_product_bump():
     assert next_product_release("1.0.0") == "1.1.0"
     assert version_from_git_ref("v0.9.0") == "0.9.0"
     assert version_from_git_ref("main") is None
+
+
+def test_versions_match_ignores_v_prefix():
+    assert versions_match("0.1.0", "v0.1.0")
+    assert versions_match("v0.1.0", "0.1.0")
+    assert not versions_match("0.1.0", "0.2.0")
+    assert not versions_match("", "0.1.0")
+    assert not versions_match("0.1.0", "")
 
 
 def test_create_list_delete_release():
@@ -176,6 +185,38 @@ def test_adapter_prefers_board_default_over_env(monkeypatch):
     )
     applied = TicketJiraAdapter().ensure_issue_fix_version("VFA-210", project_key="VFA")
     assert applied == "0.9.0"
+
+
+def test_search_issues_by_fix_version_matches_v_prefix():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Tagged",
+        user_id="dev-user",
+        key="VFA-38",
+        fix_version="v0.1.0",
+    )
+    found = TicketJiraAdapter().search_issues_by_fix_version(
+        fix_version="0.1.0",
+        project_keys=["VFA"],
+    )
+    assert [issue["key"] for issue in found] == ["VFA-38"]
+
+
+def test_board_ticket_list_payload_includes_fix_version():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    created = store.create_ticket(
+        board["board_id"],
+        title="Versioned work",
+        user_id="dev-user",
+        key="VFA-38",
+        fix_version="0.1.0",
+    )
+    listed = [ticket_to_api(ticket, include_comments=False) for ticket in store.list_tickets(board["board_id"])]
+    match = next(item for item in listed if item["ticket_id"] == created["ticket_id"])
+    assert match["fix_version"] == "0.1.0"
 
 
 def test_workflow_success_on_tag_closes_release(monkeypatch):

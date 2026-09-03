@@ -10,7 +10,13 @@ from bigas.resources.product.github_release import GitHubReleaseError, create_gi
 from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 from bigas.resources.product.release_workflow import normalize_semver_tag
 from bigas.tickets.release_store import get_release_store
-from bigas.tickets.semver import SemverError, next_product_release, normalize_version_name, version_from_git_ref
+from bigas.tickets.semver import (
+    SemverError,
+    next_product_release,
+    normalize_version_name,
+    version_from_git_ref,
+    versions_match,
+)
 from bigas.tickets.store import get_ticket_store
 
 logger = logging.getLogger(__name__)
@@ -77,7 +83,7 @@ def _open_tickets_on_version(project_key: str, version: str) -> List[Dict[str, A
     wanted = normalize_version_name(version)
     out = []
     for ticket in tickets:
-        if (ticket.get("fix_version") or "").strip() != wanted:
+        if not versions_match(ticket.get("fix_version"), wanted):
             continue
         if (ticket.get("status") or "").strip() == "Done":
             continue
