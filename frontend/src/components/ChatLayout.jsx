@@ -600,7 +600,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             {(projects.length ? projects : [{ key: 'VFA', name: 'VC Field Assistant' }]).map(
               (item) => (
                 <option key={item.key} value={item.key}>
-                  {item.key}
+                  {item.name ? `${item.key} - ${item.name}` : item.key}
                 </option>
               ),
             )}

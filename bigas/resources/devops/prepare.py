@@ -259,7 +259,6 @@ def review_and_merge_release_pr(
     )
     from bigas.resources.cto.pr_review.github_client import (
         BIGAS_REVIEW_MARKER,
-        GitHubMergeNotReadyError,
         GitHubPRCommentClient,
         GitHubPRCommentError,
     )
