@@ -38,6 +38,10 @@ export async function fetchAgents() {
   return apiFetch('/api/agents')
 }
 
+export async function fetchChatProjects() {
+  return apiFetch('/api/chat/projects')
+}
+
 export async function updateAgent(agentId, payload) {
   return apiFetch(`/api/agents/${agentId}`, {
     method: 'PUT',

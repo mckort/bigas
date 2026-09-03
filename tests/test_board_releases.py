@@ -103,6 +103,51 @@ def test_close_moves_open_tickets_to_next_minor(monkeypatch):
     assert "0.10.0" in posted[0][1]
 
 
+def test_close_without_creating_next_clears_open_tickets(monkeypatch):
+    monkeypatch.setattr("bigas.tickets.releases._publish_github_release", lambda *a, **k: None)
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", lambda *a, **k: None)
+
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    open_ticket = store.create_ticket(
+        board["board_id"],
+        title="Still open",
+        user_id="dev-user",
+        key="VFA-301",
+        fix_version="0.1.0",
+        status="To Do",
+    )
+    create_release("VFA", name="0.1.0")
+
+    result = close_release("VFA", "0.1.0", create_github=False, create_next_if_missing=False)
+    assert result["next_version"] is None
+    assert [item["key"] for item in result["moved"]] == ["VFA-301"]
+    assert store.get_ticket(open_ticket["ticket_id"])["fix_version"] is None
+    assert get_release_store().get_release_by_name("VFA", "0.2.0") is None
+
+
+def test_close_without_creating_next_moves_to_existing(monkeypatch):
+    monkeypatch.setattr("bigas.tickets.releases._publish_github_release", lambda *a, **k: None)
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", lambda *a, **k: None)
+
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    open_ticket = store.create_ticket(
+        board["board_id"],
+        title="Still open",
+        user_id="dev-user",
+        key="VFA-302",
+        fix_version="0.1.0",
+        status="To Do",
+    )
+    create_release("VFA", name="0.1.0")
+    create_release("VFA", name="0.2.0")
+
+    result = close_release("VFA", "0.1.0", create_github=False, create_next_if_missing=False)
+    assert result["next_version"] == "0.2.0"
+    assert store.get_ticket(open_ticket["ticket_id"])["fix_version"] == "0.2.0"
+
+
 def test_close_from_semver_deploy_ref(monkeypatch):
     publish_calls = []
     monkeypatch.setattr(

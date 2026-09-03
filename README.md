@@ -472,7 +472,7 @@ Production versions live on **`/board` → Releases** (per project: VFA, BIG, �
 
 Each card shows its release. The ticket field is a dropdown of project versions.
 
-**Closing a version** happens when you **Ship** it on the board, or when a **successful prod deploy** runs on that semver tag (`v0.9.0` / `release_version=0.9.0`). A normal deploy of `main` does **not** close a version (VFA deploys often; that would kill the active cut).
+**Closing a version** happens when you **Ship** it on the board, when a **successful prod deploy** runs on that semver tag (`v0.9.0` / `release_version=0.9.0`), or when a **prepare deploy** of that version finishes green on `main`. A normal deploy of `main` without a version still does **not** close a cut (VFA deploys often; that would kill the active release).
 
 On close Bigas:
 
@@ -558,6 +558,8 @@ Think of three layers:
 **One-time setup on the product repo** (example: vcfieldassistant or this repo): add the workflow YAML, then run that repo’s `./scripts/setup-github-actions-deploy.sh` so it creates the deploy service account, binds GitHub OIDC, and uploads `.env` as an Actions secret. Re-run the script when those files change. For Bigas itself, also sync `BIGAS_DEPLOY_WORKFLOW_MAP` to Secret Manager so the running instance can resolve project `BIG`.
 
 In chat after that: ask DevOps to check deploy risk for VFA or Bigas, confirm if the risk level is medium/high, then deploy. Bigas returns the Actions run URL; don’t wait in the same turn for a long build — ask for status (and a site health check) when it should be done.
+
+**Versioned prepare-deploy.** Type `prepare deploy VFA 0.1.0` (or use the composer **Prepare deploy** shortcut: project + version). DevOps opens a PR from the feature branch (`staging` for VFA) onto `main` when that branch is ahead, runs CTO review + autofix, and merges when the review is clean. It then posts the tickets on that board release plus a risk check. It asks before deploying if risk is medium/high **or** open tickets remain; low risk with no open tickets goes straight to a `main` deploy. After a green deploy it closes that board version (GitHub Release `vX.Y.Z`), leaves leftover open cards out of the cut (moves them to the next *existing* unreleased version, or clears the version if none exists), posts customer release notes, and asks whether you want blog/social drafts. **Yes** stores an X Approve/Decline draft (same review page as weekly X posts) and shows other channels as copy only. A plain `deploy VFA` without a version still does not close a release.
 
 MCP equivalents:
 

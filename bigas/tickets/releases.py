@@ -14,6 +14,7 @@ from bigas.tickets.semver import (
     SemverError,
     next_product_release,
     normalize_version_name,
+    parse_semver,
     version_from_git_ref,
     versions_match,
 )
@@ -77,18 +78,47 @@ def default_fix_version(project_key: str) -> Optional[str]:
     return active_fix_version_from_env(project_key)
 
 
-def _open_tickets_on_version(project_key: str, version: str) -> List[Dict[str, Any]]:
+def tickets_on_version(project_key: str, version: str) -> List[Dict[str, Any]]:
+    """All board tickets assigned to a release, Done and open."""
     store = get_ticket_store()
     tickets = store.list_tickets_by_project(project_key)
     wanted = normalize_version_name(version)
-    out = []
-    for ticket in tickets:
-        if not versions_match(ticket.get("fix_version"), wanted):
+    return [
+        ticket
+        for ticket in tickets
+        if versions_match(ticket.get("fix_version"), wanted)
+    ]
+
+
+def _open_tickets_on_version(project_key: str, version: str) -> List[Dict[str, Any]]:
+    return [
+        ticket
+        for ticket in tickets_on_version(project_key, version)
+        if (ticket.get("status") or "").strip() != "Done"
+    ]
+
+
+def _next_existing_unreleased(project_key: str, released_name: str) -> Optional[str]:
+    """Lowest unreleased version greater than released_name, or None."""
+    try:
+        released = parse_semver(released_name)
+    except SemverError:
+        return None
+    candidates: List[tuple] = []
+    for item in get_release_store().list_releases(project_key):
+        if item.get("released"):
             continue
-        if (ticket.get("status") or "").strip() == "Done":
+        name = (item.get("name") or "").strip()
+        try:
+            ver = parse_semver(name)
+        except SemverError:
             continue
-        out.append(ticket)
-    return out
+        if ver > released:
+            candidates.append((ver, name))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][1]
 
 
 def _ensure_next_minor(project_key: str, released_name: str) -> str:
@@ -121,17 +151,48 @@ def _move_open_tickets(project_key: str, from_version: str, to_version: str) -> 
     return moved
 
 
-def _notify_devops(project_key: str, version: str, next_version: str, moved: List[Dict[str, str]]) -> None:
+def _clear_open_ticket_versions(project_key: str, from_version: str) -> List[Dict[str, str]]:
+    store = get_ticket_store()
+    cleared: List[Dict[str, str]] = []
+    for ticket in _open_tickets_on_version(project_key, from_version):
+        store.update_ticket(ticket["ticket_id"], fix_version=None)
+        try:
+            store.add_comment(
+                ticket["ticket_id"],
+                (
+                    f"{from_version} was released without this ticket. "
+                    "Version assignment removed (no next release exists)."
+                ),
+                author_name="Bigas",
+            )
+        except Exception:
+            logger.warning("Could not comment on %s after release unassign", ticket.get("key"))
+        cleared.append({"key": ticket.get("key") or "", "from": from_version, "to": ""})
+    return cleared
+
+
+def _notify_devops(
+    project_key: str,
+    version: str,
+    next_version: Optional[str],
+    moved: List[Dict[str, str]],
+) -> None:
     lines = [
         f"**{project_key} {version} is released.**",
         "",
     ]
-    if moved:
+    if moved and next_version:
         lines.append(
             f"{len(moved)} open ticket(s) were not in this release and moved to **{next_version}**:"
         )
         for item in moved:
             lines.append(f"- {item['key']}: {item['from']} → {item['to']}")
+    elif moved:
+        lines.append(
+            f"{len(moved)} open ticket(s) were not in this release and had their version cleared:"
+        )
+        for item in moved:
+            lines.append(f"- {item['key']}")
     else:
         lines.append("No open tickets needed to be moved.")
     try:
@@ -186,8 +247,14 @@ def close_release(
     git_sha: Optional[str] = None,
     target_ref: Optional[str] = None,
     create_github: bool = True,
+    create_next_if_missing: bool = True,
 ) -> Dict[str, Any]:
-    """Mark a board release released, carry forward open tickets, notify DevOps."""
+    """Mark a board release released, carry forward open tickets, notify DevOps.
+
+    When ``create_next_if_missing`` is false (versioned prepare-deploy), open
+    tickets move to the next existing unreleased version, or lose their
+    version assignment if none exists. Ship still creates the next minor.
+    """
     proj = (project_key or "").strip().upper()
     try:
         name = normalize_version_name(version)
@@ -220,8 +287,15 @@ def close_release(
     if gh_release:
         tag_name = gh_release.get("tag_name") or tag_name
 
-    next_version = _ensure_next_minor(proj, name)
-    moved = _move_open_tickets(proj, name, next_version)
+    if create_next_if_missing:
+        next_version = _ensure_next_minor(proj, name)
+        moved = _move_open_tickets(proj, name, next_version)
+    else:
+        next_version = _next_existing_unreleased(proj, name)
+        if next_version:
+            moved = _move_open_tickets(proj, name, next_version)
+        else:
+            moved = _clear_open_ticket_versions(proj, name)
     updated = store.update_release(
         item["release_id"],
         released=True,

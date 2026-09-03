@@ -70,6 +70,14 @@ def list_agents():
     return jsonify({"agents": store.list_agents()})
 
 
+@chat_bp.route("/api/chat/projects", methods=["GET"])
+@require_chat_auth
+def list_chat_projects():
+    from bigas.resources.devops.prepare import list_shortcut_projects
+
+    return jsonify({"projects": list_shortcut_projects()})
+
+
 @chat_bp.route("/api/agents/<agent_id>", methods=["PUT"])
 @require_chat_auth
 def update_agent(agent_id: str):
@@ -112,7 +120,10 @@ def thread_messages(thread_id: str):
         since = request.args.get("since")
         messages = store.list_messages(thread_id, since=since)
         thread_data = store.get_thread(thread_id) or {}
-        deploy_poll_active = bool(thread_data.get("pending_deploy_poll"))
+        deploy_poll_active = bool(
+            thread_data.get("pending_deploy_poll")
+            or thread_data.get("pending_prepare_poll")
+        )
         return jsonify({"messages": messages, "deploy_poll_active": deploy_poll_active})
 
     from bigas.tickets.attachments import (

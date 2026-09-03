@@ -420,6 +420,38 @@ class GitHubActionsClient:
             )
         resp.raise_for_status()
 
+    def find_open_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        head: str,
+        base: str,
+    ) -> Optional[Dict[str, Any]]:
+        url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+        resp = requests.get(
+            url,
+            headers=self._headers,
+            params={
+                "state": "open",
+                "head": f"{owner}:{head}",
+                "base": base,
+                "per_page": 5,
+            },
+            timeout=30,
+        )
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        items = resp.json() if resp.text else []
+        if isinstance(items, list) and items:
+            return items[0] if isinstance(items[0], dict) else None
+        return None
+
     def create_pull_request(
         self,
         owner: str,
