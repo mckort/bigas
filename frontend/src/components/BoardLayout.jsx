@@ -1532,16 +1532,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       showOlderDone,
     }),
   )
-  const hiddenDoneCount = filteredTickets.filter((ticket) => {
-    if (!isDoneStatus(ticket.status)) return false
-    if (!ticketVisibleOnBoard(ticket, {
-      search: ticketSearch,
-      versionFilter,
-      showOlderDone: true,
-    })) return false
-    if (ticketSearch.trim() || versionFilter) return false
-    return !isRecentDone(ticket)
-  }).length
+  const hiddenDoneCount = filteredTickets.filter(
+    (ticket) => isDoneStatus(ticket.status) && !isRecentDone(ticket),
+  ).length
   const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
   const loadBoards = useCallback(async () => {
