@@ -21,6 +21,15 @@ from bigas.resources.product.create_jira_issue.lookup import (
 from bigas.resources.product.create_release_notes.jira_client import compact_jira_issue
 
 
+@pytest.fixture(autouse=True)
+def _force_external_jira(monkeypatch):
+    monkeypatch.setenv("USE_INTERNAL_BOARD", "false")
+    monkeypatch.setenv("JIRA_BASE_URL", "https://example.atlassian.net")
+    monkeypatch.setenv("JIRA_EMAIL", "dev@example.com")
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "GPWW")
+
+
 def test_compact_jira_issue_extracts_epic_parent():
     compact = compact_jira_issue(
         {

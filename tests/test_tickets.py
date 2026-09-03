@@ -101,6 +101,17 @@ def test_internal_board_default_without_jira():
     assert use_internal_board()
 
 
+def test_internal_board_default_even_when_jira_is_configured(monkeypatch):
+    monkeypatch.setenv("JIRA_BASE_URL", "https://example.atlassian.net")
+    monkeypatch.setenv("JIRA_EMAIL", "dev@example.com")
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA")
+    assert jira_configured()
+    assert use_internal_board()
+    monkeypatch.setenv("USE_INTERNAL_BOARD", "false")
+    assert not use_internal_board()
+
+
 def test_columns_for_personal_vs_project():
     personal = columns_for_board(project_key=None)
     project = columns_for_board(project_key="VFA")
@@ -396,6 +407,7 @@ def test_jira_webhook_disabled_without_jira(client):
     )
     assert resp.status_code == 404
     assert resp.get_json()["error"] == "Jira webhook disabled"
+    assert resp.get_json()["reason"] == "Internal board is the ticket source"
 
     names = [t["name"] for t in get_manifest()["tools"]]
     assert "jira_status_automation" not in names
@@ -407,6 +419,7 @@ def test_jira_webhook_requires_secret_when_configured(client, monkeypatch):
     monkeypatch.setenv("JIRA_API_TOKEN", "tok")
     monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA")
     monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
+    monkeypatch.setenv("USE_INTERNAL_BOARD", "false")
 
     denied = client.post(
         "/mcp/tools/jira_status_automation",
