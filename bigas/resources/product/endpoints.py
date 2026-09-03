@@ -448,11 +448,12 @@ def generate_weekly_x_post():
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route('/create_ticket', methods=['POST'])
 @product_bp.route('/create_jira_issue', methods=['POST'])
 @require_bigas_access_key
-def create_jira_issue():
+def create_ticket():
     """
-    Create a Jira issue in the specified project.
+    Create a ticket on the internal board (or Jira if that is the ticket source).
 
     Request JSON:
       {
@@ -511,7 +512,7 @@ def create_jira_issue():
         ) else 500
         return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
     except Exception as e:
-        logger.error("Error in create_jira_issue", exc_info=True)
+        logger.error("Error in create_ticket", exc_info=True)
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
@@ -559,11 +560,12 @@ def update_ticket():
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route('/lookup_ticket', methods=['POST'])
 @product_bp.route('/lookup_jira', methods=['POST'])
 @require_bigas_access_key
-def lookup_jira():
+def lookup_ticket():
     """
-    Look up one or more Jira issues (including parent Epic) and/or open Epics.
+    Look up one or more tickets (including parent Epic) and/or open Epics.
 
     Request JSON:
       {
@@ -601,7 +603,7 @@ def lookup_jira():
         ) else 500
         return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
     except Exception as e:
-        logger.error("Error in lookup_jira", exc_info=True)
+        logger.error("Error in lookup_ticket", exc_info=True)
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
@@ -642,11 +644,12 @@ def fetch_github_activity_endpoint():
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route('/search_tickets', methods=['POST'])
 @product_bp.route('/search_jira', methods=['POST'])
 @require_bigas_access_key
-def search_jira():
+def search_tickets():
     """
-    Search Jira with JQL (read-only, scoped to the portfolio).
+    Search the board (or Jira) with JQL (read-only, scoped to the portfolio).
 
     Request JSON:
       { "jql": "type = Bug AND text ~ \\"Stripe\\"", "max_results": 25 }
@@ -670,7 +673,7 @@ def search_jira():
         ) else 500
         return jsonify({"ok": False, "error": sanitize_error_message(msg)}), status
     except Exception as e:
-        logger.error("Error in search_jira", exc_info=True)
+        logger.error("Error in search_tickets", exc_info=True)
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
@@ -979,7 +982,7 @@ def get_manifest():
                 "description": (
                     "Draft a weekly X/Twitter post per X account from the board, git, and Jira when configured. "
                     "Only use this when the user asked to draft or post a tweet. "
-                    "Not for answering what shipped — use fetch_github_activity and search_jira."
+                    "Not for answering what shipped — use fetch_github_activity and search_tickets."
                 ),
                 "path": "/mcp/tools/generate_weekly_x_post",
                 "method": "POST",
@@ -1010,17 +1013,17 @@ def get_manifest():
                 }
             },
             {
-                "name": "create_jira_issue",
+                "name": "create_ticket",
                 "description": (
                     "Create a ticket on the internal board (or Jira if that is the ticket source). "
-                    "The tool name is historical. Available to every chat agent and MCP client. "
+                    "Available to every chat agent and MCP client. "
                     "Returns the issue key (e.g. BIG-42) and browse URL. "
                     "For marketing-related tickets (website, SEO, content, ads), set marketing=true "
                     "to add the label \"marketing\" (no other labels are needed). "
                     "Optional status sets the board column (e.g. \"Final Review\" or "
                     "\"Final approval (manual)\")."
                 ),
-                "path": "/mcp/tools/create_jira_issue",
+                "path": "/mcp/tools/create_ticket",
                 "method": "POST",
                 "parameters": {
                     "type": "object",
@@ -1098,18 +1101,18 @@ def get_manifest():
                 },
             },
             {
-                "name": "lookup_jira",
+                "name": "lookup_ticket",
                 "description": (
-                    "Look up Jira issues (summary, type, status, parent Epic) and/or list "
+                    "Look up tickets (summary, type, status, parent Epic) and/or list "
                     "open Epics in a project. Accepts one key, several keys, or a range "
                     "(e.g. BIG-15 to BIG-18). Use this to answer status questions, then write "
                     "the answer yourself — do not paste this dump as the reply. "
-                    "Also use before create_jira_issue when you need Epic context. "
+                    "Also use before create_ticket when you need Epic context. "
                     "A parent on a referenced ticket is not automatically the parent "
                     "for a new ticket — only link parent_epic_key if the new work belongs under "
                     "that Epic; otherwise create a standalone Task/Bug."
                 ),
-                "path": "/mcp/tools/lookup_jira",
+                "path": "/mcp/tools/lookup_ticket",
                 "method": "POST",
                 "parameters": {
                     "type": "object",
@@ -1172,15 +1175,15 @@ def get_manifest():
                 },
             },
             {
-                "name": "search_jira",
+                "name": "search_tickets",
                 "description": (
-                    "Search Jira with JQL when the user described a filter instead of issue keys "
-                    "(status, type, text, assignee, labels). Write the JQL yourself. "
-                    "Results are limited to portfolio projects. Use lookup_jira when the user "
-                    "named keys or a range (BIG-15 to BIG-18). After search, answer in your "
-                    "own words — do not paste this dump as the reply."
+                    "Search the internal board (or Jira) with JQL when the user described a "
+                    "filter instead of issue keys (status, type, text, assignee, labels). "
+                    "Write the JQL yourself. Results are limited to portfolio projects. "
+                    "Use lookup_ticket when the user named keys or a range (BIG-15 to BIG-18). "
+                    "After search, answer in your own words — do not paste this dump as the reply."
                 ),
-                "path": "/mcp/tools/search_jira",
+                "path": "/mcp/tools/search_tickets",
                 "method": "POST",
                 "parameters": {
                     "type": "object",

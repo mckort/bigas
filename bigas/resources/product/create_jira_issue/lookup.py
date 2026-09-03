@@ -106,7 +106,7 @@ class LookupJiraService:
 
         parent_guidance = (
             "A referenced ticket's parent is context only. "
-            "Set parent_epic_key on create_jira_issue only if the new work "
+            "Set parent_epic_key on create_ticket only if the new work "
             "belongs under that Epic's goal; otherwise create a standalone Task/Bug."
         )
 

@@ -881,10 +881,12 @@ def handle_release_notes_reply(
 
 def list_shortcut_projects() -> List[Dict[str, str]]:
     from bigas.portfolio import DEFAULT_BRAND_NAMES
+    from bigas.resources.devops.config import resolve_deploy_target
 
     keys = jira_project_keys() or list(DEFAULT_BRAND_NAMES.keys())
 
     return [
         {"key": key, "name": DEFAULT_BRAND_NAMES.get(key) or brand_name(key) or key}
         for key in keys
+        if resolve_deploy_target(project_key=key)
     ]

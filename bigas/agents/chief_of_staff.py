@@ -93,7 +93,7 @@ Coordination briefs:
 PRODUCT_PLAYBOOK = """
 Product and backlog briefs:
 - You are a senior PM. Investigate like Cursor: parse the question (product, date, shipped vs in progress), then gather evidence from every relevant source before answering.
-- "What launched / shipped / is new after DATE" → call fetch_github_activity (commits and merged PRs; convert the date to since=YYYY-MM-DD) AND search_jira on the board (statusCategory = Done, project, updated/resolved >= that date). Synthesize user-facing changes; skip autofix and infra noise unless asked. Never use generate_weekly_x_post or progress_updates to answer that question.
+- "What launched / shipped / is new after DATE" → call fetch_github_activity (commits and merged PRs; convert the date to since=YYYY-MM-DD) AND search_tickets on the board (statusCategory = Done, project, updated/resolved >= that date). Synthesize user-facing changes; skip autofix and infra noise unless asked. Never use generate_weekly_x_post or progress_updates to answer that question.
 - Jira/board is context, not the answer. Search or look up work to understand it; never end with only ticket links or a Move button.
 - For planning or priority questions: gather open Epics/tasks, name the tradeoff, recommend now / next / later and why.
 - File tickets only after the recommendation, and only for concrete work.
@@ -320,10 +320,10 @@ def _chief_native_extra() -> str:
         "When involving specialists, use consult_specialist with clear reasoning about why their "
         "expertise matters for this task.\n\n"
         "Tool tips:\n"
-        "- lookup_jira: for specific issue keys or ranges\n"
-        "- search_jira: for JQL queries (works on the internal board and Jira Cloud)\n"
+        "- lookup_ticket: for specific issue keys or ranges\n"
+        "- search_tickets: for JQL queries (works on the internal board and Jira Cloud)\n"
         "- fetch_github_activity: commits and merged PRs since a date — use for what shipped\n"
-        "- create_jira_issue: to file Tasks/Bugs — take action rather than asking the user to do it. Pass status to set the column (e.g. Final Review).\n"
+        "- create_ticket: to file Tasks/Bugs — take action rather than asking the user to do it. Pass status to set the column (e.g. Final Review).\n"
         "- update_ticket: move an existing ticket to a column (issue_key + status)\n"
         "- Include project_key when the user mentions a product or site\n"
         "- For GitHub PRs, include repo and pr_number or pr_url\n\n"
@@ -344,9 +344,9 @@ def _specialist_native_extra(agent_id: Optional[str] = None) -> str:
         "- Include project_key when the user mentions a product or site\n"
         "- For GitHub PRs, include repo and pr_number or pr_url\n"
         "- For Cursor autofix, include agent_id from cursor.com/agents/bc-... URLs\n"
-        "- lookup_jira: for specific issue keys; search_jira: for JQL filters (internal board or Jira Cloud)\n"
+        "- lookup_ticket: for specific issue keys; search_tickets: for JQL filters (internal board or Jira Cloud)\n"
         "- fetch_github_activity: what shipped since a date (commits + merged PRs)\n"
-        "- create_jira_issue: look up Epic context first if needed, then create. Pass status to set the column.\n"
+        "- create_ticket: look up Epic context first if needed, then create. Pass status to set the column.\n"
         "- update_ticket: move an existing ticket (issue_key + status, e.g. Final Review)"
     )
     rules = _agent_runtime_rules(agent_id)
@@ -753,13 +753,13 @@ def _enrich_tool_args(
         args.setdefault("project_key", project)
         if "ask_analytics" in (tool_name or "").lower():
             args["question"] = scrub_analytics_question(args.get("question") or user_message, project)
-    if (tool_name or "").lower() == "create_jira_issue" and (
+    if (tool_name or "").lower() in {"create_ticket", "create_jira_issue"} and (
         caller_agent_id or ""
     ).strip().lower() == "marketing":
         args.setdefault("marketing", True)
-    if (tool_name or "").lower() == "create_jira_issue" and user_id:
+    if (tool_name or "").lower() in {"create_ticket", "create_jira_issue"} and user_id:
         args.setdefault("user_id", user_id)
-    if (tool_name or "").lower() == "lookup_jira":
+    if (tool_name or "").lower() in {"lookup_ticket", "lookup_jira"}:
         raw_key = str(
             args.get("issue_key") or args.get("issue") or args.get("key") or ""
         ).strip()

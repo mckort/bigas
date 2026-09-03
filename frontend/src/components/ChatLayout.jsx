@@ -11,6 +11,7 @@ import {
   fetchAgents,
   fetchChatProjects,
   fetchChatAttachmentBlob,
+  fetchProjectReleases,
   fetchFeed,
   fetchMessages,
   fetchThreads,
@@ -543,37 +544,92 @@ const STARTER_PROMPTS = [
   },
 ]
 
+function pickDefaultRelease(releases, current) {
+  if (current && releases.some((item) => item.name === current)) return current
+  return releases.find((item) => item.is_default)?.name || releases[0]?.name || ''
+}
+
 function PrepareDeployShortcut({ disabled, onSubmit }) {
   const [open, setOpen] = useState(false)
   const [projects, setProjects] = useState([])
-  const [projectKey, setProjectKey] = useState('VFA')
+  const [projectsLoading, setProjectsLoading] = useState(true)
+  const [projectsError, setProjectsError] = useState('')
+  const [projectsRetryKey, setProjectsRetryKey] = useState(0)
+  const [projectKey, setProjectKey] = useState('')
   const [version, setVersion] = useState('')
+  const [releases, setReleases] = useState([])
+  const [releasesLoading, setReleasesLoading] = useState(false)
+  const [releasesError, setReleasesError] = useState('')
+  const [releasesRetryKey, setReleasesRetryKey] = useState(0)
 
   useEffect(() => {
     let cancelled = false
+    setProjectsLoading(true)
+    setProjectsError('')
     fetchChatProjects()
       .then((res) => {
         if (cancelled) return
         const items = res.projects || []
         setProjects(items)
         setProjectKey((current) =>
-          items.some((item) => item.key === current) ? current : items[0]?.key || 'VFA',
+          items.some((item) => item.key === current) ? current : items[0]?.key || '',
         )
       })
-      .catch(() => {
-        if (!cancelled) setProjects([{ key: 'VFA', name: 'VC Field Assistant' }])
+      .catch((err) => {
+        if (!cancelled) {
+          setProjects([])
+          setProjectKey('')
+          setProjectsError(err.message || 'Failed to load deploy targets')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setProjectsLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [projectsRetryKey])
+
+  useEffect(() => {
+    if (!projectKey) {
+      setReleases([])
+      setVersion('')
+      setReleasesLoading(false)
+      setReleasesError('')
+      return undefined
+    }
+    let cancelled = false
+    setReleases([])
+    setVersion('')
+    setReleasesError('')
+    setReleasesLoading(true)
+    fetchProjectReleases(projectKey)
+      .then((res) => {
+        if (cancelled) return
+        const unreleased = (res.releases || []).filter((item) => !item.released)
+        setReleases(unreleased)
+        setVersion((current) => pickDefaultRelease(unreleased, current))
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setReleases([])
+          setVersion('')
+          setReleasesError(err.message || 'Failed to load releases')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setReleasesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectKey, releasesRetryKey])
 
   function handleGo(e) {
     e.preventDefault()
     const ver = version.trim()
     if (!projectKey || !ver || disabled) return
     onSubmit(`prepare deploy ${projectKey} ${ver}`)
-    setVersion('')
     setOpen(false)
   }
 
@@ -589,43 +645,85 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
           Prepare deploy
         </button>
       ) : (
-        <form onSubmit={handleGo} className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted">Prepare deploy</span>
-          <select
-            value={projectKey}
-            onChange={(e) => setProjectKey(e.target.value)}
-            className="input-field text-xs min-h-[36px] w-[8.5rem] py-1"
-            aria-label="Project"
-          >
-            {(projects.length ? projects : [{ key: 'VFA', name: 'VC Field Assistant' }]).map(
-              (item) => (
-                <option key={item.key} value={item.key}>
-                  {item.name ? `${item.key} - ${item.name}` : item.key}
-                </option>
-              ),
-            )}
-          </select>
-          <input
-            value={version}
-            onChange={(e) => setVersion(e.target.value)}
-            placeholder="0.1.0"
-            className="input-field text-xs min-h-[36px] w-[5.5rem] py-1"
-            aria-label="Release version"
-          />
-          <button
-            type="submit"
-            disabled={disabled || !version.trim()}
-            className="btn-primary text-xs min-h-[36px] px-3 py-1"
-          >
-            Go
-          </button>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="btn-ghost text-xs min-h-[36px] px-2 py-1"
-          >
-            Cancel
-          </button>
+        <form onSubmit={handleGo} className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted">Prepare deploy</span>
+            <select
+              value={projectKey}
+              onChange={(e) => setProjectKey(e.target.value)}
+              disabled={disabled || projectsLoading || Boolean(projectsError)}
+              className="input-field text-xs min-h-[36px] w-[8.5rem] py-1"
+              aria-label="Project"
+            >
+              {projectsLoading && <option value="">Loading…</option>}
+              {!projectsLoading && projectsError && <option value="">Failed to load</option>}
+              {!projectsLoading && !projectsError && projects.length === 0 && (
+                <option value="">No deploy targets</option>
+              )}
+              {!projectsLoading &&
+                projects.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.name ? `${item.key} - ${item.name}` : item.key}
+                  </option>
+                ))}
+            </select>
+            <input
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+              list="prepare-deploy-versions"
+              placeholder={releasesLoading ? 'Loading…' : '0.1.0'}
+              disabled={disabled}
+              className="input-field text-xs min-h-[36px] w-[5.5rem] py-1"
+              aria-label="Release version"
+            />
+            <datalist id="prepare-deploy-versions">
+              {releases.map((release) => (
+                <option key={release.release_id || release.name} value={release.name} />
+              ))}
+            </datalist>
+            <button
+              type="submit"
+              disabled={disabled || !projectKey || !version.trim()}
+              className="btn-primary text-xs min-h-[36px] px-3 py-1"
+            >
+              Go
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="btn-ghost text-xs min-h-[36px] px-2 py-1"
+            >
+              Cancel
+            </button>
+          </div>
+          {(projectsError || releasesError) && (
+            <div className="space-y-1">
+              {projectsError && (
+                <p className="text-xs text-red-600">
+                  {projectsError}{' '}
+                  <button
+                    type="button"
+                    onClick={() => setProjectsRetryKey((key) => key + 1)}
+                    className="underline underline-offset-2 hover:opacity-70"
+                  >
+                    Retry
+                  </button>
+                </p>
+              )}
+              {releasesError && (
+                <p className="text-xs text-red-600">
+                  {releasesError}{' '}
+                  <button
+                    type="button"
+                    onClick={() => setReleasesRetryKey((key) => key + 1)}
+                    className="underline underline-offset-2 hover:opacity-70"
+                  >
+                    Retry
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
         </form>
       )}
     </div>
