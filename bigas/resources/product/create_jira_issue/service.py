@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
@@ -45,6 +48,7 @@ class CreateJiraIssueService:
         marketing: bool = False,
         parent_epic_key: Optional[str] = None,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Dict[str, Any]:
         from bigas.tickets.config import use_internal_board
 
@@ -72,22 +76,27 @@ class CreateJiraIssueService:
             from bigas.tickets.service import TicketService
 
             epic = normalize_parent_epic_key(parent_epic_key, project_key=proj)
-            ticket = TicketService().create_ticket_for_project(
-                proj,
-                title=title,
-                description=body,
-                issue_type=itype,
-                marketing=marketing,
-                labels=[_MARKETING_LABEL] if marketing else None,
-                parent_key=epic,
-                user_id=user_id,
-            )
+            try:
+                ticket = TicketService().create_ticket_for_project(
+                    proj,
+                    title=title,
+                    description=body,
+                    issue_type=itype,
+                    marketing=marketing,
+                    labels=[_MARKETING_LABEL] if marketing else None,
+                    parent_key=epic,
+                    user_id=user_id,
+                    status=(status or "").strip() or "To Do",
+                )
+            except ValueError as exc:
+                raise CreateJiraIssueError(str(exc)) from exc
             out: Dict[str, Any] = {
                 "ok": True,
                 "key": ticket.get("key"),
                 "url": ticket.get("url"),
                 "summary": ticket.get("title") or title,
                 "issue_type": itype,
+                "status": ticket.get("status"),
                 "project_key": proj,
                 "source": "internal_board",
             }
@@ -112,13 +121,47 @@ class CreateJiraIssueService:
                 labels=labels,
                 parent_epic_key=epic,
             )
+            issue_key = result.get("key") or ""
             out = {
                 "ok": True,
-                "key": result.get("key"),
+                "key": issue_key,
                 "url": result.get("url"),
                 "issue_type": itype,
                 "project_key": proj,
             }
+            wanted = (status or "").strip()
+
+            def _jira_issue_status() -> str:
+                try:
+                    issue = client.get_issue(issue_key, fields=["status"])
+                    return (
+                        ((issue.get("fields") or {}).get("status") or {}).get("name")
+                        or "To Do"
+                    )
+                except Exception:
+                    return "To Do"
+
+            if wanted:
+                from bigas.tickets.constants import resolve_column_status
+
+                resolved = resolve_column_status(wanted, project_key=proj) or wanted
+                try:
+                    client.transition_issue(
+                        issue_key,
+                        to_status_name=resolved,
+                    )
+                    out["status"] = resolved
+                except JiraError as exc:
+                    logger.warning(
+                        "Created Jira issue %s but could not transition to %s: %s",
+                        issue_key,
+                        resolved,
+                        exc,
+                    )
+                    out["status"] = _jira_issue_status()
+                    out["status_warning"] = _format_jira_error(exc, project_key=proj)
+            else:
+                out["status"] = _jira_issue_status()
             if labels:
                 out["labels"] = labels
             if result.get("parent_dropped"):

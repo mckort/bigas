@@ -53,3 +53,43 @@ def next_column(current: str, *, project_key: Optional[str]) -> Optional[str]:
 
 def is_valid_status(status: str, *, project_key: Optional[str]) -> bool:
     return status in columns_for_board(project_key=project_key)
+
+
+def resolve_column_status(name: str, *, project_key: Optional[str]) -> Optional[str]:
+    """Map a column/status label (or alias like 'Final Review') to a board column."""
+    cols = columns_for_board(project_key=project_key)
+    raw = (name or "").strip()
+    if not raw:
+        return None
+    if raw in cols:
+        return raw
+    lower = raw.lower()
+    for col in cols:
+        if col.lower() == lower:
+            return col
+    aliases = {
+        "todo": "To Do",
+        "to-do": "To Do",
+        "in progress": "In Progress (AI)" if project_key else "In Progress",
+        "research": "Research and describe (AI)",
+        "research and describe": "Research and describe (AI)",
+        "description approval": "Description approval (manual)",
+        "design and plan": "Design and plan (AI)",
+        "design approval": "Design approval (manual)",
+        "final review": "Final approval (manual)",
+        "final approval": "Final approval (manual)",
+        "done": "Done",
+        "review": None if project_key else "Review",
+    }
+    aliased = aliases.get(lower)
+    if aliased and aliased in cols:
+        return aliased
+    matches = [col for col in cols if lower in col.lower()]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def unknown_column_error(name: str, *, project_key: Optional[str]) -> str:
+    cols = ", ".join(columns_for_board(project_key=project_key))
+    return f"Unknown column {name!r}. Use one of: {cols}"

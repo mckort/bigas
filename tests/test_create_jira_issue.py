@@ -194,6 +194,10 @@ def test_manifest_includes_create_jira_issue():
     parent_desc = params["properties"]["parent_epic_key"]["description"].lower()
     assert "omit" in parent_desc
     assert "standalone" in parent_desc
+    assert "status" in params["properties"]
+    update = tools["update_ticket"]
+    assert update["path"] == "/mcp/tools/update_ticket"
+    assert set(update["parameters"]["required"]) == {"issue_key", "status"}
     lookup = tools["lookup_jira"]
     assert lookup["path"] == "/mcp/tools/lookup_jira"
     assert "parent" in lookup["description"].lower()
@@ -399,3 +403,68 @@ def test_create_jira_issue_passes_through_dropped_parent(monkeypatch):
     assert result["key"] == "GPWW-11"
     assert "parent_epic_key" not in result
     assert result["parent_dropped"] is True
+
+
+def test_create_jira_issue_includes_status_without_requested_column(monkeypatch):
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        def create_issue(self, **kwargs):
+            return {"ok": True, "key": "BIG-50", "url": "https://x/browse/BIG-50"}
+
+        def get_issue(self, issue_key, *, fields=None):
+            assert issue_key == "BIG-50"
+            return {"fields": {"status": {"name": "Backlog"}}}
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraConfig",
+        type("C", (), {"from_env": staticmethod(lambda: object())})(),
+    )
+
+    result = CreateJiraIssueService().create(
+        project_key="BIG",
+        summary="Title",
+        description="Body",
+    )
+    assert result["ok"] is True
+    assert result["status"] == "Backlog"
+
+
+def test_create_jira_issue_returns_created_issue_when_transition_fails(monkeypatch):
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        def create_issue(self, **kwargs):
+            return {"ok": True, "key": "BIG-51", "url": "https://x/browse/BIG-51"}
+
+        def transition_issue(self, issue_key, *, to_status_name, comment=None):
+            raise JiraError("invalid transition")
+
+        def get_issue(self, issue_key, *, fields=None):
+            return {"fields": {"status": {"name": "To Do"}}}
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraConfig",
+        type("C", (), {"from_env": staticmethod(lambda: object())})(),
+    )
+
+    result = CreateJiraIssueService().create(
+        project_key="BIG",
+        summary="Title",
+        description="Body",
+        status="Final Review",
+    )
+    assert result["ok"] is True
+    assert result["key"] == "BIG-51"
+    assert result["status"] == "To Do"
+    assert "status_warning" in result
