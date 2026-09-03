@@ -21,6 +21,7 @@ from bigas.resources.devops.pipeline import (
     should_run_deploy_pipeline,
 )
 from bigas.resources.devops.prepare import (
+    format_git_reconcile_report,
     format_version_ticket_report,
     is_prepare_start,
     parse_prepare_command,
@@ -70,12 +71,135 @@ def test_feature_report_warns_on_open_tickets():
         fix_version="0.1.0",
         status="To Do",
     )
-    text, done, open_tickets = format_version_ticket_report("VFA", "0.1.0")
-    assert len(done) == 1
+    text, in_cut, open_tickets = format_version_ticket_report("VFA", "0.1.0")
+    assert len(in_cut) == 1
     assert len(open_tickets) == 1
     assert "VFA-1" in text
     assert "VFA-2" in text
     assert "Open tickets" in text
+
+
+def test_feature_report_includes_final_approval():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Show last API activity per organization in admin",
+        user_id="dev-user",
+        key="VFA-48",
+        fix_version="0.1.0",
+        status="Final approval (manual)",
+    )
+    text, in_cut, open_tickets = format_version_ticket_report("VFA", "0.1.0")
+    assert len(in_cut) == 1
+    assert open_tickets == []
+    assert "VFA-48" in text
+    assert "Final approval" in text
+    assert "not in this cut" not in text
+
+
+def test_git_reconcile_matches_cut_and_flags_extras():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    cut = store.create_ticket(
+        board["board_id"],
+        title="Show last API activity",
+        user_id="dev-user",
+        key="VFA-48",
+        fix_version="0.1.0",
+        status="Final approval (manual)",
+    )
+    store.create_ticket(
+        board["board_id"],
+        title="Next cut work",
+        user_id="dev-user",
+        key="VFA-99",
+        fix_version="0.2.0",
+        status="Done",
+    )
+    report = format_git_reconcile_report(
+        project_key="VFA",
+        version="0.1.0",
+        in_cut=[cut],
+        compared=["deploy-backend-abc → staging"],
+        commits=[
+            {
+                "sha": "aaa1111bbbb",
+                "message": "VFA-48: Show last API activity per organization in admin",
+                "subject": "VFA-48: Show last API activity per organization in admin",
+            },
+            {
+                "sha": "ccc2222dddd",
+                "message": "chore: bump eslint",
+                "subject": "chore: bump eslint",
+            },
+            {
+                "sha": "eee3333ffff",
+                "message": "VFA-99: work for the next cut",
+                "subject": "VFA-99: work for the next cut",
+            },
+        ],
+    )
+    assert report["needs_confirm"] is True
+    assert [row["key"] for row in report["matched"]] == ["VFA-48"]
+    assert report["missing_from_git"] == []
+    extras = [row["subject"] for row in report["extra_commits"]]
+    assert "chore: bump eslint" in extras
+    assert any("VFA-99" in row["reason"] for row in report["extra_commits"])
+    assert "VFA-48" in report["text"]
+    assert "Also shipping" in report["text"]
+
+
+def test_git_reconcile_flags_cut_ticket_missing_from_git():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    cut = store.create_ticket(
+        board["board_id"],
+        title="Not actually merged",
+        user_id="dev-user",
+        key="VFA-48",
+        fix_version="0.1.0",
+        status="Final approval (manual)",
+    )
+    report = format_git_reconcile_report(
+        project_key="VFA",
+        version="0.1.0",
+        in_cut=[cut],
+        compared=["deploy-web-abc → staging"],
+        commits=[
+            {
+                "sha": "fff4444aaaa",
+                "message": "docs: update readme",
+                "subject": "docs: update readme",
+            }
+        ],
+    )
+    assert report["needs_confirm"] is True
+    assert [t.get("key") for t in report["missing_from_git"]] == ["VFA-48"]
+    assert "not in git" in report["text"]
+
+
+def test_git_reconcile_skips_match_when_compare_fails():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    cut = store.create_ticket(
+        board["board_id"],
+        title="Show last API activity",
+        user_id="dev-user",
+        key="VFA-48",
+        fix_version="0.1.0",
+        status="Final approval (manual)",
+    )
+    report = format_git_reconcile_report(
+        project_key="VFA",
+        version="0.1.0",
+        in_cut=[cut],
+        commits=[],
+        errors=["GitHub auth failed"],
+    )
+    assert report["needs_confirm"] is False
+    assert report["missing_from_git"] == []
+    assert "Skipping ticket" in report["text"]
 
 
 def _low_risk(**kwargs):
@@ -166,6 +290,131 @@ def test_prepare_asks_on_medium_risk(monkeypatch):
     assert pending and pending["risk_level"] == "high"
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
     assert "high" in blob.lower()
+
+
+def test_prepare_autodeploys_when_final_approval_matches_git(monkeypatch):
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Show last API activity",
+        user_id="dev-user",
+        key="VFA-48",
+        fix_version="0.1.0",
+        status="Final approval (manual)",
+    )
+    create_release("VFA", name="0.1.0")
+
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    triggered = {"called": False}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [
+                {
+                    "sha": "abc1234deadbeef",
+                    "message": "VFA-48: Show last API activity per organization in admin",
+                    "subject": "VFA-48: Show last API activity per organization in admin",
+                }
+            ],
+            "compared": ["deploy-backend-old → staging"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: triggered.update(called=True, ref=kwargs.get("ref"))
+        or {
+            "status": "ok",
+            "summary": "Triggered 1 workflow(s).",
+            "repo": "mckort/vcfieldassistant",
+            "ref": "main",
+            "triggered": [
+                {"workflow": "deploy-backend.yml", "run_id": 46, "html_url": "https://x"}
+            ],
+            "errors": [],
+            "site_urls": ["https://vcfieldassistant.com"],
+        },
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.1.0",
+    )
+    assert triggered["called"] is True
+    assert result.get("deploy_poll_active") is True
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "VFA-48" in blob
+    assert "In this cut and in git" in blob
+    assert "yes" not in blob.lower() or "Starting deploy" in blob
+
+
+def test_prepare_asks_when_extra_commits_lack_tickets(monkeypatch):
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Show last API activity",
+        user_id="dev-user",
+        key="VFA-48",
+        fix_version="0.1.0",
+        status="Final approval (manual)",
+    )
+    create_release("VFA", name="0.1.0")
+
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    triggered = {"called": False}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [
+                {
+                    "sha": "abc1234deadbeef",
+                    "message": "VFA-48: Show last API activity",
+                    "subject": "VFA-48: Show last API activity",
+                },
+                {
+                    "sha": "fff9999cafebabe",
+                    "message": "chore: leftover from another branch",
+                    "subject": "chore: leftover from another branch",
+                },
+            ],
+            "compared": ["deploy-web-old → staging"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: triggered.update(called=True) or {},
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.1.0",
+    )
+    assert triggered["called"] is False
+    assert result["status"] == "complete"
+    pending = chat.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert pending and pending.get("extra_commit_count") == 1
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "chore: leftover" in blob
+    assert "yes" in blob.lower()
 
 
 def test_prepare_autodeploys_on_low_risk_without_open_tickets(monkeypatch):

@@ -103,6 +103,37 @@ def test_close_moves_open_tickets_to_next_minor(monkeypatch):
     assert "0.10.0" in posted[0][1]
 
 
+def test_close_keeps_final_approval_on_released_version(monkeypatch):
+    monkeypatch.setattr("bigas.tickets.releases._publish_github_release", lambda *a, **k: None)
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", lambda *a, **k: None)
+
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    approval = store.create_ticket(
+        board["board_id"],
+        title="Show last API activity",
+        user_id="dev-user",
+        key="VFA-48",
+        fix_version="0.1.0",
+        status="Final approval (manual)",
+    )
+    leftover = store.create_ticket(
+        board["board_id"],
+        title="Still open",
+        user_id="dev-user",
+        key="VFA-49",
+        fix_version="0.1.0",
+        status="To Do",
+    )
+    create_release("VFA", name="0.1.0")
+    create_release("VFA", name="0.2.0")
+
+    result = close_release("VFA", "0.1.0", create_github=False, create_next_if_missing=False)
+    assert [item["key"] for item in result["moved"]] == ["VFA-49"]
+    assert store.get_ticket(approval["ticket_id"])["fix_version"] == "0.1.0"
+    assert store.get_ticket(leftover["ticket_id"])["fix_version"] == "0.2.0"
+
+
 def test_close_without_creating_next_clears_open_tickets(monkeypatch):
     monkeypatch.setattr("bigas.tickets.releases._publish_github_release", lambda *a, **k: None)
     monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", lambda *a, **k: None)
