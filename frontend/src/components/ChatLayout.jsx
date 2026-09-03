@@ -633,8 +633,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
     setVersion((current) => pickDefaultRelease(releases, current))
   }, [releases, releasesLoading, releasesError])
 
-  function handleGo(e) {
-    e.preventDefault()
+  function handleGo() {
     const ver = version.trim()
     if (!projectKey || !ver || disabled) return
     onSubmit(`prepare deploy ${projectKey} ${ver}`)
@@ -653,7 +652,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
           Prepare deploy
         </button>
       ) : (
-        <form onSubmit={handleGo} className="space-y-1">
+        <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted">Prepare deploy</span>
             <select
@@ -705,7 +704,8 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
                 ))}
             </select>
             <button
-              type="submit"
+              type="button"
+              onClick={handleGo}
               disabled={disabled || !projectKey || !version.trim()}
               className="btn-primary text-xs min-h-[36px] px-3 py-1"
             >
@@ -747,7 +747,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
               )}
             </div>
           )}
-        </form>
+        </div>
       )}
     </div>
   )
