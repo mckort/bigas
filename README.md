@@ -15,6 +15,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 - [What is Bigas?](#what-is-bigas)
 - [One founder, one project or several](#one-founder-one-project-or-several)
 - [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
+- [Tutorial: set up a virtual AI team in 5 minutes](docs/tutorial-set-up-a-virtual-ai-team.md)
 - [Add capabilities based on your needs](#add-capabilities-based-on-your-needs)
 - [Why Google Cloud Run?](#why-google-cloud-run)
 - [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server)
@@ -122,6 +123,8 @@ Keys for each capability: [Add capabilities based on your needs](#add-capabiliti
 ## MVP Quickstart (under 5 minutes)
 
 Try Bigas locally with **only an LLM API key** — no Google Cloud, Firebase, or Discord required.
+
+**Blog-style walkthrough (fork → local MVP):** [docs/tutorial-set-up-a-virtual-ai-team.md](docs/tutorial-set-up-a-virtual-ai-team.md)
 
 ```bash
 git clone https://github.com/mckort/bigas.git
