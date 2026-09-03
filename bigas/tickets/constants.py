@@ -31,6 +31,23 @@ AI_TRIGGER_STATUSES = frozenset(
     }
 )
 
+# Shipped enough to belong on a versioned cut. Final approval is tested in prod
+# before the card is dragged to Done, so it must stay on the release.
+RELEASE_CUT_STATUSES = frozenset(
+    {
+        "Done",
+        "Final approval (manual)",
+    }
+)
+
+
+def is_in_release_cut(status: str, *, project_key: Optional[str] = None) -> bool:
+    raw = (status or "").strip()
+    if raw in RELEASE_CUT_STATUSES:
+        return True
+    resolved = resolve_column_status(raw, project_key=project_key)
+    return bool(resolved and resolved in RELEASE_CUT_STATUSES)
+
 
 def columns_for_board(*, project_key: Optional[str]) -> List[str]:
     """Return workflow columns for a board (project-linked vs personal)."""

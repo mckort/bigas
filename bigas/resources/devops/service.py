@@ -97,6 +97,136 @@ def _collect_compare_files(compare: Dict[str, Any]) -> List[Dict[str, Any]]:
     return files if isinstance(files, list) else []
 
 
+def _collect_compare_commits(compare: Dict[str, Any]) -> List[Dict[str, Any]]:
+    commits = compare.get("commits") or []
+    return commits if isinstance(commits, list) else []
+
+
+def _prod_compare_bases(
+    client: GitHubActionsClient,
+    owner: str,
+    name: str,
+    *,
+    head: str,
+    explicit_base: Optional[str] = None,
+) -> List[tuple]:
+    """Same prod tags check_deployment_risk uses: deploy-* then latest release."""
+    explicit = (explicit_base or "").strip()
+    if explicit:
+        return [("explicit", explicit)]
+
+    backend_rel = client.latest_release_with_prefix(owner, name, "deploy-backend-")
+    web_rel = client.latest_release_with_prefix(owner, name, "deploy-web-")
+    app_rel = client.latest_release_with_prefix(owner, name, "deploy-app-")
+    bases: List[tuple] = []
+    for label, rel in (
+        ("backend", backend_rel),
+        ("web", web_rel),
+        ("app", app_rel),
+    ):
+        tag = (rel or {}).get("tag_name") if rel else None
+        if tag:
+            bases.append((label, str(tag)))
+    if not bases:
+        fallback = client.get_latest_release_tag(owner, name)
+        if fallback and fallback != head:
+            bases.append(("release", fallback))
+    return bases
+
+
+def _normalize_compare_commit(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    sha = (item.get("sha") or "").strip()
+    if not sha:
+        return None
+    message = ((item.get("commit") or {}).get("message") or "").strip()
+    return {
+        "sha": sha,
+        "message": message,
+        "html_url": (item.get("html_url") or "").strip(),
+        "subject": message.split("\n", 1)[0].strip() if message else "",
+    }
+
+
+def list_shipping_commits(
+    *,
+    repo: Optional[str] = None,
+    project_key: Optional[str] = None,
+    head_ref: Optional[str] = None,
+    github_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Commits that will ship: prod deploy tags (or latest release) → head.
+
+    Head defaults to the project feature branch (``staging`` for VFA) so squash
+    merges onto ``main`` do not hide ticket keys in the original commits.
+    """
+    target = resolve_deploy_target(project_key=project_key, repo=repo)
+    if not target and repo:
+        owner, name = parse_repo(repo)
+        target = DeployTarget(
+            project_key=project_key or "",
+            repo=f"{owner}/{name}",
+            workflows=[],
+            site_urls=[],
+        )
+    if not target:
+        raise DevOpsError(
+            "Could not resolve deployment target. Provide repo (owner/repo) or project_key."
+        )
+
+    owner, name = parse_repo(target.repo)
+    client = _github_client(github_token)
+    default_branch = client.get_default_branch(owner, name)
+    head = (head_ref or "").strip()
+    if not head and project_key:
+        from bigas.resources.product.jira_automation.config import JiraAutomationConfig
+
+        cfg = JiraAutomationConfig.from_env()
+        head = (cfg.automerge_branch_for_project(project_key, target.repo) or "").strip()
+    if not head:
+        head = default_branch
+
+    bases = _prod_compare_bases(client, owner, name, head=head)
+    if not bases:
+        bases = [("production", default_branch)] if default_branch != head else []
+
+    by_sha: Dict[str, Dict[str, Any]] = {}
+    compared: List[str] = []
+    compare_errors: List[str] = []
+    truncated = False
+    ahead_by = 0
+    for _label, tag in bases:
+        if tag == head:
+            continue
+        try:
+            compare = client.compare_refs(owner, name, tag, head)
+        except GitHubActionsError as exc:
+            compare_errors.append(f"{tag} → {head}: {exc}")
+            continue
+        compared.append(f"{tag} → {head}")
+        ahead_by = max(ahead_by, int(compare.get("ahead_by") or 0))
+        rows = _collect_compare_commits(compare)
+        if ahead_by > len(rows):
+            truncated = True
+        for raw in rows:
+            normalized = _normalize_compare_commit(raw)
+            if normalized:
+                by_sha[normalized["sha"]] = normalized
+
+    return {
+        "status": "ok" if not compare_errors or by_sha else "error",
+        "repo": target.repo,
+        "project_key": target.project_key or None,
+        "head_ref": head,
+        "compared": compared,
+        "commits": list(by_sha.values()),
+        "ahead_by": ahead_by,
+        "truncated": truncated,
+        "errors": compare_errors,
+    }
+
+
 def check_deployment_risk(
     *,
     repo: Optional[str] = None,

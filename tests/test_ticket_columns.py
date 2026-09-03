@@ -8,7 +8,11 @@ from bigas.resources.product.update_ticket import (
     UpdateTicketService,
 )
 from bigas.tickets import store as ticket_store_module
-from bigas.tickets.constants import resolve_column_status, unknown_column_error
+from bigas.tickets.constants import (
+    is_in_release_cut,
+    resolve_column_status,
+    unknown_column_error,
+)
 from bigas.tickets.release_store import reset_release_store_for_tests
 
 
@@ -16,6 +20,15 @@ def setup_function():
     ticket_store_module._store = None
     reset_release_store_for_tests()
     os.environ.pop("USE_INTERNAL_BOARD", None)
+
+
+def test_release_cut_includes_final_approval():
+    assert is_in_release_cut("Done") is True
+    assert is_in_release_cut("Final approval (manual)") is True
+    assert is_in_release_cut("final approval", project_key="VFA") is True
+    assert is_in_release_cut("Final Review", project_key="VFA") is True
+    assert is_in_release_cut("To Do") is False
+    assert is_in_release_cut("In Progress (AI)") is False
 
 
 def test_resolve_final_review_alias():

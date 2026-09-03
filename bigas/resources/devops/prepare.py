@@ -8,9 +8,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from bigas.portfolio import brand_name, jira_project_keys, normalize_project_key, resolve_project
-from bigas.resources.devops.service import DevOpsError, check_deployment_risk
+from bigas.resources.devops.service import DevOpsError, check_deployment_risk, list_shipping_commits
+from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
+from bigas.tickets.constants import is_in_release_cut
 from bigas.tickets.releases import tickets_on_version
 from bigas.tickets.semver import SemverError, normalize_version_name
+from bigas.tickets.store import get_ticket_store
 
 logger = logging.getLogger(__name__)
 
@@ -111,27 +114,29 @@ def format_version_ticket_report(
     tickets: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     items = tickets if tickets is not None else tickets_on_version(project_key, version)
-    done: List[Dict[str, Any]] = []
+    in_cut: List[Dict[str, Any]] = []
     open_tickets: List[Dict[str, Any]] = []
     for ticket in items:
-        if (ticket.get("status") or "").strip() == "Done":
-            done.append(ticket)
+        if is_in_release_cut(ticket.get("status") or "", project_key=project_key):
+            in_cut.append(ticket)
         else:
             open_tickets.append(ticket)
 
     lines = [f"**{project_key} {version} — what's in this cut**"]
-    if done:
+    if in_cut:
         lines.append("")
-        lines.append(f"Included ({len(done)} Done):")
-        for ticket in done[:30]:
+        lines.append(f"Included ({len(in_cut)} Done or Final approval):")
+        for ticket in in_cut[:30]:
             key = ticket.get("key") or "?"
             title = (ticket.get("title") or ticket.get("summary") or "").strip()
-            lines.append(f"- {key}: {title}" if title else f"- {key}")
-        if len(done) > 30:
-            lines.append(f"- …and {len(done) - 30} more")
+            status = (ticket.get("status") or "").strip()
+            label = key if status == "Done" else f"{key} ({status or 'in cut'})"
+            lines.append(f"- {label}: {title}" if title else f"- {label}")
+        if len(in_cut) > 30:
+            lines.append(f"- …and {len(in_cut) - 30} more")
     else:
         lines.append("")
-        lines.append("No Done tickets are assigned to this release.")
+        lines.append("No Done or Final approval tickets are assigned to this release.")
 
     if open_tickets:
         lines.append("")
@@ -146,7 +151,212 @@ def format_version_ticket_report(
             "If you deploy anyway they move to the next existing unreleased version, "
             "or lose their version assignment if none exists."
         )
-    return "\n".join(lines), done, open_tickets
+    return "\n".join(lines), in_cut, open_tickets
+
+
+def _ticket_keys_for_project(project_key: str, text: str) -> List[str]:
+    prefix = f"{normalize_project_key(project_key)}-"
+    return [key for key in parse_issue_keys(text, max_keys=200) if key.startswith(prefix)]
+
+
+def _first_line(message: str) -> str:
+    return (message or "").split("\n", 1)[0].strip()
+
+
+def format_git_reconcile_report(
+    *,
+    project_key: str,
+    version: str,
+    in_cut: List[Dict[str, Any]],
+    commits: List[Dict[str, Any]],
+    compared: Optional[List[str]] = None,
+    truncated: bool = False,
+    errors: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Match board cut tickets to commit messages on the shipping git range."""
+    key = normalize_project_key(project_key)
+    cut_by_key = {
+        (ticket.get("key") or "").strip().upper(): ticket
+        for ticket in in_cut
+        if (ticket.get("key") or "").strip()
+    }
+    store = get_ticket_store()
+    matched: List[Dict[str, Any]] = []
+    extra: List[Dict[str, Any]] = []
+    seen_cut: set = set()
+    seen_extra_sha: set = set()
+
+    for commit in commits:
+        sha = (commit.get("sha") or "").strip()
+        subject = (commit.get("subject") or _first_line(commit.get("message") or "")).strip()
+        keys = _ticket_keys_for_project(key, commit.get("message") or subject)
+        hit_cut = [item for item in keys if item in cut_by_key]
+        if hit_cut:
+            for item in hit_cut:
+                if item in seen_cut:
+                    continue
+                seen_cut.add(item)
+                matched.append(
+                    {
+                        "key": item,
+                        "ticket": cut_by_key[item],
+                        "sha": sha,
+                        "subject": subject,
+                    }
+                )
+            continue
+
+        reason = "no ticket key"
+        other_version = ""
+        open_on_cut = ""
+        if keys:
+            found = None
+            for item in keys:
+                found = store.get_ticket_by_key(item)
+                if found:
+                    break
+            if not found:
+                reason = f"{keys[0]} has no board ticket"
+            elif is_in_release_cut(found.get("status") or "", project_key=key):
+                assigned = (found.get("fix_version") or "").strip() or "unassigned"
+                other_version = assigned
+                reason = f"{found.get('key')} is on {assigned}, not {version}"
+            else:
+                open_on_cut = found.get("key") or keys[0]
+                reason = (
+                    f"{open_on_cut} is {(found.get('status') or 'open').strip()} "
+                    f"— not in this cut"
+                )
+        if sha and sha in seen_extra_sha:
+            continue
+        if sha:
+            seen_extra_sha.add(sha)
+        extra.append(
+            {
+                "sha": sha,
+                "subject": subject or "(no subject)",
+                "keys": keys,
+                "reason": reason,
+                "other_version": other_version,
+                "open_on_cut": open_on_cut,
+            }
+        )
+
+    compared_ok = bool(compared) or (commits and not errors)
+    missing = [
+        ticket
+        for item, ticket in cut_by_key.items()
+        if item not in seen_cut
+    ] if compared_ok else []
+    extra = extra if compared_ok else []
+
+    lines = [f"**Git vs board for {key} {version}**"]
+    if compared:
+        lines.append("Compared `" + "`, `".join(compared) + "`.")
+    elif errors:
+        lines.append("Could not compare git to this cut.")
+    else:
+        lines.append("No production tag or branch range to compare.")
+
+    if truncated:
+        lines.append("GitHub returned a truncated commit list (more than 250 commits).")
+    if errors:
+        lines.append("Compare errors: " + "; ".join(errors))
+
+    if not compared_ok:
+        lines.append("Skipping ticket↔commit matching until git compare succeeds.")
+        return {
+            "text": "\n".join(lines),
+            "matched": [],
+            "missing_from_git": [],
+            "extra_commits": [],
+            "needs_confirm": bool(errors),
+            "errors": list(errors or []),
+        }
+
+    if matched:
+        lines.append("")
+        lines.append(f"In this cut and in git ({len(matched)}):")
+        for row in matched[:30]:
+            ticket = row["ticket"]
+            title = (ticket.get("title") or ticket.get("summary") or "").strip()
+            short = (row.get("sha") or "")[:7]
+            suffix = f" `{short}`" if short else ""
+            lines.append(
+                f"- {row['key']}: {title}{suffix}" if title else f"- {row['key']}{suffix}"
+            )
+        if len(matched) > 30:
+            lines.append(f"- …and {len(matched) - 30} more")
+
+    if missing:
+        lines.append("")
+        lines.append(
+            f"**On this cut, not in git ({len(missing)})** — code may not be on the branch:"
+        )
+        for ticket in missing[:20]:
+            tkey = ticket.get("key") or "?"
+            title = (ticket.get("title") or ticket.get("summary") or "").strip()
+            status = (ticket.get("status") or "").strip()
+            label = f"{tkey} ({status})" if status else tkey
+            lines.append(f"- {label}: {title}" if title else f"- {label}")
+        if len(missing) > 20:
+            lines.append(f"- …and {len(missing) - 20} more")
+
+    if extra:
+        lines.append("")
+        lines.append(
+            f"**Also shipping — not a ticket on {version} ({len(extra)}):**"
+        )
+        for row in extra[:20]:
+            short = (row.get("sha") or "")[:7]
+            subject = row.get("subject") or "(no subject)"
+            reason = row.get("reason") or ""
+            prefix = f"`{short}` " if short else ""
+            lines.append(f"- {prefix}{subject} — {reason}")
+        if len(extra) > 20:
+            lines.append(f"- …and {len(extra) - 20} more")
+
+    if not matched and not missing and not extra and not errors:
+        lines.append("")
+        lines.append("No commits between prod and the feature branch.")
+
+    needs_confirm = bool(missing or extra)
+    return {
+        "text": "\n".join(lines),
+        "matched": matched,
+        "missing_from_git": missing,
+        "extra_commits": extra,
+        "needs_confirm": needs_confirm,
+        "errors": list(errors or []),
+    }
+
+
+def reconcile_release_with_git(
+    *,
+    project_key: str,
+    version: str,
+    in_cut: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    try:
+        shipping = list_shipping_commits(project_key=project_key)
+    except Exception as exc:
+        logger.exception("list_shipping_commits failed")
+        return format_git_reconcile_report(
+            project_key=project_key,
+            version=version,
+            in_cut=in_cut,
+            commits=[],
+            errors=[str(exc)],
+        )
+    return format_git_reconcile_report(
+        project_key=project_key,
+        version=version,
+        in_cut=in_cut,
+        commits=shipping.get("commits") or [],
+        compared=shipping.get("compared") or [],
+        truncated=bool(shipping.get("truncated")),
+        errors=shipping.get("errors") or [],
+    )
 
 
 def _github_client():
@@ -595,8 +805,11 @@ def continue_after_main_ready(
         _post(thread_id, str(exc))
         return {"status": "complete", "summary": str(exc)}
 
-    report, _done, open_tickets = format_version_ticket_report(key, ver)
+    report, in_cut, open_tickets = format_version_ticket_report(key, ver)
     _post(thread_id, report)
+    git = reconcile_release_with_git(project_key=key, version=ver, in_cut=in_cut)
+    if git.get("text"):
+        _post(thread_id, git["text"])
 
     _post(
         thread_id,
@@ -620,7 +833,10 @@ def continue_after_main_ready(
 
     _post(thread_id, _format_risk_for_chat(risk))
     risk_level = (risk.get("risk_level") or "low").lower()
-    needs_confirm = risk_level in ("high", "medium") or bool(open_tickets)
+    git_mismatch = bool(git.get("needs_confirm"))
+    needs_confirm = (
+        risk_level in ("high", "medium") or bool(open_tickets) or git_mismatch
+    )
     _complete_pipeline_progress(thread_id)
 
     pending = {
@@ -630,6 +846,10 @@ def continue_after_main_ready(
         "risk_level": risk_level,
         "repo": risk.get("repo"),
         "open_ticket_keys": [t.get("key") for t in open_tickets if t.get("key")],
+        "missing_from_git": [
+            t.get("key") for t in (git.get("missing_from_git") or []) if t.get("key")
+        ],
+        "extra_commit_count": len(git.get("extra_commits") or []),
         "site_urls": risk.get("site_urls") or [],
     }
     if needs_confirm:
@@ -641,6 +861,16 @@ def continue_after_main_ready(
             reasons.append(f"risk level is **{risk_level}**")
         if open_tickets:
             reasons.append(f"**{len(open_tickets)} open ticket(s)** would be left out")
+        missing = git.get("missing_from_git") or []
+        extra = git.get("extra_commits") or []
+        if missing:
+            reasons.append(
+                f"**{len(missing)} cut ticket(s)** were not found in git"
+            )
+        if extra:
+            reasons.append(
+                f"**{len(extra)} commit(s)** would ship without a ticket on {ver}"
+            )
         _post(
             thread_id,
             "Prepare is ready, but "
@@ -653,7 +883,8 @@ def continue_after_main_ready(
 
     _post(
         thread_id,
-        "Risk is **low** and there are no open tickets on this version. Starting deploy of `main`…",
+        "Risk is **low**, the cut matches git, and there are no leftover open tickets. "
+        "Starting deploy of `main`…",
     )
     return start_confirmed_deploy(
         thread_id=thread_id,

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from bigas.resources.product.github_release import GitHubReleaseError, create_github_release
 from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 from bigas.resources.product.release_workflow import normalize_semver_tag
+from bigas.tickets.constants import is_in_release_cut
 from bigas.tickets.release_store import get_release_store
 from bigas.tickets.semver import (
     SemverError,
@@ -94,7 +95,7 @@ def _open_tickets_on_version(project_key: str, version: str) -> List[Dict[str, A
     return [
         ticket
         for ticket in tickets_on_version(project_key, version)
-        if (ticket.get("status") or "").strip() != "Done"
+        if not is_in_release_cut(ticket.get("status") or "", project_key=project_key)
     ]
 
 
@@ -249,11 +250,12 @@ def close_release(
     create_github: bool = True,
     create_next_if_missing: bool = True,
 ) -> Dict[str, Any]:
-    """Mark a board release released, carry forward open tickets, notify DevOps.
+    """Mark a board release released, carry forward leftover open tickets, notify DevOps.
 
-    When ``create_next_if_missing`` is false (versioned prepare-deploy), open
-    tickets move to the next existing unreleased version, or lose their
-    version assignment if none exists. Ship still creates the next minor.
+    Done and Final approval stay on this version (prod-tested before Done).
+    Other open tickets move to the next existing unreleased version, or lose
+    their version assignment if none exists. Ship still creates the next minor
+    when ``create_next_if_missing`` is true.
     """
     proj = (project_key or "").strip().upper()
     try:

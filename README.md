@@ -497,7 +497,7 @@ On close Bigas:
 
 1. Creates GitHub Release `vX.Y.Z` on the mapped product repo if it is missing (`GITHUB_TOKEN` + `BIGAS_JIRA_PROJECT_REPO_MAP`).
 2. Marks the board release as released.
-3. Moves **open** tickets still on that exact version to the **next product minor** (`0.9.0` / `0.9.1` → `0.10.0`; after `1.0.0` → `1.1.0`). Creates that minor if needed. Done tickets stay on the shipped version.
+3. Moves **open** tickets still on that exact version to the **next product minor** (`0.9.0` / `0.9.1` → `0.10.0`; after `1.0.0` → `1.1.0`). Creates that minor if needed. Done and Final approval tickets stay on the shipped version.
 4. Posts the moved keys to the **DevOps** chat thread.
 
 Deleting a release on the board (including a released one) only removes the board record. **GitHub is the source of truth** for shipped tags.
@@ -578,7 +578,7 @@ Think of three layers:
 
 In chat after that: ask DevOps to check deploy risk for VFA or Bigas, confirm if the risk level is medium/high, then deploy. Bigas returns the Actions run URL; don’t wait in the same turn for a long build — ask for status (and a site health check) when it should be done.
 
-**Versioned prepare-deploy.** Type `prepare deploy VFA 0.1.0` (or use the composer **Prepare deploy** shortcut: project + version). DevOps opens a PR from the feature branch (`staging` for VFA) onto `main` when that branch is ahead, runs CTO review + autofix, and merges when the review is clean. It then posts the tickets on that board release plus a risk check. It asks before deploying if risk is medium/high **or** open tickets remain; low risk with no open tickets goes straight to a `main` deploy. After a green deploy it closes that board version (GitHub Release `vX.Y.Z`), leaves leftover open cards out of the cut (moves them to the next *existing* unreleased version, or clears the version if none exists), posts customer release notes, and asks whether you want blog/social drafts. **Yes** stores an X Approve/Decline draft (same review page as weekly X posts) and shows other channels as copy only. A plain `deploy VFA` without a version still does not close a release.
+**Versioned prepare-deploy.** Type `prepare deploy VFA 0.1.0` (or use the composer **Prepare deploy** shortcut: project + version). DevOps opens a PR from the feature branch (`staging` for VFA) onto `main` when that branch is ahead, runs CTO review + autofix, and merges when the review is clean. It then posts the tickets on that board release (**Done** and **Final approval** are in the cut — Final approval is tested in prod before Done), compares those keys to commits between prod deploy tags and the feature branch, and runs a risk check. It asks before deploying if risk is medium/high, leftover open tickets remain, a cut ticket is missing from git, or extra commits would ship without a ticket on that version; otherwise it deploys `main`. After a green deploy it closes that board version (GitHub Release `vX.Y.Z`), leaves leftover open cards out of the cut (moves them to the next *existing* unreleased version, or clears the version if none exists), posts customer release notes, and asks whether you want blog/social drafts. **Yes** stores an X Approve/Decline draft (same review page as weekly X posts) and shows other channels as copy only. A plain `deploy VFA` without a version still does not close a release.
 
 MCP equivalents:
 
