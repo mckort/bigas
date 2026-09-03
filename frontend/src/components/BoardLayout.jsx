@@ -35,6 +35,7 @@ import {
   ticketParentKey,
   ticketParentKrId,
 } from '../lib/okr'
+import { ticketFixVersion, ticketMatchesReleaseFilter } from '../lib/releases'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
 
@@ -197,14 +198,18 @@ function ObjectiveChip({ epic, onClick, className = '' }) {
   )
 }
 
-function LabelChips({ labels, onRemove, className = '' }) {
-  if (!labels?.length) return null
+const META_CHIP_CLASS =
+  'inline-flex items-center gap-1 max-w-full text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted'
+
+function LabelChips({ labels = [], onRemove, className = '', leading = null }) {
+  if (!labels?.length && !leading) return null
   return (
     <div className={`flex flex-wrap gap-1 ${className}`}>
+      {leading}
       {labels.map((label) => (
         <span
           key={label}
-          className="inline-flex items-center gap-1 max-w-full text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted"
+          className={META_CHIP_CLASS}
         >
           <span className="truncate">{label}</span>
           {onRemove && (
@@ -288,8 +293,9 @@ function LabelEditor({ labels, onChange }, ref) {
 
 const LabelEditorWithRef = forwardRef(LabelEditor)
 
-function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusChange, onDiscuss, onFilterEpic, dragging, onDragStart, onDragEnd }) {
+function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusChange, onDiscuss, onFilterEpic, onFilterVersion, dragging, onDragStart, onDragEnd }) {
   const results = keyResultsOf(ticket)
+  const fixVersion = ticketFixVersion(ticket)
   return (
     <div
       draggable
@@ -306,14 +312,6 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
         <div className="flex items-center gap-1.5 min-w-0">
           <TicketAiMark status={ticket.status} />
           <span className="text-[11px] font-mono text-muted truncate">{ticket.key}</span>
-          {ticket.fix_version && (
-            <span
-              className="text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted flex-shrink-0 font-mono"
-              title={`Release ${ticket.fix_version}`}
-            >
-              {ticket.fix_version}
-            </span>
-          )}
           {isObjective(ticket) && (
             <span className="chip-accent flex-shrink-0">
               Objective
@@ -369,7 +367,23 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
           ))}
         </div>
       )}
-      <LabelChips labels={ticketLabels(ticket)} className="mt-2" />
+      <LabelChips
+        labels={ticketLabels(ticket)}
+        className="mt-2"
+        leading={
+          fixVersion ? (
+            <button
+              type="button"
+              onClick={() => onFilterVersion?.(fixVersion)}
+              onMouseDown={(e) => e.stopPropagation()}
+              className={`${META_CHIP_CLASS} font-mono`}
+              title={`Filter by release ${fixVersion}`}
+            >
+              {fixVersion}
+            </button>
+          ) : null
+        }
+      />
       {ticket.attachment_count > 0 && (
         <p className="text-[11px] text-muted mt-2">
           {ticket.attachment_count} attachment{ticket.attachment_count === 1 ? '' : 's'}
@@ -816,7 +830,9 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
     description: ticket?.description || '',
     status: ticket?.status || initialStatus || columns[0] || 'To Do',
     assignee: ticket?.assignee || '',
-    fix_version: ticket?.fix_version || (releases || []).find((item) => item.is_default && !item.released)?.name || '',
+    fix_version: ticket
+      ? ticketFixVersion(ticket)
+      : ((releases || []).find((item) => item.is_default && !item.released)?.name || ''),
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
     parent_key: ticket ? ticketParentKey(ticket) : (initialParentKey || ''),
@@ -1476,8 +1492,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   )
   const visibleTickets = tickets.filter((ticket) => {
     if (!ticketMatchesObjectiveFilter(ticket, epicFilter)) return false
-    if (!versionFilter) return true
-    return (ticket.fix_version || '') === versionFilter
+    return ticketMatchesReleaseFilter(ticket, versionFilter)
   })
   const showEpicFilter = epicOptions.length > 0 || tickets.some((ticket) => ticketParentKey(ticket))
 
@@ -1938,6 +1953,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                       onStatusChange={handleStatusChange}
                       onDiscuss={onDiscussTicket}
                       onFilterEpic={setEpicFilter}
+                      onFilterVersion={setVersionFilter}
                       dragging={dragTicket?.ticket_id === ticket.ticket_id}
                       onDragStart={(_, t) => setDragTicket(t)}
                       onDragEnd={() => setDragTicket(null)}
@@ -1979,6 +1995,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
                       onStatusChange={handleStatusChange}
                       onDiscuss={onDiscussTicket}
                       onFilterEpic={setEpicFilter}
+                      onFilterVersion={setVersionFilter}
                       dragging={dragTicket?.ticket_id === ticket.ticket_id}
                       onDragStart={(_, t) => setDragTicket(t)}
                       onDragEnd={() => setDragTicket(null)}
