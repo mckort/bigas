@@ -41,7 +41,7 @@ def canonical_version_name(name: str) -> str:
 def versions_match(left: str, right: str) -> bool:
     a = canonical_version_name(left)
     b = canonical_version_name(right)
-    return bool(a) and a == b
+    return a == b
 
 
 def parse_semver(name: str) -> Tuple[int, int, int]:

@@ -374,7 +374,10 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
           fixVersion ? (
             <button
               type="button"
-              onClick={() => onFilterVersion?.(fixVersion)}
+              onClick={(e) => {
+                e.stopPropagation()
+                onFilterVersion?.(fixVersion)
+              }}
               onMouseDown={(e) => e.stopPropagation()}
               className={`${META_CHIP_CLASS} font-mono`}
               title={`Filter by release ${fixVersion}`}

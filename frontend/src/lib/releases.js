@@ -12,7 +12,7 @@ export function ticketFixVersion(ticket) {
 export function normalizeReleaseName(name) {
   const text = String(name || '').trim()
   if (!text) return ''
-  const stripped = /^v/i.test(text) ? text.slice(1) : text
+  const stripped = /^v(?=\d)/i.test(text) ? text.slice(1) : text
   const match = stripped.match(/^(\d+)\.(\d+)\.(\d+)$/)
   if (!match) return stripped
   return `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`
