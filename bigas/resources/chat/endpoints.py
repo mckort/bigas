@@ -429,6 +429,20 @@ def serve_frontend_root():
     return send_from_directory(FRONTEND_DIST, "index.html")
 
 
+@chat_bp.route("/robots.txt")
+def serve_robots():
+    """Public crawl rules: index `/`, hide login and app routes."""
+    for folder in (FRONTEND_DIST, FRONTEND_PUBLIC):
+        path = folder / "robots.txt"
+        if path.is_file():
+            return send_from_directory(folder, "robots.txt", mimetype="text/plain")
+    return (
+        "User-agent: *\nAllow: /\nDisallow: /login\nDisallow: /board\nDisallow: /objectives\n",
+        200,
+        {"Content-Type": "text/plain; charset=utf-8"},
+    )
+
+
 def _send_brand_icon(filename: str):
     for folder in (FRONTEND_DIST, FRONTEND_PUBLIC):
         path = folder / filename

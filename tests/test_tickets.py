@@ -75,6 +75,13 @@ def test_board_spa_and_api_bypass_access_key(client, monkeypatch):
     assert page.status_code != 401
     assert page.get_json() is None or "access key" not in str(page.get_json()).lower()
 
+    login = client.get("/login")
+    assert login.status_code != 401
+
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200
+    assert b"Disallow: /login" in robots.data
+
     unauth_api = client.get("/api/boards")
     assert unauth_api.status_code == 401
     body = unauth_api.get_json()
