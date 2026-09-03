@@ -44,6 +44,10 @@ def is_deploy_start(text: str) -> bool:
     blob = (text or "").strip()
     if not blob:
         return False
+    from bigas.resources.devops.prepare import is_prepare_start
+
+    if is_prepare_start(blob):
+        return False
     if _STATUS_RE.search(blob) and not re.search(r"\b(deploya|deployera)\b", blob, re.I):
         return False
     return bool(_DEPLOY_START_RE.search(blob))
@@ -111,13 +115,22 @@ def clear_stale_pending_deploy(user_message: str, thread_id: Optional[str] = Non
         return
     if _pending(thread_id):
         _set_pending(thread_id, None)
+    from bigas.resources.devops.prepare import clear_prepare_state
+
+    clear_prepare_state(thread_id)
 
 
 def should_run_deploy_pipeline(user_message: str, thread_id: Optional[str] = None) -> bool:
-    if is_deploy_start(user_message):
+    from bigas.resources.devops.prepare import is_prepare_start, pending_release_notes
+
+    if is_prepare_start(user_message) or is_deploy_start(user_message):
         return True
     pending = _pending(thread_id)
     if pending and (is_confirm(user_message) or is_cancel(user_message)):
+        return True
+    if pending_release_notes(thread_id) and (
+        is_confirm(user_message) or is_cancel(user_message)
+    ):
         return True
     return False
 
@@ -290,6 +303,13 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
         parts.extend(f"- {line}" for line in health_lines)
     _post(thread_id, "\n".join(parts))
     _set_deploy_poll(thread_id, None)
+    if not failed_runs and poll.get("release_version"):
+        try:
+            from bigas.resources.devops.prepare import finalize_versioned_deploy
+
+            finalize_versioned_deploy(thread_id, poll)
+        except Exception:
+            logger.exception("Versioned release close after deploy failed")
     hotfix_repo = poll.get("product_repo") or repo
     if failed_runs and hotfix_repo:
         _handoff_failed_deploys(
@@ -330,6 +350,18 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
 
 def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
     """Single client-driven poll step for post-deploy workflow status and health."""
+    from bigas.resources.devops.prepare import pending_prepare_poll, poll_prepare_followup
+
+    if pending_prepare_poll(thread_id):
+        result = poll_prepare_followup(thread_id)
+        if result.get("status") == "in_progress" or result.get("active"):
+            return {"status": "in_progress", "active": True}
+        if result.get("deploy_poll_active"):
+            return {"status": "in_progress", "active": True}
+        if _deploy_poll(thread_id):
+            return {"status": "in_progress", "active": True}
+        return {"status": result.get("status") or "complete", "active": False}
+
     poll = _deploy_poll(thread_id)
     if not poll:
         return {"status": "complete", "active": False}
@@ -411,6 +443,79 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
     return {"status": "complete", "active": False}
 
 
+def start_confirmed_deploy(
+    *,
+    thread_id: Optional[str],
+    project_key: str,
+    risk: Optional[Dict[str, Any]] = None,
+    release_version: Optional[str] = None,
+    ref: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Trigger GitHub Actions and start client-driven post-check polling."""
+    _set_pending(thread_id, None)
+    _post(
+        thread_id,
+        "🚀 **Deploy:** starting GitHub Actions…",
+        role="system",
+        status="in_progress",
+    )
+    deploy_ref = (ref or (risk or {}).get("head_ref") or "main").strip() or "main"
+    try:
+        result = trigger_deployment(project_key=project_key, ref=deploy_ref)
+    except DevOpsError as e:
+        _complete_pipeline_progress(thread_id)
+        _post(thread_id, f"Could not start deploy: {e}")
+        return {"status": "complete", "summary": str(e)}
+    except Exception as e:
+        logger.exception("trigger_deployment failed")
+        _complete_pipeline_progress(thread_id)
+        _post(thread_id, f"Could not start deploy: {e}")
+        return {"status": "complete", "summary": str(e)}
+
+    _post(thread_id, result.get("summary") or "Deploy triggered.")
+    triggered = result.get("triggered") or []
+    if not triggered:
+        errors = result.get("errors") or []
+        _complete_pipeline_progress(thread_id)
+        _post(
+            thread_id,
+            "No workflow started."
+            + ((" " + "; ".join(errors)) if errors else ""),
+        )
+        return {"status": "complete", "summary": result.get("summary") or ""}
+
+    _post(
+        thread_id,
+        "⏳ **Post-check:** waiting for GitHub Actions. I'll post here when it's done (this can take several minutes).",
+        role="system",
+        status="in_progress",
+    )
+    if thread_id:
+        _set_deploy_poll(
+            thread_id,
+            {
+                "repo": result.get("deploy_repo") or result.get("repo") or (risk or {}).get("repo") or "",
+                "product_repo": result.get("repo") or (risk or {}).get("repo") or "",
+                "triggered": triggered,
+                "site_urls": result.get("site_urls") or (risk or {}).get("site_urls") or [],
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "finished_lines": [],
+                "failed_runs": [],
+                "done_run_ids": [],
+                "ref": result.get("ref") or deploy_ref,
+                "project_key": project_key,
+                "release_version": (release_version or "").strip() or None,
+            },
+        )
+        return {
+            "status": "in_progress",
+            "summary": result.get("summary") or "",
+            "deploy_poll_active": True,
+        }
+
+    return {"status": "complete", "summary": result.get("summary") or ""}
+
+
 def run_chat_deploy_pipeline(
     *,
     thread_id: Optional[str],
@@ -418,6 +523,20 @@ def run_chat_deploy_pipeline(
     project_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run pre-check → (optional confirm) → trigger → client-polled post-check."""
+    from bigas.resources.devops.prepare import (
+        handle_release_notes_reply,
+        is_prepare_start,
+        pending_release_notes,
+        run_prepare_deploy,
+    )
+
+    notes_pending = pending_release_notes(thread_id)
+    if notes_pending and (is_confirm(user_message) or is_cancel(user_message)):
+        return handle_release_notes_reply(thread_id=thread_id, user_message=user_message)
+
+    if is_prepare_start(user_message):
+        return run_prepare_deploy(thread_id=thread_id, user_message=user_message)
+
     pending = _pending(thread_id)
     if pending and is_cancel(user_message):
         _set_pending(thread_id, None)
@@ -426,6 +545,21 @@ def run_chat_deploy_pipeline(
         return {"status": "complete", "summary": "Deploy cancelled."}
 
     confirmed = bool(pending and is_confirm(user_message))
+    if confirmed and (pending or {}).get("kind") == "prepare":
+        try:
+            risk = check_deployment_risk(project_key=pending.get("project_key"))
+        except Exception as e:
+            _complete_pipeline_progress(thread_id)
+            _post(thread_id, f"Pre-check failed: {e}")
+            return {"status": "complete", "summary": str(e)}
+        return start_confirmed_deploy(
+            thread_id=thread_id,
+            project_key=pending.get("project_key") or "",
+            risk=risk,
+            release_version=pending.get("version"),
+            ref=risk.get("head_ref") or "main",
+        )
+
     key = (
         project_key
         or (pending or {}).get("project_key")
@@ -473,63 +607,8 @@ def run_chat_deploy_pipeline(
         )
         return {"status": "complete", "summary": risk.get("summary") or ""}
 
-    _set_pending(thread_id, None)
-    _post(
-        thread_id,
-        "🚀 **Deploy:** starting GitHub Actions…",
-        role="system",
-        status="in_progress",
+    return start_confirmed_deploy(
+        thread_id=thread_id,
+        project_key=key,
+        risk=risk,
     )
-    try:
-        result = trigger_deployment(project_key=key, ref=risk.get("head_ref"))
-    except DevOpsError as e:
-        _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Could not start deploy: {e}")
-        return {"status": "complete", "summary": str(e)}
-    except Exception as e:
-        logger.exception("trigger_deployment failed")
-        _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Could not start deploy: {e}")
-        return {"status": "complete", "summary": str(e)}
-
-    _post(thread_id, result.get("summary") or "Deploy triggered.")
-    triggered = result.get("triggered") or []
-    if not triggered:
-        errors = result.get("errors") or []
-        _complete_pipeline_progress(thread_id)
-        _post(
-            thread_id,
-            "No workflow started."
-            + ((" " + "; ".join(errors)) if errors else ""),
-        )
-        return {"status": "complete", "summary": result.get("summary") or ""}
-
-    _post(
-        thread_id,
-        "⏳ **Post-check:** waiting for GitHub Actions. I'll post here when it's done (this can take several minutes).",
-        role="system",
-        status="in_progress",
-    )
-    if thread_id:
-        _set_deploy_poll(
-            thread_id,
-            {
-                "repo": result.get("deploy_repo") or result.get("repo") or risk.get("repo") or "",
-                "product_repo": result.get("repo") or risk.get("repo") or "",
-                "triggered": triggered,
-                "site_urls": result.get("site_urls") or risk.get("site_urls") or [],
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "finished_lines": [],
-                "failed_runs": [],
-                "done_run_ids": [],
-                "ref": result.get("ref") or risk.get("head_ref") or "main",
-                "project_key": key,
-            },
-        )
-        return {
-            "status": "in_progress",
-            "summary": result.get("summary") or "",
-            "deploy_poll_active": True,
-        }
-
-    return {"status": "complete", "summary": result.get("summary") or ""}

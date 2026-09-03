@@ -35,6 +35,7 @@ from bigas.resources.devops.pipeline import (
     run_chat_deploy_pipeline,
     should_run_deploy_pipeline,
 )
+from bigas.resources.devops.prepare import is_prepare_start
 from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
 from bigas.utils.mcp_client import MCPClient, MCPClientError
 
@@ -1331,7 +1332,7 @@ def handle_chat_message(
     )
 
     if agent_id == "chief":
-        if is_deploy_start(user_message):
+        if is_deploy_start(user_message) or is_prepare_start(user_message):
             response_text = run_specialist_task(
                 "devops",
                 user_message,

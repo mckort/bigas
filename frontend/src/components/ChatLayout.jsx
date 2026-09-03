@@ -9,6 +9,7 @@ import {
   approveProposal,
   createThread,
   fetchAgents,
+  fetchChatProjects,
   fetchChatAttachmentBlob,
   fetchFeed,
   fetchMessages,
@@ -541,6 +542,95 @@ const STARTER_PROMPTS = [
     prompt: 'I am a solo founder juggling multiple projects. Help me prioritize dev, maintenance, and distribution work this week.',
   },
 ]
+
+function PrepareDeployShortcut({ disabled, onSubmit }) {
+  const [open, setOpen] = useState(false)
+  const [projects, setProjects] = useState([])
+  const [projectKey, setProjectKey] = useState('VFA')
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetchChatProjects()
+      .then((res) => {
+        if (cancelled) return
+        const items = res.projects || []
+        setProjects(items)
+        setProjectKey((current) =>
+          items.some((item) => item.key === current) ? current : items[0]?.key || 'VFA',
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setProjects([{ key: 'VFA', name: 'VC Field Assistant' }])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  function handleGo(e) {
+    e.preventDefault()
+    const ver = version.trim()
+    if (!projectKey || !ver || disabled) return
+    onSubmit(`prepare deploy ${projectKey} ${ver}`)
+    setVersion('')
+    setOpen(false)
+  }
+
+  return (
+    <div className="mb-2">
+      {!open ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen(true)}
+          className="text-xs text-muted hover:text-text px-1 py-1 disabled:opacity-40"
+        >
+          Prepare deploy
+        </button>
+      ) : (
+        <form onSubmit={handleGo} className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted">Prepare deploy</span>
+          <select
+            value={projectKey}
+            onChange={(e) => setProjectKey(e.target.value)}
+            className="input-field text-xs min-h-[36px] w-[8.5rem] py-1"
+            aria-label="Project"
+          >
+            {(projects.length ? projects : [{ key: 'VFA', name: 'VC Field Assistant' }]).map(
+              (item) => (
+                <option key={item.key} value={item.key}>
+                  {item.name ? `${item.key} - ${item.name}` : item.key}
+                </option>
+              ),
+            )}
+          </select>
+          <input
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+            placeholder="0.1.0"
+            className="input-field text-xs min-h-[36px] w-[5.5rem] py-1"
+            aria-label="Release version"
+          />
+          <button
+            type="submit"
+            disabled={disabled || !version.trim()}
+            className="btn-primary text-xs min-h-[36px] px-3 py-1"
+          >
+            Go
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="btn-ghost text-xs min-h-[36px] px-2 py-1"
+          >
+            Cancel
+          </button>
+        </form>
+      )}
+    </div>
+  )
+}
 
 function StarterPrompts({ onSelect, disabled }) {
   return (
@@ -1385,6 +1475,10 @@ export default function ChatLayout({
               </div>
             )}
             {attachError && <p className="text-xs text-red-600 mb-2">{attachError}</p>}
+            <PrepareDeployShortcut
+              disabled={sending || !threadId}
+              onSubmit={(prompt) => handleSend(null, prompt)}
+            />
             <div
               className={`composer-shell ${dragOver ? 'border-accent' : ''}`}
             >
