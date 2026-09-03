@@ -4,6 +4,10 @@
   <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
   <br/>
   <strong>A brand-aligned web chat with your virtual AI team — a goal-oriented engine where you and the agents work side by side, on one project or several.</strong>
+  <br/><br/>
+  <a href="https://github.com/mckort/bigas/fork">
+    <img src="https://img.shields.io/badge/Fork%20%26%20Run%20Locally-Start%20building-73cdfb?style=for-the-badge&logo=github&logoColor=black" alt="Fork & Run Locally"/>
+  </a>
 </div>
 
 Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
