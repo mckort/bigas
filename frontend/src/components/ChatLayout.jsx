@@ -396,11 +396,20 @@ function MessageAttachments({ message, threadId }) {
   )
 }
 
+const CHAT_DISPLAY_TZ = 'Europe/Stockholm'
+
+function messageDateTimeAttr(value) {
+  if (typeof value === 'string') return value
+  if (value instanceof Date) return value.toISOString()
+  return undefined
+}
+
 function formatMessageTime(iso) {
   if (!iso) return ''
   const date = iso instanceof Date ? iso : new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleString(undefined, {
+    timeZone: CHAT_DISPLAY_TZ,
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -433,7 +442,9 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
           )}
         </div>
       )}
-      <div className="max-w-[85%] sm:max-w-[75%] min-w-0">
+      <div
+        className={`max-w-[85%] sm:max-w-[75%] min-w-0 flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
+      >
         <div
           className={`rounded-xl px-4 py-3 transition-all duration-150 ${
             isUser
@@ -460,7 +471,7 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
         </div>
         {stamp ? (
           <time
-            dateTime={typeof message.created_at === 'string' ? message.created_at : undefined}
+            dateTime={messageDateTimeAttr(message.created_at)}
             className={`mt-1 block px-1 text-[11px] text-muted ${isUser ? 'text-right' : ''}`}
           >
             {stamp}

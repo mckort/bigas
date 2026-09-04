@@ -17,6 +17,7 @@ from bigas.chat.db import get_chat_store
 from bigas.chat.timestamps import (
     current_time_prompt_block,
     format_chat_timestamp,
+    parse_chat_datetime,
     prefix_llm_message,
 )
 
@@ -30,6 +31,13 @@ def test_format_chat_timestamp_skips_empty():
     assert format_chat_timestamp(None) == ""
     assert format_chat_timestamp("") == ""
     assert format_chat_timestamp("not-a-date") == ""
+
+
+def test_parse_chat_datetime_unix_timestamp():
+    dt = parse_chat_datetime(1725437100.0)
+    assert dt is not None
+    assert dt.tzinfo == timezone.utc
+    assert dt.year == 2024
 
 
 def test_prefix_llm_message_leaves_text_when_no_time():

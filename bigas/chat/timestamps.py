@@ -42,6 +42,11 @@ def parse_chat_datetime(value: Any) -> Optional[datetime]:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value, tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
     to_datetime = getattr(value, "to_datetime", None)
     if callable(to_datetime):
         try:
