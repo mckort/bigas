@@ -72,6 +72,11 @@ def test_message_text_for_llm_includes_screenshot():
     assert "## Attachments" in text
     assert "Card declined" in text
     assert message_text_for_llm({"content": "hello"}) == "hello"
+    stamped = message_text_for_llm(
+        {"content": "hello", "created_at": "2026-09-04T08:45:00+00:00"}
+    )
+    assert stamped.startswith("[Friday, Sep 4, 2026, 10:45 AM")
+    assert stamped.endswith("hello")
 
 
 def test_process_chat_files_interprets_screenshot():
@@ -239,6 +244,15 @@ def test_chat_history_includes_prior_attachments(client, monkeypatch):
     joined = "\n".join(item["content"] for item in prior)
     assert "Primary button overflows" in joined
     assert "Look" in joined
+    from bigas.chat.db import get_chat_store
+    from bigas.chat.timestamps import format_chat_timestamp
+
+    first = next(
+        m
+        for m in get_chat_store().list_messages(thread_id)
+        if m.get("content") == "Look"
+    )
+    assert format_chat_timestamp(first["created_at"]) in joined
 
 
 def test_json_chat_still_requires_content(client, monkeypatch):

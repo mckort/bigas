@@ -396,6 +396,19 @@ function MessageAttachments({ message, threadId }) {
   )
 }
 
+function formatMessageTime(iso) {
+  if (!iso) return ''
+  const date = iso instanceof Date ? iso : new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
 function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
@@ -403,6 +416,7 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
   const isHandoff = meta.type === 'handoff'
   const showResolved =
     meta.type === 'action_proposal' && meta.status && meta.status !== 'pending'
+  const stamp = formatMessageTime(message.created_at)
 
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -419,29 +433,39 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
           )}
         </div>
       )}
-      <div
-        className={`max-w-[85%] sm:max-w-[75%] rounded-xl px-4 py-3 transition-all duration-150 ${
-          isUser
-            ? 'bg-accent text-accent-fg shadow-soft'
-            : isHandoff
-              ? 'bg-surface border border-border text-text'
-              : isSystem
-                ? 'bg-surface border border-border text-muted italic'
-                : 'bg-elevated border border-border text-text shadow-soft'
-        }`}
-      >
-        <div className="markdown-body text-sm sm:text-base break-words">
-          {meta.source === 'email' ? (
-            <EmailTriageBody message={message} />
-          ) : (
-            <ChatMarkdown content={message.content} />
+      <div className="max-w-[85%] sm:max-w-[75%] min-w-0">
+        <div
+          className={`rounded-xl px-4 py-3 transition-all duration-150 ${
+            isUser
+              ? 'bg-accent text-accent-fg shadow-soft'
+              : isHandoff
+                ? 'bg-surface border border-border text-text'
+                : isSystem
+                  ? 'bg-surface border border-border text-muted italic'
+                  : 'bg-elevated border border-border text-text shadow-soft'
+          }`}
+        >
+          <div className="markdown-body text-sm sm:text-base break-words">
+            {meta.source === 'email' ? (
+              <EmailTriageBody message={message} />
+            ) : (
+              <ChatMarkdown content={message.content} />
+            )}
+          </div>
+          <MessageAttachments message={message} threadId={threadId} />
+          <ActionProposalCard message={message} onResolved={onProposalResolved} />
+          {showResolved && (
+            <p className="mt-2 text-xs text-muted capitalize">{meta.status}</p>
           )}
         </div>
-        <MessageAttachments message={message} threadId={threadId} />
-        <ActionProposalCard message={message} onResolved={onProposalResolved} />
-        {showResolved && (
-          <p className="mt-2 text-xs text-muted capitalize">{meta.status}</p>
-        )}
+        {stamp ? (
+          <time
+            dateTime={typeof message.created_at === 'string' ? message.created_at : undefined}
+            className={`mt-1 block px-1 text-[11px] text-muted ${isUser ? 'text-right' : ''}`}
+          >
+            {stamp}
+          </time>
+        ) : null}
       </div>
     </div>
   )
