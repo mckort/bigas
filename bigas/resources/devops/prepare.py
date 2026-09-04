@@ -833,10 +833,6 @@ def continue_after_main_ready(
 
     _post(thread_id, _format_risk_for_chat(risk))
     risk_level = (risk.get("risk_level") or "low").lower()
-    git_mismatch = bool(git.get("needs_confirm"))
-    needs_confirm = (
-        risk_level in ("high", "medium") or bool(open_tickets) or git_mismatch
-    )
     _complete_pipeline_progress(thread_id)
 
     pending = {
@@ -852,46 +848,35 @@ def continue_after_main_ready(
         "extra_commit_count": len(git.get("extra_commits") or []),
         "site_urls": risk.get("site_urls") or [],
     }
-    if needs_confirm:
-        from bigas.resources.devops.pipeline import _set_pending
+    from bigas.resources.devops.pipeline import _set_pending
 
-        _set_pending(thread_id, pending)
-        reasons = []
-        if risk_level in ("high", "medium"):
-            reasons.append(f"risk level is **{risk_level}**")
-        if open_tickets:
-            reasons.append(f"**{len(open_tickets)} open ticket(s)** would be left out")
-        missing = git.get("missing_from_git") or []
-        extra = git.get("extra_commits") or []
-        if missing:
-            reasons.append(
-                f"**{len(missing)} cut ticket(s)** were not found in git"
-            )
-        if extra:
-            reasons.append(
-                f"**{len(extra)} commit(s)** would ship without a ticket on {ver}"
-            )
-        _post(
-            thread_id,
+    _set_pending(thread_id, pending)
+    reasons = []
+    if risk_level in ("high", "medium"):
+        reasons.append(f"risk level is **{risk_level}**")
+    if open_tickets:
+        reasons.append(f"**{len(open_tickets)} open ticket(s)** would be left out")
+    missing = git.get("missing_from_git") or []
+    extra = git.get("extra_commits") or []
+    if missing:
+        reasons.append(f"**{len(missing)} cut ticket(s)** were not found in git")
+    if extra:
+        reasons.append(
+            f"**{len(extra)} commit(s)** would ship without a ticket on {ver}"
+        )
+    if reasons:
+        prompt = (
             "Prepare is ready, but "
             + " and ".join(reasons)
-            + ". Reply **yes** to deploy `main`, or **no** to cancel.",
+            + ". Reply **yes** to deploy `main`, or **no** to cancel."
         )
-        return {"status": "complete", "summary": risk.get("summary") or ""}
-
-    from bigas.resources.devops.pipeline import start_confirmed_deploy
-
-    _post(
-        thread_id,
-        "Risk is **low**, the cut matches git, and there are no leftover open tickets. "
-        "Starting deploy of `main`…",
-    )
-    return start_confirmed_deploy(
-        thread_id=thread_id,
-        project_key=key,
-        risk=risk,
-        release_version=ver,
-    )
+    else:
+        prompt = (
+            "Risk is **low**, the cut matches git, and there are no leftover open tickets. "
+            "Reply **yes** to deploy `main`, or **no** to cancel."
+        )
+    _post(thread_id, prompt)
+    return {"status": "complete", "summary": risk.get("summary") or ""}
 
 
 def run_prepare_deploy(
