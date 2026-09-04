@@ -763,8 +763,6 @@ def review_and_comment_pr():
             status="To Do",
             retitle=True,
         )
-        pr_title = _pr_title_of(pr)
-        pr_ref = format_pr_discord_line(pr_url, pr_title)
 
     try:
         diff = _resolve_pr_diff_text(
