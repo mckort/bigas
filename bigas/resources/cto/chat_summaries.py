@@ -60,19 +60,26 @@ def summarize_review_result(payload: dict) -> str:
         return f"PR is already merged. Nothing to review.{suffix}".strip()
 
     merge_bit = _auto_merge_clause(payload.get("auto_merge"))
+    board = payload.get("board_ticket")
+    ticket_bit = ""
+    if isinstance(board, dict) and board.get("created") and board.get("issue_key"):
+        ticket_bit = f" Created {board.get('issue_key')} on the board."
     if payload.get("ready_to_merge"):
         if comment_url:
-            return f"Review looks clean — ready to merge. Comment: {comment_url}.{merge_bit}".rstrip()
-        return f"Review looks clean — ready to merge.{merge_bit}".rstrip()
+            return (
+                f"Review looks clean — ready to merge. Comment: {comment_url}."
+                f"{merge_bit}{ticket_bit}"
+            ).rstrip()
+        return f"Review looks clean — ready to merge.{merge_bit}{ticket_bit}".rstrip()
 
     if payload.get("review_posted") and comment_url:
         return (
             f"Review posted with findings. Comment: {comment_url}. "
-            "Want me to run autofix?"
+            f"Want me to run autofix?{ticket_bit}"
         )
     if comment_url:
-        return f"Review finished. Comment: {comment_url}."
-    return "Review finished, but no GitHub comment URL was returned."
+        return f"Review finished. Comment: {comment_url}.{ticket_bit}".rstrip()
+    return f"Review finished, but no GitHub comment URL was returned.{ticket_bit}".rstrip()
 
 
 def summarize_pr_merged_result(payload: dict) -> str:
@@ -91,6 +98,8 @@ def summarize_pr_merged_result(payload: dict) -> str:
 
     if result.get("ok") and not result.get("skipped") and issue_key:
         dest = moved_to or "Final approval (manual)"
+        if result.get("created") or reason == "created_in_final_approval":
+            return f"Created {issue_key} from the PR and put it in {dest}.{suffix}".strip()
         return f"Moved {issue_key} to {dest}.{suffix}".strip()
     if reason == "already_in_final_approval" and issue_key:
         return f"{issue_key} is already in Final approval.{suffix}".strip()

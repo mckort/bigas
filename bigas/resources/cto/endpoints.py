@@ -748,6 +748,22 @@ def review_and_comment_pr():
             summarize_review_result,
         )
 
+    board_ticket: dict = {"skipped": True, "reason": "pr_missing"}
+    if pr:
+        from bigas.resources.product.jira_automation.final_approval import (
+            ensure_board_ticket_for_pr,
+        )
+
+        board_ticket = ensure_board_ticket_for_pr(
+            repo=repo,
+            pr=pr,
+            pr_url=pr_url,
+            github_token=github_token,
+            pr_number=pr_number,
+            status="To Do",
+            retitle=True,
+        )
+
     try:
         diff = _resolve_pr_diff_text(
             diff=diff,
@@ -899,6 +915,7 @@ def review_and_comment_pr():
         "phase": phase,
         "jira_final_approval": jira_final,
         "auto_merge": auto_merge,
+        "board_ticket": board_ticket,
         "pr_url": pr_url,
     }, summarize_review_result)
 
@@ -907,6 +924,9 @@ def review_and_comment_pr():
 def notify_pr_merged():
     """
     Move the linked board ticket to Final approval after a PR is merged.
+
+    If the PR has no ticket key, create an internal-board ticket from the PR
+    (skipped for release/dependabot PRs) and put it in Final approval.
 
     Used by the PR-closed GitHub Action so a human merge (or delayed GitHub
     auto-merge) still advances the card. Idempotent if the card is already there.
