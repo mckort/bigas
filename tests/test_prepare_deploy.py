@@ -292,7 +292,7 @@ def test_prepare_asks_on_medium_risk(monkeypatch):
     assert "high" in blob.lower()
 
 
-def test_prepare_autodeploys_when_final_approval_matches_git(monkeypatch):
+def test_prepare_asks_when_final_approval_matches_git(monkeypatch):
     store = get_ticket_store()
     board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
     store.create_ticket(
@@ -349,12 +349,15 @@ def test_prepare_autodeploys_when_final_approval_matches_git(monkeypatch):
         thread_id=thread["thread_id"],
         user_message="prepare deploy VFA 0.1.0",
     )
-    assert triggered["called"] is True
-    assert result.get("deploy_poll_active") is True
+    assert triggered["called"] is False
+    assert result["status"] == "complete"
+    pending = chat.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert pending and pending.get("kind") == "prepare"
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
     assert "VFA-48" in blob
     assert "In this cut and in git" in blob
-    assert "yes" not in blob.lower() or "Starting deploy" in blob
+    assert "yes" in blob.lower()
+    assert "Starting deploy" not in blob
 
 
 def test_prepare_asks_when_extra_commits_lack_tickets(monkeypatch):
@@ -482,7 +485,7 @@ def test_git_reconcile_truncates_missing_list():
     assert "…and 5 more" in report["text"]
 
 
-def test_prepare_autodeploys_on_low_risk_without_open_tickets(monkeypatch):
+def test_prepare_asks_on_low_risk_without_open_tickets(monkeypatch):
     store = get_ticket_store()
     board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
     store.create_ticket(
@@ -541,11 +544,14 @@ def test_prepare_autodeploys_on_low_risk_without_open_tickets(monkeypatch):
         thread_id=thread["thread_id"],
         user_message="prepare deploy VFA 0.1.0",
     )
-    assert triggered["called"] is True
-    assert triggered["ref"] == "main"
-    assert result.get("deploy_poll_active") is True
-    poll = chat.get_thread(thread["thread_id"]).get("pending_deploy_poll")
-    assert poll and poll.get("release_version") == "0.1.0"
+    assert triggered["called"] is False
+    assert result["status"] == "complete"
+    pending = chat.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert pending and pending.get("kind") == "prepare"
+    assert pending.get("version") == "0.1.0"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "yes" in blob.lower()
+    assert "Starting deploy" not in blob
 
 
 def test_prepare_confirm_deploys_main(monkeypatch):
