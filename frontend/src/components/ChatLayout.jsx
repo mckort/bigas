@@ -896,6 +896,7 @@ export default function ChatLayout({
   user,
   onLogout,
   onSwitchView,
+  onOpenBoard,
   discussContext,
   onClearDiscussContext,
   onOpenSettings,
@@ -1682,7 +1683,12 @@ export default function ChatLayout({
         </div>
       </main>
 
-      <ActivityFeed events={events} open={activityOpen} onClose={() => setActivityOpen(false)} />
+      <ActivityFeed
+        events={events}
+        open={activityOpen}
+        onClose={() => setActivityOpen(false)}
+        onOpenBoard={onOpenBoard}
+      />
     </div>
   )
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import Login from './components/Login'
 import Landing from './components/Landing'
 import ChatLayout from './components/ChatLayout'
-import BoardLayout from './components/BoardLayout'
+import BoardLayout, { BOARD_URL_SYNC_EVENT } from './components/BoardLayout'
 import ObjectivesLayout from './components/ObjectivesLayout'
 import AgentSettings from './components/AgentSettings'
 import MobileNav from './components/MobileNav'
@@ -102,6 +102,21 @@ export default function App() {
     setLocationPath(path)
   }
 
+  const navigateTo = (href) => {
+    const url = new URL(href, window.location.origin)
+    const path = url.pathname || '/'
+    const next = `${path}${url.search}${url.hash || ''}`
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash || ''}`
+    if (current !== next) {
+      window.history.pushState({}, '', next)
+    }
+    setLocationPath(path)
+    setView(initialView(path))
+    if (isBoardPath(path)) {
+      window.dispatchEvent(new Event(BOARD_URL_SYNC_EVENT))
+    }
+  }
+
   useEffect(() => {
     const onPop = () => {
       const path = currentPath()
@@ -177,6 +192,7 @@ export default function App() {
           user={user}
           onLogout={handleLogout}
           onSwitchView={switchView}
+          onOpenBoard={navigateTo}
           discussContext={discussContext}
           onClearDiscussContext={() => setDiscussContext(null)}
           onOpenSettings={openSettings}
