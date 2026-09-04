@@ -135,6 +135,26 @@ def should_run_deploy_pipeline(user_message: str, thread_id: Optional[str] = Non
     return False
 
 
+def _format_triggered_runs(triggered: List[Dict[str, Any]]) -> str:
+    lines = []
+    for item in triggered or []:
+        workflow = item.get("workflow") or "workflow"
+        run_id = item.get("run_id")
+        url = item.get("html_url") or ""
+        label = f"{workflow} #{run_id}" if run_id else workflow
+        lines.append(f"- {label}" + (f" — {url}" if url else ""))
+    return "\n".join(lines)
+
+
+def _format_remaining_runs(triggered: List[Dict[str, Any]], done_ids: set) -> str:
+    leftover = [
+        f"{item.get('workflow') or 'workflow'} #{item.get('run_id')}"
+        for item in triggered or []
+        if item.get("run_id") and int(item["run_id"]) not in done_ids
+    ]
+    return ", ".join(leftover)
+
+
 def _format_risk_for_chat(risk: Dict[str, Any]) -> str:
     lines = ["**Pre-check complete.**", risk.get("summary") or ""]
     findings = risk.get("findings") or {}
@@ -288,11 +308,15 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
         )
 
     health_lines: List[str] = []
+    health_ok = True
     for url in site_urls or []:
         try:
             health = check_website_health(url)
             health_lines.append(health.get("summary") or f"{url}: checked")
+            if health.get("is_healthy") is False:
+                health_ok = False
         except Exception as e:
+            health_ok = False
             health_lines.append(f"{url}: health check failed ({e})")
 
     parts = ["**Post-check.**"]
@@ -301,9 +325,15 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
     if health_lines:
         parts.append("Site health:")
         parts.extend(f"- {line}" for line in health_lines)
+    if remaining:
+        parts.append("Post-check did not finish cleanly — skipping release notes.")
+    elif failed_runs:
+        parts.append("A workflow failed — skipping release notes and social drafts.")
+    elif not health_ok:
+        parts.append("Site health check failed — skipping release notes and social drafts.")
     _post(thread_id, "\n".join(parts))
     _set_deploy_poll(thread_id, None)
-    if not failed_runs and poll.get("release_version"):
+    if not failed_runs and not remaining and health_ok and poll.get("release_version"):
         try:
             from bigas.resources.devops.prepare import finalize_versioned_deploy
 
@@ -382,6 +412,7 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
     finished = list(poll.get("finished_lines") or [])
     failed_runs = list(poll.get("failed_runs") or [])
     done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
+    newly_finished: List[str] = []
 
     for item in triggered:
         run_id = item.get("run_id")
@@ -397,10 +428,12 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
         conclusion = (status.get("conclusion") or "unknown").lower()
         url = status.get("html_url") or item.get("html_url") or ""
         icon = "✅" if conclusion == "success" else "❌"
-        finished.append(
+        line = (
             f"{icon} {item.get('workflow') or 'workflow'} run #{run_id} "
             f"{conclusion}" + (f" — {url}" if url else "")
         )
+        finished.append(line)
+        newly_finished.append(line)
         done_ids.add(int(run_id))
         if _code_failure(conclusion):
             failed_runs.append(
@@ -419,6 +452,12 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
     ]
     timed_out = datetime.now(timezone.utc) >= deadline
     if remaining and not timed_out:
+        if newly_finished:
+            leftover = _format_remaining_runs(triggered, done_ids)
+            progress = "\n".join(newly_finished)
+            if leftover:
+                progress += f"\n⏳ Still running: {leftover}"
+            _post(thread_id, progress, role="system", status="in_progress")
         _set_deploy_poll(
             thread_id,
             {
@@ -452,10 +491,19 @@ def start_confirmed_deploy(
     ref: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Trigger GitHub Actions and start client-driven post-check polling."""
+    from bigas.resources.devops.prepare import clear_pending_release_notes
+
     _set_pending(thread_id, None)
+    clear_pending_release_notes(thread_id)
+    version = (release_version or "").strip()
+    heading = (
+        f"🚀 **Deploy {project_key} {version}:** starting GitHub Actions…"
+        if version
+        else f"🚀 **Deploy {project_key}:** starting GitHub Actions…"
+    )
     _post(
         thread_id,
-        "🚀 **Deploy:** starting GitHub Actions…",
+        heading,
         role="system",
         status="in_progress",
     )
@@ -484,9 +532,15 @@ def start_confirmed_deploy(
         )
         return {"status": "complete", "summary": result.get("summary") or ""}
 
+    wait_lines = [
+        "⏳ **Post-check:** GitHub Actions is running. I'll post progress here as each workflow finishes.",
+    ]
+    run_list = _format_triggered_runs(triggered)
+    if run_list:
+        wait_lines.append(run_list)
     _post(
         thread_id,
-        "⏳ **Post-check:** waiting for GitHub Actions. I'll post here when it's done (this can take several minutes).",
+        "\n".join(wait_lines),
         role="system",
         status="in_progress",
     )
@@ -524,15 +578,12 @@ def run_chat_deploy_pipeline(
 ) -> Dict[str, Any]:
     """Run pre-check → (optional confirm) → trigger → client-polled post-check."""
     from bigas.resources.devops.prepare import (
+        clear_pending_release_notes,
         handle_release_notes_reply,
         is_prepare_start,
         pending_release_notes,
         run_prepare_deploy,
     )
-
-    notes_pending = pending_release_notes(thread_id)
-    if notes_pending and (is_confirm(user_message) or is_cancel(user_message)):
-        return handle_release_notes_reply(thread_id=thread_id, user_message=user_message)
 
     if is_prepare_start(user_message):
         return run_prepare_deploy(thread_id=thread_id, user_message=user_message)
@@ -546,6 +597,7 @@ def run_chat_deploy_pipeline(
 
     confirmed = bool(pending and is_confirm(user_message))
     if confirmed and (pending or {}).get("kind") == "prepare":
+        clear_pending_release_notes(thread_id)
         try:
             risk = check_deployment_risk(project_key=pending.get("project_key"))
         except Exception as e:
@@ -559,6 +611,10 @@ def run_chat_deploy_pipeline(
             release_version=pending.get("version"),
             ref=risk.get("head_ref") or "main",
         )
+
+    notes_pending = pending_release_notes(thread_id)
+    if not pending and notes_pending and (is_confirm(user_message) or is_cancel(user_message)):
+        return handle_release_notes_reply(thread_id=thread_id, user_message=user_message)
 
     key = (
         project_key

@@ -108,6 +108,12 @@ def clear_prepare_state(thread_id: Optional[str]) -> None:
     _thread_set(thread_id, pending_prepare_poll=None, pending_release_notes=None)
 
 
+def clear_pending_release_notes(thread_id: Optional[str]) -> None:
+    if not thread_id:
+        return
+    _thread_set(thread_id, pending_release_notes=None)
+
+
 def format_version_ticket_report(
     project_key: str,
     version: str,
@@ -925,6 +931,11 @@ def run_prepare_deploy(
         )
         return {"status": "complete", "summary": f"Release {ver} not found."}
 
+    from bigas.resources.devops.pipeline import _set_pending
+
+    _set_pending(thread_id, None)
+    clear_prepare_state(thread_id)
+
     _post(
         thread_id,
         f"📦 **Prepare {brand_name(key) or key} {ver}:** "
@@ -1029,7 +1040,7 @@ def finalize_versioned_deploy(thread_id: str, poll: Dict[str, Any]) -> None:
     )
     _post(
         thread_id,
-        "Want blog / social drafts for this release? Reply **yes** for an X "
+        f"Want blog / social drafts for **{key} {version}**? Reply **yes** for an X "
         "Approve/Decline draft (other channels as copy only), or **no** to skip.",
     )
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 os.environ.setdefault("GA4_PROPERTY_ID", "test-property")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
@@ -416,3 +417,123 @@ def test_pipeline_does_not_handoff_cancelled_runs(monkeypatch):
     assert launched["called"] is False
     blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
     assert "CTO agent launched" not in blob
+
+
+def test_poll_posts_progress_before_postcheck(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    statuses = {
+        11: {"workflow_status": "completed", "conclusion": "success", "html_url": "https://x/11"},
+        12: {"workflow_status": "in_progress", "conclusion": None, "html_url": "https://x/12"},
+    }
+
+    store.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll={
+            "repo": "mckort/vcfieldassistant",
+            "product_repo": "mckort/vcfieldassistant",
+            "triggered": [
+                {"workflow": "deploy-backend.yml", "run_id": 11, "html_url": "https://x/11"},
+                {"workflow": "deploy-web.yml", "run_id": 12, "html_url": "https://x/12"},
+            ],
+            "site_urls": ["https://vcfieldassistant.com"],
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_lines": [],
+            "failed_runs": [],
+            "done_run_ids": [],
+            "ref": "main",
+            "project_key": "VFA",
+            "release_version": "0.2.0",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: statuses[kwargs["run_id"]],
+    )
+    notes = {"called": False}
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.finalize_versioned_deploy",
+        lambda *a, **k: notes.update(called=True),
+    )
+
+    first = poll_deploy_postcheck(thread["thread_id"])
+    assert first["status"] == "in_progress"
+    assert notes["called"] is False
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "deploy-backend.yml run #11 success" in blob
+    assert "Still running: deploy-web.yml #12" in blob
+    assert "New X post drafts" not in blob
+    assert "Want blog" not in blob
+
+    statuses[12] = {
+        "workflow_status": "completed",
+        "conclusion": "success",
+        "html_url": "https://x/12",
+    }
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} returned HTTP 200 in 40ms.", "is_healthy": True},
+    )
+    finalized = {}
+
+    def _finalize(thread_id, poll):
+        notes["called"] = True
+        finalized.update(poll)
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.finalize_versioned_deploy",
+        _finalize,
+    )
+    second = poll_deploy_postcheck(thread["thread_id"])
+    assert second["status"] == "complete"
+    assert notes["called"] is True
+    assert finalized.get("release_version") == "0.2.0"
+    later = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "Post-check" in later
+    assert "HTTP 200" in later
+
+
+def test_unhealthy_site_skips_release_notes(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    store.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll={
+            "repo": "mckort/vcfieldassistant",
+            "triggered": [
+                {"workflow": "deploy-backend.yml", "run_id": 11, "html_url": "https://x"}
+            ],
+            "site_urls": ["https://vcfieldassistant.com"],
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_lines": [],
+            "failed_runs": [],
+            "done_run_ids": [],
+            "ref": "main",
+            "project_key": "VFA",
+            "release_version": "0.2.0",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "success",
+            "html_url": "https://x",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} returned HTTP 503.", "is_healthy": False},
+    )
+    notes = {"called": False}
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.finalize_versioned_deploy",
+        lambda *a, **k: notes.update(called=True),
+    )
+
+    result = poll_deploy_postcheck(thread["thread_id"])
+    assert result["status"] == "complete"
+    assert notes["called"] is False
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "skipping release notes" in blob.lower()
+    assert "New X post drafts" not in blob
