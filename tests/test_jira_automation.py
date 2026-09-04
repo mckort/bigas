@@ -175,6 +175,216 @@ def test_issue_discord_label_includes_summary():
     assert issue_discord_label("VFA-14", "") == "`VFA-14`"
 
 
+def test_title_with_issue_key_prefixes_once():
+    from bigas.resources.product.jira_automation.final_approval import (
+        title_with_issue_key,
+    )
+
+    assert title_with_issue_key("Fix MCP token", "VFA-51") == "VFA-51: Fix MCP token"
+    assert title_with_issue_key("VFA-51: Fix MCP token", "VFA-51") == "VFA-51: Fix MCP token"
+
+
+def test_should_skip_auto_ticket_dependabot_and_release():
+    from bigas.resources.product.jira_automation.final_approval import (
+        should_skip_auto_ticket,
+    )
+
+    class FakeCfg:
+        def automerge_branch_for_project(self, project_key, repo, labels=None):
+            return "staging"
+
+        def base_branch_for_repo(self, repo):
+            return "main"
+
+    cfg = FakeCfg()
+    assert (
+        should_skip_auto_ticket(
+            {
+                "title": "Bump lodash",
+                "user": {"login": "dependabot[bot]"},
+                "head": {"ref": "dependabot/npm/lodash"},
+                "base": {"ref": "staging"},
+            },
+            repo="mckort/vcfieldassistant",
+            project_key="VFA",
+            cfg=cfg,
+        )
+        == "dependabot"
+    )
+    assert (
+        should_skip_auto_ticket(
+            {
+                "title": "Release 0.1.0: merge staging into main",
+                "user": {"login": "marcus"},
+                "head": {"ref": "staging"},
+                "base": {"ref": "main"},
+            },
+            repo="mckort/vcfieldassistant",
+            project_key="VFA",
+            cfg=cfg,
+        )
+        == "release_pr"
+    )
+    assert (
+        should_skip_auto_ticket(
+            {
+                "title": "Fix MCP token",
+                "user": {"login": "marcus"},
+                "head": {"ref": "fix/mcp"},
+                "base": {"ref": "staging"},
+            },
+            repo="mckort/vcfieldassistant",
+            project_key="VFA",
+            cfg=cfg,
+        )
+        is None
+    )
+
+
+def test_ensure_board_ticket_creates_once_and_retitles(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.store import get_ticket_store
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+
+    patched: list[dict] = []
+    posted: list[str] = []
+
+    class FakeCfg:
+        status_final_approval = "Final approval (manual)"
+        project_repos = {"FYDA": "mckort/fulfillyourdreamadventure"}
+
+        def is_project_allowed(self, project_key: str) -> bool:
+            return project_key == "FYDA"
+
+        def automerge_branch_for_project(self, project_key, repo, labels=None):
+            return "main"
+
+        def base_branch_for_repo(self, repo):
+            return "main"
+
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: FakeCfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: posted.append(msg))
+
+    pr = {
+        "number": 9,
+        "title": "Fix MCP token",
+        "body": "Creating a token crashed.",
+        "user": {"login": "marcus"},
+        "head": {"ref": "fix/mcp"},
+        "base": {"ref": "main"},
+    }
+    first = fa.ensure_board_ticket_for_pr(
+        repo="mckort/fulfillyourdreamadventure",
+        pr=pr,
+        pr_url="https://github.com/mckort/fulfillyourdreamadventure/pull/9",
+        github_token="tok",
+        pr_number=9,
+        status="To Do",
+        retitle=True,
+    )
+    assert first.get("created") is True
+    key = first.get("issue_key")
+    assert key and key.startswith("FYDA-")
+    assert first.get("retitled") is True
+    assert patched and patched[0]["title"].startswith(f"{key}:")
+    store = get_ticket_store()
+    ticket = store.get_ticket_by_key(key)
+    assert ticket is not None
+    assert ticket.get("status") == "To Do"
+    assert "pull/9" in (ticket.get("description") or "")
+
+    second = fa.ensure_board_ticket_for_pr(
+        repo="mckort/fulfillyourdreamadventure",
+        pr={
+            "number": 9,
+            "title": "Fix MCP token",
+            "body": "Creating a token crashed.",
+            "user": {"login": "marcus"},
+            "head": {"ref": "fix/mcp"},
+            "base": {"ref": "main"},
+        },
+        pr_url="https://github.com/mckort/fulfillyourdreamadventure/pull/9",
+        github_token="tok",
+        pr_number=9,
+        status="To Do",
+        retitle=True,
+    )
+    assert second.get("created") is False
+    assert second.get("issue_key") == key
+    ticket_store_module._store = None
+
+
+def test_final_approval_creates_ticket_when_pr_has_no_key(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.store import get_ticket_store
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+
+    class FakeCfg:
+        status_final_approval = "Final approval (manual)"
+        project_repos = {"FYDA": "mckort/fulfillyourdreamadventure"}
+
+        def is_project_allowed(self, project_key: str) -> bool:
+            return project_key == "FYDA"
+
+        def automerge_branch_for_project(self, project_key, repo, labels=None):
+            return "main"
+
+        def base_branch_for_repo(self, repo):
+            return "main"
+
+    class FakeResp:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {
+                "number": 4,
+                "title": "Retry worker enqueue",
+                "body": "Survive deploys.",
+                "user": {"login": "marcus"},
+                "head": {"ref": "fix/worker"},
+                "base": {"ref": "main"},
+                "merged": True,
+            }
+
+    posted: list[str] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: FakeCfg()))
+    monkeypatch.setattr(fa.requests, "get", lambda *a, **k: FakeResp())
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: posted.append(msg))
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+
+    result = fa.transition_issue_to_final_approval_for_pr(
+        repo="mckort/fulfillyourdreamadventure",
+        pr_number=4,
+        pr_url="https://github.com/mckort/fulfillyourdreamadventure/pull/4",
+        github_token="tok",
+    )
+    key = result.get("issue_key")
+    assert result.get("ok") is True
+    assert result.get("created") is True
+    assert result.get("reason") == "created_in_final_approval"
+    assert key
+    updated = get_ticket_store().get_ticket_by_key(key)
+    assert updated is not None
+    assert updated.get("status") == "Final approval (manual)"
+    ticket_store_module._store = None
+
+
 def test_extract_jira_issue_key_from_pr_texts():
     from bigas.resources.product.jira_automation.final_approval import (
         extract_jira_issue_key,

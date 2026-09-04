@@ -35,6 +35,24 @@ def test_review_summary_findings_offers_autofix():
     assert "run autofix" in text.lower()
 
 
+def test_pr_merged_summary_created_ticket():
+    text = summarize_pr_merged_result(
+        {
+            "success": True,
+            "pr_url": "https://github.com/mckort/vcfieldassistant/pull/123",
+            "jira_final_approval": {
+                "ok": True,
+                "created": True,
+                "reason": "created_in_final_approval",
+                "issue_key": "VFA-51",
+                "moved_to": "Final approval (manual)",
+            },
+        }
+    )
+    assert "VFA-51" in text
+    assert "Created" in text
+
+
 def test_pr_merged_summary_moved_ticket():
     text = summarize_pr_merged_result(
         {
