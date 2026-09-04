@@ -593,6 +593,99 @@ def test_prepare_confirm_deploys_main(monkeypatch):
     poll = chat.get_thread(thread["thread_id"]).get("pending_deploy_poll")
     assert poll and poll.get("release_version") == "0.1.0"
     assert poll.get("ref") == "main"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "Deploy VFA 0.1.0" in blob
+    assert "deploy-backend.yml #55" in blob
+
+
+def test_prepare_yes_wins_over_leftover_release_notes(monkeypatch):
+    create_release("VFA", name="0.2.0")
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    chat.patch_thread(
+        thread["thread_id"],
+        pending_deploy={
+            "kind": "prepare",
+            "project_key": "VFA",
+            "version": "0.2.0",
+            "risk_level": "low",
+            "repo": "mckort/vcfieldassistant",
+        },
+        pending_release_notes={
+            "project_key": "VFA",
+            "version": "0.1.0",
+            "social": {"x": "Release 0.1.0 is here!"},
+            "blog_markdown": "Old 0.1.0 blog",
+        },
+    )
+    x_called = {"called": False}
+
+    class _FakeX:
+        def generate(self, **kwargs):
+            x_called["called"] = True
+            return {"posts": []}
+
+    monkeypatch.setattr("bigas.resources.devops.pipeline.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Triggered 1 workflow(s).",
+            "repo": "mckort/vcfieldassistant",
+            "ref": "main",
+            "triggered": [
+                {
+                    "workflow": "deploy-backend.yml",
+                    "run_id": 77,
+                    "html_url": "https://github.com/mckort/vcfieldassistant/actions/runs/77",
+                }
+            ],
+            "errors": [],
+            "site_urls": ["https://vcfieldassistant.com"],
+        },
+    )
+    monkeypatch.setattr("bigas.resources.product.x_posts.service.XPostsService", _FakeX)
+
+    result = run_chat_deploy_pipeline(thread_id=thread["thread_id"], user_message="yes")
+    assert result["status"] == "in_progress"
+    assert x_called["called"] is False
+    state = chat.get_thread(thread["thread_id"])
+    assert state.get("pending_release_notes") is None
+    poll = state.get("pending_deploy_poll")
+    assert poll and poll.get("release_version") == "0.2.0"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "Deploy VFA 0.2.0" in blob
+    assert "Release 0.1.0 is here" not in blob
+    assert "New X post drafts" not in blob
+
+
+def test_prepare_start_clears_leftover_release_notes(monkeypatch):
+    create_release("VFA", name="0.2.0")
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    chat.patch_thread(
+        thread["thread_id"],
+        pending_release_notes={
+            "project_key": "VFA",
+            "version": "0.1.0",
+            "social": {"x": "Release 0.1.0 is here!"},
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {"commits": [], "compared": [], "truncated": False, "errors": []},
+    )
+
+    run_prepare_deploy(thread_id=thread["thread_id"], user_message="prepare deploy VFA 0.2.0")
+    state = chat.get_thread(thread["thread_id"])
+    assert state.get("pending_release_notes") is None
+    pending = state.get("pending_deploy")
+    assert pending and pending.get("version") == "0.2.0"
 
 
 def test_list_shortcut_projects_only_deploy_targets(monkeypatch):
@@ -678,6 +771,7 @@ def test_finalize_asks_for_social_then_stores_x_draft(monkeypatch):
     assert pending and pending["version"] == "0.1.0"
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
     assert "Meeting notes that remember" in blob
+    assert "VFA 0.1.0" in blob
     assert "social" in blob.lower() or "yes" in blob.lower()
 
     result = handle_release_notes_reply(thread_id=thread["thread_id"], user_message="ja")
