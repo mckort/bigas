@@ -896,6 +896,7 @@ export default function ChatLayout({
   user,
   onLogout,
   onSwitchView,
+  onOpenBoard,
   discussContext,
   onClearDiscussContext,
   onOpenSettings,
@@ -1686,14 +1687,7 @@ export default function ChatLayout({
         events={events}
         open={activityOpen}
         onClose={() => setActivityOpen(false)}
-        onOpenBoard={
-          onSwitchView
-            ? (href) => {
-                window.history.pushState({}, '', href)
-                onSwitchView('board')
-              }
-            : undefined
-        }
+        onOpenBoard={onOpenBoard}
       />
     </div>
   )

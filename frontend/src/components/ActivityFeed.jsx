@@ -3,10 +3,17 @@ import { useState } from 'react'
 const PREVIEW_LINES = 5
 const URL_RE = /(https?:\/\/[^\s<>"'`\]},]+(?:\([^\s<>"'`\]},)]*\)[^\s<>"'`\]},]*)*)/g
 const MD_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)/g
-const TICKET_KEY_RE = /`?(\b[A-Z][A-Z0-9]+-\d+\b)`?/
+const TICKET_KEY_RE = /(`?\b[A-Z][A-Z0-9]+-\d+\b`?)/
 
 function isInternalBoardHref(href) {
-  return typeof href === 'string' && href.startsWith('/board')
+  return (
+    typeof href === 'string' &&
+    (href === '/board' || href.startsWith('/board?') || href.startsWith('/board/'))
+  )
+}
+
+function ticketKeyFromToken(token) {
+  return token.replace(/^`|`$/g, '')
 }
 
 function ticketHref(key) {
@@ -55,7 +62,9 @@ function linkifyTicketKeys(text, keyPrefix, onOpenBoard) {
   if (!text) return []
   const parts = text.split(TICKET_KEY_RE)
   return parts.map((part, i) =>
-    i % 2 === 1 ? linkAnchor(ticketHref(part), part, `${keyPrefix}-k${i}`, onOpenBoard) : part
+    i % 2 === 1
+      ? linkAnchor(ticketHref(ticketKeyFromToken(part)), part, `${keyPrefix}-k${i}`, onOpenBoard)
+      : part
   )
 }
 

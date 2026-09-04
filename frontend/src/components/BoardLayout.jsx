@@ -63,7 +63,7 @@ function boardQuery() {
   }
 }
 
-const BOARD_URL_SYNC_EVENT = 'bigas-board-url'
+export const BOARD_URL_SYNC_EVENT = 'bigas-board-url'
 
 function replaceBoardLocation(mutateParams) {
   const params = new URLSearchParams(window.location.search)
