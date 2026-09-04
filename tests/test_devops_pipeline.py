@@ -11,8 +11,14 @@ os.environ.setdefault("CHAT_STORAGE_MODE", "memory")
 os.environ.setdefault("CHAT_AUTH_MODE", "dev")
 os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 os.environ.setdefault("GITHUB_TOKEN", "test-github-token")
-os.environ.setdefault("BIGAS_JIRA_PROJECT_REPO_MAP", "VFA:mckort/vcfieldassistant")
-os.environ.setdefault("BIGAS_DEPLOY_WORKFLOW_MAP", "VFA:deploy-backend.yml,deploy-web.yml")
+os.environ.setdefault(
+    "BIGAS_JIRA_PROJECT_REPO_MAP",
+    "VFA:mckort/vcfieldassistant,BIG:mckort/bigas",
+)
+os.environ.setdefault(
+    "BIGAS_DEPLOY_WORKFLOW_MAP",
+    "VFA:deploy-backend.yml,deploy-web.yml|BIG:deploy.yml",
+)
 
 from bigas.chat.db import get_chat_store
 from bigas.resources.devops.pipeline import (
@@ -202,6 +208,120 @@ def test_clear_stale_pending_on_unrelated_message(monkeypatch):
     assert should_run_deploy_pipeline("what is the status?", thread["thread_id"]) is False
     clear_stale_pending_deploy("what is the status?", thread["thread_id"])
     assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+
+
+def test_deploy_start_clears_pending_other_project():
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    store.patch_thread(
+        thread["thread_id"],
+        pending_deploy={
+            "project_key": "VFA",
+            "kind": "prepare",
+            "version": "0.2.0",
+            "repo": "mckort/vcfieldassistant",
+        },
+    )
+
+    assert should_run_deploy_pipeline("deploy bigas", thread["thread_id"]) is True
+    clear_stale_pending_deploy("deploy bigas", thread["thread_id"])
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+
+
+def test_named_project_wins_over_pending_vfa(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    store.patch_thread(
+        thread["thread_id"],
+        pending_deploy={
+            "project_key": "VFA",
+            "kind": "prepare",
+            "version": "0.2.0",
+            "repo": "mckort/vcfieldassistant",
+        },
+    )
+    seen = {}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_deployment_risk",
+        lambda **kwargs: seen.update(kwargs)
+        or {
+            "status": "ok",
+            "summary": "Compared prod → main on mckort/bigas. 2 file(s) changed.",
+            "risk_level": "low",
+            "findings": {},
+            "repo": "mckort/bigas",
+            "site_urls": ["https://bigas.me"],
+        },
+    )
+
+    def _trigger(**kwargs):
+        seen["trigger_project_key"] = kwargs.get("project_key")
+        return {
+            "status": "ok",
+            "summary": "Triggered 1 workflow(s) on mckort/bigas @ main.",
+            "repo": "mckort/bigas",
+            "triggered": [
+                {
+                    "workflow": "deploy.yml",
+                    "run_id": 77,
+                    "html_url": "https://github.com/mckort/bigas/actions/runs/77",
+                }
+            ],
+            "errors": [],
+            "site_urls": ["https://bigas.me"],
+        }
+
+    monkeypatch.setattr("bigas.resources.devops.pipeline.trigger_deployment", _trigger)
+
+    result = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="deploy bigas",
+    )
+    assert seen.get("project_key") == "BIG"
+    assert seen.get("trigger_project_key") == "BIG"
+    assert result["status"] == "in_progress"
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+
+
+def test_pipeline_skips_when_nothing_changed(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_deployment_risk",
+        lambda **kwargs: {
+            "status": "ok",
+            "summary": "Compared prod → main. 0 file(s) changed.",
+            "risk_level": "low",
+            "findings": {},
+            "repo": "mckort/vcfieldassistant",
+            "site_urls": [],
+            "total_files_changed": 0,
+            "component_changes": {"backend": [], "web": []},
+            "workflows_to_run": [],
+            "skipped_workflows": [
+                {"workflow": "deploy-backend.yml", "reason": "no backend changes vs prod"},
+                {"workflow": "deploy-web.yml", "reason": "no web changes vs prod"},
+            ],
+        },
+    )
+    triggered = {"called": False}
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: triggered.update(called=True) or {},
+    )
+
+    result = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="deploya VFA",
+    )
+    assert triggered["called"] is False
+    assert result["status"] == "complete"
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "already up to date" in blob.lower()
+    assert "starting GitHub Actions" not in blob
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy_poll") is None
 
 
 def test_pipeline_marks_in_progress_messages_complete(monkeypatch):

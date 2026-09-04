@@ -6,7 +6,7 @@ import os
 import tempfile
 import time
 import zipfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from bigas.providers.monitoring.service import _check_http_status
 from bigas.resources.devops.config import RISKY_PATH_PATTERNS, DeployTarget, parse_repo, resolve_deploy_target
@@ -27,6 +27,18 @@ logger = logging.getLogger(__name__)
 
 _RUN_POLL_INTERVAL_SEC = 1.0
 _RUN_POLL_TIMEOUT_SEC = 30.0
+
+_WEB_PATH_PREFIXES = ("web/", "frontend/", "client/", "apps/web/")
+_BACKEND_PATH_PREFIXES = (
+    "backend/",
+    "api/",
+    "server/",
+    "db/",
+    "apps/api/",
+    "apps/backend/",
+    "alembic/",
+    "prisma/",
+)
 
 
 class DevOpsError(RuntimeError):
@@ -57,6 +69,81 @@ def _classify_file(path: str) -> Optional[str]:
             if "deploy" in pattern or "docker-compose" in pattern or ".env" in pattern:
                 return "infrastructure_config"
     return None
+
+
+def path_deploy_components(path: str) -> FrozenSet[str]:
+    """Which deploy surfaces a changed path belongs to."""
+    lower = (path or "").strip().replace("\\", "/").lower()
+    if not lower:
+        return frozenset()
+    if lower.startswith(_WEB_PATH_PREFIXES):
+        return frozenset({"web"})
+    if lower.startswith(_BACKEND_PATH_PREFIXES):
+        return frozenset({"backend"})
+    return frozenset({"backend", "web", "app"})
+
+
+def workflow_deploy_kind(workflow: str) -> str:
+    name = (workflow or "").strip().lower()
+    if "backend" in name:
+        return "backend"
+    if "web" in name or "frontend" in name:
+        return "web"
+    return "app"
+
+
+def filter_unchanged_workflows(
+    workflows: List[str],
+    risk: Optional[Dict[str, Any]],
+) -> Tuple[List[str], List[Dict[str, str]]]:
+    """Drop backend/web/app workflows when that surface has no prod diff."""
+    names = [w.strip() for w in (workflows or []) if w and w.strip()]
+    if not risk or risk.get("no_prod_version"):
+        return names, []
+    has_components = "component_changes" in risk
+    has_total = "total_files_changed" in risk
+    if not has_components and not has_total:
+        return names, []
+
+    components = risk.get("component_changes") or {}
+    total = int(risk.get("total_files_changed") or 0)
+    to_run: List[str] = []
+    skipped: List[Dict[str, str]] = []
+    for workflow in names:
+        kind = workflow_deploy_kind(workflow)
+        if kind in ("backend", "web"):
+            files = components.get(kind) or []
+            if not files:
+                skipped.append(
+                    {"workflow": workflow, "reason": f"no {kind} changes vs prod"}
+                )
+                continue
+        elif total == 0:
+            skipped.append({"workflow": workflow, "reason": "no files changed vs prod"})
+            continue
+        to_run.append(workflow)
+    return to_run, skipped
+
+
+def _record_component_file(
+    component_changes: Dict[str, Dict[str, Dict[str, Any]]],
+    label: str,
+    filename: str,
+    item: Dict[str, Any],
+) -> None:
+    comps = path_deploy_components(filename)
+    if label == "backend":
+        if "backend" in comps:
+            component_changes["backend"][filename] = item
+        return
+    if label == "web":
+        if "web" in comps:
+            component_changes["web"][filename] = item
+        return
+    component_changes["app"][filename] = item
+    for component in comps:
+        if component in component_changes:
+            component_changes[component][filename] = item
 
 
 def _wait_for_new_workflow_run(
@@ -279,9 +366,14 @@ def check_deployment_risk(
                 bases.append(("release", fallback))
 
     files_by_name: Dict[str, Dict[str, Any]] = {}
+    component_changes: Dict[str, Dict[str, Dict[str, Any]]] = {
+        "backend": {},
+        "web": {},
+        "app": {},
+    }
     compared: List[str] = []
     compare_errors: List[str] = []
-    for _label, tag in bases:
+    for label, tag in bases:
         if tag == head:
             continue
         try:
@@ -296,6 +388,7 @@ def check_deployment_risk(
             filename = (item.get("filename") or "").strip()
             if filename:
                 files_by_name[filename] = item
+                _record_component_file(component_changes, label, filename, item)
 
     files = list(files_by_name.values())
     if compared:
@@ -368,6 +461,25 @@ def check_deployment_risk(
     else:
         summary_parts.append(f"Compared {base_display} on {target.repo}.")
         summary_parts.append(f"{len(files)} file(s) changed.")
+    component_file_lists = {
+        key: sorted(values.keys()) for key, values in component_changes.items()
+    }
+    workflows_to_run, skipped_workflows = filter_unchanged_workflows(
+        target.workflows,
+        {
+            "no_prod_version": no_prod_version,
+            "component_changes": component_file_lists,
+            "total_files_changed": len(files),
+        },
+    )
+    if skipped_workflows:
+        summary_parts.append(
+            "Skipping "
+            + "; ".join(
+                f"{item['workflow']} ({item['reason']})" for item in skipped_workflows
+            )
+            + "."
+        )
     if warnings:
         summary_parts.append("Warnings: " + "; ".join(warnings) + ".")
     elif not no_prod_version:
@@ -394,6 +506,9 @@ def check_deployment_risk(
         "prod_web_tag": prod_web_tag,
         "prod_app_tag": prod_app_tag,
         "total_files_changed": len(files),
+        "component_changes": component_file_lists,
+        "workflows_to_run": workflows_to_run,
+        "skipped_workflows": skipped_workflows,
         "risk_level": risk_level,
         "warnings": warnings,
         "findings": findings,
@@ -411,6 +526,8 @@ def trigger_deployment(
     workflows: Optional[List[str]] = None,
     ref: Optional[str] = None,
     github_token: Optional[str] = None,
+    risk: Optional[Dict[str, Any]] = None,
+    skip_unchanged: bool = True,
 ) -> Dict[str, Any]:
     target = resolve_deploy_target(project_key=project_key, repo=repo)
     if not target:
@@ -432,11 +549,50 @@ def trigger_deployment(
     if not workflow_names:
         raise DevOpsError("No deployment workflows configured for this target.")
 
+    skipped_workflows: List[Dict[str, str]] = []
+    if skip_unchanged:
+        risk_info = risk
+        if risk_info is None:
+            try:
+                risk_info = check_deployment_risk(
+                    repo=target.repo,
+                    project_key=target.project_key or project_key,
+                    head_ref=product_ref,
+                    github_token=github_token,
+                )
+            except Exception:
+                logger.exception("Pre-check before trigger failed; deploying configured workflows")
+                risk_info = None
+        workflow_names, skipped_workflows = filter_unchanged_workflows(
+            workflow_names, risk_info
+        )
+
     inputs = dict(target.workflow_inputs or {})
     if cross_repo:
         inputs["ref"] = product_ref
     triggered: List[Dict[str, Any]] = []
     errors: List[str] = []
+    if not workflow_names and skipped_workflows:
+        skip_text = "; ".join(
+            f"{item['workflow']} ({item['reason']})" for item in skipped_workflows
+        )
+        return {
+            "status": "ok",
+            "summary": (
+                f"Nothing to deploy on {target.dispatch_repo} @ {dispatch_branch}. "
+                f"Skipped {skip_text}."
+            ),
+            "repo": target.repo,
+            "deploy_repo": target.dispatch_repo,
+            "project_key": target.project_key,
+            "ref": product_ref,
+            "dispatch_ref": dispatch_branch,
+            "triggered": [],
+            "skipped_workflows": skipped_workflows,
+            "errors": [],
+            "site_urls": target.site_urls,
+            "workflow_inputs": inputs or None,
+        }
     for wf in workflow_names:
         previous_run_id: Optional[int] = None
         try:
@@ -487,6 +643,14 @@ def trigger_deployment(
     for item in triggered:
         url = item.get("html_url") or "(pending — check Actions tab)"
         lines.append(f"- {item['workflow']}: run #{item.get('run_id') or '?'} — {url}")
+    if skipped_workflows:
+        lines.append(
+            "Skipped "
+            + "; ".join(
+                f"{item['workflow']} ({item['reason']})" for item in skipped_workflows
+            )
+            + "."
+        )
     if errors:
         lines.append("Errors: " + "; ".join(errors))
     lines.append(
@@ -503,6 +667,7 @@ def trigger_deployment(
         "ref": product_ref,
         "dispatch_ref": dispatch_branch,
         "triggered": triggered,
+        "skipped_workflows": skipped_workflows,
         "errors": errors,
         "site_urls": target.site_urls,
         "workflow_inputs": inputs or None,

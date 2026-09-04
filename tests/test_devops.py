@@ -28,7 +28,9 @@ from bigas.resources.devops.service import (
     _classify_file,
     check_deployment_risk,
     check_website_health,
+    filter_unchanged_workflows,
     get_deployment_status,
+    path_deploy_components,
     trigger_deployment,
 )
 
@@ -447,3 +449,98 @@ def test_latest_release_with_prefix_paginates(monkeypatch):
     assert rel is not None
     assert rel["tag_name"].startswith("deploy-web-")
     assert calls["n"] == 2
+
+
+def test_path_deploy_components():
+    assert path_deploy_components("web/src/App.tsx") == frozenset({"web"})
+    assert path_deploy_components("backend/src/index.ts") == frozenset({"backend"})
+    assert path_deploy_components("db/migrations/001.sql") == frozenset({"backend"})
+    assert "backend" in path_deploy_components("README.md")
+    assert "web" in path_deploy_components("README.md")
+
+
+def test_filter_unchanged_workflows_skips_empty_surfaces():
+    workflows = ["deploy-backend.yml", "deploy-web.yml"]
+    to_run, skipped = filter_unchanged_workflows(
+        workflows,
+        {
+            "no_prod_version": False,
+            "component_changes": {"backend": [], "web": ["web/src/App.tsx"]},
+            "total_files_changed": 1,
+        },
+    )
+    assert to_run == ["deploy-web.yml"]
+    assert skipped == [
+        {"workflow": "deploy-backend.yml", "reason": "no backend changes vs prod"}
+    ]
+
+
+def test_filter_unchanged_workflows_skips_app_when_empty():
+    to_run, skipped = filter_unchanged_workflows(
+        ["deploy.yml"],
+        {"no_prod_version": False, "component_changes": {}, "total_files_changed": 0},
+    )
+    assert to_run == []
+    assert skipped[0]["workflow"] == "deploy.yml"
+
+
+def test_filter_unchanged_workflows_keeps_first_deploy():
+    to_run, skipped = filter_unchanged_workflows(
+        ["deploy-backend.yml", "deploy-web.yml"],
+        {"no_prod_version": True, "total_files_changed": 0},
+    )
+    assert to_run == ["deploy-backend.yml", "deploy-web.yml"]
+    assert skipped == []
+
+
+class _WebOnlyGitHubClient(_FakeGitHubClient):
+    def compare_refs(self, owner, repo, base, head):
+        self.compared.append((base, head))
+        return {"files": [{"filename": "web/src/pages/AdminOrganizationsPage.tsx"}]}
+
+
+class _NoChangeGitHubClient(_FakeGitHubClient):
+    def compare_refs(self, owner, repo, base, head):
+        self.compared.append((base, head))
+        return {"files": []}
+
+
+def test_check_deployment_risk_web_only_skips_backend(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: _WebOnlyGitHubClient(),
+    )
+    result = check_deployment_risk(project_key="VFA")
+    assert result["component_changes"]["web"]
+    assert result["component_changes"]["backend"] == []
+    assert result["workflows_to_run"] == ["deploy-web.yml"]
+    assert any("deploy-backend.yml" in s["workflow"] for s in result["skipped_workflows"])
+    assert "skipping" in result["summary"].lower()
+
+
+def test_trigger_deployment_skips_backend_when_web_only(monkeypatch):
+    monkeypatch.setattr("bigas.resources.devops.service.time.sleep", lambda _: None)
+    fake = _WebOnlyGitHubClient()
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: fake,
+    )
+    result = trigger_deployment(project_key="VFA")
+    assert [item["workflow"] for item in result["triggered"]] == ["deploy-web.yml"]
+    assert result["skipped_workflows"][0]["workflow"] == "deploy-backend.yml"
+    assert [dispatch[2] for dispatch in fake.dispatches] == ["deploy-web.yml"]
+
+
+def test_trigger_deployment_skips_all_when_no_changes(monkeypatch):
+    monkeypatch.setattr("bigas.resources.devops.service.time.sleep", lambda _: None)
+    fake = _NoChangeGitHubClient()
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: fake,
+    )
+    result = trigger_deployment(project_key="VFA")
+    assert result["status"] == "ok"
+    assert result["triggered"] == []
+    assert fake.dispatches == []
+    assert len(result["skipped_workflows"]) == 2
+    assert "nothing to deploy" in result["summary"].lower()
