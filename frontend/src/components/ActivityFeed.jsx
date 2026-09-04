@@ -2,15 +2,48 @@ import { useState } from 'react'
 
 const PREVIEW_LINES = 5
 const URL_RE = /(https?:\/\/[^\s<>"'`\]},]+(?:\([^\s<>"'`\]},)]*\)[^\s<>"'`\]},]*)*)/g
-const MD_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g
+const MD_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)/g
+const TICKET_KEY_RE = /`?(\b[A-Z][A-Z0-9]+-\d+\b)`?/
 
-function linkAnchor(href, label, key) {
+function isInternalBoardHref(href) {
+  return typeof href === 'string' && href.startsWith('/board')
+}
+
+function ticketHref(key) {
+  return `/board?ticket=${key}`
+}
+
+function linkAnchor(href, label, key, onOpenBoard) {
+  const internal = isInternalBoardHref(href)
   return (
     <a
       key={key}
       href={href}
-      target="_blank"
-      rel="noopener noreferrer"
+      {...(internal
+        ? {
+            onClick: (event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return
+              }
+              event.preventDefault()
+              if (onOpenBoard) {
+                onOpenBoard(href)
+              } else {
+                window.location.assign(href)
+              }
+            },
+          }
+        : {
+            target: '_blank',
+            rel: 'noopener noreferrer',
+          })}
       className="text-accent underline underline-offset-2 hover:opacity-70 break-all transition-opacity duration-150"
     >
       {label}
@@ -18,14 +51,24 @@ function linkAnchor(href, label, key) {
   )
 }
 
-function linkifyUrls(text, keyPrefix) {
-  const parts = text.split(URL_RE)
+function linkifyTicketKeys(text, keyPrefix, onOpenBoard) {
+  if (!text) return []
+  const parts = text.split(TICKET_KEY_RE)
   return parts.map((part, i) =>
-    i % 2 === 1 ? linkAnchor(part, part, `${keyPrefix}-u${i}`) : part
+    i % 2 === 1 ? linkAnchor(ticketHref(part), part, `${keyPrefix}-k${i}`, onOpenBoard) : part
   )
 }
 
-function linkify(text) {
+function linkifyUrls(text, keyPrefix, onOpenBoard) {
+  const parts = text.split(URL_RE)
+  return parts.flatMap((part, i) =>
+    i % 2 === 1
+      ? [linkAnchor(part, part, `${keyPrefix}-u${i}`, onOpenBoard)]
+      : linkifyTicketKeys(part, `${keyPrefix}-t${i}`, onOpenBoard)
+  )
+}
+
+function linkify(text, onOpenBoard) {
   if (!text || typeof text !== 'string') return text
   const nodes = []
   let lastIndex = 0
@@ -34,19 +77,19 @@ function linkify(text) {
   let idx = 0
   while ((match = re.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      nodes.push(...linkifyUrls(text.slice(lastIndex, match.index), `t${idx}`))
+      nodes.push(...linkifyUrls(text.slice(lastIndex, match.index), `t${idx}`, onOpenBoard))
     }
-    nodes.push(linkAnchor(match[2], match[1], `m${idx}`))
+    nodes.push(linkAnchor(match[2], match[1], `m${idx}`, onOpenBoard))
     lastIndex = match.index + match[0].length
     idx += 1
   }
   if (lastIndex < text.length) {
-    nodes.push(...linkifyUrls(text.slice(lastIndex), `t${idx}`))
+    nodes.push(...linkifyUrls(text.slice(lastIndex), `t${idx}`, onOpenBoard))
   }
   return nodes
 }
 
-function CollapsibleContent({ content }) {
+function CollapsibleContent({ content, onOpenBoard }) {
   const [expanded, setExpanded] = useState(false)
   const text = content || ''
   const lineCount = text.split('\n').length
@@ -59,7 +102,7 @@ function CollapsibleContent({ content }) {
           !expanded && needsCollapse ? 'line-clamp-5' : ''
         }`}
       >
-        {linkify(text)}
+        {linkify(text, onOpenBoard)}
       </p>
       {needsCollapse && (
         <button
@@ -74,7 +117,7 @@ function CollapsibleContent({ content }) {
   )
 }
 
-export default function ActivityFeed({ events, open, onClose }) {
+export default function ActivityFeed({ events, open, onClose, onOpenBoard }) {
   return (
     <>
       {open && (
@@ -116,7 +159,7 @@ export default function ActivityFeed({ events, open, onClose }) {
                 <span>·</span>
                 <time className="normal-case tracking-normal">{new Date(event.created_at).toLocaleString()}</time>
               </div>
-              <CollapsibleContent content={event.content} />
+              <CollapsibleContent content={event.content} onOpenBoard={onOpenBoard} />
             </div>
           ))}
         </div>

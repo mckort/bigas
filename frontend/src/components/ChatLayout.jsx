@@ -1682,7 +1682,19 @@ export default function ChatLayout({
         </div>
       </main>
 
-      <ActivityFeed events={events} open={activityOpen} onClose={() => setActivityOpen(false)} />
+      <ActivityFeed
+        events={events}
+        open={activityOpen}
+        onClose={() => setActivityOpen(false)}
+        onOpenBoard={
+          onSwitchView
+            ? (href) => {
+                window.history.pushState({}, '', href)
+                onSwitchView('board')
+              }
+            : undefined
+        }
+      />
     </div>
   )
 }
