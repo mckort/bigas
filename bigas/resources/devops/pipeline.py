@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -198,7 +199,11 @@ def _deploy_poll(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
 def _set_deploy_poll(thread_id: Optional[str], payload: Optional[Dict[str, Any]]) -> None:
     if not thread_id or not hasattr(_store(), "patch_thread"):
         return
-    _store().patch_thread(thread_id, pending_deploy_poll=payload)
+    _store().patch_thread(
+        thread_id,
+        pending_deploy_poll=payload,
+        has_pending_deploy_poll=bool(payload),
+    )
 
 
 def _parse_started_at(value: str) -> datetime:
@@ -496,6 +501,119 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
         remaining=remaining,
     )
     return {"status": "complete", "active": False}
+
+
+def _poll_includes_run(
+    poll: Optional[Dict[str, Any]],
+    run_id: int,
+    repo: str = "",
+) -> bool:
+    if not poll:
+        return False
+    wanted = int(run_id)
+    repos = {
+        (poll.get("repo") or "").strip().lower(),
+        (poll.get("product_repo") or "").strip().lower(),
+        (poll.get("deploy_repo") or "").strip().lower(),
+    }
+    repo_l = (repo or "").strip().lower()
+    if repo_l and repos - {""} and repo_l not in repos:
+        return False
+    for item in poll.get("triggered") or []:
+        raw = item.get("run_id")
+        if raw and int(raw) == wanted:
+            return True
+    return False
+
+
+def expire_stale_deploy_poll(thread_id: Optional[str]) -> bool:
+    """Finalize a pending deploy poll that has passed the client timeout."""
+    if not thread_id:
+        return False
+    poll = _deploy_poll(thread_id)
+    if not poll:
+        return False
+    started = poll.get("started_at")
+    if not started:
+        return False
+    try:
+        deadline = _parse_started_at(str(started)) + timedelta(seconds=_POLL_TIMEOUT_SEC)
+    except ValueError:
+        return False
+    if datetime.now(timezone.utc) < deadline:
+        return False
+    triggered = poll.get("triggered") or []
+    done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
+    remaining = _unfinished_runs(triggered, done_ids)
+    # Clear before network I/O so concurrent polls cannot re-enter or brick the thread.
+    _set_deploy_poll(thread_id, None)
+    try:
+        _finalize_deploy_postcheck(thread_id, poll, remaining=remaining)
+    except Exception:
+        logger.exception("Stale deploy poll finalization failed for thread %s", thread_id)
+        _post(
+            thread_id,
+            "Post-check timed out but finalization failed — check deploy status manually.",
+        )
+        _complete_pipeline_progress(thread_id)
+    return True
+
+
+def schedule_expire_stale_deploy_poll(thread_id: Optional[str]) -> None:
+    """Run stale deploy poll expiry in the background (for hot GET polling paths)."""
+    if not thread_id:
+        return
+
+    def _run() -> None:
+        try:
+            expire_stale_deploy_poll(thread_id)
+        except Exception:
+            logger.exception(
+                "Background stale deploy poll expiry failed for thread %s",
+                thread_id,
+            )
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Advance chat post-check when GitHub reports a watched workflow run completed."""
+    action = (payload.get("action") or "").strip().lower()
+    run = payload.get("workflow_run") or {}
+    if action != "completed" or not isinstance(run, dict):
+        return {"resumed": 0, "thread_ids": []}
+    raw_id = run.get("id")
+    if not raw_id:
+        return {"resumed": 0, "thread_ids": []}
+    run_id = int(raw_id)
+    repo_obj = payload.get("repository") or {}
+    owner = ((repo_obj.get("owner") or {}).get("login") or "").strip()
+    name = (repo_obj.get("name") or "").strip()
+    repo = f"{owner}/{name}" if owner and name else ""
+
+    store = _store()
+    lister = getattr(store, "list_pending_deploy_threads", None)
+    threads = lister() if callable(lister) else []
+    resumed: List[str] = []
+    for thread in threads:
+        thread_id = (thread or {}).get("thread_id")
+        poll = (thread or {}).get("pending_deploy_poll")
+        if not thread_id or not _poll_includes_run(
+            poll if isinstance(poll, dict) else None, run_id, repo
+        ):
+            continue
+        try:
+            poll_deploy_postcheck(thread_id)
+            resumed.append(thread_id)
+        except Exception:
+            logger.exception(
+                "Resume deploy post-check failed for thread %s (run %s)",
+                thread_id,
+                run_id,
+            )
+            _set_deploy_poll(thread_id, None)
+            _complete_pipeline_progress(thread_id)
+    return {"resumed": len(resumed), "thread_ids": resumed}
 
 
 def start_confirmed_deploy(

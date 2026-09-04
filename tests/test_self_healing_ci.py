@@ -283,6 +283,7 @@ def test_github_workflow_run_webhook_ignores_success(client):
     assert resp.status_code == 200
     data = resp.get_json()
     assert data.get("ignored") is True
+    assert (data.get("postcheck") or {}).get("resumed") in (0, None)
 
 
 def test_github_workflow_run_webhook_rejects_bad_signature(client):

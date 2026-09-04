@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any, Dict
 
 from flask import Blueprint, jsonify, request
 
@@ -216,8 +217,11 @@ def github_workflow_run_webhook():
     subscribe to Workflow runs. Verifies X-Hub-Signature-256 when
     GITHUB_WEBHOOK_SECRET is set, or X-Bigas-Webhook-Secret otherwise.
 
-    Only processes completed runs with conclusion failure. Ignores branches
-    starting with bigas-hotfix/ to prevent infinite fix loops.
+    Completed runs also resume any matching chat deploy post-check so the
+    spinner does not depend on the browser tab staying open.
+
+    Self-healing only processes completed runs with conclusion failure.
+    Ignores branches starting with bigas-hotfix/ to prevent infinite fix loops.
     """
     payload_bytes = request.get_data() or b""
     try:
@@ -258,9 +262,27 @@ def github_workflow_run_webhook():
     except Exception:
         logger.exception("Board release close from workflow_run failed")
 
+    postcheck: Dict[str, Any] = {}
+    try:
+        from bigas.resources.devops.pipeline import resume_deploy_postcheck_from_workflow
+
+        postcheck = resume_deploy_postcheck_from_workflow(
+            payload if isinstance(payload, dict) else {}
+        )
+    except Exception:
+        logger.exception("Deploy post-check resume from workflow_run failed")
+
     should_run, reason = should_process_workflow_run(payload if isinstance(payload, dict) else {})
     if not should_run:
-        return jsonify({"ok": True, "ignored": True, "reason": reason}), 200
+        resumed = int((postcheck or {}).get("resumed") or 0)
+        return jsonify(
+            {
+                "ok": True,
+                "ignored": resumed == 0,
+                "reason": reason,
+                "postcheck": postcheck or None,
+            }
+        ), 200
 
     if not self_healing_enabled():
         return jsonify({"ok": True, "ignored": True, "reason": "self_healing_disabled"}), 200
@@ -543,7 +565,8 @@ def get_manifest():
             {
                 "name": "github_workflow_run",
                 "description": (
-                    "GitHub webhook endpoint for workflow_run failures. Autonomously opens hotfix PRs "
+                    "GitHub webhook endpoint for workflow_run events. Completes chat deploy "
+                    "post-check for matching runs. Failures autonomously open hotfix PRs "
                     "via the DevOps agent. Configure in GitHub repo Settings → Webhooks."
                 ),
                 "path": "/mcp/tools/github_workflow_run",
