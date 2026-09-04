@@ -516,9 +516,9 @@ def start_confirmed_deploy(
     if isinstance(planned, list) and not planned and planned_skips:
         _complete_pipeline_progress(thread_id)
         summary = (risk or {}).get("summary") or "Nothing to deploy — already up to date."
-        _post(thread_id, summary)
         if "already up to date" not in summary.lower():
-            _post(thread_id, "Nothing to deploy — already up to date.")
+            summary = f"{summary}\n\nNothing to deploy — already up to date."
+        _post(thread_id, summary)
         return {"status": "complete", "summary": summary}
     version = (release_version or "").strip()
     heading = (

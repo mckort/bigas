@@ -107,6 +107,9 @@ def filter_unchanged_workflows(
 
     components = risk.get("component_changes") or {}
     total = int(risk.get("total_files_changed") or 0)
+    # Pending deploys created before component_changes existed only have total_files_changed.
+    if not has_components and has_total and total > 0:
+        return names, []
     to_run: List[str] = []
     skipped: List[Dict[str, str]] = []
     for workflow in names:

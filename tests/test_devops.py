@@ -493,6 +493,16 @@ def test_filter_unchanged_workflows_keeps_first_deploy():
     assert skipped == []
 
 
+def test_filter_unchanged_workflows_legacy_risk_without_component_changes():
+    workflows = ["deploy-backend.yml", "deploy-web.yml"]
+    to_run, skipped = filter_unchanged_workflows(
+        workflows,
+        {"no_prod_version": False, "total_files_changed": 5},
+    )
+    assert to_run == workflows
+    assert skipped == []
+
+
 class _WebOnlyGitHubClient(_FakeGitHubClient):
     def compare_refs(self, owner, repo, base, head):
         self.compared.append((base, head))
