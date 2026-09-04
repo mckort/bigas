@@ -81,6 +81,8 @@ def trigger_deployment_endpoint():
         "ref": "main",
         "github_token": "optional override"
       }
+
+    Unchanged backend/web/app surfaces are skipped automatically.
     """
     data = request.json or {}
     workflows = data.get("workflows")
@@ -415,9 +417,12 @@ def get_manifest():
                 "name": "trigger_deployment",
                 "description": (
                     "Trigger GitHub Actions deployment workflow(s) via workflow_dispatch. "
-                    "VFA runs separate backend and web workflows. BIG dispatches deploy.yml "
-                    "on mckort/bigas (Cloud Run). GPWW/FYDA/REM/MYL dispatch deploy.yml on "
-                    "the VM infra repo when BIGAS_DEPLOY_REPO_MAP is set."
+                    "Always pass the project the user named (BIG, VFA, GPWW, …) — never a "
+                    "leftover pending project. Skips backend, web, or app workflows that "
+                    "have no file changes vs the current prod tag. VFA runs separate "
+                    "backend and web workflows. BIG dispatches deploy.yml on mckort/bigas "
+                    "(Cloud Run). GPWW/FYDA/REM/MYL dispatch deploy.yml on the VM infra "
+                    "repo when BIGAS_DEPLOY_REPO_MAP is set."
                 ),
                 "path": "/mcp/tools/trigger_deployment",
                 "method": "POST",
@@ -426,7 +431,7 @@ def get_manifest():
                     "properties": {
                         "project_key": {
                             "type": "string",
-                            "description": "Jira project key e.g. VFA",
+                            "description": "Jira project key the user named (BIG, VFA, GPWW, …). Required.",
                         },
                         "repo": {
                             "type": "string",

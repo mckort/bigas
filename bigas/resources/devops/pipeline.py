@@ -109,15 +109,24 @@ def _set_pending(thread_id: Optional[str], payload: Optional[Dict[str, Any]]) ->
     _store().patch_thread(thread_id, pending_deploy=payload)
 
 
-def clear_stale_pending_deploy(user_message: str, thread_id: Optional[str] = None) -> None:
-    """Drop deploy confirmation state when the user sends an unrelated message."""
-    if should_run_deploy_pipeline(user_message, thread_id):
-        return
+def _clear_pending_deploy_state(thread_id: Optional[str]) -> None:
     if _pending(thread_id):
         _set_pending(thread_id, None)
     from bigas.resources.devops.prepare import clear_prepare_state
 
     clear_prepare_state(thread_id)
+
+
+def clear_stale_pending_deploy(user_message: str, thread_id: Optional[str] = None) -> None:
+    """Drop leftover deploy state on unrelated messages or a new deploy command."""
+    from bigas.resources.devops.prepare import is_prepare_start
+
+    if is_prepare_start(user_message) or is_deploy_start(user_message):
+        _clear_pending_deploy_state(thread_id)
+        return
+    if should_run_deploy_pipeline(user_message, thread_id):
+        return
+    _clear_pending_deploy_state(thread_id)
 
 
 def should_run_deploy_pipeline(user_message: str, thread_id: Optional[str] = None) -> bool:
@@ -502,6 +511,15 @@ def start_confirmed_deploy(
 
     _set_pending(thread_id, None)
     clear_pending_release_notes(thread_id)
+    planned = (risk or {}).get("workflows_to_run")
+    planned_skips = (risk or {}).get("skipped_workflows") or []
+    if isinstance(planned, list) and not planned and planned_skips:
+        _complete_pipeline_progress(thread_id)
+        summary = (risk or {}).get("summary") or "Nothing to deploy — already up to date."
+        if "already up to date" not in summary.lower():
+            summary = f"{summary}\n\nNothing to deploy — already up to date."
+        _post(thread_id, summary)
+        return {"status": "complete", "summary": summary}
     version = (release_version or "").strip()
     heading = (
         f"🚀 **Deploy {project_key} {version}:** starting GitHub Actions…"
@@ -516,7 +534,7 @@ def start_confirmed_deploy(
     )
     deploy_ref = (ref or (risk or {}).get("head_ref") or "main").strip() or "main"
     try:
-        result = trigger_deployment(project_key=project_key, ref=deploy_ref)
+        result = trigger_deployment(project_key=project_key, ref=deploy_ref, risk=risk)
     except DevOpsError as e:
         _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Could not start deploy: {e}")
@@ -529,9 +547,16 @@ def start_confirmed_deploy(
 
     _post(thread_id, result.get("summary") or "Deploy triggered.")
     triggered = result.get("triggered") or []
+    skipped = result.get("skipped_workflows") or []
     if not triggered:
         errors = result.get("errors") or []
         _complete_pipeline_progress(thread_id)
+        if skipped and not errors:
+            _post(thread_id, "Nothing to deploy — already up to date.")
+            return {
+                "status": "complete",
+                "summary": result.get("summary") or "Already up to date.",
+            }
         _post(
             thread_id,
             "No workflow started."
@@ -623,11 +648,15 @@ def run_chat_deploy_pipeline(
     if not pending and notes_pending and (is_confirm(user_message) or is_cancel(user_message)):
         return handle_release_notes_reply(thread_id=thread_id, user_message=user_message)
 
-    key = (
-        project_key
-        or (pending or {}).get("project_key")
-        or resolve_project(user_message)
-    )
+    named = resolve_project(user_message)
+    if is_deploy_start(user_message) and pending:
+        _clear_pending_deploy_state(thread_id)
+        pending = None
+    key = (project_key or "").strip().upper() or None
+    if is_deploy_start(user_message):
+        key = key or named
+    else:
+        key = key or (pending or {}).get("project_key") or named
     if not key:
         _complete_pipeline_progress(thread_id)
         _post(
