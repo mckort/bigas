@@ -118,9 +118,9 @@ def thread_messages(thread_id: str):
 
     if request.method == "GET":
         since = request.args.get("since")
-        from bigas.resources.devops.pipeline import expire_stale_deploy_poll
+        from bigas.resources.devops.pipeline import schedule_expire_stale_deploy_poll
 
-        expire_stale_deploy_poll(thread_id)
+        schedule_expire_stale_deploy_poll(thread_id)
         messages = store.list_messages(thread_id, since=since)
         thread_data = store.get_thread(thread_id) or {}
         deploy_poll_active = bool(

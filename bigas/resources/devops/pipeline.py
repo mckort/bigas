@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -532,8 +533,38 @@ def expire_stale_deploy_poll(thread_id: Optional[str]) -> bool:
         return False
     if datetime.now(timezone.utc) < deadline:
         return False
-    poll_deploy_postcheck(thread_id)
+    triggered = poll.get("triggered") or []
+    done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
+    remaining = _unfinished_runs(triggered, done_ids)
+    # Clear before network I/O so concurrent polls cannot re-enter or brick the thread.
+    _set_deploy_poll(thread_id, None)
+    try:
+        _finalize_deploy_postcheck(thread_id, poll, remaining=remaining)
+    except Exception:
+        logger.exception("Stale deploy poll finalization failed for thread %s", thread_id)
+        _post(
+            thread_id,
+            "Post-check timed out but finalization failed — check deploy status manually.",
+        )
+        _complete_pipeline_progress(thread_id)
     return True
+
+
+def schedule_expire_stale_deploy_poll(thread_id: Optional[str]) -> None:
+    """Run stale deploy poll expiry in the background (for hot GET polling paths)."""
+    if not thread_id:
+        return
+
+    def _run() -> None:
+        try:
+            expire_stale_deploy_poll(thread_id)
+        except Exception:
+            logger.exception(
+                "Background stale deploy poll expiry failed for thread %s",
+                thread_id,
+            )
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -562,8 +593,17 @@ def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, 
             poll if isinstance(poll, dict) else None, run_id, repo
         ):
             continue
-        poll_deploy_postcheck(thread_id)
-        resumed.append(thread_id)
+        try:
+            poll_deploy_postcheck(thread_id)
+            resumed.append(thread_id)
+        except Exception:
+            logger.exception(
+                "Resume deploy post-check failed for thread %s (run %s)",
+                thread_id,
+                run_id,
+            )
+            _set_deploy_poll(thread_id, None)
+            _complete_pipeline_progress(thread_id)
     return {"resumed": len(resumed), "thread_ids": resumed}
 
 
