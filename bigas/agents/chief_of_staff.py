@@ -9,6 +9,7 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from bigas.chat.db import get_chat_store
+from bigas.chat.timestamps import current_time_prompt_block
 from bigas.chat.jira_formatting import (
     JIRA_AWARE_AGENT_IDS,
     JIRA_FORMATTING_RULES,
@@ -731,6 +732,7 @@ def _agent_system_prompt(
             parts.append(okr_priming_block_for_agent(agent_id, user_id=user_id))
         except Exception:
             logger.exception("OKR priming skipped for %s", agent_id)
+    parts.append(current_time_prompt_block())
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
@@ -1358,14 +1360,18 @@ def handle_chat_message(
         user_metadata["client_id"] = client_id
     if attachments:
         user_metadata["attachments"] = list(attachments)
-    store.add_message(
+    stored_user = store.add_message(
         thread_id,
         role="user",
         content=user_message,
         metadata=user_metadata or None,
     )
     llm_user_message = message_text_for_llm(
-        {"content": user_message, "metadata": {"attachments": list(attachments or [])}}
+        {
+            "content": user_message,
+            "created_at": stored_user.get("created_at"),
+            "metadata": {"attachments": list(attachments or [])},
+        }
     )
 
     if agent_id == "chief":

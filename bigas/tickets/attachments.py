@@ -162,15 +162,15 @@ def attachments_text_for_issue(jira: Any, issue_key: str) -> str:
 
 def message_text_for_llm(message: Dict[str, Any]) -> str:
     """User/assistant text plus attachment interpretations for the chat LLM."""
+    from bigas.chat.timestamps import prefix_llm_message
+
     text = str(message.get("content") or "").strip()
     meta = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
     attachments = list((meta or {}).get("attachments") or [])
     att_block = format_ticket_attachments(attachments)
-    if not attachments or att_block == "(none)":
-        return text
-    if text:
-        return f"{text}\n\n## Attachments\n{att_block}"
-    return f"## Attachments\n{att_block}"
+    if attachments and att_block != "(none)":
+        text = f"{text}\n\n## Attachments\n{att_block}" if text else f"## Attachments\n{att_block}"
+    return prefix_llm_message(text, message.get("created_at"))
 
 
 def process_chat_files(
