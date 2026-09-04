@@ -537,3 +537,41 @@ def test_unhealthy_site_skips_release_notes(monkeypatch):
     blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
     assert "skipping release notes" in blob.lower()
     assert "New X post drafts" not in blob
+
+
+def test_finalize_timeout_skips_notes_without_nameerror(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    notes = {"called": False}
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.finalize_versioned_deploy",
+        lambda *a, **k: notes.update(called=True),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} returned HTTP 200.", "is_healthy": True},
+    )
+
+    from bigas.resources.devops.pipeline import _finalize_deploy_postcheck
+
+    _finalize_deploy_postcheck(
+        thread["thread_id"],
+        {
+            "repo": "mckort/vcfieldassistant",
+            "triggered": [
+                {"workflow": "deploy-backend.yml", "run_id": 11, "html_url": "https://x"}
+            ],
+            "site_urls": ["https://vcfieldassistant.com"],
+            "finished_lines": [],
+            "failed_runs": [],
+            "done_run_ids": [],
+            "ref": "main",
+            "project_key": "VFA",
+            "release_version": "0.2.0",
+        },
+        remaining=[{"workflow": "deploy-backend.yml", "run_id": 11}],
+    )
+    assert notes["called"] is False
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "Timeout" in blob or "still running" in blob.lower()
+    assert "skipping release notes" in blob.lower()

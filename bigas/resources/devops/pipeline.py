@@ -146,11 +146,20 @@ def _format_triggered_runs(triggered: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _unfinished_runs(
+    triggered: List[Dict[str, Any]], done_ids: set
+) -> List[Dict[str, Any]]:
+    return [
+        item
+        for item in triggered or []
+        if item.get("run_id") and int(item["run_id"]) not in done_ids
+    ]
+
+
 def _format_remaining_runs(triggered: List[Dict[str, Any]], done_ids: set) -> str:
     leftover = [
         f"{item.get('workflow') or 'workflow'} #{item.get('run_id')}"
-        for item in triggered or []
-        if item.get("run_id") and int(item["run_id"]) not in done_ids
+        for item in _unfinished_runs(triggered, done_ids)
     ]
     return ", ".join(leftover)
 
@@ -285,7 +294,11 @@ def _handoff_failed_deploys(
     )
 
 
-def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
+def _finalize_deploy_postcheck(
+    thread_id: str,
+    poll: Dict[str, Any],
+    remaining: Optional[List[Dict[str, Any]]] = None,
+) -> None:
     repo = poll.get("repo") or ""
     triggered = poll.get("triggered") or []
     site_urls = poll.get("site_urls") or []
@@ -293,11 +306,8 @@ def _finalize_deploy_postcheck(thread_id: str, poll: Dict[str, Any]) -> None:
     failed_runs = list(poll.get("failed_runs") or [])
     starting_ref = (poll.get("ref") or "main").strip() or "main"
     done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
-    remaining = [
-        item
-        for item in triggered
-        if item.get("run_id") and int(item["run_id"]) not in done_ids
-    ]
+    if remaining is None:
+        remaining = _unfinished_runs(triggered, done_ids)
 
     if remaining:
         leftover = ", ".join(
@@ -445,11 +455,7 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
                 }
             )
 
-    remaining = [
-        item
-        for item in triggered
-        if item.get("run_id") and int(item["run_id"]) not in done_ids
-    ]
+    remaining = _unfinished_runs(triggered, done_ids)
     timed_out = datetime.now(timezone.utc) >= deadline
     if remaining and not timed_out:
         if newly_finished:
@@ -478,6 +484,7 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
             "failed_runs": failed_runs,
             "done_run_ids": sorted(done_ids),
         },
+        remaining=remaining,
     )
     return {"status": "complete", "active": False}
 
