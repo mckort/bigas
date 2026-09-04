@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("GA4_PROPERTY_ID", "test-property")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
@@ -17,9 +17,11 @@ os.environ.setdefault("BIGAS_DEPLOY_WORKFLOW_MAP", "VFA:deploy-backend.yml,deplo
 from bigas.chat.db import get_chat_store
 from bigas.resources.devops.pipeline import (
     clear_stale_pending_deploy,
+    expire_stale_deploy_poll,
     is_confirm,
     is_deploy_start,
     poll_deploy_postcheck,
+    resume_deploy_postcheck_from_workflow,
     run_chat_deploy_pipeline,
     should_run_deploy_pipeline,
 )
@@ -575,3 +577,106 @@ def test_finalize_timeout_skips_notes_without_nameerror(monkeypatch):
     blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
     assert "Timeout" in blob or "still running" in blob.lower()
     assert "skipping release notes" in blob.lower()
+
+
+def _pending_poll(run_id=12, started_at=None):
+    return {
+        "repo": "mckort/vcfieldassistant",
+        "product_repo": "mckort/vcfieldassistant",
+        "triggered": [
+            {
+                "workflow": "deploy-web.yml",
+                "run_id": run_id,
+                "html_url": f"https://x/{run_id}",
+            }
+        ],
+        "site_urls": ["https://vcfieldassistant.com"],
+        "started_at": started_at or datetime.now(timezone.utc).isoformat(),
+        "finished_lines": [],
+        "failed_runs": [],
+        "done_run_ids": [],
+        "ref": "main",
+        "project_key": "VFA",
+    }
+
+
+def test_resume_workflow_completes_postcheck_without_client(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    store.patch_thread(thread["thread_id"], pending_deploy_poll=_pending_poll())
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "success",
+            "html_url": "https://x/12",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} returned HTTP 200.", "is_healthy": True},
+    )
+
+    result = resume_deploy_postcheck_from_workflow(
+        {
+            "action": "completed",
+            "workflow_run": {"id": 12, "conclusion": "success"},
+            "repository": {"name": "vcfieldassistant", "owner": {"login": "mckort"}},
+        }
+    )
+    assert result["resumed"] == 1
+    assert thread["thread_id"] in result["thread_ids"]
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy_poll") is None
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "Post-check" in blob
+
+
+def test_resume_workflow_ignores_unrelated_run():
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    store.patch_thread(thread["thread_id"], pending_deploy_poll=_pending_poll(run_id=12))
+
+    result = resume_deploy_postcheck_from_workflow(
+        {
+            "action": "completed",
+            "workflow_run": {"id": 99, "conclusion": "success"},
+            "repository": {"name": "vcfieldassistant", "owner": {"login": "mckort"}},
+        }
+    )
+    assert result["resumed"] == 0
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy_poll")
+
+
+def test_expire_stale_deploy_poll_finalizes(monkeypatch):
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    started = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    store.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll=_pending_poll(started_at=started),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "in_progress",
+            "conclusion": None,
+            "html_url": "https://x/12",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} returned HTTP 200.", "is_healthy": True},
+    )
+
+    assert expire_stale_deploy_poll(thread["thread_id"]) is True
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy_poll") is None
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "Timeout" in blob or "still running" in blob.lower()
+
+
+def test_expire_stale_deploy_poll_leaves_fresh_poll():
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    store.patch_thread(thread["thread_id"], pending_deploy_poll=_pending_poll())
+    assert expire_stale_deploy_poll(thread["thread_id"]) is False
+    assert store.get_thread(thread["thread_id"]).get("pending_deploy_poll")

@@ -469,7 +469,6 @@ function TypingIndicator({ agentName, agentIcon }) {
 function lastMessageIsInProgress(messages) {
   const last = messages[messages.length - 1]
   if (!last) return false
-  if (last.role === 'system') return true
   return last.metadata?.status === 'in_progress'
 }
 
@@ -481,6 +480,9 @@ function applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForRe
   if (res.deploy_poll_active) {
     setDeployPollActive(true)
     setWaitingForReply(true)
+  } else {
+    setDeployPollActive(false)
+    setWaitingForReply(lastMessageIsInProgress(next))
   }
   return next
 }
@@ -1243,16 +1245,22 @@ export default function ChatLayout({
     async function poll() {
       try {
         const res = await fetchMessages(threadId, lastMsgTs.current || undefined)
-        if (cancelled || !res.messages?.length) {
-          if (!cancelled && res.deploy_poll_active) setDeployPollActive(true)
+        if (cancelled) return
+        if (res.deploy_poll_active) {
+          setDeployPollActive(true)
+          setWaitingForReply(true)
+        } else {
+          setDeployPollActive(false)
+        }
+        if (!res.messages?.length) {
+          if (!res.deploy_poll_active) setWaitingForReply(false)
           return
         }
         setMessages((prev) => mergePolledMessages(prev, res.messages))
-        if (res.deploy_poll_active) setDeployPollActive(true)
         const latest = res.messages[res.messages.length - 1]
         if (latest?.created_at) lastMsgTs.current = latest.created_at
-        if (latest?.role === 'assistant' && latest.metadata?.status !== 'in_progress') {
-          if (!res.deploy_poll_active) setWaitingForReply(false)
+        if (!res.deploy_poll_active && latest?.metadata?.status !== 'in_progress') {
+          setWaitingForReply(false)
         }
       } catch {
         /* ignore poll errors */

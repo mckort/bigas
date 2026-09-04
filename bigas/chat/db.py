@@ -195,6 +195,14 @@ class MemoryChatStore:
             threads = [t for t in self._threads.values() if t.get("user_id") == user_id]
             return sorted(threads, key=lambda t: t.get("updated_at", ""), reverse=True)
 
+    def list_pending_deploy_threads(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            return [
+                dict(thread)
+                for thread in self._threads.values()
+                if isinstance(thread.get("pending_deploy_poll"), dict)
+            ]
+
     def get_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             thread = self._threads.get(thread_id)
@@ -458,6 +466,17 @@ class FirestoreChatStore:
         docs = self._threads.where("user_id", "==", user_id).stream()
         threads = [doc.to_dict() for doc in docs if doc.exists]
         return sorted(threads, key=lambda t: t.get("updated_at", ""), reverse=True)
+
+    def list_pending_deploy_threads(self) -> List[Dict[str, Any]]:
+        docs = self._threads.where("has_pending_deploy_poll", "==", True).stream()
+        threads = []
+        for doc in docs:
+            if not doc.exists:
+                continue
+            data = doc.to_dict() or {}
+            if isinstance(data.get("pending_deploy_poll"), dict):
+                threads.append(data)
+        return threads
 
     def get_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
         snap = self._threads.document(thread_id).get()
