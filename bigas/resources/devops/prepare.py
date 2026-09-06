@@ -165,8 +165,130 @@ def _ticket_keys_for_project(project_key: str, text: str) -> List[str]:
     return [key for key in parse_issue_keys(text, max_keys=200) if key.startswith(prefix)]
 
 
+_SHA_TOKEN_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
+
+
 def _first_line(message: str) -> str:
     return (message or "").split("\n", 1)[0].strip()
+
+
+def _ticket_blob(ticket: Dict[str, Any]) -> str:
+    return " ".join(
+        [
+            str(ticket.get("description") or ""),
+            str(ticket.get("title") or ""),
+            str(ticket.get("summary") or ""),
+        ]
+    )
+
+
+def _ticket_mentions_sha(ticket: Dict[str, Any], sha: str) -> bool:
+    """True when the ticket text cites this commit (full or short SHA)."""
+    wanted = (sha or "").strip().lower()
+    if len(wanted) < 7:
+        return False
+    short = wanted[:7]
+    for token in _SHA_TOKEN_RE.findall(_ticket_blob(ticket)):
+        found = token.lower()
+        if found.startswith(short) or wanted.startswith(found):
+            return True
+    return False
+
+
+def _keys_for_shipping_commit(
+    project_key: str,
+    commit: Dict[str, Any],
+    cut_by_key: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    """Ticket keys from the commit message, linked PR, or SHA cited on a cut ticket."""
+    key = normalize_project_key(project_key)
+    prefix = f"{key}-"
+    found: List[str] = []
+    seen = set()
+
+    def _add(item: str) -> None:
+        normalized = (item or "").strip().upper()
+        if not normalized.startswith(prefix) or normalized in seen:
+            return
+        seen.add(normalized)
+        found.append(normalized)
+
+    text = commit.get("message") or commit.get("subject") or ""
+    for item in _ticket_keys_for_project(key, text):
+        _add(item)
+    for item in commit.get("pr_keys") or []:
+        _add(str(item))
+    if found:
+        return found
+    sha = (commit.get("sha") or "").strip()
+    for item, ticket in cut_by_key.items():
+        if _ticket_mentions_sha(ticket, sha):
+            _add(item)
+    return found
+
+
+def _enrich_commits_with_pr_keys(
+    *,
+    project_key: str,
+    repo: str,
+    commits: List[Dict[str, Any]],
+    max_lookups: int = 20,
+) -> List[Dict[str, Any]]:
+    """Attach PR ticket keys to commits whose messages have none (autofix, direct push)."""
+    repo = (repo or "").strip()
+    if not repo or "/" not in repo or not commits:
+        return commits
+    key = normalize_project_key(project_key)
+    from bigas.resources.product.jira_automation.final_approval import (
+        extract_jira_issue_key,
+    )
+
+    need = [
+        commit
+        for commit in commits
+        if not _ticket_keys_for_project(key, commit.get("message") or commit.get("subject") or "")
+    ]
+    if not need:
+        return commits
+    try:
+        client = _github_client()
+    except Exception:
+        logger.warning("Could not create GitHub client to attach PR keys", exc_info=True)
+        return commits
+    owner, name = repo.split("/", 1)
+    lookups = 0
+    for commit in need:
+        if lookups >= max_lookups:
+            break
+        sha = (commit.get("sha") or "").strip()
+        if not sha:
+            continue
+        lookups += 1
+        try:
+            pulls = client.list_pulls_for_commit(owner, name, sha)
+        except Exception:
+            logger.warning("list_pulls_for_commit failed for %s@%s", repo, sha[:7], exc_info=True)
+            continue
+        pr_keys: List[str] = []
+        seen = set()
+        for pull in pulls:
+            if not isinstance(pull, dict):
+                continue
+            found = extract_jira_issue_key(
+                (pull.get("title") or ""),
+                (pull.get("body") or ""),
+                (((pull.get("head") or {}).get("ref") or "")),
+            )
+            if not found:
+                continue
+            found = found.upper()
+            if not found.startswith(f"{key}-") or found in seen:
+                continue
+            seen.add(found)
+            pr_keys.append(found)
+        if pr_keys:
+            commit["pr_keys"] = pr_keys
+    return commits
 
 
 def format_git_reconcile_report(
@@ -195,7 +317,7 @@ def format_git_reconcile_report(
     for commit in commits:
         sha = (commit.get("sha") or "").strip()
         subject = (commit.get("subject") or _first_line(commit.get("message") or "")).strip()
-        keys = _ticket_keys_for_project(key, commit.get("message") or subject)
+        keys = _keys_for_shipping_commit(key, commit, cut_by_key)
         hit_cut = [item for item in keys if item in cut_by_key]
         if hit_cut:
             for item in hit_cut:
@@ -354,11 +476,20 @@ def reconcile_release_with_git(
             commits=[],
             errors=[str(exc)],
         )
+    commits = list(shipping.get("commits") or [])
+    try:
+        commits = _enrich_commits_with_pr_keys(
+            project_key=project_key,
+            repo=str(shipping.get("repo") or ""),
+            commits=commits,
+        )
+    except Exception:
+        logger.warning("Could not attach PR keys to shipping commits", exc_info=True)
     return format_git_reconcile_report(
         project_key=project_key,
         version=version,
         in_cut=in_cut,
-        commits=shipping.get("commits") or [],
+        commits=commits,
         compared=shipping.get("compared") or [],
         truncated=bool(shipping.get("truncated")),
         errors=shipping.get("errors") or [],

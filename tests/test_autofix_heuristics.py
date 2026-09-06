@@ -6,6 +6,7 @@ from bigas.resources.cto.autofix.heuristics import (
 )
 from bigas.resources.cto.autofix.service import (
     _build_prompt,
+    _issue_key_from_pr,
     autofix_looks_like_confirmation_stop,
 )
 
@@ -137,6 +138,33 @@ def test_autofix_prompt_forbids_confirmation():
     assert "already resolved" in prompt or "local wrapper" in prompt
     assert "remove that dead code" in prompt
     assert "Do not expand into a repo-wide cleanup" in prompt
+    assert "[bigas-autofix]" in prompt
+
+
+def test_autofix_prompt_requires_ticket_key_in_commit():
+    prompt = _build_prompt(
+        repo="mckort/vcfieldassistant",
+        pr_number=191,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/191",
+        review_body="## Blocking\nFix contrast",
+        issue_key="VFA-53",
+    )
+    assert "VFA-53: [bigas-autofix]" in prompt
+    assert prompt.index("VFA-53: [bigas-autofix]") < prompt.index("Do not merge")
+
+
+def test_issue_key_from_pr_title():
+    assert (
+        _issue_key_from_pr(
+            {
+                "title": "VFA-53: Fix meeting notes email headline contrast",
+                "body": "",
+                "head": {"ref": "fix/ios-headline"},
+            }
+        )
+        == "VFA-53"
+    )
+    assert _issue_key_from_pr({"title": "Add cherry-pick workflow"}) == ""
 
 
 def test_pr_review_prompts_respect_project_helpers():

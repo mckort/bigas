@@ -30,7 +30,73 @@ class AutofixError(RuntimeError):
     pass
 
 
-def _build_prompt(*, repo: str, pr_number: int, pr_url: str, review_body: str) -> str:
+def _commit_message_rule(issue_key: str = "") -> str:
+    key = (issue_key or "").strip().upper()
+    marker = AUTOFIX_COMMIT_MARKER
+    if key:
+        return (
+            f"5. Every commit message you create MUST start with `{key}: {marker}` "
+            f"(ticket key first, then the exact marker). "
+            f"Example: `{key}: {marker} Fix checkout fetch`."
+        )
+    return (
+        f"5. Every commit message you create MUST include the exact marker `{marker}`. "
+        "If the PR title has a ticket key (e.g. VFA-53), start the subject with that "
+        f"key before the marker: `VFA-53: {marker} …`."
+    )
+
+
+def _issue_key_from_pr(pr: dict[str, Any]) -> str:
+    from bigas.resources.product.jira_automation.final_approval import (
+        extract_jira_issue_key,
+    )
+
+    return (
+        extract_jira_issue_key(
+            (pr.get("title") or ""),
+            (pr.get("body") or ""),
+            ((pr.get("head") or {}).get("ref") or ""),
+        )
+        or ""
+    )
+
+
+def _ensure_issue_key_for_autofix(
+    *,
+    repo: str,
+    pr: dict[str, Any],
+    pr_url: str,
+    pr_number: int,
+    github_token: str,
+) -> str:
+    """Return a ticket key for autofix commits, creating/retitling the PR if needed."""
+    key = _issue_key_from_pr(pr)
+    if key:
+        return key
+    from bigas.resources.product.jira_automation.final_approval import (
+        ensure_board_ticket_for_pr,
+    )
+
+    ensured = ensure_board_ticket_for_pr(
+        repo=repo,
+        pr=pr,
+        pr_url=pr_url,
+        github_token=github_token,
+        pr_number=pr_number,
+        status="To Do",
+        retitle=True,
+    )
+    return (ensured.get("issue_key") or "").strip()
+
+
+def _build_prompt(
+    *,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    review_body: str,
+    issue_key: str = "",
+) -> str:
     return f"""You are fixing findings from an automated Bigas CTO PR review.
 
 Repository: {repo}
@@ -44,7 +110,7 @@ Pull request: {pr_url}
 2. Also fix Minor items listed in the same review — they ride along in this round when Blockers/Important already triggered autofix.
 3. Do not invent extra polish beyond what the review lists. Do not expand scope or refactor unrelated code.
 4. Push commits directly to this PR's head branch (already checked out for you).
-5. Every commit message you create MUST include the exact marker `{AUTOFIX_COMMIT_MARKER}`.
+{_commit_message_rule(issue_key)}
 6. Do not merge the PR, do not force-push, do not rewrite history, and do not open a new PR.
 7. If after inspecting the code there is nothing safe to fix, make no commits and explain why.
 8. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — apply the fixes and push commits immediately. Do not stop after a proposal.
@@ -281,8 +347,28 @@ class AutofixService:
                 }
 
         next_round = autofix_count + 1
+        issue_key = ""
+        try:
+            issue_key = _ensure_issue_key_for_autofix(
+                repo=repo,
+                pr=pr if isinstance(pr, dict) else {},
+                pr_url=pr_url,
+                pr_number=pr_number,
+                github_token=self._github_token,
+            )
+        except Exception:
+            logger.warning(
+                "Could not resolve ticket key for autofix on %s#%s",
+                repo,
+                pr_number,
+                exc_info=True,
+            )
         prompt = _build_prompt(
-            repo=repo, pr_number=pr_number, pr_url=pr_url, review_body=body
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            review_body=body,
+            issue_key=issue_key,
         )
         client = CursorCloudAgentClient(api_key=self._cursor_key)
         try:

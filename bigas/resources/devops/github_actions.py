@@ -294,6 +294,25 @@ class GitHubActionsClient:
                     handle.write(chunk)
         return total
 
+    def list_pulls_for_commit(
+        self, owner: str, repo: str, sha: str
+    ) -> List[Dict[str, Any]]:
+        """PRs that contain this commit (open or merged)."""
+        sha = (sha or "").strip()
+        if not sha:
+            return []
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/pulls"
+        resp = requests.get(url, headers=self._headers, timeout=30)
+        if resp.status_code == 404:
+            return []
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        data = resp.json() or []
+        return data if isinstance(data, list) else []
+
     def get_commit(self, owner: str, repo: str, ref: str) -> Dict[str, Any]:
         url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}"
         resp = requests.get(url, headers=self._headers, timeout=60)
