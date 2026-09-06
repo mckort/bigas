@@ -21,6 +21,7 @@ from bigas.resources.devops.pipeline import (
     should_run_deploy_pipeline,
 )
 from bigas.resources.devops.prepare import (
+    _enrich_commits_with_pr_keys,
     format_git_reconcile_report,
     format_version_ticket_report,
     is_prepare_start,
@@ -148,6 +149,104 @@ def test_git_reconcile_matches_cut_and_flags_extras():
     assert any("VFA-99" in row["reason"] for row in report["extra_commits"])
     assert "VFA-48" in report["text"]
     assert "Also shipping" in report["text"]
+
+
+def test_git_reconcile_matches_cut_ticket_via_sha_in_description():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    cut = store.create_ticket(
+        board["board_id"],
+        title="Add cherry-pick hotfix workflow for staging → main",
+        user_id="dev-user",
+        key="VFA-55",
+        fix_version="0.2.2",
+        status="Final approval (manual)",
+        description="Already on staging (commit 2b45d00).",
+    )
+    report = format_git_reconcile_report(
+        project_key="VFA",
+        version="0.2.2",
+        in_cut=[cut],
+        compared=["deploy-backend-abc → staging"],
+        commits=[
+            {
+                "sha": "2b45d003ea32204b73c935efa4d8cd5ad92bb1e6",
+                "message": "Add cherry-pick hotfix workflow so Bigas can land staging fixes on main.",
+                "subject": "Add cherry-pick hotfix workflow so Bigas can land staging fixes on main.",
+            }
+        ],
+    )
+    assert [row["key"] for row in report["matched"]] == ["VFA-55"]
+    assert report["missing_from_git"] == []
+    assert report["extra_commits"] == []
+
+
+def test_git_reconcile_matches_unkeyed_commit_via_pr_keys():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    cut = store.create_ticket(
+        board["board_id"],
+        title="Text in IOS still hard to read (headline)",
+        user_id="dev-user",
+        key="VFA-53",
+        fix_version="0.2.2",
+        status="Final approval (manual)",
+    )
+    report = format_git_reconcile_report(
+        project_key="VFA",
+        version="0.2.2",
+        in_cut=[cut],
+        compared=["deploy-web-abc → staging"],
+        commits=[
+            {
+                "sha": "93b84ea11111111111111111111111111111111",
+                "message": "[bigas-autofix] Use span wrappers for Gmail-safe HTML inside email headings",
+                "subject": "[bigas-autofix] Use span wrappers for Gmail-safe HTML inside email headings",
+                "pr_keys": ["VFA-53"],
+            }
+        ],
+    )
+    assert [row["key"] for row in report["matched"]] == ["VFA-53"]
+    assert report["missing_from_git"] == []
+    assert report["extra_commits"] == []
+
+
+def test_enrich_commits_attaches_pr_keys(monkeypatch):
+    class FakeClient:
+        def list_pulls_for_commit(self, owner, repo, sha):
+            assert owner == "mckort"
+            assert repo == "vcfieldassistant"
+            return [
+                {
+                    "title": "VFA-53: Fix meeting notes email headline contrast",
+                    "body": "",
+                    "head": {"ref": "fix/vfa-53-ios-headline"},
+                }
+            ]
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._github_client",
+        lambda: FakeClient(),
+    )
+    commits = [
+        {
+            "sha": "93b84ea11111111111111111111111111111111",
+            "message": "[bigas-autofix] Use span wrappers",
+            "subject": "[bigas-autofix] Use span wrappers",
+        },
+        {
+            "sha": "46c103b11111111111111111111111111111111",
+            "message": "VFA-53: Fix meeting notes email headline contrast",
+            "subject": "VFA-53: Fix meeting notes email headline contrast",
+        },
+    ]
+    enriched = _enrich_commits_with_pr_keys(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        commits=commits,
+    )
+    assert enriched[0]["pr_keys"] == ["VFA-53"]
+    assert "pr_keys" not in enriched[1]
 
 
 def test_git_reconcile_flags_cut_ticket_missing_from_git():

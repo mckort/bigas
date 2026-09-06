@@ -104,5 +104,5 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 - Cooldown when head is a fresh `[bigas-autofix]` commit *and* no newer Bigas review exists yet: Actions waits/retries; Bigas posts a PR cooldown notice. If review is already newer than the autofix head, the next agent launches immediately.
 
 **Actions note:** `pr-review.yml` skips workflow runs whose head commit **subject** contains `[bigas-autofix]` (gate job). That prevents the autofix push from cancelling the in-flight job or starting a second full review/merge cycle. Bigas also skips review / final-approval Discord / auto-merge quietly when the PR is already merged.
-- Agent prompt requires that marker in any commits it creates
+- Agent prompt requires that marker in any commits it creates, prefixed by the PR ticket key (`VFA-53: [bigas-autofix] …`) so prepare-deploy can match git to the board. If the PR has no key, Bigas creates a board ticket and retitles the PR first.
 - Re-review after autofix uses a verification prompt and the previous Bigas comment, so it should not invent a fresh set of nits each round

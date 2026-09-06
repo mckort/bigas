@@ -280,7 +280,7 @@ def test_ensure_board_ticket_creates_once_and_retitles(monkeypatch):
         "title": "Fix MCP token",
         "body": "Creating a token crashed.",
         "user": {"login": "marcus"},
-        "head": {"ref": "fix/mcp"},
+        "head": {"ref": "fix/mcp", "sha": "2b45d003ea32204b73c935efa4d8cd5ad92bb1e6"},
         "base": {"ref": "main"},
     }
     first = fa.ensure_board_ticket_for_pr(
@@ -302,6 +302,7 @@ def test_ensure_board_ticket_creates_once_and_retitles(monkeypatch):
     assert ticket is not None
     assert ticket.get("status") == "To Do"
     assert "pull/9" in (ticket.get("description") or "")
+    assert "2b45d003ea32204b73c935efa4d8cd5ad92bb1e6" in (ticket.get("description") or "")
 
     second = fa.ensure_board_ticket_for_pr(
         repo="mckort/fulfillyourdreamadventure",

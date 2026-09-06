@@ -176,10 +176,13 @@ def ensure_board_ticket_for_pr(
         else:
             from bigas.tickets.service import TicketService
 
+            head_sha = (((pr.get("head") or {}).get("sha") or "")).strip()
             desc_parts = [
                 "Opened from GitHub (no ticket key on the PR).",
                 f"PR: {pr_url}",
             ]
+            if head_sha:
+                desc_parts.append(f"Head: {head_sha}")
             if body:
                 desc_parts.append(body)
             try:
@@ -340,6 +343,21 @@ def transition_issue_to_final_approval_for_pr(
         fields = issue.get("fields") or {}
         summary = (fields.get("summary") or "").strip()
         current = ((fields.get("status") or {}).get("name") or "").strip()
+
+        try:
+            from bigas.tickets.review import attach_review_from_pr
+
+            attach_review_from_pr(
+                issue_key,
+                pr_url=pr_url,
+                pr_title=title,
+                github_token=token,
+                comment=True,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to attach review links on %s", issue_key, exc_info=True
+            )
 
         # Already there (e.g. auto-merge plus closed webhook) — no Discord spam.
         if current.casefold() == cfg.status_final_approval.casefold():
