@@ -292,3 +292,10 @@ export async function shipProjectRelease(projectKey, releaseId, payload = {}) {
     { method: 'POST', body: JSON.stringify(payload) },
   )
 }
+
+export async function markProjectReleaseReleased(projectKey, releaseId, payload = {}) {
+  return apiFetch(
+    `/api/projects/${encodeURIComponent(projectKey)}/releases/${encodeURIComponent(releaseId)}/mark-released`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+}
