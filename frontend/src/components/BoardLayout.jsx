@@ -15,6 +15,7 @@ import {
   fetchTicket,
   fetchTicketAttachmentBlob,
   fetchTicketByKey,
+  markProjectReleaseReleased,
   shipProjectRelease,
   updateProjectRelease,
   updateTicket,
@@ -1299,6 +1300,7 @@ function ReleasesPanel({ projectKey, releases, onClose, onChanged }) {
   const [name, setName] = useState('')
   const [makeDefault, setMakeDefault] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const unreleased = (releases || []).filter((item) => !item.released)
   const released = (releases || []).filter((item) => item.released)
@@ -1306,9 +1308,11 @@ function ReleasesPanel({ projectKey, releases, onClose, onChanged }) {
   const run = async (fn) => {
     setBusy(true)
     setError('')
+    setNotice('')
     try {
-      await fn()
+      const message = await fn()
       await onChanged()
+      if (message) setNotice(message)
     } catch (err) {
       setError(err.message || 'Request failed')
     } finally {
@@ -1413,6 +1417,33 @@ function ReleasesPanel({ projectKey, releases, onClose, onChanged }) {
                       <button
                         type="button"
                         disabled={busy}
+                        className="text-xs px-2 py-1 rounded-lg border border-border min-h-[32px]"
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `Mark ${release.name} released without deploying? Use this when prod already has this cut.`,
+                            )
+                          ) {
+                            return
+                          }
+                          return run(async () => {
+                            const result = await markProjectReleaseReleased(
+                              projectKey,
+                              release.release_id,
+                            )
+                            const version = result?.release?.name || release.name
+                            if (result?.already_released) {
+                              return `${version} was already released.`
+                            }
+                            return `${version} marked released.`
+                          })
+                        }}
+                      >
+                        Mark released
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
                         className="text-xs text-red-600 px-2 py-1 min-h-[32px]"
                         onClick={() => {
                           if (!window.confirm(`Delete ${release.name} from the board? GitHub is left unchanged.`)) {
@@ -1460,6 +1491,7 @@ function ReleasesPanel({ projectKey, releases, onClose, onChanged }) {
               ))}
             </ul>
           </section>
+          {notice && <p className="text-xs text-green-700">{notice}</p>}
           {error && <p className="text-xs text-red-600">{error}</p>}
         </div>
       </div>

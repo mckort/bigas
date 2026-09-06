@@ -491,7 +491,7 @@ Production versions live on **`/board` → Releases** (per project: VFA, BIG, �
 
 Each card shows its release. The ticket field is a dropdown of project versions.
 
-**Closing a version** happens when you **Ship** it on the board, when a **successful prod deploy** runs on that semver tag (`v0.9.0` / `release_version=0.9.0`), or when a **prepare deploy** of that version finishes green on `main`. A normal deploy of `main` without a version still does **not** close a cut (VFA deploys often; that would kill the active release).
+**Closing a version** happens when you **Ship** it on the board (GitHub release + deploy; the board closes after that deploy is green), when you **Mark released** (close the board cut without deploying — use this if prod already has the cut), when a **successful prod deploy** runs on that semver tag (`v0.9.0` / `release_version=0.9.0`), or when a **prepare deploy** of that version finishes green on `main`. A normal deploy of `main` without a version still does **not** close a cut (VFA deploys often; that would kill the active release).
 
 On close Bigas:
 

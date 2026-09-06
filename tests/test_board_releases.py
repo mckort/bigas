@@ -20,6 +20,7 @@ from bigas.tickets.releases import (
     close_release_from_deploy_ref,
     create_release,
     delete_release,
+    mark_release_released,
     maybe_close_board_release_from_workflow,
     ship_release,
 )
@@ -246,6 +247,40 @@ def test_ship_release_retries_deploy_after_partial_failure(monkeypatch):
     assert len(deploy_calls) == 2
     assert result["deploy"]["workflow_run_id"] == 42
     assert result["github_release"]["tag_name"] == "v0.9.0"
+
+
+def test_mark_release_released_closes_without_deploy(monkeypatch):
+    deploy_calls = []
+    monkeypatch.setattr(
+        "bigas.tickets.releases._publish_github_release",
+        lambda *a, **k: {"tag_name": "v0.2.0", "html_url": "https://github.example/v0.2.0"},
+    )
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "bigas.resources.devops.service.trigger_deployment",
+        lambda **kwargs: deploy_calls.append(kwargs) or {"workflow_run_id": 99},
+    )
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    leftover = store.create_ticket(
+        board["board_id"],
+        title="Still open",
+        user_id="dev-user",
+        key="VFA-401",
+        fix_version="0.2.0",
+        status="To Do",
+    )
+    create_release("VFA", name="0.2.0")
+    create_release("VFA", name="0.2.1")
+
+    result = mark_release_released("VFA", "0.2.0")
+
+    assert result["already_released"] is False
+    assert result["release"]["released"] is True
+    assert result["next_version"] == "0.2.1"
+    assert store.get_ticket(leftover["ticket_id"])["fix_version"] == "0.2.1"
+    assert deploy_calls == []
+    assert get_release_store().get_release_by_name("VFA", "0.3.0") is None
 
 
 def test_adapter_prefers_board_default_over_env(monkeypatch):

@@ -567,3 +567,31 @@ def project_release_ship(project_key: str, release_id: str):
     except ReleaseError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(result)
+
+
+@tickets_bp.route(
+    "/api/projects/<project_key>/releases/<release_id>/mark-released",
+    methods=["POST"],
+)
+@require_chat_auth
+def project_release_mark_released(project_key: str, release_id: str):
+    from bigas.tickets.release_store import get_release_store
+    from bigas.tickets.releases import ReleaseError, mark_release_released
+
+    user_id = g.chat_user["uid"]
+    proj = (project_key or "").strip().upper()
+    if not _user_can_access_project(user_id, proj):
+        return jsonify({"error": "Board not found"}), 404
+    item = get_release_store().get_release(release_id)
+    if not item or (item.get("project_key") or "").upper() != proj:
+        return jsonify({"error": "Release not found"}), 404
+    body = request.get_json(silent=True) or {}
+    try:
+        result = mark_release_released(
+            proj,
+            item["name"],
+            target_ref=(body.get("target_ref") or "").strip() or None,
+        )
+    except ReleaseError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result)

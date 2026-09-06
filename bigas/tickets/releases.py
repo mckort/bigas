@@ -428,3 +428,19 @@ def ship_release(
         else None,
         "deploy": deploy_result,
     }
+
+
+def mark_release_released(
+    project_key: str,
+    version: str,
+    *,
+    target_ref: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Close a board release without deploying (prod already has this cut)."""
+    return close_release(
+        project_key,
+        version,
+        target_ref=target_ref,
+        create_github=True,
+        create_next_if_missing=False,
+    )
