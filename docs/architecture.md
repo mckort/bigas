@@ -298,3 +298,26 @@ Cloud Scheduler (nightly) --> POST /api/v1/providers/email/sync
 - **Sync endpoint**: `bigas/resources/email/endpoints.py` — secured by `BIGAS_ACCESS_KEYS` when access mode is restricted (same pattern as `/mcp/tools/*`).
 - **Proposals**: assistant messages carry `metadata.type=action_proposal` with `actions[]` (`delegate`, `tool`, or `draft_reply`). `draft_reply` is sent via SMTP after the human edits and clicks Send; other approvals execute via `execute_proposal_action()`. Rejections update metadata only.
 - **Target thread**: `BIGAS_EMAIL_SYNC_USER_EMAIL` / `CHAT_ADMIN_EMAILS` → user's most recent Chief thread (`get_or_create_chief_thread`).
+
+## AI Model Evaluation Engine (BIG-57)
+
+Modular eval under `bigas/eval/` discovers flagship models, invokes product-specific eval adapters at runtime, scores outputs with LLM-as-a-judge, and stores artifacts in Bigas GCS only.
+
+```text
+Cloud Scheduler / CLI
+        |
+        v
+POST /tasks/eval/<use_case>  (auth: X-Bigas-Access-Key or CRON_SECRET)
+        |
+        v
+EvalRunner → UseCaseEvaluator.run(fixture, model)
+        |              |
+        |              +--> VFA eval-only HTTP (return-only; no customer writes)
+        v
+LLMJudge → ranking report → GCS + PM chat + Discord
+```
+
+- **Registry** (`registry.py`): provider model discovery, pricing estimates, champion/eliminated state in `model_eval_state.json`.
+- **Use-case adapters** (`use_cases/`): thin HTTP/MCP clients; first adapter is `vc-field-assistant`.
+- **Isolation**: fixtures reject `workspaceId` / `companyId`; VFA adapter aborts if response indicates workspace writes.
+- **Scheduling**: `POST /tasks/eval/vc-field-assistant` or `python scripts/run_eval.py`.

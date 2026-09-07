@@ -48,12 +48,12 @@ def _extract_bearer_or_header_token(*header_names: str) -> Optional[str]:
     return None
 
 
-def verify_evaluate_goals_webhook_auth():
+def verify_scheduled_task_auth(*, task_name: str = "scheduled task"):
     """
     Return None if allowed, or a 401/503 response if denied.
 
-    The evaluate-goals scheduler webhook always requires auth, even when
-    BIGAS_ACCESS_MODE=open. Accepts BIGAS_ACCESS_KEY or legacy CRON_SECRET.
+    Scheduler webhooks always require auth, even when BIGAS_ACCESS_MODE=open.
+    Accepts BIGAS_ACCESS_KEY or legacy CRON_SECRET.
     """
     header_name = current_app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
     expected_keys = current_app.config.get("BIGAS_ACCESS_KEYS") or set()
@@ -75,7 +75,7 @@ def verify_evaluate_goals_webhook_auth():
         response = jsonify(
             {
                 "detail": (
-                    "Evaluate-goals webhook is not configured "
+                    f"{task_name} webhook is not configured "
                     "(set BIGAS_ACCESS_KEYS or CRON_SECRET)"
                 )
             }
@@ -84,6 +84,16 @@ def verify_evaluate_goals_webhook_auth():
         return response
 
     return _unauthorized({"detail": "Invalid or missing access key"})
+
+
+def verify_evaluate_goals_webhook_auth():
+    """
+    Return None if allowed, or a 401/503 response if denied.
+
+    The evaluate-goals scheduler webhook always requires auth, even when
+    BIGAS_ACCESS_MODE=open. Accepts BIGAS_ACCESS_KEY or legacy CRON_SECRET.
+    """
+    return verify_scheduled_task_auth(task_name="Evaluate-goals")
 
 
 def require_bigas_access_key(view: Callable):
