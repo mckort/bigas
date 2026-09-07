@@ -5,11 +5,14 @@ import pytest
 
 from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 from bigas.resources.product.release_workflow import (
+    is_versioned_feature_head,
     labels_include_hotfix,
     normalize_semver_tag,
     parse_project_branch_mapping,
     resolve_automerge_branch,
     resolve_production_branch,
+    version_from_feature_branch,
+    versioned_feature_branch,
 )
 
 
@@ -26,6 +29,38 @@ def test_resolve_automerge_branch_staging_for_project(monkeypatch):
         project_branch_map={"VFA": "staging", "DEFAULT": "main"},
     )
     assert branch == "staging"
+
+
+def test_resolve_automerge_branch_versions_staging():
+    branch = resolve_automerge_branch(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        project_branch_map={"VFA": "staging", "DEFAULT": "main"},
+        fix_version="0.2.3",
+    )
+    assert branch == "staging-0.2.3"
+
+
+def test_resolve_automerge_branch_hotfix_ignores_version():
+    branch = resolve_automerge_branch(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        labels=["hotfix"],
+        project_branch_map={"VFA": "staging", "DEFAULT": "main"},
+        repo_base_branches={"mckort/vcfieldassistant": "main"},
+        fix_version="0.3.0",
+    )
+    assert branch == "main"
+
+
+def test_versioned_feature_branch_helpers():
+    assert versioned_feature_branch("staging", "0.2.3") == "staging-0.2.3"
+    assert versioned_feature_branch("staging-0.2.3", "0.3.0") == "staging-0.2.3"
+    assert version_from_feature_branch("staging-0.2.3") == "0.2.3"
+    assert version_from_feature_branch("staging-0.2.3-beta") == "0.2.3"
+    assert version_from_feature_branch("staging") is None
+    assert is_versioned_feature_head("staging-0.2.3", "staging") is True
+    assert is_versioned_feature_head("staging", "staging") is False
 
 
 def test_resolve_automerge_branch_hotfix_label_to_main():
@@ -72,4 +107,10 @@ def test_config_automerge_branch_for_project(monkeypatch):
     assert (
         cfg.automerge_branch_for_project("VFA", "mckort/vcfieldassistant", labels=["hotfix"])
         == "main"
+    )
+    assert (
+        cfg.automerge_branch_for_project(
+            "VFA", "mckort/vcfieldassistant", fix_version="0.2.3"
+        )
+        == "staging-0.2.3"
     )

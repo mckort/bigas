@@ -99,12 +99,12 @@ def _open_tickets_on_version(project_key: str, version: str) -> List[Dict[str, A
     ]
 
 
-def _next_existing_unreleased(project_key: str, released_name: str) -> Optional[str]:
-    """Lowest unreleased version greater than released_name, or None."""
+def unreleased_versions_after(project_key: str, released_name: str) -> List[str]:
+    """Unreleased board versions greater than released_name, lowest first."""
     try:
         released = parse_semver(released_name)
     except SemverError:
-        return None
+        return []
     candidates: List[tuple] = []
     for item in get_release_store().list_releases(project_key):
         if item.get("released"):
@@ -116,10 +116,14 @@ def _next_existing_unreleased(project_key: str, released_name: str) -> Optional[
             continue
         if ver > released:
             candidates.append((ver, name))
-    if not candidates:
-        return None
     candidates.sort()
-    return candidates[0][1]
+    return [name for _ver, name in candidates]
+
+
+def _next_existing_unreleased(project_key: str, released_name: str) -> Optional[str]:
+    """Lowest unreleased version greater than released_name, or None."""
+    versions = unreleased_versions_after(project_key, released_name)
+    return versions[0] if versions else None
 
 
 def _ensure_next_minor(project_key: str, released_name: str) -> str:

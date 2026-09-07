@@ -397,6 +397,28 @@ def _finalize_deploy_postcheck(
                             f"**{closed['release'].get('name')} released.** "
                             "No open tickets needed to move.",
                         )
+                    shipped = (closed.get("release") or {}).get("name") or ""
+                    project = (
+                        poll.get("project_key")
+                        or poll.get("release_project_key")
+                        or ""
+                    )
+                    if shipped and project:
+                        try:
+                            from bigas.resources.product.release_branches import (
+                                rebase_newer_release_branches,
+                            )
+
+                            rebase_newer_release_branches(
+                                project_key=project,
+                                shipped_version=shipped,
+                                thread_id=thread_id,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Rebase of newer release branches after %s failed",
+                                shipped,
+                            )
             except Exception:
                 logger.exception("Board release close after deploy failed")
         _complete_pipeline_progress(thread_id)

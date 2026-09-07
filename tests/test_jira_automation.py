@@ -228,6 +228,34 @@ def test_should_skip_auto_ticket_dependabot_and_release():
     assert (
         should_skip_auto_ticket(
             {
+                "title": "Release 0.2.3: merge staging-0.2.3 into main",
+                "user": {"login": "marcus"},
+                "head": {"ref": "staging-0.2.3"},
+                "base": {"ref": "main"},
+            },
+            repo="mckort/vcfieldassistant",
+            project_key="VFA",
+            cfg=cfg,
+        )
+        == "release_pr"
+    )
+    assert (
+        should_skip_auto_ticket(
+            {
+                "title": "Resolve conflicts: staging-0.3.0 onto main",
+                "user": {"login": "github-actions[bot]"},
+                "head": {"ref": "bigas-rebase/staging-0.3.0"},
+                "base": {"ref": "staging-0.3.0"},
+            },
+            repo="mckort/vcfieldassistant",
+            project_key="VFA",
+            cfg=cfg,
+        )
+        == "release_pr"
+    )
+    assert (
+        should_skip_auto_ticket(
+            {
                 "title": "Fix MCP token",
                 "user": {"login": "marcus"},
                 "head": {"ref": "fix/mcp"},

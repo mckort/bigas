@@ -273,7 +273,19 @@ def list_shipping_commits(
         from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 
         cfg = JiraAutomationConfig.from_env()
-        head = (cfg.automerge_branch_for_project(project_key, target.repo) or "").strip()
+        default_version = ""
+        try:
+            from bigas.tickets.releases import default_fix_version
+
+            default_version = default_fix_version(project_key) or ""
+        except Exception:
+            default_version = ""
+        head = (
+            cfg.automerge_branch_for_project(
+                project_key, target.repo, fix_version=default_version
+            )
+            or ""
+        ).strip()
     if not head:
         head = default_branch
 

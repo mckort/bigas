@@ -21,6 +21,7 @@ from bigas.resources.devops.pipeline import (
     should_run_deploy_pipeline,
 )
 from bigas.resources.devops.prepare import (
+    _branch_pair,
     _enrich_commits_with_pr_keys,
     compare_ahead_count,
     ensure_release_on_main,
@@ -48,6 +49,14 @@ def setup_function():
 def teardown_function():
     ticket_store_module._store = None
     reset_release_store_for_tests()
+
+
+def test_branch_pair_uses_versioned_staging():
+    feature, production = _branch_pair("VFA", "mckort/vcfieldassistant", "0.2.3")
+    assert feature == "staging-0.2.3"
+    assert production == "main"
+    feature_plain, _prod = _branch_pair("VFA", "mckort/vcfieldassistant")
+    assert feature_plain == "staging"
 
 
 def test_parse_prepare_command():
@@ -861,7 +870,11 @@ class _FakeGitHub:
 
     def compare_refs(self, owner, repo, base, head):
         self.compared.append((base, head))
-        ahead = self.staging_ahead if head == "staging" else self.ahead_by
+        ahead = (
+            self.staging_ahead
+            if head == "staging" or str(head).startswith("staging-")
+            else self.ahead_by
+        )
         return {"ahead_by": ahead, "total_commits": ahead, "commits": [{}] * ahead}
 
     def find_open_pull_request(self, owner, repo, *, head, base):
@@ -895,7 +908,7 @@ def test_ensure_release_opens_pr_with_cut_keys(monkeypatch):
     )
     monkeypatch.setattr(
         "bigas.resources.devops.prepare._branch_pair",
-        lambda project_key, repo: ("staging", "main"),
+        lambda project_key, repo, version="": ("staging", "main"),
     )
     monkeypatch.setattr("bigas.resources.devops.prepare._github_client", lambda: fake)
     monkeypatch.setattr(
@@ -925,7 +938,7 @@ def test_ensure_release_falls_back_to_staging_when_mapped_to_main(monkeypatch):
     )
     monkeypatch.setattr(
         "bigas.resources.devops.prepare._branch_pair",
-        lambda project_key, repo: ("main", "main"),
+        lambda project_key, repo, version="": ("main", "main"),
     )
     monkeypatch.setattr("bigas.resources.devops.prepare._github_client", lambda: fake)
     monkeypatch.setattr(
@@ -939,9 +952,9 @@ def test_ensure_release_falls_back_to_staging_when_mapped_to_main(monkeypatch):
         project_key="VFA", version="0.2.3", thread_id=thread["thread_id"]
     )
     assert result["status"] == "merged"
-    assert fake.created_prs[0]["head"] == "staging"
+    assert fake.created_prs[0]["head"] == "staging-0.2.3"
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
-    assert "staging" in blob
+    assert "staging-0.2.3" in blob
     assert "ahead" in blob
 
 
@@ -955,7 +968,7 @@ def test_ensure_release_posts_when_already_on_main(monkeypatch):
     )
     monkeypatch.setattr(
         "bigas.resources.devops.prepare._branch_pair",
-        lambda project_key, repo: ("staging", "main"),
+        lambda project_key, repo, version="": ("staging", "main"),
     )
     monkeypatch.setattr("bigas.resources.devops.prepare._github_client", lambda: fake)
 

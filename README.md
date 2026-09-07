@@ -506,17 +506,17 @@ Deleting a release on the board (including a released one) only removes the boar
 
 ### Staging branch, fix versions, and hotfixes (BIG-42)
 
-Some products (e.g. VC Field Assistant) accumulate features on **`staging`** while **`main`** stays production-ready:
+Some products (e.g. VC Field Assistant) accumulate features on **versioned staging branches** while **`main`** stays production-ready. `PROJECT_BRANCH_MAPPING=VFA:staging` is a prefix: a ticket on board release `0.2.3` opens its PR against **`staging-0.2.3`**. The first ticket on a new version creates that branch from **`main`**. `prepare deploy VFA 0.2.3` merges only `staging-0.2.3` → `main`, so later work on `0.3.0` stays off the cut. After that deploy is green, Bigas rebases newer `staging-*` branches onto the new `main` (`rebase_release.yml`). Conflicts open a `bigas-rebase/*` PR and launch Cursor to resolve them.
 
 | Setting | Purpose |
 |---|---|
-| `PROJECT_BRANCH_MAPPING=VFA:staging,DEFAULT:main` | Cursor implement + fallback PRs target `staging` for VFA; other projects stay on `main` |
-| Board **Releases** (or Jira Fix Version) | Active unreleased version — default on the board, or `BIGAS_PROJECT_ACTIVE_FIX_VERSION` as fallback |
+| `PROJECT_BRANCH_MAPPING=VFA:staging,DEFAULT:main` | Cursor implement + fallback PRs target `staging-{version}` for VFA; other projects stay on `main` |
+| Board **Releases** (or Jira Fix Version) | Ticket version selects the staging branch (`staging-0.2.3`). Default unreleased version, or `BIGAS_PROJECT_ACTIVE_FIX_VERSION` as fallback |
 | `hotfix` Jira/board label | Routes that issue's PR straight to `main`, skipping staging |
 | `@bigas hotfix VFA-123` / `POST cherry_pick_hotfix` | Cherry-picks a merged staging PR onto `main` and opens a hotfix PR |
 | `create_release_notes` + `create_github_release: true` + `mark_released: true` | Semver GitHub Release plus mark the version released (board carry-forward + Jira when configured) |
 
-Copy [`.github/workflows/cherry_pick.yml`](.github/workflows/cherry_pick.yml) into product repos that use staging. Bigas dispatches that workflow via `workflow_dispatch` (a real `git cherry-pick` in CI).
+Copy [`.github/workflows/cherry_pick.yml`](.github/workflows/cherry_pick.yml) and [`.github/workflows/rebase_release.yml`](.github/workflows/rebase_release.yml) into product repos that use staging. Bigas dispatches those workflows via `workflow_dispatch`. The oldest open cut still copies unversioned `staging` when that branch is ahead of `main` (one-time migration); newer versions always start from `main`.
 
 Two more Product tools round out the flow once you're shipping regularly:
 

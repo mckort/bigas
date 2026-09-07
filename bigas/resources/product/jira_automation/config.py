@@ -197,6 +197,7 @@ class JiraAutomationConfig:
         repo: str,
         *,
         labels: Optional[Iterable[str]] = None,
+        fix_version: Optional[str] = None,
     ) -> str:
         """PR / implement base branch from project mapping (staging vs main)."""
         return resolve_automerge_branch(
@@ -206,6 +207,7 @@ class JiraAutomationConfig:
             project_branch_map=self.project_branch_map,
             repo_base_branches=self.repo_base_branches,
             default_base_branch=self.default_base_branch,
+            fix_version=fix_version,
         )
 
     def is_project_allowed(self, project_key: str) -> bool:

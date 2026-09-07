@@ -21,11 +21,15 @@ from bigas.resources.product.jira_automation.config import (
     BIGAS_COMMENT_MARKER,
     JiraAutomationConfig,
 )
+from bigas.resources.product.release_workflow import is_versioned_feature_head
 
 logger = logging.getLogger(__name__)
 
 _ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
-_RELEASE_TITLE_RE = re.compile(r"^(release\s+|prepare deploy\b)", re.I)
+_RELEASE_TITLE_RE = re.compile(
+    r"^(release\s+|prepare deploy\b|resolve conflicts\b)",
+    re.I,
+)
 
 
 def extract_jira_issue_key(*texts: str) -> Optional[str]:
@@ -66,11 +70,15 @@ def should_skip_auto_ticket(
         return "dependabot"
     if _RELEASE_TITLE_RE.match(title):
         return "release_pr"
+    if head.startswith("bigas-rebase/"):
+        return "release_pr"
     resolved = cfg or JiraAutomationConfig.from_env()
     feature = (resolved.automerge_branch_for_project(project_key, repo) or "").strip()
     production = (resolved.base_branch_for_repo(repo) or "").strip()
     if feature and production and feature != production:
         if head == feature and base == production:
+            return "release_pr"
+        if is_versioned_feature_head(head, feature) and base == production:
             return "release_pr"
     return None
 

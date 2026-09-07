@@ -1,0 +1,90 @@
+# Rebase a versioned staging branch onto main after a release ships.
+# Copy this workflow to product repos that use staging-{version} → main.
+# Triggered by Bigas after a successful versioned deploy.
+name: Rebase release branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_branch:
+        description: Versioned staging branch (e.g. staging-0.3.0)
+        required: true
+        type: string
+      onto_branch:
+        description: Branch to rebase onto (default main)
+        required: false
+        default: main
+        type: string
+      shipped_version:
+        description: Version that just shipped (e.g. 0.2.3)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Rebase onto production
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+          ONTO_BRANCH: ${{ inputs.onto_branch }}
+          SHIPPED_VERSION: ${{ inputs.shipped_version }}
+          BIGAS_URL: ${{ vars.BIGAS_URL }}
+          BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
+        run: |
+          set -euo pipefail
+          git fetch origin "${ONTO_BRANCH}" "${RELEASE_BRANCH}"
+          git checkout -B "${RELEASE_BRANCH}" "origin/${RELEASE_BRANCH}"
+          if git rebase "origin/${ONTO_BRANCH}"; then
+            git push --force-with-lease origin "${RELEASE_BRANCH}"
+            echo "Rebased ${RELEASE_BRANCH} onto ${ONTO_BRANCH}"
+            exit 0
+          fi
+          git rebase --abort
+          SYNC="bigas-rebase/${RELEASE_BRANCH}"
+          git checkout -B "${SYNC}" "origin/${RELEASE_BRANCH}"
+          if git merge "origin/${ONTO_BRANCH}" --no-edit; then
+            git checkout "${RELEASE_BRANCH}"
+            git merge --ff-only "${SYNC}"
+            git push origin "${RELEASE_BRANCH}"
+            echo "Merged ${ONTO_BRANCH} into ${RELEASE_BRANCH} after rebase stopped (clean merge)"
+            exit 0
+          fi
+          git add -A
+          git commit --no-edit -m "WIP: resolve conflicts after ${SHIPPED_VERSION:-release} shipped" || true
+          git push --force -u origin "${SYNC}"
+          PR_URL="$(
+            gh pr view "${SYNC}" --json url -q .url || \
+            gh pr create \
+              --base "${RELEASE_BRANCH}" \
+              --head "${SYNC}" \
+              --title "Resolve conflicts: ${RELEASE_BRANCH} onto ${ONTO_BRANCH}" \
+              --body "After **${SHIPPED_VERSION:-the last release}** shipped, \`${RELEASE_BRANCH}\` could not rebase cleanly onto \`${ONTO_BRANCH}\`.
+
+          This PR merges \`${ONTO_BRANCH}\` into \`${RELEASE_BRANCH}\` with conflict markers left in place. Resolve them (keep both production fixes and unreleased work), then merge into \`${RELEASE_BRANCH}\`.
+
+          Opened by Bigas \`rebase_release.yml\`."
+          )"
+          echo "Opened conflict PR: ${PR_URL}"
+          if [ -n "${BIGAS_URL:-}" ] && [ -n "${BIGAS_API_KEY:-}" ] && [ -n "${PR_URL}" ]; then
+            curl -sS -X POST "${BIGAS_URL%/}/mcp/tools/autofix_pr" \
+              -H "Content-Type: application/json" \
+              -H "X-Bigas-Access-Key: ${BIGAS_API_KEY}" \
+              -d "{\"pr_url\": \"${PR_URL}\", \"force\": true, \"review_body\": \"Resolve every merge conflict in this PR. Keep both the newly shipped production changes from ${ONTO_BRANCH} and the unreleased work on ${RELEASE_BRANCH}. Remove all conflict markers. Do not target main.\"}" \
+              || true
+          fi
