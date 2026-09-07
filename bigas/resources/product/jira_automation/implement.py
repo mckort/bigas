@@ -546,8 +546,7 @@ class ImplementHandler:
                 self._report_implementation_timeout(
                     issue_key=issue_key,
                     summary=summary,
-                    agent_url=agent_url,
-                    agent_id=agent_id,
+                    agent_url=agent_url or agent_id,
                 )
 
         return {
@@ -618,14 +617,13 @@ class ImplementHandler:
         issue_key: str,
         summary: str,
         agent_url: str,
-        agent_id: str,
     ) -> None:
         label = issue_discord_label(issue_key, summary)
         detail = f"still running after ~{_poll_budget_seconds()}s"
         comment = (
             f"{BIGAS_COMMENT_MARKER} Implementation still in progress "
             f"(monitor timed out).\n"
-            f"Agent: {agent_url or agent_id}\n"
+            f"Agent: {agent_url}\n"
             f"Detail: {detail}\n"
             f"Left in In Progress (AI). Re-check the agent or move the card manually."
         )
@@ -640,7 +638,7 @@ class ImplementHandler:
         _post_discord_cto(
             f"**Implementation monitor timeout** {label}\n"
             f"Left in **In Progress (AI)**.\n"
-            f"Agent: {agent_url or agent_id}\n"
+            f"Agent: {agent_url}\n"
             f"{detail}"
         )
 
