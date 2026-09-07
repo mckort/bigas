@@ -230,6 +230,18 @@ Details: [GA4 setup](#ga4-setup).
 
 Details: [docs/cto-ai-usage.md](docs/cto-ai-usage.md).
 
+### 5. Model evaluation
+
+**Value:** Rank flagship models (OpenAI, Anthropic, Gemini) on a real product prompt pack. First pack is VC Field Assistant living analysis. Results go to the Product Manager thread and Discord.
+
+**Need:** the same LLM keys you already use (`OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`). Optional `TAVILY_API_KEY` (or `EVAL_TAVILY_API_KEY`) if a pack step searches the web.
+
+**How:** drop a YAML file in `eval/*.pack.yaml`. Bigas runs the models. A pack may fetch a public URL and optionally web-search on a step — that is Bigas-side research, not an API in your product. The VFA pack scores the **prompt suite + Bigas web research**, not VFA's full citation backend.
+
+**Try:** `python scripts/run_eval.py --pack vfa-living-analysis --dry-run`
+
+Details: [eval/README.md](eval/README.md), [AI Model Evaluation Engine](#ai-model-evaluation-engine-cloud-scheduler).
+
 ---
 
 ## Why Google Cloud Run?
@@ -855,13 +867,15 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Bigas AI usage | `0 16 * * 0` | `.../weekly_cto_ai_report` (CFO chat) |
 | Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
 | Proactive goal evaluation | `0 23 * * 0` | `.../api/agents/evaluate-goals` |
-| AI model evaluation (VFA) | `0 6 * * 1` | `.../tasks/eval/vc-field-assistant` |
+| AI model evaluation (VFA pack) | `0 6 * * 1` | `.../tasks/eval/vfa-living-analysis` |
 
 All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
 
 ### AI Model Evaluation Engine (Cloud Scheduler)
 
-Bigas can periodically benchmark flagship LLM models (OpenAI, Anthropic, Gemini) against modular use-case adapters. The first use case is **VC Field Assistant living analysis**: Bigas calls the real VFA eval-only pipeline at runtime (prompts stay in the VFA repo) with a public fixture — default **VC Field Assistant** / `https://vcfieldassistant.com`. Results are ranked with LLM-as-a-judge, stored in Bigas GCS, and posted to the **Product Manager** chat thread and Discord.
+Bigas periodically benchmarks flagship LLM models (OpenAI, Anthropic, Gemini) against **eval packs** — YAML files that name a public fixture, prompt sources, and optional Bigas-side web research. The first pack is **VC Field Assistant living analysis** (`eval/vfa-living-analysis.pack.yaml`). Prompts stay in the VFA repo (`prompt_from`); Bigas fetches them, runs the models, ranks with LLM-as-a-judge, stores artifacts in Bigas GCS, and posts to the **Product Manager** chat thread and Discord.
+
+This scores the VFA **prompt suite + Bigas web research** (fixture URL + optional Tavily snippets). It is not VFA's full citation / competitor-homepage pipeline.
 
 **Isolation rules (hard):**
 
@@ -869,14 +883,16 @@ Bigas can periodically benchmark flagship LLM models (OpenAI, Anthropic, Gemini)
 - Fixtures use public `company` + `url` only — never `workspaceId` / `companyId`.
 - Artifacts live in Bigas GCS (`eval-runs/...`) only.
 
-Configure `EVAL_VFA_ENDPOINT` to point at the VFA eval-only API (`POST /eval/living-analysis`). Set `EVAL_STORAGE_BUCKET` (or reuse `STORAGE_BUCKET_NAME`). Optional: `MODEL_EVAL_JUDGE_MODEL`, `MODEL_EVAL_BUDGET_USD` (default $15 per run).
+Set `EVAL_STORAGE_BUCKET` (or reuse `STORAGE_BUCKET_NAME`). Optional: `MODEL_EVAL_JUDGE_MODEL`, `MODEL_EVAL_BUDGET_USD` (default $15 per run), `TAVILY_API_KEY` / `EVAL_TAVILY_API_KEY` for landscape search. Without a search key, landscape still runs on the fixture page alone.
 
 CLI (local):
 
 ```bash
-python scripts/run_eval.py --use-case vc-field-assistant \
+python scripts/run_eval.py --pack vfa-living-analysis \
   --company "VC Field Assistant" --url https://vcfieldassistant.com --dry-run
 ```
+
+`--use-case vc-field-assistant` is the same pack (kept for the existing scheduler path).
 
 Cloud Scheduler (weekly, same auth as evaluate-goals — always requires `X-Bigas-Access-Key` or `CRON_SECRET`):
 
@@ -885,7 +901,7 @@ gcloud scheduler jobs create http bigas-eval-vfa-models \
   --location=europe-west1 \
   --schedule="0 6 * * 1" \
   --time-zone="Europe/Stockholm" \
-  --uri="https://YOUR-SERVICE-URL.a.run.app/tasks/eval/vc-field-assistant" \
+  --uri="https://YOUR-SERVICE-URL.a.run.app/tasks/eval/vfa-living-analysis" \
   --http-method=POST \
   --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
   --message-body='{"company":"VC Field Assistant","url":"https://vcfieldassistant.com"}' \

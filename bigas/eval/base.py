@@ -24,13 +24,17 @@ class EvalFixture:
     company_name: str
     website_url: str
     extra_urls: tuple[str, ...] = ()
+    input_text: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data: Dict[str, Any] = {
             "company_name": self.company_name,
             "website_url": self.website_url,
             "extra_urls": list(self.extra_urls),
         }
+        if self.input_text:
+            data["input_text"] = self.input_text
+        return data
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "EvalFixture":
@@ -40,10 +44,12 @@ class EvalFixture:
         extra = raw.get("extra_urls") or []
         if isinstance(extra, str):
             extra = [u.strip() for u in extra.split(",") if u.strip()]
+        input_text = str(raw.get("input_text") or raw.get("input") or "").strip()
         return cls(
             company_name=name,
             website_url=url,
             extra_urls=tuple(str(u).strip() for u in extra if str(u).strip()),
+            input_text=input_text,
         )
 
 
@@ -134,7 +140,7 @@ class EvalRunResult:
 
 
 class BaseUseCaseEvaluator(ABC):
-    """Thin adapter: invoke a product eval entry at runtime; do not own prompts."""
+    """Run a use case (typically a YAML pack). Prompts stay in the product repo."""
 
     use_case_id: str = ""
     display_name: str = ""
@@ -169,6 +175,13 @@ def register_use_case(cls: Type[BaseUseCaseEvaluator]) -> Type[BaseUseCaseEvalua
         raise ValueError(f"{cls.__name__} must set use_case_id")
     _USE_CASE_REGISTRY[cls.use_case_id] = cls
     return cls
+
+
+def register_use_case_alias(alias: str, cls: Type[BaseUseCaseEvaluator]) -> None:
+    key = (alias or "").strip().lower()
+    if not key:
+        raise ValueError("Use-case alias is required")
+    _USE_CASE_REGISTRY[key] = cls
 
 
 def get_use_case_evaluator(use_case_id: str) -> BaseUseCaseEvaluator:

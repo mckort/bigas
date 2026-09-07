@@ -148,7 +148,23 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("90.0", md)
 
 
-class VFAAdapterTests(unittest.TestCase):
+class VFAPackEvaluatorTests(unittest.TestCase):
+    def _inline_pack(self):
+        from bigas.eval.pack import pack_from_mapping
+
+        return pack_from_mapping(
+            {
+                "id": "vfa-living-analysis",
+                "name": "VC Field Assistant living analysis",
+                "fixture": {
+                    "company": "VC Field Assistant",
+                    "url": "https://vcfieldassistant.com",
+                },
+                "steps": [{"id": "classify", "prompt": "Classify {{fixture.company}}"}],
+                "rubric": "No invented figures.",
+            }
+        )
+
     def test_default_fixture(self):
         with patch.dict(
             "os.environ",
@@ -157,43 +173,29 @@ class VFAAdapterTests(unittest.TestCase):
                 "EVAL_VFA_DEFAULT_URL": "https://vcfieldassistant.com",
             },
         ):
-            evaluator = VCFieldAssistantEvaluator()
+            evaluator = VCFieldAssistantEvaluator(self._inline_pack())
             fixture = evaluator.default_fixture()
             self.assertEqual(fixture.website_url, "https://vcfieldassistant.com")
 
-    @patch("bigas.eval.use_cases.vc_field_assistant.requests.post")
-    def test_run_rejects_workspace_writes_in_response(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"sections": {}, "usage": {}, "wrote_to_workspace": True},
+    @patch("bigas.eval.use_cases.vc_field_assistant.complete_eval_model")
+    @patch("bigas.eval.use_cases.vc_field_assistant.fetch_page_text", return_value="Public homepage.")
+    def test_run_success_without_product_http(self, mock_fetch, mock_complete):
+        mock_complete.return_value = LLMCompletion(
+            text='{"category":"investor workspace"}',
+            usage=TokenUsage(prompt_tokens=100, candidates_tokens=50, total_tokens=150),
         )
-        with patch.dict("os.environ", {"EVAL_VFA_ENDPOINT": "https://vfa.example.com"}):
-            evaluator = VCFieldAssistantEvaluator()
-            fixture = EvalFixture("Test Co", "https://example.com")
-            with self.assertRaises(RuntimeError) as ctx:
-                evaluator.run(fixture, "gpt-4o")
-            self.assertIn("workspace writes", str(ctx.exception).lower())
-
-    @patch("bigas.eval.use_cases.vc_field_assistant.requests.post")
-    def test_run_success(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {
-                "sections": {"executive_summary": "Strong product."},
-                "usage": {"prompt_tokens": 100, "output_tokens": 50},
-            },
+        evaluator = VCFieldAssistantEvaluator(self._inline_pack())
+        output, usage = evaluator.run(
+            EvalFixture("Test Co", "https://example.com"),
+            "gpt-4o",
         )
-        with patch.dict("os.environ", {"EVAL_VFA_ENDPOINT": "https://vfa.example.com"}):
-            evaluator = VCFieldAssistantEvaluator()
-            output, usage = evaluator.run(
-                EvalFixture("Test Co", "https://example.com"),
-                "gpt-4o",
-            )
-            self.assertIn("executive_summary", output)
-            self.assertEqual(usage.prompt_tokens, 100)
-            mock_post.assert_called_once()
-            call_kwargs = mock_post.call_args.kwargs
-            self.assertNotIn("workspaceId", json.dumps(call_kwargs.get("json", {})))
+        self.assertIn("classify", output["steps"])
+        self.assertEqual(usage.prompt_tokens, 100)
+        mock_fetch.assert_called_once()
+        mock_complete.assert_called_once()
+        prompt = mock_complete.call_args[0][1]
+        self.assertIn("Test Co", prompt)
+        self.assertNotIn("workspaceId", prompt)
 
 
 class EvalRunnerTests(unittest.TestCase):
