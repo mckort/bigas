@@ -544,6 +544,7 @@ class TicketService:
         user_id: Optional[str] = None,
         key: Optional[str] = None,
         status: str = "To Do",
+        git_ref: Optional[str] = None,
     ) -> Dict[str, Any]:
         uid = user_id or _sync_user_id()
         board = self._store.find_board_for_project(project_key, uid)
@@ -551,7 +552,7 @@ class TicketService:
             board = self._store.create_board(
                 uid, name=f"{project_key} Board", project_key=project_key
             )
-        from bigas.tickets.releases import default_fix_version
+        from bigas.tickets.releases import fix_version_for_new_ticket
 
         resolved = (status or "").strip() or "To Do"
         if resolved != "To Do":
@@ -571,7 +572,7 @@ class TicketService:
             user_id=uid,
             key=key,
             status=resolved,
-            fix_version=default_fix_version(project_key),
+            fix_version=fix_version_for_new_ticket(project_key, git_ref=git_ref),
         )
         return ticket_to_api(ticket)
 

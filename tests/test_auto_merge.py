@@ -112,6 +112,7 @@ def test_maybe_auto_merge_success_posts_discord(
         repo="app",
         pr_number=12,
         merge_method="squash",
+        commit_title="Merge pull request (#12)",
     )
     client.enable_pull_request_auto_merge.assert_not_called()
     client.mark_pull_request_ready_for_review.assert_not_called()
@@ -152,6 +153,13 @@ def test_maybe_auto_merge_includes_jira_label(
     )
 
     assert result.get("ok") is True
+    client.merge_pull_request.assert_called_once_with(
+        owner="acme",
+        repo="app",
+        pr_number=12,
+        merge_method="squash",
+        commit_title="BIG-15: Let chat agents use tools, then answer (#12)",
+    )
     posted = mock_discord.call_args[0][0]
     assert "`BIG-15` — Restructure README and add Solo Founder Playbooks" in posted
     assert "Let chat agents use tools, then answer" in posted
@@ -185,6 +193,13 @@ def test_maybe_auto_merge_extracts_jira_key_from_pr_title(
     )
 
     assert result.get("ok") is True
+    client.merge_pull_request.assert_called_once_with(
+        owner="acme",
+        repo="app",
+        pr_number=12,
+        merge_method="squash",
+        commit_title="BIG-15: Let chat agents use tools (#12)",
+    )
     posted = mock_discord.call_args[0][0]
     assert "`BIG-15`" in posted
 
@@ -222,6 +237,7 @@ def test_maybe_auto_merge_enables_native_when_checks_block(
         repo="app",
         pr_number=12,
         merge_method="squash",
+        commit_headline="Merge pull request (#12)",
     )
     posted = mock_discord.call_args[0][0]
     assert "PR auto-merge enabled" in posted
@@ -339,12 +355,19 @@ def test_enable_pull_request_auto_merge_graphql(mock_get_pr, mock_post):
 
     client = GitHubPRCommentClient(token="tok")
     data = client.enable_pull_request_auto_merge(
-        owner="acme", repo="app", pr_number=3
+        owner="acme",
+        repo="app",
+        pr_number=3,
+        commit_headline="VFA-59: fix(deploy): use GCR mirror (#3)",
     )
     assert data["enabled"] is True
     assert data["merge_method"] == "squash"
     _, kwargs = mock_post.call_args
     assert kwargs["json"]["variables"]["mergeMethod"] == "SQUASH"
+    assert (
+        kwargs["json"]["variables"]["commitHeadline"]
+        == "VFA-59: fix(deploy): use GCR mirror (#3)"
+    )
 
 
 @patch("bigas.resources.cto.endpoints._post_to_discord_cto")

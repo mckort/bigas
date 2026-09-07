@@ -39,6 +39,28 @@ def test_ticket_adapter_assigns_active_fix_version(monkeypatch):
     assert updated["fix_version"] == "0.9.0"
 
 
+def test_ticket_adapter_falls_back_to_lowest_unreleased(monkeypatch):
+    reset_release_store_for_tests()
+    monkeypatch.delenv("BIGAS_PROJECT_ACTIVE_FIX_VERSION", raising=False)
+    from bigas.tickets.releases import create_release, fix_version_for_new_ticket
+
+    create_release("VFA", name="0.3.0")
+    create_release("VFA", name="0.2.3")
+    assert fix_version_for_new_ticket("VFA") == "0.2.3"
+    assert fix_version_for_new_ticket("VFA", git_ref="staging-0.3.0") == "0.3.0"
+
+    store = TicketJiraAdapter()._store
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Hotfix",
+        user_id="dev-user",
+        key="VFA-102",
+    )
+    adapter = TicketJiraAdapter()
+    assert adapter.ensure_issue_fix_version("VFA-102", project_key="VFA") == "0.2.3"
+
+
 def test_ticket_adapter_keeps_existing_fix_version(monkeypatch):
     monkeypatch.setenv("BIGAS_PROJECT_ACTIVE_FIX_VERSION", "VFA:0.9.0")
     store = TicketJiraAdapter()._store

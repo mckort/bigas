@@ -570,11 +570,14 @@ class GitHubPRCommentClient:
         pr_number: int,
         *,
         merge_method: str = "squash",
+        commit_headline: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Enable GitHub native auto-merge (waits for required checks) via GraphQL.
 
         Requires repository setting "Allow auto-merge" and a token that can merge.
+        Pass commit_headline so squash uses the PR title (ticket key) instead of
+        the first branch commit subject.
         """
         method = (merge_method or "squash").strip().upper() or "SQUASH"
         if method not in {"MERGE", "SQUASH", "REBASE"}:
@@ -589,29 +592,60 @@ class GitHubPRCommentClient:
                 f"Could not resolve GraphQL node_id for {owner}/{repo}#{pr_number}."
             )
 
-        mutation = """
-        mutation EnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
-          enablePullRequestAutoMerge(input: {
-            pullRequestId: $pullRequestId,
-            mergeMethod: $mergeMethod
-          }) {
-            pullRequest {
-              id
-              number
-              autoMergeRequest {
-                enabledAt
-                mergeMethod
+        headline = (commit_headline or "").strip()
+        if headline:
+            mutation = """
+            mutation EnableAutoMerge(
+              $pullRequestId: ID!,
+              $mergeMethod: PullRequestMergeMethod!,
+              $commitHeadline: String
+            ) {
+              enablePullRequestAutoMerge(input: {
+                pullRequestId: $pullRequestId,
+                mergeMethod: $mergeMethod,
+                commitHeadline: $commitHeadline
+              }) {
+                pullRequest {
+                  id
+                  number
+                  autoMergeRequest {
+                    enabledAt
+                    mergeMethod
+                  }
+                }
               }
             }
-          }
-        }
-        """
-        payload = {
-            "query": mutation,
-            "variables": {
+            """
+            variables: dict[str, Any] = {
                 "pullRequestId": node_id,
                 "mergeMethod": method,
-            },
+                "commitHeadline": headline,
+            }
+        else:
+            mutation = """
+            mutation EnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+              enablePullRequestAutoMerge(input: {
+                pullRequestId: $pullRequestId,
+                mergeMethod: $mergeMethod
+              }) {
+                pullRequest {
+                  id
+                  number
+                  autoMergeRequest {
+                    enabledAt
+                    mergeMethod
+                  }
+                }
+              }
+            }
+            """
+            variables = {
+                "pullRequestId": node_id,
+                "mergeMethod": method,
+            }
+        payload = {
+            "query": mutation,
+            "variables": variables,
         }
         resp = requests.post(
             "https://api.github.com/graphql",

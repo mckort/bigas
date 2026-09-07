@@ -278,6 +278,13 @@ def test_ensure_board_ticket_creates_once_and_retitles(monkeypatch):
     monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
     monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
     monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("BIGAS_PROJECT_ACTIVE_FIX_VERSION", raising=False)
+
+    from bigas.tickets.release_store import reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+
+    reset_release_store_for_tests()
+    create_release("FYDA", name="0.2.3")
 
     patched: list[dict] = []
     posted: list[str] = []
@@ -329,6 +336,7 @@ def test_ensure_board_ticket_creates_once_and_retitles(monkeypatch):
     ticket = store.get_ticket_by_key(key)
     assert ticket is not None
     assert ticket.get("status") == "To Do"
+    assert ticket.get("fix_version") == "0.2.3"
     assert "pull/9" in (ticket.get("description") or "")
     assert "2b45d003ea32204b73c935efa4d8cd5ad92bb1e6" in (ticket.get("description") or "")
 
@@ -351,6 +359,7 @@ def test_ensure_board_ticket_creates_once_and_retitles(monkeypatch):
     assert second.get("created") is False
     assert second.get("issue_key") == key
     ticket_store_module._store = None
+    reset_release_store_for_tests()
 
 
 def test_final_approval_creates_ticket_when_pr_has_no_key(monkeypatch):
@@ -417,11 +426,17 @@ def test_final_approval_creates_ticket_when_pr_has_no_key(monkeypatch):
 def test_extract_jira_issue_key_from_pr_texts():
     from bigas.resources.product.jira_automation.final_approval import (
         extract_jira_issue_key,
+        squash_commit_title,
+        title_with_issue_key,
     )
 
     assert extract_jira_issue_key("VFA-14: Brand reports", "") == "VFA-14"
     assert extract_jira_issue_key("title", "Jira: WAYW-3\nmore") == "WAYW-3"
     assert extract_jira_issue_key("no key here") is None
+    assert squash_commit_title("VFA-59: fix deploy", 198) == "VFA-59: fix deploy (#198)"
+    assert squash_commit_title("VFA-59: fix deploy (#198)", 198) == "VFA-59: fix deploy (#198)"
+    assert squash_commit_title("", 12) == "Merge pull request (#12)"
+    assert title_with_issue_key("fix deploy", "VFA-59") == "VFA-59: fix deploy"
 
 
 def test_final_approval_skips_when_already_in_status(monkeypatch):
