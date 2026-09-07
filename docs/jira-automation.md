@@ -13,7 +13,7 @@ Enrich description (keep human Brief) → **Description approval (manual)** → 
 Write **AI Plan (Bigas)** → **Design approval (manual)** → Discord **bigas-cto** and the CTO chat thread.
 
 ### Phase 3 — In Progress (AI)
-Launch Cursor cloud agent on the mapped GitHub repo (`autoCreatePR=true`) → comment agent URL on the issue → leave in **In Progress (AI)** → Discord **bigas-cto** and the CTO chat thread. If Cursor pushes the branch but cannot open the PR (typical GitHub App permission error), Bigas opens it with `GITHUB_TOKEN` (`{issue_key}:` title and `Jira: {issue_key}` in the body). The implement prompt tells the agent to remove dead/unused code created by its own change before it opens the PR (not a repo-wide cleanup).
+Launch Cursor cloud agent on the mapped GitHub repo (`autoCreatePR=true`) → comment agent URL on the issue → **wait on the same HTTP request** (Cloud Run CPU) until the agent is terminal or the poll budget expires → leave in **In Progress (AI)** → Discord **bigas-cto** and the CTO chat thread. If Cursor pushes the branch but cannot open the PR (typical GitHub App permission error), Bigas opens it with `GITHUB_TOKEN` (`{issue_key}:` title and `Jira: {issue_key}` in the body). Do not rely on a background thread — Cloud Run stops those when the request returns. The implement prompt tells the agent to remove dead/unused code created by its own change before it opens the PR (not a repo-wide cleanup).
 
 Simple tickets may skip Phases 1–2. Drag from To Do with a title, short brief, and/or screenshot; Implement runs from that context (no AI Research / AI Plan required).
 

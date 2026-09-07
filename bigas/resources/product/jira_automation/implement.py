@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import threading
 import time
 from typing import Any, Dict, Optional
 
@@ -69,16 +68,22 @@ def _monitor_seconds() -> int:
         return 900
 
 
-def _sync_wait_seconds() -> int:
+def _poll_budget_seconds() -> int:
     """
-    Inline poll budget after launch (Cloud Run only has reliable CPU during the request).
-    Long enough to catch agents that stop early to ask for confirmation (~2–3 min).
+    Inline poll budget after launch.
+
+    Cloud Run only keeps CPU for the HTTP request (automation-worker / webhook).
+    A daemon thread dies when that request returns, so we wait here — long enough
+    to see FINISHED and open the fallback PR. Cap below the 900s Cloud Run timeout
+    so `ensure_implement_pr` still has time to run.
     """
-    raw = (os.environ.get("BIGAS_JIRA_IMPLEMENT_SYNC_WAIT_SECONDS") or "240").strip()
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return 240
+    raw = (os.environ.get("BIGAS_JIRA_IMPLEMENT_SYNC_WAIT_SECONDS") or "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return max(60, min(_monitor_seconds(), 840))
 
 
 def _monitor_interval_seconds() -> int:
@@ -516,9 +521,8 @@ class ImplementHandler:
             ) from e
 
         outcome: Optional[Dict[str, Any]] = None
-        monitor_started = False
         if agent_id:
-            # Prefer inline wait so Cloud Run CPU stays allocated for early aborts.
+            # Stay on this request so Cloud Run keeps CPU until FINISHED + fallback PR.
             outcome = self._poll_until_terminal(
                 agent_id=agent_id,
                 run_id=run_id,
@@ -527,7 +531,7 @@ class ImplementHandler:
                 issue_key=issue_key,
                 summary=summary,
                 agent_url=agent_url,
-                timeout_seconds=_sync_wait_seconds(),
+                timeout_seconds=_poll_budget_seconds(),
             )
             if outcome:
                 self._report_implementation_outcome(
@@ -538,17 +542,12 @@ class ImplementHandler:
                     agent_id=agent_id,
                 )
             else:
-                # Still running — best-effort background monitor (needs non-throttled CPU).
-                self._start_outcome_monitor(
+                self._report_implementation_timeout(
                     issue_key=issue_key,
                     summary=summary,
-                    repo=repo,
-                    base_branch=base_branch,
-                    agent_id=agent_id,
-                    run_id=run_id,
                     agent_url=agent_url,
+                    agent_id=agent_id,
                 )
-                monitor_started = True
 
         return {
             "ok": True,
@@ -567,36 +566,9 @@ class ImplementHandler:
             "had_plan_section": _has_text(plan),
             "had_research_section": _has_text(research),
             "human_comments_included": _has_text(comments_text),
-            "monitor_started": monitor_started,
+            "monitor_started": False,
             "outcome": outcome,
         }
-
-    def _start_outcome_monitor(
-        self,
-        *,
-        issue_key: str,
-        summary: str,
-        repo: str,
-        base_branch: str,
-        agent_id: str,
-        run_id: str,
-        agent_url: str,
-    ) -> None:
-        t = threading.Thread(
-            target=self._monitor_implementation_outcome,
-            kwargs={
-                "issue_key": issue_key,
-                "summary": summary,
-                "repo": repo,
-                "base_branch": base_branch,
-                "agent_id": agent_id,
-                "run_id": run_id,
-                "agent_url": agent_url,
-            },
-            name=f"jira-implement-monitor-{issue_key}",
-            daemon=True,
-        )
-        t.start()
 
     def _poll_until_terminal(
         self,
@@ -640,41 +612,16 @@ class ImplementHandler:
             time.sleep(interval)
         return None
 
-    def _monitor_implementation_outcome(
+    def _report_implementation_timeout(
         self,
         *,
         issue_key: str,
         summary: str,
-        repo: str,
-        base_branch: str,
-        agent_id: str,
-        run_id: str,
         agent_url: str,
+        agent_id: str,
     ) -> None:
-        """Background poll until terminal; comment + Discord on no PR / failure."""
-        remaining = max(60, _monitor_seconds() - _sync_wait_seconds())
-        outcome = self._poll_until_terminal(
-            agent_id=agent_id,
-            run_id=run_id,
-            repo=repo,
-            base_branch=base_branch,
-            issue_key=issue_key,
-            summary=summary,
-            agent_url=agent_url,
-            timeout_seconds=remaining,
-        )
         label = issue_discord_label(issue_key, summary)
-        if outcome:
-            self._report_implementation_outcome(
-                issue_key=issue_key,
-                label=label,
-                outcome=outcome,
-                agent_url=agent_url or outcome.get("agent_url") or "",
-                agent_id=agent_id,
-            )
-            return
-
-        detail = f"still running after ~{_monitor_seconds()}s"
+        detail = f"still running after ~{_poll_budget_seconds()}s"
         comment = (
             f"{BIGAS_COMMENT_MARKER} Implementation still in progress "
             f"(monitor timed out).\n"
