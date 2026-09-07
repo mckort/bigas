@@ -96,12 +96,13 @@ class RegistryTests(unittest.TestCase):
         storage.store_json.assert_called_once()
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("bigas.eval.registry._discover_anthropic_models", return_value=[])
     @patch("bigas.eval.registry._discover_gemini_models", return_value=[])
     @patch("bigas.eval.registry._discover_openai_models", return_value=[])
-    def test_discover_fallback_models(self, *_mocks):
+    def test_discover_anthropic_models_when_other_providers_fail(self, *_mocks):
         models = discover_pro_models()
-        self.assertGreaterEqual(len(models), 3)
+        self.assertGreaterEqual(len(models), 2)
+        providers = {m.provider for m in models}
+        self.assertIn("anthropic", providers)
 
 
 class JudgeTests(unittest.TestCase):

@@ -13,6 +13,10 @@ from bigas.eval.storage import EvalStorage, eval_bucket_name
 logger = logging.getLogger(__name__)
 
 
+def report_json_blob_path(run: EvalRunResult) -> str:
+    return f"{run.use_case}/reports/{run.run_id}/ranking.json"
+
+
 def build_markdown_report(run: EvalRunResult) -> str:
     ranked = run.ranked_results()
     lines = [
@@ -76,16 +80,14 @@ def publish_report(
     post_chat: bool = True,
 ) -> dict:
     """Persist report and post to PM Discord + product chat thread."""
+    if not run.report_blob:
+        run.report_blob = report_json_blob_path(run)
+
     body = (markdown or run.report_markdown or build_markdown_report(run)).strip()
     run.report_markdown = body
 
     storage = EvalStorage()
-    report_blob = f"{run.use_case}/reports/{run.run_id}/ranking.md"
-    storage.store_json(
-        report_blob.replace(".md", ".json"),
-        run.to_dict(),
-    )
-    run.report_blob = report_blob.replace(".md", ".json")
+    storage.store_json(run.report_blob, run.to_dict())
 
     posted_discord = False
     posted_chat = False

@@ -35,10 +35,21 @@ def run_eval_task(use_case: str):
       }
     """
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
     try:
         reject_customer_identifiers(data)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+    extra_urls = data.get("extra_urls")
+    if extra_urls is not None and not isinstance(extra_urls, list):
+        return jsonify({"error": "extra_urls must be a list of strings"}), 400
+
+    models = data.get("models")
+    if models is not None and not isinstance(models, list):
+        return jsonify({"error": "models must be a list of strings"}), 400
 
     fixture = None
     company = (data.get("company") or data.get("company_name") or "").strip()
@@ -48,7 +59,7 @@ def run_eval_task(use_case: str):
             {
                 "company_name": company,
                 "website_url": url,
-                "extra_urls": data.get("extra_urls") or [],
+                "extra_urls": extra_urls or [],
             }
         )
 
@@ -56,7 +67,6 @@ def run_eval_task(use_case: str):
     skip_judge = bool(data.get("skip_judge"))
     post_discord = data.get("post_discord", True) is not False
     post_chat = data.get("post_to_chat", True) is not False
-    models = data.get("models")
 
     try:
         runner = EvalRunner()

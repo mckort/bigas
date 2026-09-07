@@ -124,13 +124,6 @@ def discover_pro_models() -> List[ModelCandidate]:
             seen.add(item.key)
             candidates.append(item)
 
-    if not candidates:
-        for provider, model_id in DEFAULT_PRO_MODELS:
-            item = ModelCandidate(provider, model_id)
-            if item.key not in seen:
-                seen.add(item.key)
-                candidates.append(item)
-
     return candidates
 
 

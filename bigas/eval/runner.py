@@ -22,7 +22,7 @@ from bigas.eval.registry import (
     get_candidate_models,
     update_eval_state_after_run,
 )
-from bigas.eval.reporter import build_markdown_report, publish_report
+from bigas.eval.reporter import build_markdown_report, publish_report, report_json_blob_path
 from bigas.eval.storage import EvalStorage
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ class EvalRunner:
                 )
                 for c in candidates
             ]
+            run.report_blob = report_json_blob_path(run)
             run.report_markdown = build_markdown_report(run)
             if not skip_report:
                 publish_report(run, post_discord=False, post_chat=False)
@@ -122,6 +123,7 @@ class EvalRunner:
                 storage=self.storage,
             )
 
+        run.report_blob = report_json_blob_path(run)
         run.report_markdown = build_markdown_report(run)
         self._persist_run_artifacts(run)
 
