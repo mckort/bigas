@@ -456,6 +456,7 @@ def format_git_reconcile_report(
         "extra_commits": extra,
         "needs_confirm": needs_confirm,
         "errors": list(errors or []),
+        "compared": list(compared or []),
     }
 
 
@@ -464,18 +465,21 @@ def reconcile_release_with_git(
     project_key: str,
     version: str,
     in_cut: List[Dict[str, Any]],
+    head_ref: str = "main",
 ) -> Dict[str, Any]:
     try:
-        shipping = list_shipping_commits(project_key=project_key)
+        shipping = list_shipping_commits(project_key=project_key, head_ref=head_ref)
     except Exception as exc:
         logger.exception("list_shipping_commits failed")
-        return format_git_reconcile_report(
+        failed = format_git_reconcile_report(
             project_key=project_key,
             version=version,
             in_cut=in_cut,
             commits=[],
             errors=[str(exc)],
         )
+        failed["commits"] = []
+        return failed
     commits = list(shipping.get("commits") or [])
     try:
         commits = _enrich_commits_with_pr_keys(
@@ -485,7 +489,7 @@ def reconcile_release_with_git(
         )
     except Exception:
         logger.warning("Could not attach PR keys to shipping commits", exc_info=True)
-    return format_git_reconcile_report(
+    report = format_git_reconcile_report(
         project_key=project_key,
         version=version,
         in_cut=in_cut,
@@ -494,6 +498,8 @@ def reconcile_release_with_git(
         truncated=bool(shipping.get("truncated")),
         errors=shipping.get("errors") or [],
     )
+    report["commits"] = commits
+    return report
 
 
 def _github_client():
@@ -524,6 +530,133 @@ def _branch_pair(project_key: str, repo: str) -> Tuple[str, str]:
     return feature, production
 
 
+def compare_ahead_count(compare: Dict[str, Any]) -> int:
+    """Commits (or files) that `head` has beyond `base` in a GitHub compare payload."""
+    ahead = int(compare.get("ahead_by") or 0)
+    total = int(compare.get("total_commits") or 0)
+    commits = compare.get("commits") if isinstance(compare.get("commits"), list) else []
+    files = compare.get("files") if isinstance(compare.get("files"), list) else []
+    count = max(ahead, total, len(commits))
+    if count <= 0 and files:
+        return 1
+    return count
+
+
+def cut_ticket_keys(project_key: str, version: str) -> List[str]:
+    keys: List[str] = []
+    seen = set()
+    for ticket in tickets_on_version(project_key, version):
+        if not is_in_release_cut(ticket.get("status") or "", project_key=project_key):
+            continue
+        key = (ticket.get("key") or "").strip().upper()
+        if key and key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def _keys_suffix(keys: List[str], *, limit: int = 8) -> str:
+    if not keys:
+        return ""
+    shown = keys[:limit]
+    extra = f" +{len(keys) - limit}" if len(keys) > limit else ""
+    return f" ({', '.join(shown)}{extra})"
+
+
+def release_pr_title(version: str, feature: str, production: str, keys: List[str]) -> str:
+    return (
+        f"Release {version}: merge {feature} into {production}"
+        f"{_keys_suffix(keys)}"
+    )
+
+
+def release_pr_body(
+    project_key: str,
+    version: str,
+    feature: str,
+    production: str,
+    keys: List[str],
+) -> str:
+    lines = [
+        f"Prepare deploy of **{project_key} {version}**.",
+        "",
+        f"Merges `{feature}` into `{production}` so production can ship this cut.",
+    ]
+    if keys:
+        lines.append("")
+        lines.append("Cut tickets:")
+        for key in keys:
+            lines.append(f"- {key}")
+    return "\n".join(lines)
+
+
+def release_commit_title(version: str, keys: List[str]) -> str:
+    return f"Release {version}: merge into main{_keys_suffix(keys)}"
+
+
+def format_main_ship_report(
+    *,
+    commits: List[Dict[str, Any]],
+    compared: Optional[List[str]] = None,
+    files_changed: Optional[int] = None,
+) -> str:
+    lines = ["**On `main` now — yes deploys this**"]
+    if compared:
+        lines.append("Compared `" + "`, `".join(compared) + "`.")
+    if commits:
+        lines.append("")
+        for commit in commits[:20]:
+            short = (commit.get("sha") or "")[:7]
+            subject = (
+                commit.get("subject")
+                or _first_line(commit.get("message") or "")
+                or "(no subject)"
+            )
+            prefix = f"`{short}` " if short else ""
+            lines.append(f"- {prefix}{subject}")
+        if len(commits) > 20:
+            lines.append(f"- …and {len(commits) - 20} more")
+    else:
+        lines.append("")
+        lines.append("No commits on `main` that are not already in production.")
+    if files_changed is not None:
+        lines.append("")
+        lines.append(f"{files_changed} file(s) changed vs production.")
+    return "\n".join(lines)
+
+
+def _already_on_main(
+    *,
+    repo: str,
+    production: str,
+    reason: str,
+    thread_id: Optional[str],
+) -> Dict[str, Any]:
+    _post(thread_id, reason)
+    return {
+        "status": "already_on_main",
+        "repo": repo,
+        "ref": production,
+        "reason": reason,
+    }
+
+
+def _compare_feature_ahead(
+    client: Any,
+    owner: str,
+    name: str,
+    production: str,
+    feature: str,
+) -> Tuple[int, Dict[str, Any]]:
+    from bigas.resources.devops.github_actions import GitHubActionsError
+
+    try:
+        compare = client.compare_refs(owner, name, production, feature)
+    except GitHubActionsError as exc:
+        raise DevOpsError(str(exc)) from exc
+    return compare_ahead_count(compare), compare
+
+
 def ensure_release_on_main(
     *,
     project_key: str,
@@ -531,23 +664,74 @@ def ensure_release_on_main(
     thread_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create/reuse a feature→main PR when needed. Returns merged or polling."""
-    from bigas.resources.devops.github_actions import GitHubActionsError
-
     repo = _project_repo(project_key)
     feature, production = _branch_pair(project_key, repo)
-    if feature == production:
-        return {"status": "already_on_main", "repo": repo, "ref": production}
-
     owner, name = repo.split("/", 1)
     client = _github_client()
-    try:
-        compare = client.compare_refs(owner, name, production, feature)
-    except GitHubActionsError as exc:
-        raise DevOpsError(str(exc)) from exc
+    cut_keys = cut_ticket_keys(project_key, version)
 
-    ahead = int(compare.get("ahead_by") or 0)
+    if feature == production:
+        _post(
+            thread_id,
+            f"`{project_key}` maps `{feature}` as both feature and production. "
+            f"Checking whether `staging` is ahead of `{production}`…",
+        )
+        if feature != "staging":
+            try:
+                ahead, _compare = _compare_feature_ahead(
+                    client, owner, name, production, "staging"
+                )
+            except DevOpsError as exc:
+                return _already_on_main(
+                    repo=repo,
+                    production=production,
+                    reason=(
+                        f"No separate feature branch to merge (`{feature}` is production), "
+                        f"and `staging` could not be compared ({exc})."
+                    ),
+                    thread_id=thread_id,
+                )
+            if ahead > 0:
+                feature = "staging"
+                _post(
+                    thread_id,
+                    f"`staging` is **{ahead}** commit(s) ahead of `{production}`. "
+                    "Opening a release PR.",
+                )
+            else:
+                return _already_on_main(
+                    repo=repo,
+                    production=production,
+                    reason=(
+                        f"`staging` is not ahead of `{production}`. "
+                        f"Nothing to merge; continuing with `{production}`."
+                    ),
+                    thread_id=thread_id,
+                )
+        else:
+            return _already_on_main(
+                repo=repo,
+                production=production,
+                reason=(
+                    f"`{project_key}` has no separate feature branch "
+                    f"(`{feature}` is also production). Continuing with `{production}`."
+                ),
+                thread_id=thread_id,
+            )
+
+    ahead, _compare = _compare_feature_ahead(
+        client, owner, name, production, feature
+    )
     if ahead <= 0:
-        return {"status": "already_on_main", "repo": repo, "ref": production}
+        return _already_on_main(
+            repo=repo,
+            production=production,
+            reason=(
+                f"`{feature}` is not ahead of `{production}` "
+                f"(0 commit(s) to merge). Continuing with `{production}`."
+            ),
+            thread_id=thread_id,
+        )
 
     existing = client.find_open_pull_request(
         owner, name, head=feature, base=production
@@ -564,11 +748,8 @@ def ensure_release_on_main(
         created = client.create_pull_request(
             owner,
             name,
-            title=f"Release {version}: merge {feature} into {production}",
-            body=(
-                f"Prepare deploy of **{project_key} {version}**.\n\n"
-                f"Merges `{feature}` into `{production}` so production can ship this cut."
-            ),
+            title=release_pr_title(version, feature, production, cut_keys),
+            body=release_pr_body(project_key, version, feature, production, cut_keys),
             head=feature,
             base=production,
         )
@@ -588,6 +769,7 @@ def ensure_release_on_main(
         thread_id=thread_id,
         project_key=project_key,
         version=version,
+        cut_keys=cut_keys,
     )
 
 
@@ -599,6 +781,7 @@ def review_and_merge_release_pr(
     project_key: str = "",
     version: str = "",
     phase: str = "initial",
+    cut_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     from bigas.resources.cto.autofix.heuristics import (
         review_is_ready_to_merge,
@@ -626,6 +809,7 @@ def review_and_merge_release_pr(
             "ref": "main",
             "project_key": project_key,
             "version": version,
+            "cut_keys": list(cut_keys or []),
         }
 
     if pr.get("draft"):
@@ -667,6 +851,7 @@ def review_and_merge_release_pr(
             thread_id=thread_id,
             project_key=project_key,
             version=version,
+            cut_keys=cut_keys,
         )
 
     needs, reason = review_needs_autofix(review_body)
@@ -681,6 +866,7 @@ def review_and_merge_release_pr(
             thread_id=thread_id,
             project_key=project_key,
             version=version,
+            cut_keys=cut_keys,
         )
 
     return _launch_autofix_and_poll(
@@ -692,6 +878,7 @@ def review_and_merge_release_pr(
         project_key=project_key,
         version=version,
         reason=reason,
+        cut_keys=cut_keys,
     )
 
 
@@ -706,6 +893,7 @@ def _merge_or_wait(
     thread_id: Optional[str],
     project_key: str,
     version: str,
+    cut_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     from bigas.resources.cto.pr_review.github_client import (
         GitHubMergeNotReadyError,
@@ -718,7 +906,9 @@ def _merge_or_wait(
             repo_name,
             pr_number,
             merge_method="squash",
-            commit_title=f"Release {version}: merge into main" if version else None,
+            commit_title=release_commit_title(version, list(cut_keys or []))
+            if version
+            else None,
         )
         _complete_pipeline_progress(thread_id)
         _post(thread_id, f"✅ Merged release PR: {pr_url}")
@@ -729,6 +919,7 @@ def _merge_or_wait(
             "ref": "main",
             "project_key": project_key,
             "version": version,
+            "cut_keys": list(cut_keys or []),
         }
     except GitHubMergeNotReadyError:
         try:
@@ -752,6 +943,7 @@ def _merge_or_wait(
                 "pr_url": pr_url,
                 "project_key": project_key,
                 "version": version,
+                "cut_keys": list(cut_keys or []),
                 "started_at": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -772,6 +964,7 @@ def _launch_autofix_and_poll(
     project_key: str,
     version: str,
     reason: str,
+    cut_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     from bigas.resources.cto.autofix.service import AutofixError, AutofixService
 
@@ -798,6 +991,7 @@ def _launch_autofix_and_poll(
             project_key=project_key,
             version=version,
             phase="post_autofix",
+            cut_keys=cut_keys,
         )
     if launched.get("skipped") and not launched.get("launched"):
         _complete_pipeline_progress(thread_id)
@@ -826,6 +1020,7 @@ def _launch_autofix_and_poll(
             "pr_url": pr_url,
             "project_key": project_key,
             "version": version,
+            "cut_keys": list(cut_keys or []),
             "agent_id": launched.get("agent_id") or "",
             "run_id": launched.get("run_id") or "",
             "started_at": datetime.now(timezone.utc).isoformat(),
@@ -873,6 +1068,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
             thread_id=thread_id,
             project_key=poll.get("project_key") or "",
             version=poll.get("version") or "",
+            merge_status="merged",
         )
 
     phase = poll.get("phase") or "autofix"
@@ -907,6 +1103,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
             project_key=poll.get("project_key") or "",
             version=poll.get("version") or "",
             phase="post_autofix",
+            cut_keys=list(poll.get("cut_keys") or []),
         )
         result.setdefault("project_key", poll.get("project_key") or "")
         result.setdefault("version", poll.get("version") or "")
@@ -921,6 +1118,7 @@ def _prepare_result_to_poll(thread_id: str, result: Dict[str, Any]) -> Dict[str,
             thread_id=thread_id,
             project_key=result.get("project_key") or "",
             version=result.get("version") or "",
+            merge_status="merged",
         )
     if result.get("status") == "polling":
         return {"status": "in_progress", "active": True}
@@ -932,8 +1130,9 @@ def continue_after_main_ready(
     thread_id: Optional[str],
     project_key: str,
     version: str,
+    merge_status: str = "merged",
 ) -> Dict[str, Any]:
-    """Risk check + feature report, then confirm or auto-deploy."""
+    """Risk check + feature report, then confirm or stop if main is empty."""
     key = normalize_project_key(project_key)
     try:
         ver = normalize_version_name(version)
@@ -944,7 +1143,9 @@ def continue_after_main_ready(
 
     report, in_cut, open_tickets = format_version_ticket_report(key, ver)
     _post(thread_id, report)
-    git = reconcile_release_with_git(project_key=key, version=ver, in_cut=in_cut)
+    git = reconcile_release_with_git(
+        project_key=key, version=ver, in_cut=in_cut, head_ref="main"
+    )
     if git.get("text"):
         _post(thread_id, git["text"])
 
@@ -955,7 +1156,7 @@ def continue_after_main_ready(
         status="in_progress",
     )
     try:
-        risk = check_deployment_risk(project_key=key)
+        risk = check_deployment_risk(project_key=key, head_ref="main")
     except DevOpsError as exc:
         _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Pre-check failed: {exc}")
@@ -968,9 +1169,36 @@ def continue_after_main_ready(
 
     from bigas.resources.devops.pipeline import _format_risk_for_chat
 
+    files_changed = risk.get("total_files_changed")
+    if not isinstance(files_changed, int):
+        files_changed = None
+    _post(
+        thread_id,
+        format_main_ship_report(
+            commits=list(git.get("commits") or []),
+            compared=list(git.get("compared") or []),
+            files_changed=files_changed,
+        ),
+    )
     _post(thread_id, _format_risk_for_chat(risk))
     risk_level = (risk.get("risk_level") or "low").lower()
     _complete_pipeline_progress(thread_id)
+
+    missing = git.get("missing_from_git") or []
+    extra = git.get("extra_commits") or []
+    skipped_merge = (merge_status or "") == "already_on_main"
+    if skipped_merge and missing:
+        _post(
+            thread_id,
+            "I did not merge a feature branch onto `main`, and "
+            f"**{len(missing)} cut ticket(s)** are not on `main`. "
+            "I will not ask to deploy. Land the cut on `main` (or ask me to "
+            "prepare again) once the code is there.",
+        )
+        return {
+            "status": "complete",
+            "summary": "Cut tickets are not on main; deploy skipped.",
+        }
 
     pending = {
         "kind": "prepare",
@@ -979,10 +1207,8 @@ def continue_after_main_ready(
         "risk_level": risk_level,
         "repo": risk.get("repo"),
         "open_ticket_keys": [t.get("key") for t in open_tickets if t.get("key")],
-        "missing_from_git": [
-            t.get("key") for t in (git.get("missing_from_git") or []) if t.get("key")
-        ],
-        "extra_commit_count": len(git.get("extra_commits") or []),
+        "missing_from_git": [t.get("key") for t in missing if t.get("key")],
+        "extra_commit_count": len(extra),
         "site_urls": risk.get("site_urls") or [],
     }
     from bigas.resources.devops.pipeline import _set_pending
@@ -993,8 +1219,6 @@ def continue_after_main_ready(
         reasons.append(f"risk level is **{risk_level}**")
     if open_tickets:
         reasons.append(f"**{len(open_tickets)} open ticket(s)** would be left out")
-    missing = git.get("missing_from_git") or []
-    extra = git.get("extra_commits") or []
     if missing:
         reasons.append(f"**{len(missing)} cut ticket(s)** were not found in git")
     if extra:
@@ -1097,7 +1321,12 @@ def run_prepare_deploy(
     if merge.get("status") == "failed":
         return {"status": "complete", "summary": merge.get("summary") or "Prepare failed."}
 
-    return continue_after_main_ready(thread_id=thread_id, project_key=key, version=ver)
+    return continue_after_main_ready(
+        thread_id=thread_id,
+        project_key=key,
+        version=ver,
+        merge_status=str(merge.get("status") or "merged"),
+    )
 
 
 def finalize_versioned_deploy(thread_id: str, poll: Dict[str, Any]) -> None:
