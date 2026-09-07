@@ -94,9 +94,22 @@ class VFAPackIntegrationTests(unittest.TestCase):
         classify = next(step for step in pack.steps if step.id == "classify")
         self.assertFalse(classify.prompt_from)
         self.assertIn("Classify this portfolio company", classify.resolved_prompt)
+        self.assertNotIn("{namn}", classify.resolved_prompt)
+        self.assertNotIn("{corpus", classify.resolved_prompt)
+        primary = next(step for step in pack.steps if step.id == "primary")
+        for token in (
+            "<sektionsprompt>",
+            "om uppdatering",
+            "{beskrivningssektioner}",
+            "{bekräftade KPI",
+            "{uppladdat material",
+        ):
+            self.assertNotIn(token, primary.resolved_prompt, msg=f"unresolved placeholder {token!r}")
         landscape = next(step for step in pack.steps if step.id == "landscape")
         self.assertEqual(landscape.research.provider, "web")
         self.assertIn("Write three buckets", landscape.resolved_prompt)
+        self.assertIn("Bucket assignment:", landscape.resolved_prompt)
+        self.assertNotIn("{guardrails", landscape.resolved_prompt)
 
     @patch("bigas.eval.runner.LLMJudge")
     @patch("bigas.eval.runner.get_candidate_models")
