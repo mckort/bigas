@@ -1,0 +1,62 @@
+# Evaluates the VFA living-analysis prompt suite + Bigas-side web research.
+# This is not the full VFA backend (no Tavily citation chain, no workspace writes).
+id: vfa-living-analysis
+name: VC Field Assistant living analysis
+source: https://github.com/mckort/vcfieldassistant
+fixture:
+  company: VC Field Assistant
+  url: https://vcfieldassistant.com
+steps:
+  - id: classify
+    prompt_from: docs/analysis-prompts.md#classify
+    input: |
+      Company: {{fixture.company}}
+      SOURCE EXCERPT:
+      {{fixture.page}}
+  - id: primary
+    prompt_from: docs/analysis-prompts.md#primary
+    input: |
+      COMPANY: {{fixture.company}}
+      COMPANY PAGE:
+      {{fixture.page}}
+      CLASSIFICATION:
+      {{steps.classify.output}}
+  - id: landscape
+    prompt_from: docs/analysis-prompts.md#competitive-landscape
+    input: |
+      COMPANY: {{fixture.company}}
+      COMPANY PAGE:
+      {{fixture.page}}
+      CLASSIFICATION:
+      {{steps.classify.output}}
+      WEB RESEARCH SNIPPETS:
+      {{research.snippets}}
+    research:
+      provider: web
+      queries:
+        - "{{steps.classify.category}} alternatives"
+        - "alternatives to {{fixture.company}} {{steps.classify.customer_segment}}"
+        - "{{steps.classify.category}} G2"
+      fetch_urls_from: snippets
+      max_pages: 6
+  - id: moats
+    prompt_from: docs/analysis-prompts.md#guardrails-moats
+    input: |
+      PRIMARY ANALYSIS:
+      {{steps.primary.output}}
+      COMPETITIVE LANDSCAPE:
+      {{steps.landscape.output}}
+  - id: thesis
+    prompt_from: docs/analysis-prompts.md#investment-thesis
+    input: |
+      PRIMARY ANALYSIS:
+      {{steps.primary.output}}
+      COMPETITIVE LANDSCAPE:
+      {{steps.landscape.output}}
+      MOATS:
+      {{steps.moats.output}}
+rubric: |
+  No invented figures. Landscape names must appear in the fixture page or research snippets.
+  Three competitive buckets (overlapping, ad-hoc substitutes, complementary).
+  Structured sections: overview, market, strengths/risks, landscape, moats, thesis.
+  This scores the prompt suite + Bigas web research, not VFA's full citation pipeline.

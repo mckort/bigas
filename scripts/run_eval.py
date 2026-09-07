@@ -16,8 +16,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run Bigas modular model evaluation")
     parser.add_argument(
         "--use-case",
-        required=True,
-        help="Use case id (e.g. vc-field-assistant)",
+        dest="use_case",
+        help="Use case / pack id (e.g. vfa-living-analysis or vc-field-assistant)",
+    )
+    parser.add_argument(
+        "--pack",
+        dest="pack",
+        help="Eval pack id (alias for --use-case)",
     )
     parser.add_argument("--company", help="Fixture company name")
     parser.add_argument("--url", help="Fixture website URL")
@@ -30,8 +35,11 @@ def main() -> int:
     parser.add_argument("--no-discord", action="store_true", help="Skip Discord posting")
     parser.add_argument("--no-chat", action="store_true", help="Skip PM chat posting")
     args = parser.parse_args()
+    use_case = (args.pack or args.use_case or "").strip()
+    if not use_case:
+        parser.error("one of --pack / --use-case is required")
 
-    # Register adapters
+    # Register pack evaluators
     import bigas.eval.use_cases.vc_field_assistant  # noqa: F401
     from bigas.eval.base import EvalFixture
     from bigas.eval.reporter import summarize_for_response
@@ -52,7 +60,7 @@ def main() -> int:
 
     runner = EvalRunner()
     result = runner.run(
-        args.use_case,
+        use_case,
         fixture=fixture,
         models=models,
         dry_run=args.dry_run,

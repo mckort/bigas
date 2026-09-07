@@ -1,11 +1,22 @@
-"""Integration-style tests for VC Field Assistant model eval."""
+"""Integration-style tests for VC Field Assistant pack eval."""
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from bigas.eval.base import EvalFixture
+from bigas.eval.base import EvalFixture, get_use_case_evaluator, list_use_cases
+from bigas.eval.pack import load_pack
 from bigas.eval.runner import EvalRunner
+from bigas.llm.completion import LLMCompletion
+from bigas.llm.usage import TokenUsage
+
+_VFA_PROMPTS = (
+    Path(__file__).resolve().parents[1].parent
+    / "vcfieldassistant"
+    / "docs"
+    / "analysis-prompts.md"
+)
 
 
 class EvalEndpointTests(unittest.TestCase):
@@ -48,6 +59,23 @@ class EvalEndpointTests(unittest.TestCase):
         data = resp.get_json()
         self.assertEqual(data["use_case"], "vc-field-assistant")
 
+    @patch("bigas.eval.endpoints.EvalRunner")
+    def test_pack_id_endpoint_works(self, mock_runner):
+        from bigas.eval.base import EvalRunResult
+
+        mock_runner.return_value.run.return_value = EvalRunResult(
+            use_case="vc-field-assistant",
+            run_id="run1",
+            fixture=EvalFixture("VC Field Assistant", "https://vcfieldassistant.com"),
+        )
+        resp = self.client.post(
+            "/tasks/eval/vfa-living-analysis",
+            json={"dry_run": True},
+            headers={"X-Bigas-Access-Key": "test-key"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        mock_runner.return_value.run.assert_called_once()
+
     def test_endpoint_rejects_customer_company_id(self):
         resp = self.client.post(
             "/tasks/eval/vc-field-assistant",
@@ -58,25 +86,73 @@ class EvalEndpointTests(unittest.TestCase):
         self.assertIn("companyId", resp.get_json()["error"])
 
 
-class VFAIntegrationTests(unittest.TestCase):
+class VFAPackIntegrationTests(unittest.TestCase):
+    def test_aliases_resolve_to_same_evaluator(self):
+        import bigas.eval.use_cases.vc_field_assistant  # noqa: F401
+
+        self.assertIn("vc-field-assistant", list_use_cases())
+        self.assertIn("vfa-living-analysis", list_use_cases())
+        self.assertEqual(
+            type(get_use_case_evaluator("vc-field-assistant")),
+            type(get_use_case_evaluator("vfa-living-analysis")),
+        )
+
+    @unittest.skipUnless(_VFA_PROMPTS.is_file(), "VFA analysis-prompts.md not checked out")
+    def test_shipped_pack_resolves_classify_heading(self):
+        pack = load_pack("vfa-living-analysis")
+        classify = next(step for step in pack.steps if step.id == "classify")
+        self.assertIn("Classify this portfolio company", classify.resolved_prompt)
+        landscape = next(step for step in pack.steps if step.id == "landscape")
+        self.assertEqual(landscape.research.provider, "web")
+
     @patch("bigas.eval.runner.LLMJudge")
     @patch("bigas.eval.runner.get_candidate_models")
-    @patch("bigas.eval.use_cases.vc_field_assistant.requests.post")
-    def test_full_run_mocks_adapter(self, mock_post, mock_candidates, mock_judge_cls):
-        mock_candidates.return_value = [MagicMock(provider="openai", model_id="gpt-4o", key="openai:gpt-4o")]
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {
-                "sections": {"executive_summary": "Analysis complete."},
-                "usage": {"prompt_tokens": 2000, "output_tokens": 800},
-            },
+    @patch("bigas.eval.use_cases.vc_field_assistant.complete_eval_model")
+    @patch("bigas.eval.use_cases.vc_field_assistant.run_web_research", return_value="")
+    @patch("bigas.eval.use_cases.vc_field_assistant.fetch_page_text", return_value="Public homepage.")
+    def test_full_run_mocks_llm_not_vfa_http(
+        self,
+        mock_fetch,
+        _mock_research,
+        mock_complete,
+        mock_candidates,
+        mock_judge_cls,
+    ):
+        mock_candidates.return_value = [
+            MagicMock(provider="openai", model_id="gpt-4o", key="openai:gpt-4o")
+        ]
+        mock_complete.return_value = LLMCompletion(
+            text='{"category":"investor workspace","customerSegment":"VCs"}',
+            usage=TokenUsage(prompt_tokens=2000, candidates_tokens=800, total_tokens=2800),
         )
         mock_judge_cls.return_value.score.return_value = (88.0, "High quality output.")
 
         storage = MagicMock()
         storage.get_json.return_value = {"use_cases": {}}
 
-        with patch.dict("os.environ", {"EVAL_VFA_ENDPOINT": "https://vfa.example.com"}):
+        from bigas.eval.pack import pack_from_mapping
+        from bigas.eval.use_cases.vc_field_assistant import VCFieldAssistantEvaluator
+
+        pack = pack_from_mapping(
+            {
+                "id": "vfa-living-analysis",
+                "fixture": {"company": "VC Field Assistant", "url": "https://vcfieldassistant.com"},
+                "steps": [
+                    {"id": "classify", "prompt": "Classify {{fixture.page}}"},
+                    {
+                        "id": "landscape",
+                        "prompt": "Landscape {{research.snippets}}",
+                        "research": {"provider": "web", "queries": ["{{steps.classify.category}} alternatives"]},
+                    },
+                ],
+                "rubric": "No invented figures.",
+            }
+        )
+
+        with patch(
+            "bigas.eval.runner.get_use_case_evaluator",
+            return_value=VCFieldAssistantEvaluator(pack),
+        ):
             runner = EvalRunner(storage=storage, judge=mock_judge_cls.return_value)
             with patch("bigas.eval.runner.publish_report") as mock_publish:
                 result = runner.run(
@@ -90,9 +166,10 @@ class VFAIntegrationTests(unittest.TestCase):
 
         self.assertEqual(len(result.results), 1)
         self.assertEqual(result.results[0].score, 88.0)
+        self.assertEqual(mock_complete.call_count, 2)
         storage.store_json.assert_called()
         mock_publish.assert_called_once()
-        mock_post.assert_called_once()
+        mock_fetch.assert_called()
 
 
 if __name__ == "__main__":

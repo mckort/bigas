@@ -301,23 +301,25 @@ Cloud Scheduler (nightly) --> POST /api/v1/providers/email/sync
 
 ## AI Model Evaluation Engine (BIG-57)
 
-Modular eval under `bigas/eval/` discovers flagship models, invokes product-specific eval adapters at runtime, scores outputs with LLM-as-a-judge, and stores artifacts in Bigas GCS only.
+Modular eval under `bigas/eval/` discovers flagship models, runs YAML **eval packs**, scores outputs with LLM-as-a-judge, and stores artifacts in Bigas GCS only.
 
 ```text
 Cloud Scheduler / CLI
         |
         v
-POST /tasks/eval/<use_case>  (auth: X-Bigas-Access-Key or CRON_SECRET)
+POST /tasks/eval/<pack_id>  (auth: X-Bigas-Access-Key or CRON_SECRET)
         |
         v
-EvalRunner → UseCaseEvaluator.run(fixture, model)
+EvalRunner → PackEvaluator.run(fixture, model)
         |              |
-        |              +--> VFA eval-only HTTP (return-only; no customer writes)
+        |              +--> prompt_from (local / GitHub raw)
+        |              +--> optional research.provider: web (fixture URL + Tavily)
+        |              +--> Bigas LLM complete (OpenAI / Gemini / Anthropic)
         v
 LLMJudge → ranking report → GCS + PM chat + Discord
 ```
 
+- **Packs** (`eval/*.pack.yaml`): fixture, steps, optional web research, judge rubric. First pack is `vfa-living-analysis` (alias `vc-field-assistant`).
 - **Registry** (`registry.py`): provider model discovery, pricing estimates, champion/eliminated state in `model_eval_state.json`.
-- **Use-case adapters** (`use_cases/`): thin HTTP/MCP clients; first adapter is `vc-field-assistant`.
-- **Isolation**: fixtures reject `workspaceId` / `companyId`; VFA adapter aborts if response indicates workspace writes.
-- **Scheduling**: `POST /tasks/eval/vc-field-assistant` or `python scripts/run_eval.py`.
+- **Isolation**: fixtures reject `workspaceId` / `companyId`; no writes to product customer workspaces.
+- **Scheduling**: `POST /tasks/eval/vfa-living-analysis` or `python scripts/run_eval.py --pack vfa-living-analysis`.

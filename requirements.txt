@@ -24,6 +24,9 @@ google-cloud-secret-manager==2.16.0
 # Web scraping for page analysis
 beautifulsoup4==4.12.2
 
+# Eval packs (YAML)
+PyYAML==6.0.2
+
 # X (Twitter) API v2 posting
 tweepy>=4.14.0
 
