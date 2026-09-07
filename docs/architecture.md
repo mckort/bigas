@@ -312,7 +312,7 @@ POST /tasks/eval/<pack_id>  (auth: X-Bigas-Access-Key or CRON_SECRET)
         v
 EvalRunner → PackEvaluator.run(fixture, model)
         |              |
-        |              +--> prompt_from (local / GitHub raw)
+        |              +--> pack prompts (inline, or optional prompt_from)
         |              +--> optional research.provider: web (fixture URL + Tavily)
         |              +--> Bigas LLM complete (OpenAI / Gemini / Anthropic)
         v
