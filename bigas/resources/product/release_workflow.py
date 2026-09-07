@@ -8,7 +8,9 @@ from typing import Dict, Iterable, Optional, Sequence
 from bigas.tickets.semver import SemverError, normalize_version_name
 
 _SEMVER_RE = re.compile(r"^v?(?P<ver>\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._+-]+)?)$", re.I)
-_BRANCH_VERSION_RE = re.compile(r"-(\d+\.\d+\.\d+)$")
+_BRANCH_VERSION_RE = re.compile(
+    r"-(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._+-]+)?)$", re.I
+)
 _HOTFIX_LABELS = frozenset({"hotfix", "urgent-fix", "production-fix"})
 _PRODUCTION_BRANCH_NAMES = frozenset({"main", "master"})
 
@@ -105,14 +107,21 @@ def resolve_production_branch(
 
 
 def version_from_feature_branch(branch: str) -> Optional[str]:
-    """Return X.Y.Z if branch looks like `staging-0.2.3`."""
+    """Return X.Y.Z if branch looks like `staging-0.2.3` or `staging-0.2.3-beta`."""
     match = _BRANCH_VERSION_RE.search((branch or "").strip())
     if not match:
         return None
+    raw = match.group(1)
     try:
-        return normalize_version_name(match.group(1))
+        return normalize_version_name(raw)
     except SemverError:
-        return None
+        base = re.match(r"^(\d+\.\d+\.\d+)", raw)
+        if not base:
+            return None
+        try:
+            return normalize_version_name(base.group(1))
+        except SemverError:
+            return None
 
 
 def feature_branch_prefix(branch: str) -> str:

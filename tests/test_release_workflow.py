@@ -57,6 +57,7 @@ def test_versioned_feature_branch_helpers():
     assert versioned_feature_branch("staging", "0.2.3") == "staging-0.2.3"
     assert versioned_feature_branch("staging-0.2.3", "0.3.0") == "staging-0.2.3"
     assert version_from_feature_branch("staging-0.2.3") == "0.2.3"
+    assert version_from_feature_branch("staging-0.2.3-beta") == "0.2.3"
     assert version_from_feature_branch("staging") is None
     assert is_versioned_feature_head("staging-0.2.3", "staging") is True
     assert is_versioned_feature_head("staging", "staging") is False
