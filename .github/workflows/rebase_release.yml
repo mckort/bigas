@@ -67,8 +67,9 @@ jobs:
           fi
           git add -A
           git commit --no-edit -m "WIP: resolve conflicts after ${SHIPPED_VERSION:-release} shipped" || true
-          git push -u origin "${SYNC}"
+          git push --force -u origin "${SYNC}"
           PR_URL="$(
+            gh pr view "${SYNC}" --json url -q .url || \
             gh pr create \
               --base "${RELEASE_BRANCH}" \
               --head "${SYNC}" \
