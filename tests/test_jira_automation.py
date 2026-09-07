@@ -696,13 +696,12 @@ def test_implement_handler_launches_simple_ticket_without_plan(monkeypatch):
 
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     monkeypatch.setattr(impl, "CursorCloudAgentClient", FakeCursor)
-    monkeypatch.setattr(impl, "_sync_wait_seconds", lambda: 0)
+    monkeypatch.setattr(impl, "_poll_budget_seconds", lambda: 0)
     monkeypatch.setattr(
         impl,
         "attachments_text_for_issue",
         lambda *_a, **_k: "### shot.png\nGreen button, tight padding",
     )
-    monkeypatch.setattr(ImplementHandler, "_start_outcome_monitor", lambda *a, **k: None)
 
     result = ImplementHandler(jira=FakeJira(), cursor_api_key="test-key").run(
         issue_key="GPWW-10",
@@ -1031,6 +1030,83 @@ def test_ensure_implement_pr_uses_existing_pr(monkeypatch):
     assert out["kind"] == "pr_opened"
     assert out["pr_url"].endswith("/pull/10")
     assert out.get("pr_opened_by") != "bigas"
+
+
+def test_poll_budget_defaults_cap_below_cloud_run(monkeypatch):
+    monkeypatch.delenv("BIGAS_JIRA_IMPLEMENT_SYNC_WAIT_SECONDS", raising=False)
+    monkeypatch.delenv("BIGAS_JIRA_IMPLEMENT_MONITOR_SECONDS", raising=False)
+    from bigas.resources.product.jira_automation.implement import _poll_budget_seconds
+
+    assert _poll_budget_seconds() == 840
+
+
+def test_poll_budget_honors_explicit_sync_wait(monkeypatch):
+    monkeypatch.setenv("BIGAS_JIRA_IMPLEMENT_SYNC_WAIT_SECONDS", "120")
+    from bigas.resources.product.jira_automation.implement import _poll_budget_seconds
+
+    assert _poll_budget_seconds() == 120
+
+
+def test_poll_budget_caps_explicit_sync_wait_below_cloud_run(monkeypatch):
+    monkeypatch.setenv("BIGAS_JIRA_IMPLEMENT_SYNC_WAIT_SECONDS", "900")
+    from bigas.resources.product.jira_automation.implement import _poll_budget_seconds
+
+    assert _poll_budget_seconds() == 840
+
+
+def test_implement_timeout_comments_inline(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+    from bigas.resources.product.jira_automation.implement import ImplementHandler
+
+    comments = []
+
+    class FakeCursor:
+        def __init__(self, api_key):
+            pass
+
+        def launch_implementation(self, **kwargs):
+            return {
+                "agent_url": "https://cursor.com/agents/bc-slow",
+                "agent_id": "bc-slow",
+                "run_id": "run-slow",
+            }
+
+        def get_run_status(self, **kwargs):
+            raise AssertionError("poll budget 0 must not call Cursor")
+
+    class FakeJira:
+        def get_issue(self, key, fields=None):
+            return {
+                "fields": {
+                    "summary": "Evaluation of AI models",
+                    "description": "## Brief\nBuild eval",
+                    "status": {"name": "In Progress (AI)"},
+                    "labels": [],
+                    "issuelinks": [],
+                    "parent": None,
+                    "project": {"key": "BIG"},
+                }
+            }
+
+        def list_comments(self, key, max_results=50):
+            return []
+
+        def add_comment(self, key, body):
+            comments.append(body)
+
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    monkeypatch.setattr(impl, "CursorCloudAgentClient", FakeCursor)
+    monkeypatch.setattr(impl, "_poll_budget_seconds", lambda: 0)
+    monkeypatch.setattr(impl, "attachments_text_for_issue", lambda *_a, **_k: "")
+    monkeypatch.setattr(impl, "_post_discord_cto", lambda *_a, **_k: None)
+
+    result = ImplementHandler(jira=FakeJira(), cursor_api_key="test-key").run(
+        issue_key="BIG-57",
+        repo="mckort/bigas",
+    )
+    assert result["ok"] is True
+    assert result["outcome"] is None
+    assert any("monitor timed out" in body for body in comments)
 
 
 def test_config_maps_implement_status(monkeypatch):
