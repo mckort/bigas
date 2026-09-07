@@ -286,6 +286,28 @@ def test_github_workflow_run_webhook_ignores_success(client):
     assert (data.get("postcheck") or {}).get("resumed") in (0, None)
 
 
+def test_github_workflow_run_webhook_is_public_in_restricted_mode(client):
+    client.application.config["BIGAS_ACCESS_MODE"] = "restricted"
+    client.application.config["BIGAS_ACCESS_KEYS"] = {"scheduler-key"}
+    client.application.config["BIGAS_ACCESS_HEADER"] = "X-Bigas-Access-Key"
+    payload = _workflow_run_payload(conclusion="success")
+    denied = client.post(
+        "/mcp/tools/github_workflow_run",
+        data=json.dumps(payload),
+        content_type="application/json",
+        headers={"X-GitHub-Event": "workflow_run"},
+    )
+    assert denied.status_code == 401
+    resp = client.post(
+        "/mcp/tools/github_workflow_run",
+        data=json.dumps(payload),
+        content_type="application/json",
+        headers=_signed_headers(payload),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json().get("ignored") is True
+
+
 def test_github_workflow_run_webhook_rejects_bad_signature(client):
     payload = _workflow_run_payload()
     resp = client.post(

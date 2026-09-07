@@ -197,6 +197,7 @@ def create_app():
         "/mcp",
         "/mcp/manifest",
         "/mcp/providers",
+        "/mcp/tools/github_workflow_run",
         "/openapi.json",
         "/api/auth/config",
     }
