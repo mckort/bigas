@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bigas.eval.base import EvalFixture, get_use_case_evaluator, list_use_cases
@@ -10,13 +9,6 @@ from bigas.eval.pack import load_pack
 from bigas.eval.runner import EvalRunner
 from bigas.llm.completion import LLMCompletion
 from bigas.llm.usage import TokenUsage
-
-_VFA_PROMPTS = (
-    Path(__file__).resolve().parents[1].parent
-    / "vcfieldassistant"
-    / "docs"
-    / "analysis-prompts.md"
-)
 
 
 class EvalEndpointTests(unittest.TestCase):
@@ -97,13 +89,27 @@ class VFAPackIntegrationTests(unittest.TestCase):
             type(get_use_case_evaluator("vfa-living-analysis")),
         )
 
-    @unittest.skipUnless(_VFA_PROMPTS.is_file(), "VFA analysis-prompts.md not checked out")
-    def test_shipped_pack_resolves_classify_heading(self):
+    def test_shipped_pack_is_self_contained(self):
         pack = load_pack("vfa-living-analysis")
         classify = next(step for step in pack.steps if step.id == "classify")
+        self.assertFalse(classify.prompt_from)
         self.assertIn("Classify this portfolio company", classify.resolved_prompt)
+        self.assertNotIn("{namn}", classify.resolved_prompt)
+        self.assertNotIn("{corpus", classify.resolved_prompt)
+        primary = next(step for step in pack.steps if step.id == "primary")
+        for token in (
+            "<sektionsprompt>",
+            "om uppdatering",
+            "{beskrivningssektioner}",
+            "{bekräftade KPI",
+            "{uppladdat material",
+        ):
+            self.assertNotIn(token, primary.resolved_prompt, msg=f"unresolved placeholder {token!r}")
         landscape = next(step for step in pack.steps if step.id == "landscape")
         self.assertEqual(landscape.research.provider, "web")
+        self.assertIn("Write three buckets", landscape.resolved_prompt)
+        self.assertIn("Bucket assignment:", landscape.resolved_prompt)
+        self.assertNotIn("{guardrails", landscape.resolved_prompt)
 
     @patch("bigas.eval.runner.LLMJudge")
     @patch("bigas.eval.runner.get_candidate_models")

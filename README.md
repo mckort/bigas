@@ -873,7 +873,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales
 
 ### AI Model Evaluation Engine (Cloud Scheduler)
 
-Bigas periodically benchmarks flagship LLM models (OpenAI, Anthropic, Gemini) against **eval packs** — YAML files that name a public fixture, prompt sources, and optional Bigas-side web research. The first pack is **VC Field Assistant living analysis** (`eval/vfa-living-analysis.pack.yaml`). Prompts stay in the VFA repo (`prompt_from`); Bigas fetches them, runs the models, ranks with LLM-as-a-judge, stores artifacts in Bigas GCS, and posts to the **Product Manager** chat thread and Discord.
+Bigas periodically benchmarks flagship LLM models (OpenAI, Anthropic, Gemini) against **eval packs** — self-contained YAML files with fixture, prompts, and optional Bigas-side web research. The first pack is **VC Field Assistant living analysis** (`eval/vfa-living-analysis.pack.yaml`). Bigas runs the models, ranks with LLM-as-a-judge, stores artifacts in Bigas GCS, and posts to the **Product Manager** chat thread and Discord.
 
 This scores the VFA **prompt suite + Bigas web research** (fixture URL + optional Tavily snippets). It is not VFA's full citation / competitor-homepage pipeline.
 
