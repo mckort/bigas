@@ -5,6 +5,7 @@ import io
 import json
 import os
 import zipfile
+from unittest.mock import patch
 
 import pytest
 
@@ -287,25 +288,32 @@ def test_github_workflow_run_webhook_ignores_success(client):
 
 
 def test_github_workflow_run_webhook_is_public_in_restricted_mode(client):
-    client.application.config["BIGAS_ACCESS_MODE"] = "restricted"
-    client.application.config["BIGAS_ACCESS_KEYS"] = {"scheduler-key"}
-    client.application.config["BIGAS_ACCESS_HEADER"] = "X-Bigas-Access-Key"
     payload = _workflow_run_payload(conclusion="success")
-    denied = client.post(
-        "/mcp/tools/github_workflow_run",
-        data=json.dumps(payload),
-        content_type="application/json",
-        headers={"X-GitHub-Event": "workflow_run"},
-    )
-    assert denied.status_code == 401
-    resp = client.post(
-        "/mcp/tools/github_workflow_run",
-        data=json.dumps(payload),
-        content_type="application/json",
-        headers=_signed_headers(payload),
-    )
-    assert resp.status_code == 200
-    assert resp.get_json().get("ignored") is True
+    restricted_config = {
+        "BIGAS_ACCESS_MODE": "restricted",
+        "BIGAS_ACCESS_KEYS": {"scheduler-key"},
+        "BIGAS_ACCESS_HEADER": "X-Bigas-Access-Key",
+    }
+    with patch.dict(client.application.config, restricted_config):
+        denied = client.post(
+            "/mcp/tools/github_workflow_run",
+            data=json.dumps(payload),
+            content_type="application/json",
+            headers={"X-GitHub-Event": "workflow_run"},
+        )
+        assert denied.status_code == 401
+        denied_body = denied.get_json()
+        assert denied_body.get("error") == "unauthorized"
+        assert "access key" not in str(denied_body.get("detail", "")).lower()
+
+        resp = client.post(
+            "/mcp/tools/github_workflow_run",
+            data=json.dumps(payload),
+            content_type="application/json",
+            headers=_signed_headers(payload),
+        )
+        assert resp.status_code == 200
+        assert resp.get_json().get("ignored") is True
 
 
 def test_github_workflow_run_webhook_rejects_bad_signature(client):
