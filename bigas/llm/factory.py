@@ -59,6 +59,7 @@ def get_llm_client(
         "okr_research": "BIGAS_OKR_RESEARCH_MODEL",
         "okr_plan": "BIGAS_OKR_PLAN_MODEL",
         "okr_pulse": "BIGAS_OKR_PULSE_MODEL",
+        "model_eval_judge": "MODEL_EVAL_JUDGE_MODEL",
     }
     feature_env = feature_env_map.get(feature)
 

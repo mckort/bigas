@@ -170,6 +170,11 @@ def create_app():
         app.register_blueprint(email_bp)
         logger.info("Registered email ingest blueprint.")
 
+        from bigas.eval.endpoints import eval_bp
+
+        app.register_blueprint(eval_bp)
+        logger.info("Registered model eval blueprint.")
+
         logger.info("Registered marketing blueprint.")
         logger.info("Registered product blueprint.")
         logger.info("Registered X-post approval blueprint.")
@@ -199,6 +204,8 @@ def create_app():
     def _is_public_path(path: str) -> bool:
         # Scheduler webhook: same X-Bigas-Access-Key as other cron jobs.
         if path.rstrip("/") == "/api/agents/evaluate-goals":
+            return False
+        if path.startswith("/tasks/eval/"):
             return False
         return (
             path in public_paths
@@ -241,6 +248,14 @@ def create_app():
             from bigas.access import verify_evaluate_goals_webhook_auth
 
             err = verify_evaluate_goals_webhook_auth()
+            if err is not None:
+                return err
+            return
+
+        if request.path.startswith("/tasks/eval/"):
+            from bigas.access import verify_scheduled_task_auth
+
+            err = verify_scheduled_task_auth(task_name="Model eval")
             if err is not None:
                 return err
             return

@@ -855,8 +855,44 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Bigas AI usage | `0 16 * * 0` | `.../weekly_cto_ai_report` (CFO chat) |
 | Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
 | Proactive goal evaluation | `0 23 * * 0` | `.../api/agents/evaluate-goals` |
+| AI model evaluation (VFA) | `0 6 * * 1` | `.../tasks/eval/vc-field-assistant` |
 
 All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
+
+### AI Model Evaluation Engine (Cloud Scheduler)
+
+Bigas can periodically benchmark flagship LLM models (OpenAI, Anthropic, Gemini) against modular use-case adapters. The first use case is **VC Field Assistant living analysis**: Bigas calls the real VFA eval-only pipeline at runtime (prompts stay in the VFA repo) with a public fixture — default **VC Field Assistant** / `https://vcfieldassistant.com`. Results are ranked with LLM-as-a-judge, stored in Bigas GCS, and posted to the **Product Manager** chat thread and Discord.
+
+**Isolation rules (hard):**
+
+- Eval never writes to a VFA customer workspace (no live analysis, preview, description, labels, or usage).
+- Fixtures use public `company` + `url` only — never `workspaceId` / `companyId`.
+- Artifacts live in Bigas GCS (`eval-runs/...`) only.
+
+Configure `EVAL_VFA_ENDPOINT` to point at the VFA eval-only API (`POST /eval/living-analysis`). Set `EVAL_STORAGE_BUCKET` (or reuse `STORAGE_BUCKET_NAME`). Optional: `MODEL_EVAL_JUDGE_MODEL`, `MODEL_EVAL_BUDGET_USD` (default $15 per run).
+
+CLI (local):
+
+```bash
+python scripts/run_eval.py --use-case vc-field-assistant \
+  --company "VC Field Assistant" --url https://vcfieldassistant.com --dry-run
+```
+
+Cloud Scheduler (weekly, same auth as evaluate-goals — always requires `X-Bigas-Access-Key` or `CRON_SECRET`):
+
+```bash
+gcloud scheduler jobs create http bigas-eval-vfa-models \
+  --location=europe-west1 \
+  --schedule="0 6 * * 1" \
+  --time-zone="Europe/Stockholm" \
+  --uri="https://YOUR-SERVICE-URL.a.run.app/tasks/eval/vc-field-assistant" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
+  --message-body='{"company":"VC Field Assistant","url":"https://vcfieldassistant.com"}' \
+  --attempt-deadline=900s
+```
+
+Only the reigning champion plus newly discovered pro models are re-tested; previously eliminated models are skipped until a new champion wins.
 
 ### Proactive Goal Engine (Cloud Scheduler)
 
