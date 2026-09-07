@@ -77,13 +77,14 @@ def _poll_budget_seconds() -> int:
     to see FINISHED and open the fallback PR. Cap below the 900s Cloud Run timeout
     so `ensure_implement_pr` still has time to run.
     """
+    cap = 840
     raw = (os.environ.get("BIGAS_JIRA_IMPLEMENT_SYNC_WAIT_SECONDS") or "").strip()
     if raw:
         try:
-            return max(0, int(raw))
+            return max(0, min(int(raw), cap))
         except ValueError:
             pass
-    return max(60, min(_monitor_seconds(), 840))
+    return max(60, min(_monitor_seconds(), cap))
 
 
 def _monitor_interval_seconds() -> int:
@@ -566,7 +567,6 @@ class ImplementHandler:
             "had_plan_section": _has_text(plan),
             "had_research_section": _has_text(research),
             "human_comments_included": _has_text(comments_text),
-            "monitor_started": False,
             "outcome": outcome,
         }
 

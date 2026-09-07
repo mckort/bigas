@@ -1047,6 +1047,13 @@ def test_poll_budget_honors_explicit_sync_wait(monkeypatch):
     assert _poll_budget_seconds() == 120
 
 
+def test_poll_budget_caps_explicit_sync_wait_below_cloud_run(monkeypatch):
+    monkeypatch.setenv("BIGAS_JIRA_IMPLEMENT_SYNC_WAIT_SECONDS", "900")
+    from bigas.resources.product.jira_automation.implement import _poll_budget_seconds
+
+    assert _poll_budget_seconds() == 840
+
+
 def test_implement_timeout_comments_inline(monkeypatch):
     from bigas.resources.product.jira_automation import implement as impl
     from bigas.resources.product.jira_automation.implement import ImplementHandler
@@ -1098,7 +1105,6 @@ def test_implement_timeout_comments_inline(monkeypatch):
         repo="mckort/bigas",
     )
     assert result["ok"] is True
-    assert result["monitor_started"] is False
     assert result["outcome"] is None
     assert any("monitor timed out" in body for body in comments)
 
