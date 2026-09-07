@@ -718,20 +718,20 @@ def ensure_release_on_main(
                 ),
                 thread_id=thread_id,
             )
-
-    ahead, _compare = _compare_feature_ahead(
-        client, owner, name, production, feature
-    )
-    if ahead <= 0:
-        return _already_on_main(
-            repo=repo,
-            production=production,
-            reason=(
-                f"`{feature}` is not ahead of `{production}` "
-                f"(0 commit(s) to merge). Continuing with `{production}`."
-            ),
-            thread_id=thread_id,
+    else:
+        ahead, _compare = _compare_feature_ahead(
+            client, owner, name, production, feature
         )
+        if ahead <= 0:
+            return _already_on_main(
+                repo=repo,
+                production=production,
+                reason=(
+                    f"`{feature}` is not ahead of `{production}` "
+                    f"(0 commit(s) to merge). Continuing with `{production}`."
+                ),
+                thread_id=thread_id,
+            )
 
     existing = client.find_open_pull_request(
         owner, name, head=feature, base=production
