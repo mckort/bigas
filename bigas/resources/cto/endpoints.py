@@ -375,11 +375,13 @@ def _maybe_auto_merge_pr(
         )
     pr_title = _pr_title_of(pr)
     pr_ref = format_pr_discord_line(pr_url, pr_title)
-    if not (issue_key or "").strip():
-        from bigas.resources.product.jira_automation.final_approval import (
-            extract_jira_issue_key,
-        )
+    from bigas.resources.product.jira_automation.final_approval import (
+        extract_jira_issue_key,
+        squash_commit_title,
+        title_with_issue_key,
+    )
 
+    if not (issue_key or "").strip():
         issue_key = (
             extract_jira_issue_key(
                 pr_title,
@@ -389,6 +391,9 @@ def _maybe_auto_merge_pr(
             or ""
         )
         issue_bit = _jira_issue_heading(issue_key, issue_summary)
+
+    merge_title = title_with_issue_key(pr_title, issue_key) if issue_key else pr_title
+    commit_title = squash_commit_title(merge_title, pr_number)
 
     # Quiet skip when a parallel review already merged (no Discord spam).
     if pr.get("merged"):
@@ -445,6 +450,7 @@ def _maybe_auto_merge_pr(
             repo=repo_name,
             pr_number=pr_number,
             merge_method="squash",
+            commit_title=commit_title,
         )
     except GitHubMergeNotReadyError as e:
         sync_err = sanitize_error_message(str(e))
@@ -474,6 +480,7 @@ def _maybe_auto_merge_pr(
                 repo=repo_name,
                 pr_number=pr_number,
                 merge_method="squash",
+                commit_headline=commit_title,
             )
         except GitHubPRCommentError as enable_err:
             err = sanitize_error_message(str(enable_err))

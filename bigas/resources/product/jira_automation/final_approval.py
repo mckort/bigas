@@ -54,6 +54,15 @@ def title_with_issue_key(title: str, issue_key: str) -> str:
     return f"{key}: {raw}" if raw else key
 
 
+def squash_commit_title(title: str, pr_number: int) -> str:
+    """PR title plus number so repo squash defaults cannot drop the ticket key."""
+    number = int(pr_number)
+    raw = (title or "").strip() or "Merge pull request"
+    if re.search(rf"\s*\(#{number}\)\s*$", raw):
+        return raw
+    return f"{raw} (#{number})"
+
+
 def should_skip_auto_ticket(
     pr: Dict[str, Any],
     *,
@@ -200,6 +209,7 @@ def ensure_board_ticket_for_pr(
                     description="\n\n".join(desc_parts),
                     issue_type="Task",
                     status=status,
+                    git_ref=head_ref or (((pr.get("base") or {}).get("ref") or "")).strip(),
                 )
             except Exception as exc:
                 logger.warning("Auto-create board ticket failed for %s", pr_url, exc_info=True)
@@ -214,6 +224,18 @@ def ensure_board_ticket_for_pr(
 
     if not issue_key:
         return {"ok": False, "reason": "create_failed", "project_key": project_key}
+
+    try:
+        from bigas.resources.product.fix_version import ensure_active_fix_version
+        from bigas.tickets.jira_adapter import TicketJiraAdapter
+
+        ensure_active_fix_version(
+            TicketJiraAdapter(),
+            issue_key=issue_key,
+            project_key=project_key,
+        )
+    except Exception:
+        logger.warning("Could not assign fix version on %s", issue_key, exc_info=True)
 
     new_title = title_with_issue_key(title, issue_key)
     new_body = body
@@ -347,6 +369,16 @@ def transition_issue_to_final_approval_for_pr(
                 "issue_key": issue_key,
             }
         client = _resolve_issue_client(issue_key)
+        try:
+            from bigas.resources.product.fix_version import ensure_active_fix_version
+
+            ensure_active_fix_version(
+                client,
+                issue_key=issue_key,
+                project_key=project_key,
+            )
+        except Exception:
+            logger.warning("Could not assign fix version on %s", issue_key, exc_info=True)
         issue = client.get_issue(issue_key, fields=["summary", "status"])
         fields = issue.get("fields") or {}
         summary = (fields.get("summary") or "").strip()

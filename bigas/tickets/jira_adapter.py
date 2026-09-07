@@ -274,8 +274,8 @@ class TicketJiraAdapter:
         *,
         project_key: Optional[str] = None,
     ) -> Optional[str]:
-        """Assign the board default (or env fallback) when ticket has no fix_version."""
-        from bigas.tickets.releases import default_fix_version
+        """Assign the board default, env fallback, or lowest unreleased version."""
+        from bigas.tickets.releases import fix_version_for_new_ticket
 
         ticket = self._ticket(issue_key)
         if not ticket:
@@ -295,7 +295,7 @@ class TicketJiraAdapter:
         if not proj and issue_key and "-" in issue_key:
             proj = issue_key.split("-", 1)[0].upper()
 
-        active = default_fix_version(proj) or active_fix_version_from_env(proj)
+        active = fix_version_for_new_ticket(proj) or active_fix_version_from_env(proj)
         if not active:
             return None
 

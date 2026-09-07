@@ -79,6 +79,40 @@ def default_fix_version(project_key: str) -> Optional[str]:
     return active_fix_version_from_env(project_key)
 
 
+def lowest_unreleased_version(project_key: str) -> Optional[str]:
+    """Lowest unreleased board version, or None when the project has none."""
+    candidates: List[tuple] = []
+    for item in get_release_store().list_releases(project_key):
+        if item.get("released"):
+            continue
+        name = (item.get("name") or "").strip()
+        try:
+            ver = parse_semver(name)
+        except SemverError:
+            continue
+        candidates.append((ver, name))
+    candidates.sort()
+    return candidates[0][1] if candidates else None
+
+
+def fix_version_for_new_ticket(
+    project_key: str,
+    *,
+    git_ref: Optional[str] = None,
+) -> Optional[str]:
+    """Version to stamp on a newly created ticket.
+
+    Prefer a semver from a versioned feature branch (``staging-0.2.3``), then
+    the board default / env fallback, then the lowest unreleased version.
+    """
+    from bigas.resources.product.release_workflow import version_from_feature_branch
+
+    from_branch = version_from_feature_branch(git_ref or "")
+    if from_branch:
+        return from_branch
+    return default_fix_version(project_key) or lowest_unreleased_version(project_key)
+
+
 def tickets_on_version(project_key: str, version: str) -> List[Dict[str, Any]]:
     """All board tickets assigned to a release, Done and open."""
     store = get_ticket_store()
