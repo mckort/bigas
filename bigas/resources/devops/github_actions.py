@@ -17,6 +17,10 @@ class GitHubActionsError(RuntimeError):
     pass
 
 
+class GitHubMergeConflict(GitHubActionsError):
+    pass
+
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _GHA_PREFIX_RE = re.compile(
     r"^(?:[^\t\n]+\t[^\t\n]+\t)?\d{4}-\d{2}-\d{2}T[\d:.]+Z\s?"
@@ -416,6 +420,104 @@ class GitHubActionsClient:
         if not sha:
             raise GitHubActionsError("GitHub did not return commit sha")
         return sha
+
+    def branch_exists(self, owner: str, repo: str, branch: str) -> bool:
+        try:
+            self.get_ref_sha(owner, repo, branch)
+            return True
+        except GitHubActionsError as exc:
+            if "not found" in str(exc).lower():
+                return False
+            raise
+
+    def list_matching_refs(
+        self,
+        owner: str,
+        repo: str,
+        ref_prefix: str,
+    ) -> List[Dict[str, Any]]:
+        prefix = (ref_prefix or "").strip().lstrip("/")
+        url = f"https://api.github.com/repos/{owner}/{repo}/git/matching-refs/{prefix}"
+        resp = requests.get(url, headers=self._headers, timeout=30)
+        if resp.status_code == 404:
+            return []
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        data = resp.json() or []
+        return data if isinstance(data, list) else []
+
+    def list_versioned_feature_branches(
+        self,
+        owner: str,
+        repo: str,
+        prefix: str,
+    ) -> List[str]:
+        mapped = (prefix or "").strip()
+        if not mapped:
+            return []
+        refs = self.list_matching_refs(owner, repo, f"heads/{mapped}-")
+        names: List[str] = []
+        for item in refs:
+            ref = (item.get("ref") or "") if isinstance(item, dict) else ""
+            if ref.startswith("refs/heads/"):
+                names.append(ref[len("refs/heads/") :])
+        return names
+
+    def ensure_branch_from_ref(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+        source_ref: str,
+    ) -> str:
+        """Create ``branch`` at ``source_ref`` if missing. Return 'existing' or source."""
+        if self.branch_exists(owner, repo, branch):
+            return "existing"
+        sha = self.get_ref_sha(owner, repo, source_ref)
+        try:
+            self.create_branch_ref(owner, repo, branch, sha)
+        except GitHubActionsError as exc:
+            if "already exists" in str(exc).lower():
+                return "existing"
+            raise
+        return source_ref
+
+    def merge_branches(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        base: str,
+        head: str,
+        message: str = "",
+    ) -> Dict[str, Any]:
+        """Merge ``head`` into ``base``. 409 → GitHubMergeConflict."""
+        url = f"https://api.github.com/repos/{owner}/{repo}/merges"
+        payload: Dict[str, Any] = {"base": base, "head": head}
+        if (message or "").strip():
+            payload["commit_message"] = message.strip()
+        resp = requests.post(url, headers=self._headers, json=payload, timeout=60)
+        if resp.status_code == 204:
+            return {"status": "already_merged", "base": base, "head": head}
+        if resp.status_code == 409:
+            raise GitHubMergeConflict(
+                f"Merge conflict: {head} into {base} ({_github_error_detail(resp)})"
+            )
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        if resp.status_code == 404:
+            raise GitHubActionsError(f"Merge failed: {owner}/{repo} {head} → {base}")
+        resp.raise_for_status()
+        data = resp.json() or {}
+        sha = ""
+        if isinstance(data, dict):
+            sha = (data.get("sha") or "").strip()
+        return {"status": "merged", "base": base, "head": head, "sha": sha}
 
     def create_branch_ref(
         self,

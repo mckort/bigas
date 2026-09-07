@@ -446,6 +446,15 @@ class ImplementHandler:
             issue_key=issue_key,
             project_key=project_key,
         )
+        from bigas.resources.product.release_branches import resolve_implement_base_branch
+
+        base_branch = resolve_implement_base_branch(
+            project_key=project_key,
+            repo=repo,
+            labels=labels,
+            fix_version=fix_version,
+            mapped_branch=base_branch,
+        )
 
         try:
             raw_comments = self._jira.list_comments(issue_key, max_results=50)

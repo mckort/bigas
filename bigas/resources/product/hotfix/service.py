@@ -7,10 +7,12 @@ import re
 from typing import Any, Dict, Optional
 
 from bigas.resources.devops.github_actions import GitHubActionsClient, GitHubActionsError
-from bigas.resources.product.hotfix.cherry_pick import find_merged_pr_for_issue
+from bigas.resources.product.hotfix.cherry_pick import CherryPickError, find_merged_pr_for_issue
 from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 from bigas.resources.product.release_workflow import (
+    feature_branch_prefix,
     project_branch_mapping_from_env,
+    resolve_automerge_branch,
     resolve_production_branch,
 )
 
@@ -46,6 +48,18 @@ def _issue_key_from_input(raw: str) -> str:
     return key
 
 
+def _ticket_fix_version(issue_key: str) -> Optional[str]:
+    try:
+        from bigas.tickets.store import get_ticket_store
+
+        ticket = get_ticket_store().get_ticket_by_key(issue_key)
+    except Exception:
+        return None
+    if not ticket:
+        return None
+    return (ticket.get("fix_version") or "").strip() or None
+
+
 class HotfixService:
     def __init__(self, *, config: Optional[JiraAutomationConfig] = None) -> None:
         self._config = config or JiraAutomationConfig.from_env()
@@ -72,12 +86,6 @@ class HotfixService:
 
         owner, name = _parse_repo(mapped_repo)
         branch_map = self._config.project_branch_map or project_branch_mapping_from_env()
-        staging = (
-            (staging_branch or "").strip()
-            or branch_map.get(project_key)
-            or branch_map.get("DEFAULT")
-            or "staging"
-        )
         production = (
             (production_branch or "").strip()
             or resolve_production_branch(
@@ -87,6 +95,18 @@ class HotfixService:
                 default_base_branch=self._config.default_base_branch,
             )
         )
+        ticket_version = _ticket_fix_version(key)
+        staging = (staging_branch or "").strip() or resolve_automerge_branch(
+            project_key=project_key,
+            repo=mapped_repo,
+            project_branch_map=branch_map,
+            repo_base_branches=self._config.repo_base_branches,
+            default_base_branch=self._config.default_base_branch,
+            fix_version=ticket_version,
+        )
+        prefix = feature_branch_prefix(
+            branch_map.get(project_key) or branch_map.get("DEFAULT") or "staging"
+        )
         if staging == production:
             raise HotfixError(
                 f"Project {project_key} does not use a staging branch "
@@ -94,13 +114,26 @@ class HotfixService:
             )
 
         token = _github_token()
-        pr = find_merged_pr_for_issue(
-            token=token,
-            owner=owner,
-            repo=name,
-            issue_key=key,
-            base_branch=staging,
-        )
+        bases = [staging]
+        if prefix and prefix not in bases and prefix != production:
+            bases.append(prefix)
+        pr = None
+        last_error = None
+        for base in bases:
+            try:
+                pr = find_merged_pr_for_issue(
+                    token=token,
+                    owner=owner,
+                    repo=name,
+                    issue_key=key,
+                    base_branch=base,
+                )
+                staging = base
+                break
+            except CherryPickError as exc:
+                last_error = exc
+        if pr is None:
+            raise HotfixError(str(last_error) if last_error else f"No merged PR for {key}")
         merge_sha = (pr.get("merge_commit_sha") or "").strip()
         pr_number = pr.get("number")
         source_pr_url = (pr.get("html_url") or "").strip()

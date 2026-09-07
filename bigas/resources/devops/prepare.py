@@ -521,11 +521,16 @@ def _project_repo(project_key: str) -> str:
     return repo
 
 
-def _branch_pair(project_key: str, repo: str) -> Tuple[str, str]:
+def _branch_pair(project_key: str, repo: str, version: str = "") -> Tuple[str, str]:
     from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 
     cfg = JiraAutomationConfig.from_env()
-    feature = (cfg.automerge_branch_for_project(project_key, repo) or "main").strip()
+    feature = (
+        cfg.automerge_branch_for_project(
+            project_key, repo, fix_version=version
+        )
+        or "main"
+    ).strip()
     production = (cfg.base_branch_for_repo(repo) or "main").strip()
     return feature, production
 
@@ -665,21 +670,26 @@ def ensure_release_on_main(
 ) -> Dict[str, Any]:
     """Create/reuse a feature→main PR when needed. Returns merged or polling."""
     repo = _project_repo(project_key)
-    feature, production = _branch_pair(project_key, repo)
+    feature, production = _branch_pair(project_key, repo, version)
     owner, name = repo.split("/", 1)
     client = _github_client()
     cut_keys = cut_ticket_keys(project_key, version)
 
     if feature == production:
+        fallback = "staging"
+        if (version or "").strip():
+            from bigas.resources.product.release_workflow import versioned_feature_branch
+
+            fallback = versioned_feature_branch("staging", version) or "staging"
         _post(
             thread_id,
             f"`{project_key}` maps `{feature}` as both feature and production. "
-            f"Checking whether `staging` is ahead of `{production}`…",
+            f"Checking whether `{fallback}` is ahead of `{production}`…",
         )
-        if feature != "staging":
+        if feature != fallback:
             try:
                 ahead, _compare = _compare_feature_ahead(
-                    client, owner, name, production, "staging"
+                    client, owner, name, production, fallback
                 )
             except DevOpsError as exc:
                 return _already_on_main(
@@ -687,15 +697,15 @@ def ensure_release_on_main(
                     production=production,
                     reason=(
                         f"No separate feature branch to merge (`{feature}` is production), "
-                        f"and `staging` could not be compared ({exc})."
+                        f"and `{fallback}` could not be compared ({exc})."
                     ),
                     thread_id=thread_id,
                 )
             if ahead > 0:
-                feature = "staging"
+                feature = fallback
                 _post(
                     thread_id,
-                    f"`staging` is **{ahead}** commit(s) ahead of `{production}`. "
+                    f"`{fallback}` is **{ahead}** commit(s) ahead of `{production}`. "
                     "Opening a release PR.",
                 )
             else:
@@ -703,7 +713,7 @@ def ensure_release_on_main(
                     repo=repo,
                     production=production,
                     reason=(
-                        f"`staging` is not ahead of `{production}`. "
+                        f"`{fallback}` is not ahead of `{production}`. "
                         f"Nothing to merge; continuing with `{production}`."
                     ),
                     thread_id=thread_id,
@@ -1363,6 +1373,17 @@ def finalize_versioned_deploy(thread_id: str, poll: Dict[str, Any]) -> None:
         if gh:
             extra += f" GitHub: {gh}"
         _post(thread_id, f"**{key} {version} released.**{extra}")
+
+    try:
+        from bigas.resources.product.release_branches import rebase_newer_release_branches
+
+        rebase_newer_release_branches(
+            project_key=key,
+            shipped_version=version,
+            thread_id=thread_id,
+        )
+    except Exception:
+        logger.exception("Rebase of newer release branches after %s %s failed", key, version)
 
     notes: Dict[str, Any] = {}
     try:
