@@ -22,10 +22,16 @@ from bigas.resources.devops.pipeline import (
 )
 from bigas.resources.devops.prepare import (
     _enrich_commits_with_pr_keys,
+    compare_ahead_count,
+    ensure_release_on_main,
     format_git_reconcile_report,
+    format_main_ship_report,
     format_version_ticket_report,
     is_prepare_start,
     parse_prepare_command,
+    release_commit_title,
+    release_pr_body,
+    release_pr_title,
     run_prepare_deploy,
 )
 from bigas.tickets.release_store import reset_release_store_for_tests
@@ -309,6 +315,7 @@ def _low_risk(**kwargs):
         "findings": {},
         "repo": "mckort/vcfieldassistant",
         "head_ref": "main",
+        "total_files_changed": 0,
         "site_urls": ["https://vcfieldassistant.com"],
     }
 
@@ -802,6 +809,261 @@ def test_list_shortcut_projects_only_deploy_targets(monkeypatch):
     keys = [item["key"] for item in list_shortcut_projects()]
     assert keys == ["VFA", "BIG"]
     assert "WAYW" not in keys
+
+
+def test_compare_ahead_count_uses_commits_and_files():
+    assert compare_ahead_count({"ahead_by": 3}) == 3
+    assert compare_ahead_count({"ahead_by": 0, "total_commits": 7}) == 7
+    assert compare_ahead_count({"ahead_by": 0, "commits": [{}, {}]}) == 2
+    assert compare_ahead_count({"ahead_by": 0, "files": [{"filename": "a.py"}]}) == 1
+    assert compare_ahead_count({}) == 0
+
+
+def test_release_pr_copy_includes_cut_keys():
+    keys = ["VFA-56", "VFA-53"]
+    title = release_pr_title("0.2.3", "staging", "main", keys)
+    assert title.startswith("Release 0.2.3: merge staging into main")
+    assert "VFA-56" in title
+    body = release_pr_body("VFA", "0.2.3", "staging", "main", keys)
+    assert "VFA-56" in body
+    assert "VFA-53" in body
+    assert release_commit_title("0.2.3", keys) == (
+        "Release 0.2.3: merge into main (VFA-56, VFA-53)"
+    )
+
+
+def test_format_main_ship_report_lists_commits():
+    text = format_main_ship_report(
+        commits=[
+            {
+                "sha": "abc1234deadbeef",
+                "subject": "Release 0.2.3: merge into main (VFA-56)",
+            }
+        ],
+        compared=["deploy-backend-old → main"],
+        files_changed=4,
+    )
+    assert "yes deploys this" in text
+    assert "VFA-56" in text
+    assert "4 file(s) changed" in text
+
+
+class _FakeGitHub:
+    def __init__(self, *, ahead_by=7, staging_ahead=7, created=None):
+        self.ahead_by = ahead_by
+        self.staging_ahead = staging_ahead
+        self.created = created or {
+            "number": 200,
+            "html_url": "https://github.com/mckort/vcfieldassistant/pull/200",
+        }
+        self.created_prs = []
+        self.compared = []
+
+    def compare_refs(self, owner, repo, base, head):
+        self.compared.append((base, head))
+        ahead = self.staging_ahead if head == "staging" else self.ahead_by
+        return {"ahead_by": ahead, "total_commits": ahead, "commits": [{}] * ahead}
+
+    def find_open_pull_request(self, owner, repo, *, head, base):
+        return None
+
+    def create_pull_request(self, owner, repo, *, title, body, head, base):
+        self.created_prs.append(
+            {"title": title, "body": body, "head": head, "base": base}
+        )
+        return self.created
+
+
+def test_ensure_release_opens_pr_with_cut_keys(monkeypatch):
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Meeting notes email still cramped",
+        user_id="dev-user",
+        key="VFA-56",
+        fix_version="0.2.3",
+        status="Final approval (manual)",
+    )
+    create_release("VFA", name="0.2.3")
+    fake = _FakeGitHub()
+    merged = {}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._project_repo",
+        lambda project_key: "mckort/vcfieldassistant",
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._branch_pair",
+        lambda project_key, repo: ("staging", "main"),
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare._github_client", lambda: fake)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.review_and_merge_release_pr",
+        lambda **kwargs: merged.update(kwargs) or {"status": "merged", **kwargs},
+    )
+
+    result = ensure_release_on_main(project_key="VFA", version="0.2.3")
+    assert result["status"] == "merged"
+    assert fake.created_prs
+    pr = fake.created_prs[0]
+    assert pr["head"] == "staging"
+    assert pr["base"] == "main"
+    assert "VFA-56" in pr["title"]
+    assert "VFA-56" in pr["body"]
+    assert merged["cut_keys"] == ["VFA-56"]
+
+
+def test_ensure_release_falls_back_to_staging_when_mapped_to_main(monkeypatch):
+    create_release("VFA", name="0.2.3")
+    fake = _FakeGitHub(ahead_by=0, staging_ahead=4)
+    opened = {}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._project_repo",
+        lambda project_key: "mckort/vcfieldassistant",
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._branch_pair",
+        lambda project_key, repo: ("main", "main"),
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare._github_client", lambda: fake)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.review_and_merge_release_pr",
+        lambda **kwargs: opened.update(kwargs) or {"status": "merged", **kwargs},
+    )
+
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    result = ensure_release_on_main(
+        project_key="VFA", version="0.2.3", thread_id=thread["thread_id"]
+    )
+    assert result["status"] == "merged"
+    assert fake.created_prs[0]["head"] == "staging"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "staging" in blob
+    assert "ahead" in blob
+
+
+def test_ensure_release_posts_when_already_on_main(monkeypatch):
+    create_release("VFA", name="0.2.3")
+    fake = _FakeGitHub(ahead_by=0, staging_ahead=0)
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._project_repo",
+        lambda project_key: "mckort/vcfieldassistant",
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._branch_pair",
+        lambda project_key, repo: ("staging", "main"),
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare._github_client", lambda: fake)
+
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    result = ensure_release_on_main(
+        project_key="VFA", version="0.2.3", thread_id=thread["thread_id"]
+    )
+    assert result["status"] == "already_on_main"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "not ahead" in blob
+    assert "staging" in blob
+
+
+def test_prepare_stops_when_merge_skipped_and_cut_missing(monkeypatch):
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Meeting notes email still cramped",
+        user_id="dev-user",
+        key="VFA-56",
+        fix_version="0.2.3",
+        status="Final approval (manual)",
+    )
+    create_release("VFA", name="0.2.3")
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [],
+            "compared": ["deploy-backend-old → main"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.2.3",
+    )
+    assert result["status"] == "complete"
+    state = chat.get_thread(thread["thread_id"])
+    assert state.get("pending_deploy") is None
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "will not ask to deploy" in blob
+    assert "On `main` now" in blob
+    assert "Reply **yes**" not in blob
+
+
+def test_prepare_after_merge_shows_main_commits(monkeypatch):
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Meeting notes email still cramped",
+        user_id="dev-user",
+        key="VFA-56",
+        fix_version="0.2.3",
+        status="Final approval (manual)",
+    )
+    create_release("VFA", name="0.2.3")
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "merged", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.check_deployment_risk",
+        lambda **kwargs: {**_low_risk(), "total_files_changed": 6},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [
+                {
+                    "sha": "cafe1234deadbeef",
+                    "message": "Release 0.2.3: merge into main (VFA-56)",
+                    "subject": "Release 0.2.3: merge into main (VFA-56)",
+                }
+            ],
+            "compared": ["deploy-web-old → main"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.2.3",
+    )
+    assert result["status"] == "complete"
+    pending = chat.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert pending and pending.get("kind") == "prepare"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "On `main` now" in blob
+    assert "VFA-56" in blob
+    assert "6 file(s) changed" in blob
+    assert "yes" in blob.lower()
 
 
 def test_prepare_requires_project_and_version():
