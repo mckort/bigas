@@ -21,7 +21,11 @@ from bigas.resources.product.jira_automation.config import (
     BIGAS_COMMENT_MARKER,
     JiraAutomationConfig,
 )
-from bigas.resources.product.release_workflow import is_versioned_feature_head
+from bigas.resources.product.release_workflow import (
+    feature_branch_prefix,
+    is_versioned_feature_head,
+    version_from_feature_branch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -105,18 +109,85 @@ def find_ticket_by_pr_url(project_key: str, pr_url: str) -> Optional[Dict[str, A
     return None
 
 
+def _ticket_fix_version(issue_key: str) -> Optional[str]:
+    from bigas.tickets.jira_adapter import TicketJiraAdapter
+
+    ticket = TicketJiraAdapter()._ticket(issue_key)
+    if not ticket:
+        return None
+    return (ticket.get("fix_version") or "").strip() or None
+
+
+def _align_pr_base_to_board_release(
+    *,
+    repo: str,
+    pr: Dict[str, Any],
+    project_key: str,
+    issue_key: str,
+    github_token: str,
+    pr_number: Optional[int],
+) -> Optional[str]:
+    """Create staging-x.y.z from the board default and retarget an unversioned base."""
+    current = (((pr.get("base") or {}).get("ref") or "")).strip()
+    if not current or version_from_feature_branch(current):
+        return None
+
+    from bigas.resources.product.fix_version import ensure_active_fix_version
+    from bigas.resources.product.release_branches import resolve_implement_base_branch
+    from bigas.tickets.jira_adapter import TicketJiraAdapter
+
+    fix_version = ensure_active_fix_version(
+        TicketJiraAdapter(),
+        issue_key=issue_key,
+        project_key=project_key,
+    ) or _ticket_fix_version(issue_key)
+    if not fix_version:
+        return None
+
+    wanted = resolve_implement_base_branch(
+        project_key=project_key,
+        repo=repo,
+        fix_version=fix_version,
+    )
+    if not wanted or wanted == current or not version_from_feature_branch(wanted):
+        return None
+    if current != feature_branch_prefix(wanted):
+        return None
+
+    number = pr_number or pr.get("number")
+    token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
+    if not token or not number:
+        return None
+    if not _update_pr_title_and_body(
+        repo=repo,
+        pr_number=int(number),
+        base=wanted,
+        github_token=token,
+    ):
+        return None
+    pr.setdefault("base", {})["ref"] = wanted
+    return wanted
+
+
 def _update_pr_title_and_body(
     *,
     repo: str,
     pr_number: int,
-    title: str,
-    body: Optional[str],
+    title: Optional[str] = None,
+    body: Optional[str] = None,
+    base: Optional[str] = None,
     github_token: str,
 ) -> bool:
     owner, name = repo.split("/", 1)
-    payload: Dict[str, Any] = {"title": title}
+    payload: Dict[str, Any] = {}
+    if title is not None:
+        payload["title"] = title
     if body is not None:
         payload["body"] = body
+    if base is not None:
+        payload["base"] = base
+    if not payload:
+        return False
     try:
         resp = requests.patch(
             f"https://api.github.com/repos/{owner}/{name}/pulls/{pr_number}",
@@ -262,12 +333,22 @@ def ensure_board_ticket_for_pr(
             if new_body != body:
                 pr["body"] = new_body
 
+    retargeted_base = _align_pr_base_to_board_release(
+        repo=repo,
+        pr=pr,
+        project_key=project_key,
+        issue_key=issue_key,
+        github_token=token,
+        pr_number=number if number else None,
+    )
+
     return {
         "ok": True,
         "created": created,
         "issue_key": issue_key,
         "title": (pr.get("title") or new_title or title).strip(),
         "retitled": retitled,
+        "retargeted_base": retargeted_base,
         "project_key": project_key,
         "pr_url": pr_url,
     }
