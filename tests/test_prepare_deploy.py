@@ -23,6 +23,7 @@ from bigas.resources.devops.pipeline import (
 from bigas.resources.devops.prepare import (
     _branch_pair,
     _enrich_commits_with_pr_keys,
+    _launch_autofix_and_poll,
     compare_ahead_count,
     ensure_release_on_main,
     format_git_reconcile_report,
@@ -839,6 +840,45 @@ def test_release_pr_copy_includes_cut_keys():
     assert release_commit_title("0.2.3", keys) == (
         "Release 0.2.3: merge into main (VFA-56, VFA-53)"
     )
+
+
+def test_autofix_skip_when_pr_already_merged_continues(monkeypatch):
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    continued = {}
+
+    class _FakeAutofix:
+        def run(self, **kwargs):
+            return {
+                "skipped": True,
+                "reason": "pr_already_merged",
+                "pr_url": "https://github.com/mckort/vcfieldassistant/pull/200",
+            }
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        _FakeAutofix,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.review_and_merge_release_pr",
+        lambda **kwargs: continued.update(kwargs) or {"status": "merged", **kwargs},
+    )
+
+    result = _launch_autofix_and_poll(
+        repo="mckort/vcfieldassistant",
+        pr_number=200,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/200",
+        review_body="needs a small fix",
+        thread_id=thread["thread_id"],
+        project_key="VFA",
+        version="0.2.3",
+        reason="review needs fixes",
+        cut_keys=["VFA-56"],
+    )
+    assert result["status"] == "merged"
+    assert continued["pr_number"] == 200
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "Handle the release PR manually" not in blob
 
 
 def test_format_main_ship_report_lists_commits():

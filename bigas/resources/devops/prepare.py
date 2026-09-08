@@ -993,7 +993,10 @@ def _launch_autofix_and_poll(
         _post(thread_id, f"Could not launch autofix: {exc}")
         return {"status": "failed", "summary": str(exc), "pr_url": pr_url}
 
-    if launched.get("skipped") and launched.get("review_clean"):
+    if launched.get("skipped") and (
+        launched.get("review_clean")
+        or launched.get("reason") == "pr_already_merged"
+    ):
         return review_and_merge_release_pr(
             repo=repo,
             pr_number=pr_number,
