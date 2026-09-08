@@ -110,9 +110,12 @@ def find_ticket_by_pr_url(project_key: str, pr_url: str) -> Optional[Dict[str, A
 
 
 def _ticket_fix_version(issue_key: str) -> Optional[str]:
-    from bigas.tickets.jira_adapter import TicketJiraAdapter
+    try:
+        from bigas.tickets.store import get_ticket_store
 
-    ticket = TicketJiraAdapter()._ticket(issue_key)
+        ticket = get_ticket_store().get_ticket_by_key(issue_key)
+    except Exception:
+        return None
     if not ticket:
         return None
     return (ticket.get("fix_version") or "").strip() or None
@@ -165,7 +168,9 @@ def _align_pr_base_to_board_release(
         github_token=token,
     ):
         return None
-    pr.setdefault("base", {})["ref"] = wanted
+    if not pr.get("base"):
+        pr["base"] = {}
+    pr["base"]["ref"] = wanted
     return wanted
 
 
@@ -338,8 +343,8 @@ def ensure_board_ticket_for_pr(
         pr=pr,
         project_key=project_key,
         issue_key=issue_key,
-        github_token=token,
-        pr_number=number if number else None,
+        github_token=github_token,
+        pr_number=pr_number,
     )
 
     return {
