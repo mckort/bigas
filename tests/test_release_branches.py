@@ -12,7 +12,6 @@ from bigas.resources.product.release_branches import (
     ensure_versioned_release_branch,
     newer_release_branch_names,
     rebase_newer_release_branches,
-    should_inherit_legacy_staging,
 )
 from bigas.tickets.releases import create_release, unreleased_versions_after
 
@@ -24,13 +23,6 @@ def _reset_stores():
     yield
     ticket_store_module._store = None
     reset_release_store_for_tests()
-
-
-def test_should_inherit_legacy_staging_only_oldest(monkeypatch):
-    create_release("VFA", name="0.2.3")
-    create_release("VFA", name="0.3.0")
-    assert should_inherit_legacy_staging("VFA", "0.2.3") is True
-    assert should_inherit_legacy_staging("VFA", "0.3.0") is False
 
 
 def test_unreleased_versions_after_orders_newer(monkeypatch):
@@ -64,43 +56,23 @@ def test_ensure_creates_from_main_when_no_legacy_staging():
     )
 
 
-def test_ensure_migrates_from_unversioned_staging_for_oldest_cut():
+def test_ensure_always_creates_from_main_even_if_staging_is_ahead():
     client = MagicMock()
     client.branch_exists.side_effect = lambda owner, repo, branch: branch == "staging"
     client.compare_refs.return_value = {"ahead_by": 4, "commits": [1, 2, 3, 4]}
-    client.ensure_branch_from_ref.return_value = "staging"
-
-    result = ensure_versioned_release_branch(
-        repo="mckort/vcfieldassistant",
-        branch="staging-0.2.3",
-        production="main",
-        prefix="staging",
-        client=client,
-        inherit_legacy_prefix=True,
-    )
-    assert result["source"] == "staging"
-    client.ensure_branch_from_ref.assert_called_once_with(
-        "mckort", "vcfieldassistant", "staging-0.2.3", "staging"
-    )
-
-
-def test_ensure_newer_version_always_from_main():
-    client = MagicMock()
-    client.branch_exists.side_effect = lambda owner, repo, branch: branch == "staging"
     client.ensure_branch_from_ref.return_value = "main"
 
     result = ensure_versioned_release_branch(
         repo="mckort/vcfieldassistant",
-        branch="staging-0.3.0",
+        branch="staging-0.2.4",
         production="main",
         prefix="staging",
         client=client,
-        inherit_legacy_prefix=False,
     )
     assert result["source"] == "main"
     client.compare_refs.assert_not_called()
     client.ensure_branch_from_ref.assert_called_once_with(
-        "mckort", "vcfieldassistant", "staging-0.3.0", "main"
+        "mckort", "vcfieldassistant", "staging-0.2.4", "main"
     )
 
 
