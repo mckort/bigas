@@ -84,12 +84,13 @@ class ModelOutputTokenLimitTests(unittest.TestCase):
 
     def test_gpt6_astra_request_uses_max_completion_tokens(self):
         captured = self._complete_captured("gpt-6-astra")
-        self.assertEqual(captured["max_completion_tokens"], 800)
+        self.assertEqual(captured.get("extra_body"), {"max_completion_tokens": 800})
         self.assertNotIn("max_tokens", captured)
+        self.assertNotIn("max_completion_tokens", captured)
 
     def test_o3_request_omits_temperature(self):
         captured = self._complete_captured("o3-mini")
-        self.assertEqual(captured["max_completion_tokens"], 800)
+        self.assertEqual(captured.get("extra_body"), {"max_completion_tokens": 800})
         self.assertNotIn("temperature", captured)
 
 
