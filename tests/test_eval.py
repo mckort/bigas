@@ -26,10 +26,14 @@ from bigas.eval.registry import (
     discover_pro_models,
     estimate_model_cost_usd,
     get_candidate_models,
+    parse_model_ref,
     update_eval_state_after_run,
 )
+from bigas.eval.html import build_html_report
 from bigas.eval.reporter import build_markdown_report
+from bigas.eval.readable import build_full_markdown, humanize_step_output
 from bigas.eval.runner import EvalRunner
+from bigas.eval.pack import load_pack
 from bigas.eval.use_cases.vc_field_assistant import VCFieldAssistantEvaluator
 from bigas.llm.completion import LLMCompletion
 from bigas.llm.usage import TokenUsage
@@ -66,9 +70,53 @@ class RegistryTests(unittest.TestCase):
         self.assertGreater(cost, 2.0)
 
     def test_get_candidate_models_explicit(self):
-        models = get_candidate_models("vc-field-assistant", explicit_models=["gpt-4o", "gemini:gemini-2.5-pro"])
+        models = get_candidate_models(
+            "vc-field-assistant",
+            explicit_models=["gpt-4o", "gemini:gemini-2.5-pro"],
+            include_baseline=False,
+        )
         self.assertEqual(len(models), 2)
         self.assertEqual(models[0].model_id, "gpt-4o")
+
+    @patch.dict("os.environ", {"EVAL_BASELINE_MODEL": ""}, clear=False)
+    def test_explicit_models_still_include_baseline(self):
+        models = get_candidate_models(
+            "vc-field-assistant",
+            explicit_models=["openai:gpt-4o"],
+            baseline_model="gemini:gemini-2.5-pro",
+        )
+        self.assertEqual([m.key for m in models], ["gemini:gemini-2.5-pro", "openai:gpt-4o"])
+
+    @patch.dict("os.environ", {"EVAL_BASELINE_MODEL": ""}, clear=False)
+    def test_baseline_survives_elimination(self):
+        storage = MagicMock()
+        storage.get_json.return_value = {
+            "use_cases": {
+                "vc-field-assistant": {
+                    "champion": "openai:gpt-4o",
+                    "eliminated": ["gemini:gemini-2.5-pro"],
+                }
+            }
+        }
+        with patch("bigas.eval.registry.discover_pro_models") as discover:
+            discover.return_value = [
+                ModelCandidate("openai", "gpt-4o"),
+                ModelCandidate("gemini", "gemini-2.5-pro"),
+                ModelCandidate("openai", "gpt-5"),
+            ]
+            models = get_candidate_models(
+                "vc-field-assistant",
+                storage=storage,
+                baseline_model="gemini:gemini-2.5-pro",
+            )
+        keys = [m.key for m in models]
+        self.assertEqual(keys[0], "gemini:gemini-2.5-pro")
+        self.assertIn("openai:gpt-4o", keys)
+        self.assertIn("openai:gpt-5", keys)
+
+    def test_parse_model_ref(self):
+        model = parse_model_ref("gemini:gemini-2.5-pro")
+        self.assertEqual(model.key, "gemini:gemini-2.5-pro")
 
     def test_eliminated_models_skipped(self):
         storage = MagicMock()
@@ -86,7 +134,11 @@ class RegistryTests(unittest.TestCase):
                 ModelCandidate("gemini", "gemini-2.5-pro"),
                 ModelCandidate("openai", "gpt-5"),
             ]
-            models = get_candidate_models("vc-field-assistant", storage=storage)
+            models = get_candidate_models(
+                "vc-field-assistant",
+                storage=storage,
+                include_baseline=False,
+            )
         keys = {m.key for m in models}
         self.assertIn("openai:gpt-4o", keys)
         self.assertIn("openai:gpt-5", keys)
@@ -263,6 +315,45 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("gpt-4o", md)
         self.assertIn("90.0", md)
 
+    def test_full_report_unwraps_json_steps(self):
+        run = EvalRunResult(
+            use_case="vc-field-assistant",
+            run_id="abc123",
+            fixture=EvalFixture("VC Field Assistant", "https://vcfieldassistant.com"),
+            baseline_model="gemini:gemini-2.5-pro",
+            results=[
+                EvalModelResult(
+                    model_id="gemini-2.5-pro",
+                    provider="gemini",
+                    output={
+                        "steps": {
+                            "primary": '{"sections":[{"key":"company_snapshot","title":"Company overview","body":"A portfolio workspace for VCs."}]}',
+                            "landscape": '{"overlapping":[{"name":"Affinity","product":"CRM","strength":"Network","relevance":"High"}],"adHoc":[],"complementary":[]}',
+                        }
+                    },
+                    usage=EvalUsage(latency_ms=800, cost_usd=0.02),
+                    score=80.0,
+                    score_rationale="Grounded snapshot.",
+                )
+            ],
+        )
+        md = build_full_markdown(run)
+        self.assertIn("In production", md)
+        self.assertIn("A portfolio workspace for VCs.", md)
+        self.assertIn("Affinity", md)
+        self.assertNotIn('"sections"', md)
+        html_page = build_html_report(run)
+        self.assertIn("A portfolio workspace for VCs.", html_page)
+        self.assertIn("<table>", html_page)
+
+    def test_humanize_classify_json(self):
+        text = humanize_step_output(
+            "classify",
+            '{"category":"investor workspace","productFunction":"living analysis"}',
+        )
+        self.assertIn("investor workspace", text)
+        self.assertIn("productFunction", text)
+
 
 class VFAPackEvaluatorTests(unittest.TestCase):
     def _inline_pack(self):
@@ -280,6 +371,10 @@ class VFAPackEvaluatorTests(unittest.TestCase):
                 "rubric": "No invented figures.",
             }
         )
+
+    def test_pack_exposes_baseline_model(self):
+        pack = load_pack("vfa-living-analysis")
+        self.assertEqual(pack.baseline_model, "gemini:gemini-2.5-pro")
 
     def test_default_fixture(self):
         with patch.dict(

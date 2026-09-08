@@ -874,7 +874,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales
 
 ### AI Model Evaluation Engine (Cloud Scheduler)
 
-Bigas periodically benchmarks flagship LLM models (OpenAI, Anthropic, Gemini) against **eval packs** — self-contained YAML files with fixture, prompts, and optional Bigas-side web research. Each run reads the vendors' model-overview pages ([Claude](https://platform.claude.com/docs/en/models/overview), [OpenAI](https://developers.openai.com/api/docs/models), [Gemini](https://ai.google.dev/gemini-api/docs/models)) and takes **at most two current reasoning models per provider**, then skips ids already eliminated and retests the champion. The first pack is **VC Field Assistant living analysis** (`eval/vfa-living-analysis.pack.yaml`). Bigas runs the models, ranks with LLM-as-a-judge, stores artifacts in Bigas GCS, and posts to the **Product Manager** chat thread and Discord.
+Bigas periodically benchmarks flagship LLM models (OpenAI, Anthropic, Gemini) against **eval packs** — self-contained YAML files with fixture, prompts, and optional Bigas-side web research. Each run reads the vendors' model-overview pages ([Claude](https://platform.claude.com/docs/en/models/overview), [OpenAI](https://developers.openai.com/api/docs/models), [Gemini](https://ai.google.dev/gemini-api/docs/models)) and takes **at most two current reasoning models per provider**, then skips ids already eliminated and retests the champion **and the current production baseline**. The first pack is **VC Field Assistant living analysis** (`eval/vfa-living-analysis.pack.yaml`, baseline `gemini:gemini-2.5-pro`, override with `EVAL_BASELINE_MODEL`). Bigas runs the models, ranks with LLM-as-a-judge, stores `ranking.json` plus a readable `report.html` / `report.md`, posts a ranking summary to the **Product Manager** chat thread and Discord, and includes a signed clickable report link (`/eval/reports/<use-case>/<run-id>`).
 
 This scores the VFA **prompt suite + Bigas web research** (fixture URL + optional Tavily snippets). It is not VFA's full citation / competitor-homepage pipeline.
 
@@ -909,7 +909,7 @@ gcloud scheduler jobs create http bigas-eval-vfa-models \
   --attempt-deadline=900s
 ```
 
-Only the reigning champion plus newly discovered flagship models are re-tested; previously eliminated models are skipped until a new champion wins. Set `EVAL_MODELS_PER_PROVIDER=1` to keep a single current model per vendor.
+The production baseline is always re-tested (even if it lost a previous round). Only other previously eliminated models are skipped until a new champion wins. Set `EVAL_MODELS_PER_PROVIDER=1` to keep a single current challenger per vendor.
 
 ### Proactive Goal Engine (Cloud Scheduler)
 

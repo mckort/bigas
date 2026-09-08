@@ -28,13 +28,27 @@ class EvalStorage:
         self.bucket = self.client.bucket(self.bucket_name)
 
     def store_json(self, blob_name: str, data: Dict[str, Any]) -> str:
-        blob = self.bucket.blob(blob_name)
-        blob.upload_from_string(
+        return self.store_text(
+            blob_name,
             json.dumps(data, indent=2, ensure_ascii=False),
             content_type="application/json",
         )
+
+    def store_text(self, blob_name: str, text: str, *, content_type: str = "text/plain") -> str:
+        blob = self.bucket.blob(blob_name)
+        blob.upload_from_string(text, content_type=content_type)
         logger.info("Stored eval artifact at gs://%s/%s", self.bucket_name, blob_name)
         return blob_name
+
+    def get_text(self, blob_name: str) -> Optional[str]:
+        try:
+            blob = self.bucket.blob(blob_name)
+            if not blob.exists():
+                return None
+            return blob.download_as_text()
+        except Exception as exc:
+            logger.warning("Failed to load gs://%s/%s: %s", self.bucket_name, blob_name, exc)
+            return None
 
     def get_json(self, blob_name: str) -> Optional[Dict[str, Any]]:
         try:

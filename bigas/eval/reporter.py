@@ -1,75 +1,61 @@
-"""Markdown ranking reports and delivery to PM chat / Discord."""
+"""Markdown/HTML ranking reports and delivery to PM chat / Discord."""
 from __future__ import annotations
 
 import logging
 import os
-from typing import List, Optional
+from typing import Optional
+from urllib.parse import urlencode
 
 from bigas.chat.activity import post_to_agent_thread
 from bigas.discord_webhook import post_long_to_discord
-from bigas.eval.base import EvalModelResult, EvalRunResult
+from bigas.eval.base import EvalRunResult
+from bigas.eval.html import build_html_report
+from bigas.eval.readable import build_full_markdown, build_summary_markdown
+from bigas.eval.signing import sign_report, signing_secret
 from bigas.eval.storage import EvalStorage, eval_bucket_name
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PUBLIC_BASE = "https://mcp-marketing-343105851187.europe-north1.run.app"
 
 
 def report_json_blob_path(run: EvalRunResult) -> str:
     return f"{run.use_case}/reports/{run.run_id}/ranking.json"
 
 
+def report_html_blob_path(run: EvalRunResult) -> str:
+    return f"{run.use_case}/reports/{run.run_id}/report.html"
+
+
+def report_markdown_blob_path(run: EvalRunResult) -> str:
+    return f"{run.use_case}/reports/{run.run_id}/report.md"
+
+
+def public_eval_base_url() -> str:
+    return (
+        (os.environ.get("BIGAS_PUBLIC_URL") or "").strip()
+        or (os.environ.get("SERVER_URL") or "").strip()
+        or DEFAULT_PUBLIC_BASE
+    ).rstrip("/")
+
+
+def readable_report_url(run: EvalRunResult) -> str:
+    if not signing_secret():
+        return ""
+    query = urlencode({"token": sign_report(run.use_case, run.run_id)})
+    return f"{public_eval_base_url()}/eval/reports/{run.use_case}/{run.run_id}?{query}"
+
+
+def attach_report_paths(run: EvalRunResult) -> None:
+    run.report_blob = run.report_blob or report_json_blob_path(run)
+    run.report_html_blob = run.report_html_blob or report_html_blob_path(run)
+    run.report_markdown_blob = run.report_markdown_blob or report_markdown_blob_path(run)
+    run.report_url = run.report_url or readable_report_url(run)
+
+
 def build_markdown_report(run: EvalRunResult) -> str:
-    ranked = run.ranked_results()
-    lines = [
-        "# AI Model Evaluation Report",
-        "",
-        f"**Use case:** {run.use_case}",
-        f"**Run ID:** {run.run_id}",
-        f"**Fixture:** {run.fixture.company_name} — {run.fixture.website_url}",
-        "",
-    ]
-
-    if not ranked:
-        lines.append("_No successful model results to rank._")
-        errors = [r for r in run.results if r.error]
-        for item in errors:
-            lines.append(f"- {item.model_id}: {item.error}")
-        return "\n".join(lines)
-
-    champion = ranked[0]
-    lines.extend(
-        [
-            f"**Champion:** {champion.model_id} (score {champion.score:.1f}/100)",
-            "",
-            "## Ranking",
-            "",
-            "| Rank | Model | Score | Latency | Est. cost |",
-            "| --- | --- | ---: | ---: | ---: |",
-        ]
-    )
-
-    for idx, result in enumerate(ranked, start=1):
-        latency = f"{result.usage.latency_ms:.0f} ms"
-        cost = (
-            f"${result.usage.cost_usd:.4f}"
-            if result.usage.cost_usd is not None
-            else "n/a"
-        )
-        lines.append(
-            f"| {idx} | {result.model_id} | {result.score:.1f} | {latency} | {cost} |"
-        )
-
-    lines.extend(["", "## Motivation", ""])
-    for idx, result in enumerate(ranked, start=1):
-        lines.append(f"### {idx}. {result.model_id}")
-        lines.append(result.score_rationale or "_No rationale provided._")
-        if result.output_blob:
-            lines.append(f"- Output: `gs://{eval_bucket_name()}/{result.output_blob}`")
-        lines.append("")
-
-    if run.report_blob:
-        lines.append(f"Full report JSON: `gs://{eval_bucket_name()}/{run.report_blob}`")
-
-    return "\n".join(lines).strip()
+    attach_report_paths(run)
+    return build_summary_markdown(run)
 
 
 def publish_report(
@@ -79,15 +65,17 @@ def publish_report(
     post_discord: bool = True,
     post_chat: bool = True,
 ) -> dict:
-    """Persist report and post to PM Discord + product chat thread."""
-    if not run.report_blob:
-        run.report_blob = report_json_blob_path(run)
-
+    """Persist JSON + readable reports and post to PM Discord + product chat."""
+    attach_report_paths(run)
     body = (markdown or run.report_markdown or build_markdown_report(run)).strip()
     run.report_markdown = body
+    full_markdown = build_full_markdown(run)
+    html_page = build_html_report(run)
 
     storage = EvalStorage()
     storage.store_json(run.report_blob, run.to_dict())
+    storage.store_text(run.report_markdown_blob, full_markdown, content_type="text/markdown; charset=utf-8")
+    storage.store_text(run.report_html_blob, html_page, content_type="text/html; charset=utf-8")
 
     posted_discord = False
     posted_chat = False
@@ -115,7 +103,10 @@ def publish_report(
 
     return {
         "report_blob": run.report_blob,
+        "report_html_blob": run.report_html_blob,
+        "report_markdown_blob": run.report_markdown_blob,
         "report_gcs_uri": storage.gcs_uri(run.report_blob),
+        "report_url": run.report_url,
         "posted_discord": posted_discord,
         "posted_chat": posted_chat,
     }
@@ -129,8 +120,12 @@ def summarize_for_response(run: EvalRunResult) -> dict:
         "use_case": run.use_case,
         "run_id": run.run_id,
         "champion": champion,
+        "baseline_model": run.baseline_model,
         "fixture": run.fixture.to_dict(),
-        "report_url": EvalStorage().gcs_uri(run.report_blob) if run.report_blob else "",
+        "report_url": run.report_url,
+        "ranking_json_url": (
+            f"gs://{eval_bucket_name()}/{run.report_blob}" if run.report_blob else ""
+        ),
         "models_tested": len(run.results),
         "models": [f"{r.provider}:{r.model_id}" for r in run.results],
         "dry_run": run.dry_run,

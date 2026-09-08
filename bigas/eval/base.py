@@ -110,6 +110,32 @@ class EvalModelResult:
             "error": self.error,
         }
 
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "EvalModelResult":
+        usage_raw = raw.get("usage") or {}
+        if not isinstance(usage_raw, Mapping):
+            usage_raw = {}
+        output = raw.get("output") or {}
+        if not isinstance(output, Mapping):
+            output = {"text": output}
+        return cls(
+            model_id=str(raw.get("model_id") or ""),
+            provider=str(raw.get("provider") or ""),
+            output=dict(output),
+            usage=EvalUsage(
+                prompt_tokens=int(usage_raw.get("prompt_tokens") or 0),
+                output_tokens=int(usage_raw.get("output_tokens") or 0),
+                cached_tokens=int(usage_raw.get("cached_tokens") or 0),
+                total_tokens=int(usage_raw.get("total_tokens") or 0),
+                latency_ms=float(usage_raw.get("latency_ms") or 0),
+                cost_usd=usage_raw.get("cost_usd"),
+            ),
+            score=raw.get("score"),
+            score_rationale=str(raw.get("score_rationale") or ""),
+            output_blob=str(raw.get("output_blob") or ""),
+            error=raw.get("error"),
+        )
+
 
 @dataclass
 class EvalRunResult:
@@ -118,7 +144,11 @@ class EvalRunResult:
     fixture: EvalFixture
     results: List[EvalModelResult] = field(default_factory=list)
     champion_model: str = ""
+    baseline_model: str = ""
     report_blob: str = ""
+    report_html_blob: str = ""
+    report_markdown_blob: str = ""
+    report_url: str = ""
     report_markdown: str = ""
     dry_run: bool = False
 
@@ -133,10 +163,39 @@ class EvalRunResult:
             "run_id": self.run_id,
             "fixture": self.fixture.to_dict(),
             "champion_model": self.champion_model or (ranked[0].model_id if ranked else ""),
+            "baseline_model": self.baseline_model,
             "report_blob": self.report_blob,
+            "report_html_blob": self.report_html_blob,
+            "report_markdown_blob": self.report_markdown_blob,
+            "report_url": self.report_url,
             "dry_run": self.dry_run,
             "results": [r.to_dict() for r in self.results],
         }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "EvalRunResult":
+        fixture_raw = raw.get("fixture") or {}
+        if not isinstance(fixture_raw, Mapping):
+            fixture_raw = {}
+        results_raw = raw.get("results") or []
+        results = [
+            EvalModelResult.from_dict(item)
+            for item in results_raw
+            if isinstance(item, Mapping)
+        ]
+        return cls(
+            use_case=str(raw.get("use_case") or ""),
+            run_id=str(raw.get("run_id") or ""),
+            fixture=EvalFixture.from_dict(fixture_raw),
+            results=results,
+            champion_model=str(raw.get("champion_model") or raw.get("champion") or ""),
+            baseline_model=str(raw.get("baseline_model") or ""),
+            report_blob=str(raw.get("report_blob") or ""),
+            report_html_blob=str(raw.get("report_html_blob") or ""),
+            report_markdown_blob=str(raw.get("report_markdown_blob") or ""),
+            report_url=str(raw.get("report_url") or ""),
+            dry_run=bool(raw.get("dry_run")),
+        )
 
 
 class BaseUseCaseEvaluator(ABC):

@@ -193,28 +193,52 @@ def save_eval_state(state: Dict[str, Any], storage: Optional[EvalStorage] = None
     store.store_json(STATE_BLOB, state)
 
 
+def parse_model_ref(raw: str) -> Optional[ModelCandidate]:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if ":" in text:
+        provider, model_id = text.split(":", 1)
+        provider = provider.strip().lower()
+        model_id = model_id.strip()
+        if not provider or not model_id:
+            return None
+        return ModelCandidate(provider, model_id)
+    return ModelCandidate(_infer_provider(text), text)
+
+
+def resolve_baseline_model(pack_baseline: Optional[str] = None) -> Optional[ModelCandidate]:
+    """EVAL_BASELINE_MODEL wins over the pack's baseline_model."""
+    env = (os.environ.get("EVAL_BASELINE_MODEL") or "").strip()
+    return parse_model_ref(env or (pack_baseline or ""))
+
+
 def get_candidate_models(
     use_case: str,
     *,
     storage: Optional[EvalStorage] = None,
     explicit_models: Optional[List[str]] = None,
+    baseline_model: Optional[str] = None,
+    include_baseline: bool = True,
 ) -> List[ModelCandidate]:
     """
-    Return models to benchmark: reigning champion + newly discovered pro models.
-    Skips models previously eliminated for this use case.
+    Return models to benchmark: production baseline + reigning champion +
+    newly discovered pro models. Skips previously eliminated models, except
+    the current production baseline which is always re-tested.
     """
+    baseline = resolve_baseline_model(baseline_model) if include_baseline else None
+
     if explicit_models:
         out: List[ModelCandidate] = []
+        seen: Set[str] = set()
         for raw in explicit_models:
-            text = (raw or "").strip()
-            if not text:
+            model = parse_model_ref(raw)
+            if not model or model.key in seen:
                 continue
-            if ":" in text:
-                provider, model_id = text.split(":", 1)
-                out.append(ModelCandidate(provider.strip().lower(), model_id.strip()))
-            else:
-                provider = _infer_provider(text)
-                out.append(ModelCandidate(provider, text))
+            seen.add(model.key)
+            out.append(model)
+        if baseline and baseline.key not in seen:
+            out.insert(0, baseline)
         return out
 
     state = load_eval_state(storage)
@@ -231,20 +255,24 @@ def get_candidate_models(
     candidates: List[ModelCandidate] = []
     seen: Set[str] = set()
 
-    def _add(model: ModelCandidate) -> None:
-        if model.key in eliminated or model.key in seen:
+    def _add(model: ModelCandidate, *, force: bool = False) -> None:
+        if model.key in seen:
+            return
+        if not force and model.key in eliminated:
             return
         seen.add(model.key)
         candidates.append(model)
 
+    if baseline:
+        _add(baseline, force=True)
+        already.add(baseline.key)
+
     if champion:
-        if ":" in champion:
-            provider, model_id = champion.split(":", 1)
-            _add(ModelCandidate(provider.strip().lower(), model_id.strip()))
-        elif champion in by_id:
-            _add(by_id[champion])
-        else:
-            _add(ModelCandidate(_infer_provider(champion), champion))
+        champion_model = parse_model_ref(champion)
+        if champion_model is None and champion in by_id:
+            champion_model = by_id[champion]
+        if champion_model is not None:
+            _add(champion_model)
 
     new_models = [model for model in discovered if model.key not in already]
     skipped = [model.key for model in discovered if model.key in eliminated]
@@ -252,6 +280,8 @@ def get_candidate_models(
         logger.info("Eval skipping already-run models: %s", ", ".join(skipped))
     if new_models:
         logger.info("Eval new flagship models: %s", ", ".join(m.key for m in new_models))
+    if baseline:
+        logger.info("Eval including production baseline: %s", baseline.key)
 
     for model in new_models:
         _add(model)

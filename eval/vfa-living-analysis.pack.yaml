@@ -9,6 +9,8 @@
 id: vfa-living-analysis
 name: VC Field Assistant living analysis
 source: https://github.com/mckort/vcfieldassistant
+# Always compared, even if discovery would skip it. Override with EVAL_BASELINE_MODEL.
+baseline_model: gemini:gemini-2.5-pro
 fixture:
   company: VC Field Assistant
   url: https://vcfieldassistant.com
