@@ -21,6 +21,7 @@ from bigas.eval.discover import (
     match_catalog_id,
 )
 from bigas.eval.registry import (
+    DEFAULT_PRO_MODELS,
     ModelCandidate,
     discover_pro_models,
     estimate_model_cost_usd,
@@ -112,6 +113,10 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("anthropic", providers)
         self.assertTrue(all(sum(1 for m in models if m.provider == p) <= 2 for p in providers))
 
+    def test_fallback_excludes_retired_gemini_25_pro(self):
+        self.assertNotIn(("gemini", "gemini-2.5-pro"), DEFAULT_PRO_MODELS)
+        self.assertIn(("gemini", "gemini-3.1-pro-preview"), DEFAULT_PRO_MODELS)
+
 
 class DiscoverTests(unittest.TestCase):
     def test_official_overview_urls_are_stable_paths(self):
@@ -191,6 +196,41 @@ class JudgeTests(unittest.TestCase):
         score, rationale = judge._parse_score(completion)
         self.assertEqual(score, 87.5)
         self.assertIn("Strong structure", rationale)
+
+    def test_score_uses_complete_detailed(self):
+        judge = LLMJudge()
+        evaluator = MagicMock()
+        evaluator.get_judge_rubric.return_value = "Be accurate."
+        client = MagicMock()
+        client.complete_detailed.return_value = LLMCompletion(
+            text='{"score": 80, "rationale": "Solid."}',
+            usage=TokenUsage(),
+        )
+        with patch("bigas.llm.factory.get_llm_client", return_value=(client, "gemini-3.1-pro-preview")):
+            score, rationale = judge.score(
+                evaluator=evaluator,
+                fixture=EvalFixture("Co", "https://example.com"),
+                output={"summary": "ok"},
+            )
+        self.assertEqual(score, 80)
+        self.assertIn("Solid", rationale)
+        client.complete_detailed.assert_called_once()
+        client.complete.assert_not_called()
+
+    def test_score_when_only_complete_returns_str(self):
+        judge = LLMJudge()
+        evaluator = MagicMock()
+        evaluator.get_judge_rubric.return_value = "Be accurate."
+        client = MagicMock(spec=["complete"])
+        client.complete.return_value = '{"score": 64, "rationale": "Plain string."}'
+        with patch("bigas.llm.factory.get_llm_client", return_value=(client, "gemini-3.1-pro-preview")):
+            score, rationale = judge.score(
+                evaluator=evaluator,
+                fixture=EvalFixture("Co", "https://example.com"),
+                output={"summary": "ok"},
+            )
+        self.assertEqual(score, 64)
+        self.assertIn("Plain string", rationale)
 
 
 class ReporterTests(unittest.TestCase):

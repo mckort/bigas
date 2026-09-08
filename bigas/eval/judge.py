@@ -57,12 +57,17 @@ class LLMJudge:
     def _complete(self, prompt: str) -> LLMCompletion:
         from bigas.llm.factory import get_llm_client
 
-        client, model = get_llm_client(feature="model_eval_judge", explicit_model=self.model)
-        return client.complete(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=800,
-        )
+        client, _model = get_llm_client(feature="model_eval_judge", explicit_model=self.model)
+        messages = [{"role": "user", "content": prompt}]
+        kwargs = {"temperature": 0.1, "max_tokens": 800}
+        detailed = getattr(client, "complete_detailed", None)
+        if callable(detailed):
+            result = detailed(messages=messages, **kwargs)
+        else:
+            result = client.complete(messages=messages, **kwargs)
+        if isinstance(result, LLMCompletion):
+            return result
+        return LLMCompletion(text=str(result or ""))
 
     def _parse_score(self, completion: LLMCompletion) -> Tuple[float, str]:
         text = (completion.text or "").strip()
