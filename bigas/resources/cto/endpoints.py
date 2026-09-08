@@ -379,6 +379,7 @@ def _maybe_auto_merge_pr(
         extract_jira_issue_key,
         squash_commit_title,
         title_with_issue_key,
+        versioned_staging_merge_blocked,
     )
 
     if not (issue_key or "").strip():
@@ -402,6 +403,18 @@ def _maybe_auto_merge_pr(
             "reason": "pr_already_merged",
             "merged": True,
             "ok": True,
+        }
+
+    blocked = versioned_staging_merge_blocked(pr, repo)
+    if blocked:
+        _post_cto_status(
+            f"**PR auto-merge blocked**{issue_bit}\n{pr_ref}\nReason: {blocked}"
+        )
+        return {
+            "ok": False,
+            "merged": False,
+            "error": blocked,
+            "reason": "versioned_staging_base_required",
         }
 
     converted_draft = False

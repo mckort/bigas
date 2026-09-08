@@ -126,6 +126,38 @@ def test_maybe_auto_merge_success_posts_discord(
 
 @patch("bigas.resources.cto.endpoints._post_to_discord_cto")
 @patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_blocks_vfa_pr_still_on_main(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "node_id": "PR_x",
+        "title": "VFA-63: Switch living analysis default",
+        "base": {"ref": "main"},
+        "labels": [],
+    }
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="mckort/vcfieldassistant",
+        pr_number=205,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/205",
+        github_token="tok",
+        issue_key="VFA-63",
+    )
+
+    assert result.get("merged") is False
+    assert result.get("reason") == "versioned_staging_base_required"
+    client.merge_pull_request.assert_not_called()
+    posted = mock_discord.call_args[0][0]
+    assert "auto-merge blocked" in posted.lower()
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
 def test_maybe_auto_merge_includes_jira_label(
     mock_client_cls, mock_discord, monkeypatch
 ):

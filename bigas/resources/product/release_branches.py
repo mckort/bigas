@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 REBASE_WORKFLOW = "rebase_release.yml"
 
 
-def _github_client() -> GitHubActionsClient:
-    token = (os.environ.get("GITHUB_TOKEN") or "").strip()
-    if not token:
+def _github_client(token: Optional[str] = None) -> GitHubActionsClient:
+    value = (token or os.environ.get("GITHUB_TOKEN") or "").strip()
+    if not value:
         raise GitHubActionsError("GITHUB_TOKEN is required for release branches")
-    return GitHubActionsClient(token)
+    return GitHubActionsClient(value)
 
 
 def _split_repo(repo: str) -> tuple[str, str]:
@@ -88,6 +88,7 @@ def ensure_versioned_release_branch(
     production: str = "main",
     prefix: str = "staging",
     client: Optional[GitHubActionsClient] = None,
+    github_token: Optional[str] = None,
     inherit_legacy_prefix: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -103,7 +104,7 @@ def ensure_versioned_release_branch(
     if not wanted or wanted == onto:
         return {"branch": wanted or onto, "created": False, "source": "production"}
 
-    gh = client or _github_client()
+    gh = client or _github_client(github_token)
     owner, name = _split_repo(repo)
     if gh.branch_exists(owner, name, wanted):
         return {"branch": wanted, "created": False, "source": "existing"}
@@ -134,6 +135,7 @@ def resolve_implement_base_branch(
     fix_version: Optional[str] = None,
     mapped_branch: str = "",
     config: Optional[JiraAutomationConfig] = None,
+    github_token: Optional[str] = None,
 ) -> str:
     """Versioned staging branch for implement, creating it from main if needed."""
     cfg = config or JiraAutomationConfig.from_env()
@@ -158,6 +160,7 @@ def resolve_implement_base_branch(
             branch=branch,
             production=production,
             prefix=prefix,
+            github_token=github_token,
             inherit_legacy_prefix=should_inherit_legacy_staging(
                 project_key, fix_version or version_from_feature_branch(branch)
             ),
@@ -169,6 +172,7 @@ def resolve_implement_base_branch(
             repo,
             exc,
         )
+        raise
     return branch
 
 
