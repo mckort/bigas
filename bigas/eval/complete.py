@@ -8,6 +8,7 @@ import requests
 
 from bigas.eval.registry import _infer_provider
 from bigas.llm.completion import LLMCompletion
+from bigas.llm.limits import supports_temperature
 from bigas.llm.usage import TokenUsage
 
 
@@ -55,6 +56,13 @@ def _complete_anthropic(
     api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot eval Claude models")
+    payload = {
+        "model": model_id,
+        "max_tokens": max_tokens,
+        "messages": _messages(prompt),
+    }
+    if supports_temperature(model_id):
+        payload["temperature"] = temperature
     resp = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -62,12 +70,7 @@ def _complete_anthropic(
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         },
-        json={
-            "model": model_id,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": _messages(prompt),
-        },
+        json=payload,
         timeout=180,
     )
     if resp.status_code >= 400:

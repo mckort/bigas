@@ -46,7 +46,12 @@ class ModelOutputTokenLimitTests(unittest.TestCase):
     def test_reasoning_models_reject_custom_temperature(self):
         self.assertFalse(supports_temperature("o1"))
         self.assertFalse(supports_temperature("o3-mini"))
+        self.assertFalse(supports_temperature("gpt-6-astra"))
+        self.assertFalse(supports_temperature("gpt-5.6-sol"))
+        self.assertFalse(supports_temperature("claude-fable-5-1"))
+        self.assertFalse(supports_temperature("claude-opus-5"))
         self.assertTrue(supports_temperature("gpt-4o"))
+        self.assertTrue(supports_temperature("claude-sonnet-4-20250514"))
 
     def _complete_captured(self, model_id: str) -> dict:
         captured: dict = {}
@@ -87,6 +92,7 @@ class ModelOutputTokenLimitTests(unittest.TestCase):
         self.assertEqual(captured.get("extra_body"), {"max_completion_tokens": 800})
         self.assertNotIn("max_tokens", captured)
         self.assertNotIn("max_completion_tokens", captured)
+        self.assertNotIn("temperature", captured)
 
     def test_o3_request_omits_temperature(self):
         captured = self._complete_captured("o3-mini")
