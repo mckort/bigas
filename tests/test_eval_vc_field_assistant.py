@@ -146,7 +146,18 @@ class VFAPackIntegrationTests(unittest.TestCase):
             text='{"category":"investor workspace","customerSegment":"VCs"}',
             usage=TokenUsage(prompt_tokens=2000, candidates_tokens=800, total_tokens=2800),
         )
-        mock_judge_cls.return_value.score.return_value = (88.0, "High quality output.")
+        from bigas.eval.judge import JudgeVerdict
+
+        mock_judge = mock_judge_cls.return_value
+        mock_judge.models = ["gemini:gemini-3.1-pro-preview"]
+        mock_judge.score_panel.return_value = [
+            JudgeVerdict(
+                model_id="gemini-3.1-pro-preview",
+                provider="gemini",
+                score=88.0,
+                rationale="High quality output.",
+            )
+        ]
 
         storage = MagicMock()
         storage.get_json.return_value = {"use_cases": {}}

@@ -88,6 +88,7 @@ class EvalPack:
     name: str
     source: str = ""
     fixture: Dict[str, Any] = field(default_factory=dict)
+    fixtures: List[Dict[str, Any]] = field(default_factory=list)
     steps: List[PackStep] = field(default_factory=list)
     rubric: str = ""
     baseline_model: str = ""
@@ -144,6 +145,19 @@ def pack_from_mapping(raw: Mapping[str, Any], *, path: Optional[Path] = None) ->
         raise ValueError("Eval pack fixture must be an object")
     if isinstance(fixture, Mapping):
         reject_customer_identifiers(fixture)
+    fixtures_raw = raw.get("fixtures") or []
+    if fixtures_raw and not isinstance(fixtures_raw, list):
+        raise ValueError("Eval pack fixtures must be a list")
+    fixtures: List[Dict[str, Any]] = []
+    for item in fixtures_raw:
+        if not isinstance(item, Mapping):
+            raise ValueError("Eval pack fixtures entries must be objects")
+        reject_customer_identifiers(item)
+        fixtures.append(dict(item))
+    if fixtures and not fixture:
+        fixture = fixtures[0]
+    elif fixture and not fixtures:
+        fixtures = [dict(fixture)] if isinstance(fixture, Mapping) else []
     steps_raw = raw.get("steps") or []
     if not isinstance(steps_raw, list) or not steps_raw:
         raise ValueError(f"Eval pack {pack_id!r} must declare at least one step")
@@ -156,6 +170,7 @@ def pack_from_mapping(raw: Mapping[str, Any], *, path: Optional[Path] = None) ->
         name=str(raw.get("name") or pack_id).strip(),
         source=str(raw.get("source") or "").strip(),
         fixture=dict(fixture) if isinstance(fixture, Mapping) else {},
+        fixtures=fixtures,
         steps=steps,
         rubric=str(rubric).strip(),
         baseline_model=str(raw.get("baseline_model") or "").strip(),

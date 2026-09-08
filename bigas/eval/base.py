@@ -97,6 +97,12 @@ class EvalModelResult:
     score_rationale: str = ""
     output_blob: str = ""
     error: Optional[str] = None
+    judge_scores: Dict[str, float] = field(default_factory=dict)
+    judges: List[Dict[str, Any]] = field(default_factory=list)
+    subscores: Dict[str, float] = field(default_factory=dict)
+    mechanical_penalty: float = 0.0
+    mechanical_notes: List[str] = field(default_factory=list)
+    fixture_scores: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -108,6 +114,12 @@ class EvalModelResult:
             "score_rationale": self.score_rationale,
             "output_blob": self.output_blob,
             "error": self.error,
+            "judge_scores": dict(self.judge_scores),
+            "judges": list(self.judges),
+            "subscores": dict(self.subscores),
+            "mechanical_penalty": self.mechanical_penalty,
+            "mechanical_notes": list(self.mechanical_notes),
+            "fixture_scores": list(self.fixture_scores),
         }
 
     @classmethod
@@ -118,6 +130,8 @@ class EvalModelResult:
         output = raw.get("output") or {}
         if not isinstance(output, Mapping):
             output = {"text": output}
+        judge_scores = raw.get("judge_scores") or {}
+        subscores = raw.get("subscores") or {}
         return cls(
             model_id=str(raw.get("model_id") or ""),
             provider=str(raw.get("provider") or ""),
@@ -134,6 +148,22 @@ class EvalModelResult:
             score_rationale=str(raw.get("score_rationale") or ""),
             output_blob=str(raw.get("output_blob") or ""),
             error=raw.get("error"),
+            judge_scores=(
+                {str(k): float(v) for k, v in judge_scores.items()}
+                if isinstance(judge_scores, Mapping)
+                else {}
+            ),
+            judges=[dict(item) for item in (raw.get("judges") or []) if isinstance(item, Mapping)],
+            subscores=(
+                {str(k): float(v) for k, v in subscores.items()}
+                if isinstance(subscores, Mapping)
+                else {}
+            ),
+            mechanical_penalty=float(raw.get("mechanical_penalty") or 0),
+            mechanical_notes=[str(item) for item in (raw.get("mechanical_notes") or [])],
+            fixture_scores=[
+                dict(item) for item in (raw.get("fixture_scores") or []) if isinstance(item, Mapping)
+            ],
         )
 
 
@@ -151,6 +181,14 @@ class EvalRunResult:
     report_url: str = ""
     report_markdown: str = ""
     dry_run: bool = False
+    fixtures: List[EvalFixture] = field(default_factory=list)
+    judge_models: List[str] = field(default_factory=list)
+    rubric: str = ""
+
+    def all_fixtures(self) -> List[EvalFixture]:
+        if self.fixtures:
+            return list(self.fixtures)
+        return [self.fixture] if self.fixture.company_name or self.fixture.website_url else []
 
     def ranked_results(self) -> List[EvalModelResult]:
         valid = [r for r in self.results if r.error is None and r.score is not None]
@@ -158,12 +196,16 @@ class EvalRunResult:
 
     def to_dict(self) -> Dict[str, Any]:
         ranked = self.ranked_results()
+        fixtures = self.all_fixtures()
         return {
             "use_case": self.use_case,
             "run_id": self.run_id,
             "fixture": self.fixture.to_dict(),
+            "fixtures": [item.to_dict() for item in fixtures],
             "champion_model": self.champion_model or (ranked[0].model_id if ranked else ""),
             "baseline_model": self.baseline_model,
+            "judge_models": list(self.judge_models),
+            "rubric": self.rubric,
             "report_blob": self.report_blob,
             "report_html_blob": self.report_html_blob,
             "report_markdown_blob": self.report_markdown_blob,
@@ -177,6 +219,12 @@ class EvalRunResult:
         fixture_raw = raw.get("fixture") or {}
         if not isinstance(fixture_raw, Mapping):
             fixture_raw = {}
+        fixtures_raw = raw.get("fixtures") or []
+        fixtures = [
+            EvalFixture.from_dict(item)
+            for item in fixtures_raw
+            if isinstance(item, Mapping)
+        ]
         results_raw = raw.get("results") or []
         results = [
             EvalModelResult.from_dict(item)
@@ -195,6 +243,9 @@ class EvalRunResult:
             report_markdown_blob=str(raw.get("report_markdown_blob") or ""),
             report_url=str(raw.get("report_url") or ""),
             dry_run=bool(raw.get("dry_run")),
+            fixtures=fixtures,
+            judge_models=[str(item) for item in (raw.get("judge_models") or [])],
+            rubric=str(raw.get("rubric") or ""),
         )
 
 
@@ -207,6 +258,9 @@ class BaseUseCaseEvaluator(ABC):
     @abstractmethod
     def default_fixture(self) -> EvalFixture:
         raise NotImplementedError
+
+    def default_fixtures(self) -> List[EvalFixture]:
+        return [self.default_fixture()]
 
     @abstractmethod
     def run(self, fixture: EvalFixture, model_id: str) -> tuple[Dict[str, Any], EvalUsage]:

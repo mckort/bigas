@@ -14,6 +14,11 @@ baseline_model: gemini:gemini-3.1-pro-preview
 fixture:
   company: VC Field Assistant
   url: https://vcfieldassistant.com
+fixtures:
+  - company: VC Field Assistant
+    url: https://vcfieldassistant.com
+  - company: Stripe
+    url: https://stripe.com
 steps:
 - id: classify
   prompt: |-

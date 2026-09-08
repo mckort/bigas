@@ -874,7 +874,7 @@ All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales
 
 ### AI Model Evaluation Engine (Cloud Scheduler)
 
-Bigas periodically benchmarks flagship LLM models (OpenAI, Anthropic, Gemini) against **eval packs** — self-contained YAML files with fixture, prompts, and optional Bigas-side web research. Each run reads the vendors' model-overview pages ([Claude](https://platform.claude.com/docs/en/models/overview), [OpenAI](https://developers.openai.com/api/docs/models), [Gemini](https://ai.google.dev/gemini-api/docs/models)) and takes **at most two current reasoning models per provider**, then skips ids already eliminated and retests the champion **and the current production baseline**. The first pack is **VC Field Assistant living analysis** (`eval/vfa-living-analysis.pack.yaml`, baseline `gemini:gemini-3.1-pro-preview`, override with `EVAL_BASELINE_MODEL`). Bigas runs the models, ranks with LLM-as-a-judge, stores `ranking.json` plus a readable `report.html` / `report.md`, posts a ranking summary to the **Product Manager** chat thread and Discord, and includes a signed clickable report link (`/eval/reports/<use-case>/<run-id>`).
+Bigas periodically benchmarks flagship LLM models (OpenAI, Anthropic, Gemini) against **eval packs** — self-contained YAML files with fixtures, prompts, and optional Bigas-side web research. Each run reads the vendors' model-overview pages ([Claude](https://platform.claude.com/docs/en/models/overview), [OpenAI](https://developers.openai.com/api/docs/models), [Gemini](https://ai.google.dev/gemini-api/docs/models)) and takes **at most two current reasoning models per provider**, then skips ids already eliminated and retests the champion **and the current production baseline**. The first pack is **VC Field Assistant living analysis** (`eval/vfa-living-analysis.pack.yaml`, baseline `gemini:gemini-3.1-pro-preview`, override with `EVAL_BASELINE_MODEL`, default fixtures VC Field Assistant + Stripe). Bigas runs the models, scores with a **two-judge panel** (Gemini + Claude by default) plus mechanical checks, stores `ranking.json` plus a readable `report.html` / `report.md`, posts a ranking summary to the **Product Manager** chat thread and Discord, and includes a signed clickable report link (`/eval/reports/<use-case>/<run-id>`). The report shows mean score and per-judge scores.
 
 This scores the VFA **prompt suite + Bigas web research** (fixture URL + optional Tavily snippets). It is not VFA's full citation / competitor-homepage pipeline.
 
@@ -884,7 +884,7 @@ This scores the VFA **prompt suite + Bigas web research** (fixture URL + optiona
 - Fixtures use public `company` + `url` only — never `workspaceId` / `companyId`.
 - Artifacts live in Bigas GCS (`eval-runs/...`) only.
 
-Set `EVAL_STORAGE_BUCKET` (or reuse `STORAGE_BUCKET_NAME`). Optional: `MODEL_EVAL_JUDGE_MODEL`, `MODEL_EVAL_BUDGET_USD` (default $15 per run), `TAVILY_API_KEY` / `EVAL_TAVILY_API_KEY` for landscape search. Without a search key, landscape still runs on the fixture page alone.
+Set `EVAL_STORAGE_BUCKET` (or reuse `STORAGE_BUCKET_NAME`). Optional: `MODEL_EVAL_JUDGE_MODELS` (CSV, default `gemini:gemini-3.1-pro-preview,anthropic:claude-sonnet-5`), `MODEL_EVAL_BUDGET_USD` (default $15 per run), `TAVILY_API_KEY` / `EVAL_TAVILY_API_KEY` for landscape search. Without a search key, landscape still runs on the fixture page alone. Omit `company`/`url` in the request to run every pack fixture; pass them to score a single company.
 
 CLI (local):
 
@@ -905,7 +905,7 @@ gcloud scheduler jobs create http bigas-eval-vfa-models \
   --uri="https://YOUR-SERVICE-URL.a.run.app/tasks/eval/vfa-living-analysis" \
   --http-method=POST \
   --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
-  --message-body='{"company":"VC Field Assistant","url":"https://vcfieldassistant.com"}' \
+  --message-body='{}' \
   --attempt-deadline=900s
 ```
 

@@ -164,6 +164,18 @@ def iter_step_outputs(output: Mapping[str, Any]) -> List[Tuple[str, str]]:
 
 
 def humanize_model_output(output: Mapping[str, Any]) -> str:
+    nested = output.get("fixtures")
+    if isinstance(nested, list) and len(nested) > 1:
+        parts: List[str] = []
+        for item in nested:
+            if not isinstance(item, Mapping):
+                continue
+            company = str(item.get("company") or "Fixture")
+            parts.append(f"## Fixture: {company}")
+            parts.append("")
+            parts.append(humanize_model_output({k: v for k, v in item.items() if k != "fixtures"}))
+            parts.append("")
+        return "\n".join(parts).strip()
     steps = iter_step_outputs(output)
     if not steps:
         dumped = json.dumps(dict(output), indent=2, ensure_ascii=False)
@@ -187,16 +199,129 @@ def _cost(result: EvalModelResult) -> str:
     return f"${result.usage.cost_usd:.4f}"
 
 
+def judge_column_keys(run: EvalRunResult) -> List[str]:
+    keys: List[str] = []
+    for item in run.judge_models:
+        if item and item not in keys:
+            keys.append(item)
+    for result in run.results:
+        for key in result.judge_scores:
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+def _judge_label(key: str) -> str:
+    model = (key or "").split(":", 1)[-1]
+    return model or key or "judge"
+
+
+def _score_cell(value: Optional[float]) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.1f}"
+
+
+def format_motivation(result: EvalModelResult) -> str:
+    """Human prose only — never dump raw judge JSON."""
+    parts: List[str] = []
+    if result.fixture_scores:
+        for row in result.fixture_scores:
+            company = str(row.get("company") or "Fixture")
+            mean = row.get("score")
+            heading = f"**{company}**"
+            if mean is not None:
+                heading += f" — mean {_score_cell(float(mean))}"
+            per_judge = []
+            for verdict in row.get("judges") or []:
+                if not isinstance(verdict, Mapping):
+                    continue
+                label = str(verdict.get("model_id") or "judge")
+                score = verdict.get("score")
+                rationale = _prose_only(str(verdict.get("rationale") or ""))
+                score_bit = f" ({float(score):.0f})" if score is not None else ""
+                if rationale:
+                    per_judge.append(f"{label}{score_bit}: {rationale}")
+            mech = [str(item) for item in (row.get("mechanical_notes") or [])]
+            block = [heading]
+            block.extend(per_judge)
+            if mech:
+                block.append("Mechanical: " + "; ".join(mech))
+            parts.append("\n".join(block))
+    elif result.judges:
+        for verdict in result.judges:
+            if not isinstance(verdict, Mapping):
+                continue
+            label = str(verdict.get("model_id") or "judge")
+            score = verdict.get("score")
+            rationale = _prose_only(str(verdict.get("rationale") or ""))
+            if not rationale:
+                continue
+            score_bit = f" ({float(score):.0f})" if score is not None else ""
+            parts.append(f"**{label}{score_bit}:** {rationale}")
+        if result.mechanical_notes:
+            parts.append("**Mechanical:** " + "; ".join(result.mechanical_notes))
+    else:
+        prose = _prose_only(result.score_rationale)
+        if prose:
+            parts.append(prose)
+        if result.mechanical_notes:
+            parts.append("**Mechanical:** " + "; ".join(result.mechanical_notes))
+    return "\n\n".join(parts) or "_No rationale provided._"
+
+
+def _prose_only(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("{") and '"rationale"' in raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, Mapping):
+                return str(data.get("rationale") or "").strip()
+        except json.JSONDecodeError:
+            match = re.search(r'"rationale"\s*:\s*"((?:\\.|[^"\\])*)"', raw)
+            if match:
+                return match.group(1).encode("utf-8").decode("unicode_escape")
+        return ""
+    if raw.startswith("{") or raw.startswith("["):
+        return ""
+    return raw
+
+
+def _scoring_header(run: EvalRunResult) -> List[str]:
+    fixtures = run.all_fixtures()
+    fixture_bits = [
+        f"{item.company_name} — {item.website_url}" if item.website_url else item.company_name
+        for item in fixtures
+    ]
+    judges = run.judge_models or judge_column_keys(run)
+    lines = [
+        f"**Use case:** {run.use_case}",
+        f"**Run ID:** {run.run_id}",
+        f"**Fixtures:** {'; '.join(fixture_bits) or (run.fixture.company_name + ' — ' + run.fixture.website_url)}",
+    ]
+    if judges:
+        lines.append("**Judges:** " + ", ".join(f"`{item}`" for item in judges))
+    lines.append(
+        "**Scoring:** mean of judges (grounding 30%, structure 20%, landscape 25%, "
+        "hallucination 25%), then mechanical penalty for missing sections, "
+        "unsupported landscape names, and invented figures."
+    )
+    if run.rubric:
+        lines.extend(["", "**Rubric:**", "", run.rubric.strip(), ""])
+    else:
+        lines.append("")
+    return lines
+
+
 def build_summary_markdown(run: EvalRunResult) -> str:
     """Short ranking for Discord / PM chat."""
     ranked = run.ranked_results()
     lines = [
         "# AI Model Evaluation Report",
         "",
-        f"**Use case:** {run.use_case}",
-        f"**Run ID:** {run.run_id}",
-        f"**Fixture:** {run.fixture.company_name} — {run.fixture.website_url}",
-        "",
+        *_scoring_header(run),
     ]
     if run.baseline_model:
         lines.append(f"**In production:** `{run.baseline_model}`")
@@ -213,21 +338,36 @@ def build_summary_markdown(run: EvalRunResult) -> str:
         return "\n".join(lines).strip()
 
     champion = ranked[0]
+    judge_keys = judge_column_keys(run)
+    headers = ["Rank", "Model", "Role", "Mean", *[_judge_label(key) for key in judge_keys], "Mech", "Latency", "Est. cost"]
     lines.extend(
         [
-            f"**Champion:** {champion.model_id} (score {champion.score:.1f}/100)",
+            f"**Champion:** {champion.model_id} (mean {champion.score:.1f}/100)",
             "",
             "## Ranking",
             "",
-            "| Rank | Model | Role | Score | Latency | Est. cost |",
-            "| --- | --- | --- | ---: | ---: | ---: |",
+            "| " + " | ".join(headers) + " |",
+            "| " + " | ".join("---" if i < 3 else "---:" for i in range(len(headers))) + " |",
         ]
     )
     for idx, result in enumerate(ranked, start=1):
         role = format_roles(result_roles(result, run)) or "—"
-        lines.append(
-            f"| {idx} | {result.model_id} | {role} | {result.score:.1f} | {_latency(result)} | {_cost(result)} |"
+        cells = [
+            str(idx),
+            result.model_id,
+            role,
+            _score_cell(result.score),
+        ]
+        for key in judge_keys:
+            cells.append(_score_cell(result.judge_scores.get(key)))
+        cells.extend(
+            [
+                f"−{result.mechanical_penalty:.0f}" if result.mechanical_penalty else "0",
+                _latency(result),
+                _cost(result),
+            ]
         )
+        lines.append("| " + " | ".join(cells) + " |")
 
     lines.extend(["", "## Motivation", ""])
     for idx, result in enumerate(ranked, start=1):
@@ -236,7 +376,7 @@ def build_summary_markdown(run: EvalRunResult) -> str:
         if role:
             heading = f"{heading} ({role})"
         lines.append(heading)
-        lines.append(result.score_rationale or "_No rationale provided._")
+        lines.append(format_motivation(result))
         lines.append("")
 
     if errors:
@@ -269,10 +409,18 @@ def build_full_markdown(run: EvalRunResult) -> str:
             lines.append("")
             continue
         if result.score is not None:
-            lines.append(f"**Score:** {result.score:.1f}/100 · {_latency(result)} · {_cost(result)}")
-        if result.score_rationale:
+            judge_bits = " · ".join(
+                f"{_judge_label(key)} {value:.1f}" for key, value in result.judge_scores.items()
+            )
+            extra = f" · {judge_bits}" if judge_bits else ""
+            mech = f" · mech −{result.mechanical_penalty:.0f}" if result.mechanical_penalty else ""
+            lines.append(
+                f"**Mean:** {result.score:.1f}/100{extra}{mech} · {_latency(result)} · {_cost(result)}"
+            )
+        motivation = format_motivation(result)
+        if motivation and motivation != "_No rationale provided._":
             lines.append("")
-            lines.append(result.score_rationale)
+            lines.append(motivation)
         lines.append("")
         lines.append(humanize_model_output(result.output or {}))
         lines.append("")

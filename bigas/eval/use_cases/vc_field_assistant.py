@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from bigas.eval.base import (
     BaseUseCaseEvaluator,
@@ -53,20 +53,27 @@ class PackEvaluator(BaseUseCaseEvaluator):
         return self._pack
 
     def default_fixture(self) -> EvalFixture:
-        raw = dict(self.pack.fixture or {})
-        company = (
-            os.environ.get("EVAL_VFA_DEFAULT_COMPANY")
-            or raw.get("company")
-            or raw.get("company_name")
-            or "VC Field Assistant"
-        ).strip()
-        url = (
-            os.environ.get("EVAL_VFA_DEFAULT_URL")
-            or raw.get("url")
-            or raw.get("website_url")
-            or "https://vcfieldassistant.com"
-        ).strip()
-        return EvalFixture.from_dict({**raw, "company": company, "url": url})
+        fixtures = self.default_fixtures()
+        return fixtures[0]
+
+    def default_fixtures(self) -> List[EvalFixture]:
+        raws = list(self.pack.fixtures or [])
+        if not raws and self.pack.fixture:
+            raws = [self.pack.fixture]
+        if not raws:
+            raws = [{"company": "VC Field Assistant", "url": "https://vcfieldassistant.com"}]
+        fixtures: List[EvalFixture] = []
+        for index, raw in enumerate(raws):
+            data = dict(raw)
+            if index == 0:
+                company = (os.environ.get("EVAL_VFA_DEFAULT_COMPANY") or "").strip()
+                url = (os.environ.get("EVAL_VFA_DEFAULT_URL") or "").strip()
+                if company:
+                    data["company"] = company
+                if url:
+                    data["url"] = url
+            fixtures.append(EvalFixture.from_dict(data))
+        return fixtures
 
     def get_judge_rubric(self) -> str:
         if self.pack.rubric:
@@ -100,6 +107,7 @@ class PackEvaluator(BaseUseCaseEvaluator):
         }
         usage = EvalUsage()
         step_outputs: Dict[str, str] = {}
+        snippets = ""
 
         for step in self.pack.steps:
             if step.research:
@@ -120,7 +128,11 @@ class PackEvaluator(BaseUseCaseEvaluator):
             "pack_id": self.pack.id,
             "steps": step_outputs,
             "sections": step_outputs,
-            "research_used": bool((context.get("research") or {}).get("snippets")),
+            "research_used": bool(snippets),
+            "sources": {
+                "page": page,
+                "snippets": snippets,
+            },
         }
         return output, usage
 
