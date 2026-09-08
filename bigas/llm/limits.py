@@ -56,6 +56,14 @@ def uses_max_completion_tokens(model: str) -> bool:
     return name.startswith("gpt-5") or name.startswith("gpt-6")
 
 
+def supports_temperature(model: str) -> bool:
+    """True when Chat Completions accepts a custom ``temperature`` for this model id."""
+    name = (model or "").strip().lower()
+    if not name:
+        return True
+    return not name.startswith(("o1", "o3", "o4"))
+
+
 def cap_output_tokens(model: str, requested: int) -> int:
     """Return ``requested`` capped to the model's known output limit."""
     if requested <= 0:

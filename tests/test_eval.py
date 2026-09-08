@@ -197,12 +197,6 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual(score, 87.5)
         self.assertIn("Strong structure", rationale)
 
-    def test_parse_score_accepts_plain_string(self):
-        judge = LLMJudge()
-        score, rationale = judge._parse_score('{"score": 71, "rationale": "String complete()."}')
-        self.assertEqual(score, 71)
-        self.assertIn("String complete", rationale)
-
     def test_score_uses_complete_detailed(self):
         judge = LLMJudge()
         evaluator = MagicMock()

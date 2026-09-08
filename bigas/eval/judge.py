@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple
 
 from bigas.eval.base import BaseUseCaseEvaluator, EvalFixture
 from bigas.llm.completion import LLMCompletion
@@ -58,30 +58,19 @@ class LLMJudge:
         from bigas.llm.factory import get_llm_client
 
         client, _model = get_llm_client(feature="model_eval_judge", explicit_model=self.model)
+        messages = [{"role": "user", "content": prompt}]
+        kwargs = {"temperature": 0.1, "max_tokens": 800}
         detailed = getattr(client, "complete_detailed", None)
         if callable(detailed):
-            result = detailed(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=800,
-            )
-            if isinstance(result, LLMCompletion):
-                return result
-            return LLMCompletion(text=str(result or ""))
-        raw = client.complete(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=800,
-        )
-        if isinstance(raw, LLMCompletion):
-            return raw
-        return LLMCompletion(text=str(raw or ""))
-
-    def _parse_score(self, completion: Union[LLMCompletion, str]) -> Tuple[float, str]:
-        if isinstance(completion, str):
-            text = completion.strip()
+            result = detailed(messages=messages, **kwargs)
         else:
-            text = (completion.text or "").strip()
+            result = client.complete(messages=messages, **kwargs)
+        if isinstance(result, LLMCompletion):
+            return result
+        return LLMCompletion(text=str(result or ""))
+
+    def _parse_score(self, completion: LLMCompletion) -> Tuple[float, str]:
+        text = (completion.text or "").strip()
         parsed = self._extract_json(text)
         if parsed:
             score = parsed.get("score")

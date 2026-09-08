@@ -7,7 +7,7 @@ import openai
 
 from bigas.llm.client import LLMClient
 from bigas.llm.completion import LLMCompletion, ToolCall
-from bigas.llm.limits import uses_max_completion_tokens
+from bigas.llm.limits import supports_temperature, uses_max_completion_tokens
 from bigas.llm.usage import TokenUsage, usage_from_mapping
 
 
@@ -52,7 +52,7 @@ class OpenAILLMClient(LLMClient):
             "messages": messages,
             **kwargs,
         }
-        if temperature is not None:
+        if temperature is not None and supports_temperature(self._model):
             create_kwargs["temperature"] = temperature
         if max_tokens is not None:
             token_key = (
