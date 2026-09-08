@@ -332,5 +332,37 @@ class EvalRunnerTests(unittest.TestCase):
         evaluator.run.assert_not_called()
 
 
+class AnthropicCompleteTests(unittest.TestCase):
+    def _ok_response(self):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 4},
+        }
+        return resp
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("bigas.eval.complete.requests.post")
+    def test_claude_5_omits_temperature(self, mock_post):
+        from bigas.eval.complete import complete_eval_model
+
+        mock_post.return_value = self._ok_response()
+        complete_eval_model("claude-opus-5", "hello", max_tokens=256, temperature=0.2)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertNotIn("temperature", payload)
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("bigas.eval.complete.requests.post")
+    def test_claude_4_keeps_temperature(self, mock_post):
+        from bigas.eval.complete import complete_eval_model
+
+        mock_post.return_value = self._ok_response()
+        complete_eval_model("claude-sonnet-4-20250514", "hello", max_tokens=256, temperature=0.2)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["temperature"], 0.2)
+
+
 if __name__ == "__main__":
     unittest.main()
