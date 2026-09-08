@@ -132,5 +132,6 @@ def summarize_for_response(run: EvalRunResult) -> dict:
         "fixture": run.fixture.to_dict(),
         "report_url": EvalStorage().gcs_uri(run.report_blob) if run.report_blob else "",
         "models_tested": len(run.results),
+        "models": [f"{r.provider}:{r.model_id}" for r in run.results],
         "dry_run": run.dry_run,
     }

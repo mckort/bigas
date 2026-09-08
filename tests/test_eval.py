@@ -13,6 +13,13 @@ from bigas.eval.base import (
     reject_customer_identifiers,
 )
 from bigas.eval.judge import LLMJudge
+from bigas.eval.discover import (
+    OFFICIAL_MODEL_PAGES,
+    discover_flagship_models,
+    extract_ids_from_text,
+    is_not_reasoning,
+    match_catalog_id,
+)
 from bigas.eval.registry import (
     ModelCandidate,
     discover_pro_models,
@@ -95,14 +102,83 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(champion, "openai:gpt-5")
         storage.store_json.assert_called_once()
 
-    @patch.dict("os.environ", {}, clear=True)
-    @patch("bigas.eval.registry._discover_gemini_models", return_value=[])
-    @patch("bigas.eval.registry._discover_openai_models", return_value=[])
-    def test_discover_anthropic_models_when_other_providers_fail(self, *_mocks):
+    @patch.dict("os.environ", {"EVAL_MODELS_PER_PROVIDER": "2"}, clear=False)
+    @patch("bigas.eval.discover.load_provider_catalogs", return_value={})
+    @patch("bigas.eval.discover.gather_flagship_snippets", return_value="")
+    def test_discover_falls_back_when_official_pages_empty(self, _snippets, _catalogs):
         models = discover_pro_models()
-        self.assertGreaterEqual(len(models), 2)
+        self.assertLessEqual(len(models), 6)
         providers = {m.provider for m in models}
         self.assertIn("anthropic", providers)
+        self.assertTrue(all(sum(1 for m in models if m.provider == p) <= 2 for p in providers))
+
+
+class DiscoverTests(unittest.TestCase):
+    def test_official_overview_urls_are_stable_paths(self):
+        self.assertEqual(
+            OFFICIAL_MODEL_PAGES["anthropic"],
+            "https://platform.claude.com/docs/en/models/overview",
+        )
+        self.assertEqual(
+            OFFICIAL_MODEL_PAGES["openai"],
+            "https://developers.openai.com/api/docs/models",
+        )
+        self.assertEqual(
+            OFFICIAL_MODEL_PAGES["gemini"],
+            "https://ai.google.dev/gemini-api/docs/models",
+        )
+
+    def test_extract_claude_ids_from_overview_copy(self):
+        text = (
+            "Claude Fable 5.1 claude-fable-5-1 for demanding reasoning. "
+            "Claude Opus 5 claude-opus-5 for complex agentic coding. "
+            "Claude Sonnet 5 claude-sonnet-5. Claude Haiku 4.5 claude-haiku-4-5-20251001."
+        )
+        ids = extract_ids_from_text("anthropic", text)
+        self.assertEqual(ids, ["claude-fable-5-1", "claude-opus-5"])
+        self.assertNotIn("claude-haiku-4-5-20251001", ids)
+
+    def test_extract_skips_sora_and_lyria(self):
+        openai_ids = extract_ids_from_text("openai", "Flagship gpt-6-astra plus sora-2-pro and gpt-image-1")
+        gemini_ids = extract_ids_from_text("gemini", "gemini-3.1-pro-preview and lyria-3-pro-preview")
+        self.assertEqual(openai_ids, ["gpt-6-astra"])
+        self.assertEqual(gemini_ids, ["gemini-3.1-pro-preview"])
+
+    def test_gemini_id_is_not_excluded_as_mini(self):
+        self.assertFalse(is_not_reasoning("gemini-3.1-pro-preview"))
+        self.assertTrue(is_not_reasoning("gpt-4o-mini"))
+        self.assertTrue(is_not_reasoning("claude-haiku-4-5"))
+
+    def test_extract_gemini_pro_skips_flash(self):
+        ids = extract_ids_from_text(
+            "gemini",
+            "Latest gemini-3-flash and gemini-3.1-pro-preview plus gemini-2.5-pro",
+        )
+        self.assertEqual(ids, ["gemini-3.1-pro-preview", "gemini-2.5-pro"])
+
+    def test_caps_at_two_per_provider(self):
+        models = discover_flagship_models(
+            catalog={
+                "openai": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.4"],
+                "anthropic": ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"],
+                "gemini": ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.0-pro"],
+            },
+            snippets="unused",
+            picked={
+                "openai": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.4"],
+                "anthropic": ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"],
+                "gemini": ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.0-pro"],
+            },
+        )
+        self.assertEqual(len(models), 6)
+        self.assertTrue(all(sum(1 for m in models if m.provider == p) <= 2 for p in {m.provider for m in models}))
+
+    def test_match_catalog_prefers_undated_alias(self):
+        match = match_catalog_id(
+            "claude-opus-5",
+            ["claude-opus-5-20260301", "claude-opus-5"],
+        )
+        self.assertEqual(match, "claude-opus-5")
 
 
 class JudgeTests(unittest.TestCase):

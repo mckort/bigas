@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 
@@ -16,30 +16,30 @@ logger = logging.getLogger(__name__)
 
 STATE_BLOB = "model_eval_state.json"
 
-# Fallback flagship models when provider list APIs are unavailable.
+# Fallback when official model-overview pages cannot be fetched.
 DEFAULT_PRO_MODELS: Tuple[Tuple[str, str], ...] = (
-    ("openai", "gpt-4o"),
-    ("openai", "gpt-5"),
-    ("anthropic", "claude-sonnet-4-20250514"),
-    ("anthropic", "claude-opus-4-20250514"),
-    ("gemini", "gemini-2.5-pro"),
+    ("openai", "gpt-6-astra"),
+    ("openai", "gpt-5.6-sol"),
+    ("anthropic", "claude-fable-5-1"),
+    ("anthropic", "claude-opus-5"),
     ("gemini", "gemini-3.1-pro-preview"),
+    ("gemini", "gemini-2.5-pro"),
 )
 
 # Anthropic list prices (USD / 1M tokens) — input, output.
 _ANTHROPIC_PRICE_USD_PER_MTOK: Tuple[Tuple[str, float, float], ...] = (
+    ("claude-fable-5", 10.00, 50.00),
+    ("claude-opus-5", 5.00, 25.00),
+    ("claude-sonnet-5", 2.00, 10.00),
     ("claude-opus-4", 15.00, 75.00),
     ("claude-sonnet-4", 3.00, 15.00),
     ("claude-3-5-sonnet", 3.00, 15.00),
     ("claude-3-opus", 15.00, 75.00),
 )
 
-_PRO_PATTERNS = re.compile(
-    r"(pro|opus|sonnet|gpt-4|gpt-5|o1|o3|o4|flagship|latest)",
-    re.IGNORECASE,
-)
-_EXCLUDE_PATTERNS = re.compile(
-    r"(embed|embedding|whisper|tts|dall-e|realtime|audio|transcribe|moderation|instruct|mini|nano|lite|flash-lite|preview-tts)",
+_CATALOG_EXCLUDE = re.compile(
+    r"(embed|embedding|whisper|tts|dall-e|realtime|audio|transcribe|moderation|"
+    r"instruct|image|sora|lyria|veo|imagen)",
     re.IGNORECASE,
 )
 
@@ -54,14 +54,12 @@ class ModelCandidate:
         return f"{self.provider}:{self.model_id}"
 
 
-def _is_pro_model(model_id: str) -> bool:
+def _keep_catalog_id(model_id: str) -> bool:
     name = (model_id or "").strip()
-    if not name or _EXCLUDE_PATTERNS.search(name):
-        return False
-    return bool(_PRO_PATTERNS.search(name))
+    return bool(name) and not _CATALOG_EXCLUDE.search(name)
 
 
-def _discover_openai_models() -> List[ModelCandidate]:
+def list_openai_model_ids() -> List[str]:
     api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
     if not api_key:
         return []
@@ -73,18 +71,18 @@ def _discover_openai_models() -> List[ModelCandidate]:
         )
         resp.raise_for_status()
         data = resp.json()
-        out: List[ModelCandidate] = []
+        out: List[str] = []
         for item in data.get("data") or []:
             model_id = (item.get("id") or "").strip()
-            if _is_pro_model(model_id):
-                out.append(ModelCandidate("openai", model_id))
+            if _keep_catalog_id(model_id):
+                out.append(model_id)
         return out
     except Exception as exc:
-        logger.warning("OpenAI model discovery failed: %s", exc)
+        logger.warning("OpenAI model catalog failed: %s", exc)
         return []
 
 
-def _discover_gemini_models() -> List[ModelCandidate]:
+def list_gemini_model_ids() -> List[str]:
     api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
     if not api_key:
         return []
@@ -92,39 +90,42 @@ def _discover_gemini_models() -> List[ModelCandidate]:
         import google.generativeai as genai
 
         genai.configure(api_key=api_key)
-        out: List[ModelCandidate] = []
+        out: List[str] = []
         for model in genai.list_models():
             name = (getattr(model, "name", "") or "").replace("models/", "")
-            if _is_pro_model(name):
-                out.append(ModelCandidate("gemini", name))
+            if _keep_catalog_id(name):
+                out.append(name)
         return out
     except Exception as exc:
-        logger.warning("Gemini model discovery failed: %s", exc)
+        logger.warning("Gemini model catalog failed: %s", exc)
         return []
 
 
-def _discover_anthropic_models() -> List[ModelCandidate]:
-    """Anthropic has no public list-models endpoint in Bigas deps — use known pro models."""
-    return [
-        ModelCandidate(provider, model_id)
-        for provider, model_id in DEFAULT_PRO_MODELS
-        if provider == "anthropic"
+def list_anthropic_model_ids() -> List[str]:
+    """Anthropic listing is not in Bigas deps — known current ids plus defaults."""
+    known = [
+        "claude-fable-5-1",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-opus-4-20250514",
+        "claude-sonnet-4-20250514",
     ]
+    extra = [model_id for provider, model_id in DEFAULT_PRO_MODELS if provider == "anthropic"]
+    seen: Set[str] = set()
+    out: List[str] = []
+    for model_id in extra + known:
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        out.append(model_id)
+    return out
 
 
 def discover_pro_models() -> List[ModelCandidate]:
-    """Return deduplicated flagship/pro models across supported providers."""
-    seen: Set[str] = set()
-    candidates: List[ModelCandidate] = []
+    """Current flagship reasoning models from official overview pages (1–2 per provider)."""
+    from bigas.eval.discover import discover_flagship_models
 
-    for source in (_discover_openai_models, _discover_gemini_models, _discover_anthropic_models):
-        for item in source():
-            if item.key in seen:
-                continue
-            seen.add(item.key)
-            candidates.append(item)
-
-    return candidates
+    return discover_flagship_models()
 
 
 def resolve_anthropic_price_usd_per_mtok(model_id: str) -> Optional[Tuple[float, float]]:
@@ -224,6 +225,9 @@ def get_candidate_models(
 
     discovered = discover_pro_models()
     by_id: Dict[str, ModelCandidate] = {m.model_id: m for m in discovered}
+    already = set(eliminated)
+    if champion:
+        already.add(champion)
 
     candidates: List[ModelCandidate] = []
     seen: Set[str] = set()
@@ -242,6 +246,13 @@ def get_candidate_models(
             _add(by_id[champion])
         else:
             _add(ModelCandidate(_infer_provider(champion), champion))
+
+    new_models = [model for model in discovered if model.key not in already]
+    skipped = [model.key for model in discovered if model.key in eliminated]
+    if skipped:
+        logger.info("Eval skipping already-run models: %s", ", ".join(skipped))
+    if new_models:
+        logger.info("Eval new flagship models: %s", ", ".join(m.key for m in new_models))
 
     for model in discovered:
         _add(model)
