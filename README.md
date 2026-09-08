@@ -376,6 +376,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 |---|---|
 | `GEMINI_API_KEY` | Gemini API key — **default LLM**; used when `LLM_MODEL` is unset or starts with `gemini-` |
 | `OPENAI_API_KEY` | OpenAI API key — alternative; used when `LLM_MODEL` starts with `gpt-` |
+| `ANTHROPIC_API_KEY` | Anthropic API key — used by model eval for Claude candidates. Add the name to `SECRET_MANAGER_SECRET_NAMES` |
 | `LLM_MODEL` | Global default model; defaults to `gemini-3.1-pro-preview` if unset |
 
 **Optional:**
