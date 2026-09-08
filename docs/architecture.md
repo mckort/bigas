@@ -316,11 +316,12 @@ EvalRunner → PackEvaluator.run(fixture, model)
         |              +--> optional research.provider: web (fixture URL + Tavily)
         |              +--> Bigas LLM complete (OpenAI / Gemini / Anthropic)
         v
-LLMJudge → ranking report → GCS + PM chat + Discord
+LLMJudge → ranking.json + report.html → GCS + signed link in PM chat + Discord
 ```
 
-- **Packs** (`eval/*.pack.yaml`): fixture, steps, optional web research, judge rubric. First pack is `vfa-living-analysis` (alias `vc-field-assistant`).
-- **Discovery** (`discover.py`): current flagship reasoning models from official overview pages (Anthropic, OpenAI, Gemini). At most two per provider; Tavily only if a page fetch fails.
+- **Packs** (`eval/*.pack.yaml`): fixture, steps, optional web research, judge rubric, optional `baseline_model`. First pack is `vfa-living-analysis` (alias `vc-field-assistant`).
+- **Discovery** (`discover.py`): current flagship reasoning models from official overview pages (Anthropic, OpenAI, Gemini). At most two per provider; Tavily only if a page fetch fails. The pack/env production baseline is always included.
 - **Registry** (`registry.py`): catalogs for id confirmation, pricing estimates, champion/eliminated state in `model_eval_state.json`.
+- **Readable reports**: `GET /eval/reports/<use_case>/<run_id>?token=` (HMAC) renders stored HTML; `ranking.json` stays machine-readable.
 - **Isolation**: fixtures reject `workspaceId` / `companyId`; no writes to product customer workspaces.
 - **Scheduling**: `POST /tasks/eval/vfa-living-analysis` or `python scripts/run_eval.py --pack vfa-living-analysis`.

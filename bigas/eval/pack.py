@@ -90,6 +90,7 @@ class EvalPack:
     fixture: Dict[str, Any] = field(default_factory=dict)
     steps: List[PackStep] = field(default_factory=list)
     rubric: str = ""
+    baseline_model: str = ""
     path: Optional[Path] = None
 
 
@@ -157,6 +158,7 @@ def pack_from_mapping(raw: Mapping[str, Any], *, path: Optional[Path] = None) ->
         fixture=dict(fixture) if isinstance(fixture, Mapping) else {},
         steps=steps,
         rubric=str(rubric).strip(),
+        baseline_model=str(raw.get("baseline_model") or "").strip(),
         path=path,
     )
 

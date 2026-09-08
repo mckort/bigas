@@ -20,12 +20,19 @@ from bigas.eval.registry import (
     ModelCandidate,
     estimate_model_cost_usd,
     get_candidate_models,
+    resolve_baseline_model,
     update_eval_state_after_run,
 )
-from bigas.eval.reporter import build_markdown_report, publish_report, report_json_blob_path
+from bigas.eval.reporter import attach_report_paths, build_markdown_report, publish_report
 from bigas.eval.storage import EvalStorage
 
 logger = logging.getLogger(__name__)
+
+
+def _pack_baseline_model(evaluator: Any) -> str:
+    pack = getattr(evaluator, "pack", None)
+    baseline = getattr(pack, "baseline_model", None)
+    return baseline.strip() if isinstance(baseline, str) else ""
 
 
 def _budget_cap_usd() -> float:
@@ -59,16 +66,26 @@ class EvalRunner:
         skip_report: bool = False,
         post_discord: bool = True,
         post_chat: bool = True,
+        include_baseline: bool = True,
     ) -> EvalRunResult:
         evaluator = get_use_case_evaluator(use_case)
         resolved_fixture = fixture or evaluator.default_fixture()
         run_id = uuid.uuid4().hex[:12]
-        candidates = get_candidate_models(use_case, storage=self.storage, explicit_models=models)
+        pack_baseline = _pack_baseline_model(evaluator)
+        baseline = resolve_baseline_model(pack_baseline) if include_baseline else None
+        candidates = get_candidate_models(
+            use_case,
+            storage=self.storage,
+            explicit_models=models,
+            baseline_model=pack_baseline,
+            include_baseline=include_baseline,
+        )
 
         run = EvalRunResult(
             use_case=evaluator.use_case_id,
             run_id=run_id,
             fixture=resolved_fixture,
+            baseline_model=baseline.key if baseline else "",
             dry_run=dry_run,
         )
 
@@ -84,7 +101,7 @@ class EvalRunner:
                 )
                 for c in candidates
             ]
-            run.report_blob = report_json_blob_path(run)
+            attach_report_paths(run)
             run.report_markdown = build_markdown_report(run)
             if not skip_report:
                 publish_report(run, post_discord=False, post_chat=False)
@@ -123,7 +140,7 @@ class EvalRunner:
                 storage=self.storage,
             )
 
-        run.report_blob = report_json_blob_path(run)
+        attach_report_paths(run)
         run.report_markdown = build_markdown_report(run)
         self._persist_run_artifacts(run)
 

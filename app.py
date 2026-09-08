@@ -220,6 +220,7 @@ def create_app():
             or path.startswith("/objectives/")
             or path.startswith("/api/x-posts")
             or path.startswith("/api/qa-proposals")
+            or path.startswith("/eval/reports/")
             or path.startswith("/api/chat/")
             or path.startswith("/api/v1/chat/")
             or path == "/api/boards"

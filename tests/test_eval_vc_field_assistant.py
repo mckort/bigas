@@ -77,6 +77,21 @@ class EvalEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("companyId", resp.get_json()["error"])
 
+    def test_report_page_requires_token(self):
+        resp = self.client.get("/eval/reports/vc-field-assistant/abc123")
+        self.assertEqual(resp.status_code, 403)
+
+    @patch.dict("os.environ", {"BIGAS_ACCESS_KEYS": "test-key"}, clear=False)
+    @patch("bigas.eval.endpoints.EvalStorage")
+    def test_report_page_returns_stored_html(self, mock_storage):
+        from bigas.eval.signing import sign_report
+
+        mock_storage.return_value.get_text.return_value = "<html>readable report</html>"
+        token = sign_report("vc-field-assistant", "abc123")
+        resp = self.client.get(f"/eval/reports/vc-field-assistant/abc123?token={token}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b"readable report", resp.data)
+
 
 class VFAPackIntegrationTests(unittest.TestCase):
     def test_aliases_resolve_to_same_evaluator(self):
