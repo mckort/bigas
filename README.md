@@ -529,7 +529,7 @@ Some products (e.g. VC Field Assistant) accumulate features on **versioned stagi
 | `@bigas hotfix VFA-123` / `POST cherry_pick_hotfix` | Cherry-picks a merged staging PR onto `main` and opens a hotfix PR |
 | `create_release_notes` + `create_github_release: true` + `mark_released: true` | Semver GitHub Release plus mark the version released (board carry-forward + Jira when configured) |
 
-Copy [`.github/workflows/cherry_pick.yml`](.github/workflows/cherry_pick.yml) and [`.github/workflows/rebase_release.yml`](.github/workflows/rebase_release.yml) into product repos that use staging. Bigas dispatches those workflows via `workflow_dispatch`. The oldest open cut still copies unversioned `staging` when that branch is ahead of `main` (one-time migration); newer versions always start from `main`.
+Copy [`.github/workflows/cherry_pick.yml`](.github/workflows/cherry_pick.yml) and [`.github/workflows/rebase_release.yml`](.github/workflows/rebase_release.yml) into product repos that use staging. Bigas dispatches those workflows via `workflow_dispatch`. Every new `staging-x.y.z` is created from `main`. After a release ships, existing newer versioned branches are rebased onto `main`.
 
 Two more Product tools round out the flow once you're shipping regularly:
 

@@ -17,7 +17,7 @@ from bigas.resources.product.release_workflow import (
     version_from_feature_branch,
     versioned_feature_branch,
 )
-from bigas.tickets.semver import SemverError, parse_semver, versions_match
+from bigas.tickets.semver import SemverError, parse_semver
 
 logger = logging.getLogger(__name__)
 
@@ -52,54 +52,16 @@ def mapped_feature_prefix(
     return feature_branch_prefix(mapped), production
 
 
-def _oldest_unreleased_version(project_key: str) -> Optional[str]:
-    try:
-        from bigas.tickets.releases import list_releases
-    except Exception:
-        return None
-    candidates: List[tuple] = []
-    for item in list_releases(project_key) or []:
-        if item.get("released"):
-            continue
-        name = (item.get("name") or "").strip()
-        try:
-            candidates.append((parse_semver(name), name))
-        except SemverError:
-            continue
-    if not candidates:
-        return None
-    candidates.sort()
-    return candidates[0][1]
-
-
-def should_inherit_legacy_staging(project_key: str, version: Optional[str]) -> bool:
-    """Copy unversioned `staging` only for the oldest open cut (one-time migration)."""
-    ver = (version or "").strip()
-    if not ver or not project_key:
-        return False
-    oldest = _oldest_unreleased_version(project_key)
-    return bool(oldest and versions_match(ver, oldest))
-
-
 def ensure_versioned_release_branch(
     *,
     repo: str,
     branch: str,
     production: str = "main",
-    prefix: str = "staging",
     client: Optional[GitHubActionsClient] = None,
-    inherit_legacy_prefix: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Create ``branch`` from ``production`` when missing.
-
-    When ``inherit_legacy_prefix`` is true (oldest open board version) and the
-    unversioned prefix is ahead of production, copy from that prefix so in-flight
-    work on `staging` is not orphaned.
-    """
+    """Create ``branch`` from ``production`` when missing. Never copy unversioned staging."""
     wanted = (branch or "").strip()
     onto = (production or "main").strip() or "main"
-    mapped = (prefix or "").strip() or "staging"
     if not wanted or wanted == onto:
         return {"branch": wanted or onto, "created": False, "source": "production"}
 
@@ -108,21 +70,11 @@ def ensure_versioned_release_branch(
     if gh.branch_exists(owner, name, wanted):
         return {"branch": wanted, "created": False, "source": "existing"}
 
-    source = onto
-    if inherit_legacy_prefix and mapped and mapped != onto and gh.branch_exists(owner, name, mapped):
-        try:
-            compare = gh.compare_refs(owner, name, onto, mapped)
-            ahead = int(compare.get("ahead_by") or 0) or len(compare.get("commits") or [])
-        except GitHubActionsError:
-            ahead = 0
-        if ahead > 0:
-            source = mapped
-
-    created_from = gh.ensure_branch_from_ref(owner, name, wanted, source)
+    created_from = gh.ensure_branch_from_ref(owner, name, wanted, onto)
     return {
         "branch": wanted,
         "created": created_from != "existing",
-        "source": source if created_from != "existing" else "existing",
+        "source": onto if created_from != "existing" else "existing",
     }
 
 
@@ -157,10 +109,6 @@ def resolve_implement_base_branch(
             repo=repo,
             branch=branch,
             production=production,
-            prefix=prefix,
-            inherit_legacy_prefix=should_inherit_legacy_staging(
-                project_key, fix_version or version_from_feature_branch(branch)
-            ),
         )
     except GitHubActionsError as exc:
         logger.warning(
