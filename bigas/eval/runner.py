@@ -50,11 +50,9 @@ def _resolve_fixtures(
 ) -> List[EvalFixture]:
     if fixture is not None:
         return [fixture]
-    method = getattr(type(evaluator), "default_fixtures", None)
-    if callable(method):
-        resolved = list(method(evaluator) or [])
-        if resolved and all(isinstance(item, EvalFixture) for item in resolved):
-            return resolved
+    resolved = list(evaluator.default_fixtures() or [])
+    if resolved and all(isinstance(item, EvalFixture) for item in resolved):
+        return resolved
     return [evaluator.default_fixture()]
 
 
@@ -367,8 +365,11 @@ class EvalRunner:
                 for verdict in row.get("judges") or []:
                     if not isinstance(verdict, dict):
                         continue
-                    key = f"{verdict.get('provider')}:{verdict.get('model_id')}"
-                    seen[key] = dict(verdict)
+                    provider = verdict.get("provider")
+                    model_id = verdict.get("model_id") or ""
+                    key = f"{provider}:{model_id}" if provider else model_id
+                    if key not in seen:
+                        seen[key] = dict(verdict)
             for key, verdict in seen.items():
                 if key in judge_scores:
                     verdict["score"] = judge_scores[key]
@@ -390,6 +391,7 @@ class EvalRunner:
             "usage": usage.to_dict(),
             "score": score,
             "score_rationale": rationale,
+            "error": first_error,
             "judge_scores": judge_scores,
             "judges": judges,
             "subscores": subscores,

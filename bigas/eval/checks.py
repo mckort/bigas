@@ -64,12 +64,21 @@ def _parse_jsonish(text: str) -> Any:
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
-    if not raw or raw[0] not in "{[":
+    if not raw:
         return None
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        return None
+        pass
+    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+        start = raw.find(open_ch)
+        end = raw.rfind(close_ch)
+        if start >= 0 and end > start:
+            try:
+                return json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                continue
+    return None
 
 
 def _landscape_names(text: str) -> List[str]:

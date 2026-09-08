@@ -282,7 +282,11 @@ def _prose_only(text: str) -> str:
         except json.JSONDecodeError:
             match = re.search(r'"rationale"\s*:\s*"((?:\\.|[^"\\])*)"', raw)
             if match:
-                return match.group(1).encode("utf-8").decode("unicode_escape")
+                val = match.group(1)
+                try:
+                    return val.encode("utf-8").decode("unicode_escape")
+                except Exception:
+                    return val
         return ""
     if raw.startswith("{") or raw.startswith("["):
         return ""

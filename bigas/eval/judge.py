@@ -82,6 +82,12 @@ def _provider_of(model_id: str) -> str:
 
 
 def _same_family(left: str, right: str) -> bool:
+    left_parsed = parse_model_ref(left)
+    right_parsed = parse_model_ref(right)
+    if left_parsed and right_parsed:
+        if left_parsed.provider != "unknown" or right_parsed.provider != "unknown":
+            return left_parsed.provider == right_parsed.provider
+        return left_parsed.key == right_parsed.key
     return _provider_of(left) == _provider_of(right)
 
 
