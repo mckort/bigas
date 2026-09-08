@@ -18,7 +18,7 @@ Launch Cursor cloud agent on the mapped GitHub repo (`autoCreatePR=true`) → co
 Simple tickets may skip Phases 1–2. Drag from To Do with a title, short brief, and/or screenshot; Implement runs from that context (no AI Research / AI Plan required).
 
 ### Phase 4 — PR merged → Final approval
-When the PR is **merged** (Bigas auto-merge, GitHub auto-merge after checks, or a human merge), Bigas finds the ticket key on the PR (`VFA-14:` title / `Jira: VFA-14` body) and moves the issue to **Final approval (manual)** → Discord **bigas-cto** and the Activity feed (not the CTO chat thread). Internal-board tickets are updated in the ticket store. An untagged ticket gets the board default, env fallback, or lowest unreleased version so prepare-deploy can match the cut. Ready-to-merge does **not** move the card.
+When the PR is **merged** (Bigas auto-merge, GitHub auto-merge after checks, or a human merge), Bigas finds the ticket key on the PR title or head branch (`VFA-14:` / `fix/VFA-14-…`) and moves the issue to **Final approval (manual)** → Discord **bigas-cto** and the Activity feed (not the CTO chat thread). Mentions in the PR body are ignored so a follow-up does not attach to an old ticket. Internal-board tickets are updated in the ticket store. An untagged ticket gets the board default, env fallback, or lowest unreleased version so prepare-deploy can match the cut. Ready-to-merge does **not** move the card.
 
 ### Epics — Goal Engine (not implement)
 If the issue is an **Epic**, Phases 1–3 above are skipped. The same webhook runs the Proactive Goal Engine for that Epic and leaves it in the column it was dragged to:

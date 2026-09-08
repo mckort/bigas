@@ -433,6 +433,132 @@ def test_ensure_board_ticket_retargets_unversioned_staging_to_board_default(monk
     reset_release_store_for_tests()
 
 
+def _vfa_retarget_cfg():
+    class FakeCfg:
+        status_final_approval = "Final approval (manual)"
+        project_repos = {"VFA": "mckort/vcfieldassistant"}
+        project_branch_map = {"VFA": "staging", "DEFAULT": "main"}
+        repo_base_branches = {}
+        default_base_branch = "main"
+
+        def is_project_allowed(self, project_key: str) -> bool:
+            return project_key == "VFA"
+
+        def automerge_branch_for_project(self, project_key, repo, labels=None, fix_version=None):
+            if labels and any(str(label).lower() == "hotfix" for label in labels):
+                return "main"
+            if fix_version:
+                return f"staging-{fix_version}"
+            return "staging"
+
+        def base_branch_for_repo(self, repo):
+            return "main"
+
+    return FakeCfg()
+
+
+def test_ensure_board_ticket_retargets_main_to_versioned_staging(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.release_store import reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reset_release_store_for_tests()
+    create_release("VFA", name="0.2.5", is_default=True)
+
+    patched: list[dict] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: _vfa_retarget_cfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: None)
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.ensure_versioned_release_branch",
+        lambda **kwargs: {"branch": kwargs.get("branch"), "created": True, "source": "main"},
+    )
+
+    pr = {
+        "number": 204,
+        "title": "Keep meeting-notes body copy readable on Gmail iOS",
+        "body": "VFA-60 locked Apple Mail colors, but Gmail iOS still inverted Summary.",
+        "user": {"login": "marcus"},
+        "head": {"ref": "fix/gmail-ios-email-blend"},
+        "base": {"ref": "main"},
+    }
+    result = fa.ensure_board_ticket_for_pr(
+        repo="mckort/vcfieldassistant",
+        pr=pr,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/204",
+        github_token="tok",
+        pr_number=204,
+        status="To Do",
+        retitle=True,
+    )
+    assert result.get("ok") is True
+    assert result.get("created") is True
+    assert result.get("issue_key") != "VFA-60"
+    assert result.get("retargeted_base") == "staging-0.2.5"
+    assert any(item.get("base") == "staging-0.2.5" for item in patched)
+    assert (((pr.get("base") or {}).get("ref")) == "staging-0.2.5")
+    ticket_store_module._store = None
+    reset_release_store_for_tests()
+
+
+def test_ensure_board_ticket_hotfix_on_main_is_not_retargeted(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.release_store import reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reset_release_store_for_tests()
+    create_release("VFA", name="0.2.5", is_default=True)
+
+    patched: list[dict] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: _vfa_retarget_cfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: None)
+
+    pr = {
+        "number": 205,
+        "title": "Hotfix prod outage",
+        "body": "Fix live site.",
+        "user": {"login": "marcus"},
+        "head": {"ref": "hotfix/outage"},
+        "base": {"ref": "main"},
+        "labels": [{"name": "hotfix"}],
+    }
+    result = fa.ensure_board_ticket_for_pr(
+        repo="mckort/vcfieldassistant",
+        pr=pr,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/205",
+        github_token="tok",
+        pr_number=205,
+        status="To Do",
+        retitle=True,
+    )
+    assert result.get("ok") is True
+    assert result.get("retargeted_base") is None
+    assert all(item.get("base") is None for item in patched)
+    ticket_store_module._store = None
+    reset_release_store_for_tests()
+
+
 def test_final_approval_creates_ticket_when_pr_has_no_key(monkeypatch):
     from bigas.resources.product.jira_automation import final_approval as fa
     from bigas.tickets import store as ticket_store_module
@@ -497,6 +623,7 @@ def test_final_approval_creates_ticket_when_pr_has_no_key(monkeypatch):
 def test_extract_jira_issue_key_from_pr_texts():
     from bigas.resources.product.jira_automation.final_approval import (
         extract_jira_issue_key,
+        extract_pr_ticket_key,
         squash_commit_title,
         title_with_issue_key,
     )
@@ -504,6 +631,36 @@ def test_extract_jira_issue_key_from_pr_texts():
     assert extract_jira_issue_key("VFA-14: Brand reports", "") == "VFA-14"
     assert extract_jira_issue_key("title", "Jira: WAYW-3\nmore") == "WAYW-3"
     assert extract_jira_issue_key("no key here") is None
+    assert (
+        extract_pr_ticket_key(
+            {
+                "title": "Keep meeting-notes readable",
+                "body": "VFA-60 locked Apple Mail colors, but Gmail iOS still inverted text.",
+                "head": {"ref": "fix/gmail-ios-email-blend"},
+            }
+        )
+        is None
+    )
+    assert (
+        extract_pr_ticket_key(
+            {
+                "title": "VFA-14: Brand reports",
+                "body": "Mentions VFA-99 in passing.",
+                "head": {"ref": "fix/brand"},
+            }
+        )
+        == "VFA-14"
+    )
+    assert (
+        extract_pr_ticket_key(
+            {
+                "title": "Keep colors readable",
+                "body": "",
+                "head": {"ref": "fix/VFA-14-ios-mail"},
+            }
+        )
+        == "VFA-14"
+    )
     assert squash_commit_title("VFA-59: fix deploy", 198) == "VFA-59: fix deploy (#198)"
     assert squash_commit_title("VFA-59: fix deploy (#198)", 198) == "VFA-59: fix deploy (#198)"
     assert squash_commit_title("", 12) == "Merge pull request (#12)"

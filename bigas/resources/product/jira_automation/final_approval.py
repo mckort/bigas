@@ -47,6 +47,27 @@ def extract_jira_issue_key(*texts: str) -> Optional[str]:
     return None
 
 
+def extract_pr_ticket_key(pr: Dict[str, Any]) -> Optional[str]:
+    """Ticket key from PR title or head branch — not body prose."""
+    if not isinstance(pr, dict):
+        return None
+    title = (pr.get("title") or "").strip()
+    head_ref = (((pr.get("head") or {}).get("ref") or "")).strip()
+    return extract_jira_issue_key(title, head_ref)
+
+
+def _pr_label_names(pr: Dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for item in pr.get("labels") or []:
+        if isinstance(item, dict):
+            name = (item.get("name") or "").strip()
+        else:
+            name = str(item or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
 def title_with_issue_key(title: str, issue_key: str) -> str:
     """Prefix a PR title with the ticket key unless it already has that key."""
     key = (issue_key or "").strip().upper()
@@ -130,7 +151,7 @@ def _align_pr_base_to_board_release(
     github_token: str,
     pr_number: Optional[int],
 ) -> Optional[str]:
-    """Create staging-x.y.z from the board default and retarget an unversioned base."""
+    """Create staging-x.y.z from the board default and retarget main or unversioned staging."""
     current = (((pr.get("base") or {}).get("ref") or "")).strip()
     if not current or version_from_feature_branch(current):
         return None
@@ -150,11 +171,14 @@ def _align_pr_base_to_board_release(
     wanted = resolve_implement_base_branch(
         project_key=project_key,
         repo=repo,
+        labels=_pr_label_names(pr),
         fix_version=fix_version,
     )
     if not wanted or wanted == current or not version_from_feature_branch(wanted):
         return None
-    if current != feature_branch_prefix(wanted):
+    production = (JiraAutomationConfig.from_env().base_branch_for_repo(repo) or "").strip()
+    allowed = {feature_branch_prefix(wanted), production}
+    if current not in allowed:
         return None
 
     number = pr_number or pr.get("number")
@@ -238,7 +262,7 @@ def ensure_board_ticket_for_pr(
     title = (pr.get("title") or "").strip()
     body = (pr.get("body") or "").strip()
     head_ref = (((pr.get("head") or {}).get("ref") or "")).strip()
-    issue_key = extract_jira_issue_key(title, body, head_ref)
+    issue_key = extract_pr_ticket_key(pr)
 
     from bigas.tickets.releases import project_key_for_repo
 
@@ -422,9 +446,7 @@ def transition_issue_to_final_approval_for_pr(
         return {"skipped": True, "reason": "pr_not_merged"}
 
     title = (pr.get("title") or "").strip()
-    body = (pr.get("body") or "").strip()
-    head_ref = ((pr.get("head") or {}).get("ref") or "").strip()
-    issue_key = extract_jira_issue_key(title, body, head_ref)
+    issue_key = extract_pr_ticket_key(pr)
     created = False
     cfg = JiraAutomationConfig.from_env()
     if not issue_key:
