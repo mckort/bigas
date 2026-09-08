@@ -46,7 +46,6 @@ def test_ensure_creates_from_main_when_no_legacy_staging():
         repo="mckort/vcfieldassistant",
         branch="staging-0.3.0",
         production="main",
-        prefix="staging",
         client=client,
     )
     assert result["created"] is True
@@ -59,14 +58,12 @@ def test_ensure_creates_from_main_when_no_legacy_staging():
 def test_ensure_always_creates_from_main_even_if_staging_is_ahead():
     client = MagicMock()
     client.branch_exists.side_effect = lambda owner, repo, branch: branch == "staging"
-    client.compare_refs.return_value = {"ahead_by": 4, "commits": [1, 2, 3, 4]}
     client.ensure_branch_from_ref.return_value = "main"
 
     result = ensure_versioned_release_branch(
         repo="mckort/vcfieldassistant",
         branch="staging-0.2.4",
         production="main",
-        prefix="staging",
         client=client,
     )
     assert result["source"] == "main"

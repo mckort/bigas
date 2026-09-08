@@ -57,11 +57,9 @@ def ensure_versioned_release_branch(
     repo: str,
     branch: str,
     production: str = "main",
-    prefix: str = "staging",
     client: Optional[GitHubActionsClient] = None,
 ) -> Dict[str, Any]:
     """Create ``branch`` from ``production`` when missing. Never copy unversioned staging."""
-    _ = prefix
     wanted = (branch or "").strip()
     onto = (production or "main").strip() or "main"
     if not wanted or wanted == onto:
@@ -111,7 +109,6 @@ def resolve_implement_base_branch(
             repo=repo,
             branch=branch,
             production=production,
-            prefix=prefix,
         )
     except GitHubActionsError as exc:
         logger.warning(
