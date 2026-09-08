@@ -374,7 +374,7 @@ class VFAPackEvaluatorTests(unittest.TestCase):
 
     def test_pack_exposes_baseline_model(self):
         pack = load_pack("vfa-living-analysis")
-        self.assertEqual(pack.baseline_model, "gemini:gemini-2.5-pro")
+        self.assertEqual(pack.baseline_model, "gemini:gemini-3.1-pro-preview")
 
     def test_default_fixture(self):
         with patch.dict(

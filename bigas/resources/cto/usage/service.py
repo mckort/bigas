@@ -610,7 +610,7 @@ def _configured_stack_blurb() -> str:
         f"- Bigas PR review: {review or '(same as default)'}",
         f"- Cursor autofix: {autofix or 'composer-2.5'}",
         f"- Bigas marketing: {marketing or '(same as default)'}",
-        "- VCFA living-analysis judgment: gemini-2.5-pro (thinking on)",
+        "- VCFA living-analysis judgment: gemini-3.1-pro-preview (thinking on)",
         "- VCFA living-analysis helper + Bigas Flash paths: gemini-2.5-flash",
     ]
     return "\n".join(lines)
