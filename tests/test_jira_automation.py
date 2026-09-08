@@ -511,6 +511,31 @@ def test_ensure_board_ticket_retargets_main_to_versioned_staging(monkeypatch):
     reset_release_store_for_tests()
 
 
+def test_versioned_staging_merge_blocked_on_main(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reason = fa.versioned_staging_merge_blocked(
+        {"base": {"ref": "main"}, "labels": []},
+        "mckort/vcfieldassistant",
+    )
+    assert reason
+    assert "staging-x.y.z" in reason
+
+
+def test_versioned_staging_merge_allows_versioned_base(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    assert (
+        fa.versioned_staging_merge_blocked(
+            {"base": {"ref": "staging-0.3.0"}, "labels": []},
+            "mckort/vcfieldassistant",
+        )
+        is None
+    )
+
+
 def test_ensure_board_ticket_hotfix_on_main_is_not_retargeted(monkeypatch):
     from bigas.resources.product.jira_automation import final_approval as fa
     from bigas.tickets import store as ticket_store_module

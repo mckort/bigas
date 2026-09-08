@@ -166,14 +166,29 @@ def _align_pr_base_to_board_release(
         project_key=project_key,
     ) or _ticket_fix_version(issue_key)
     if not fix_version:
+        from bigas.tickets.releases import default_fix_version
+
+        fix_version = default_fix_version(project_key)
+    if not fix_version:
         return None
 
-    wanted = resolve_implement_base_branch(
-        project_key=project_key,
-        repo=repo,
-        labels=_pr_label_names(pr),
-        fix_version=fix_version,
-    )
+    token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
+    try:
+        wanted = resolve_implement_base_branch(
+            project_key=project_key,
+            repo=repo,
+            labels=_pr_label_names(pr),
+            fix_version=fix_version,
+            github_token=token,
+        )
+    except Exception:
+        logger.warning(
+            "Could not create versioned staging branch for %s on %s",
+            issue_key,
+            repo,
+            exc_info=True,
+        )
+        return None
     if not wanted or wanted == current or not version_from_feature_branch(wanted):
         return None
     production = (JiraAutomationConfig.from_env().base_branch_for_repo(repo) or "").strip()
@@ -182,7 +197,6 @@ def _align_pr_base_to_board_release(
         return None
 
     number = pr_number or pr.get("number")
-    token = (github_token or os.environ.get("GITHUB_TOKEN") or "").strip()
     if not token or not number:
         return None
     if not _update_pr_title_and_body(
@@ -196,6 +210,34 @@ def _align_pr_base_to_board_release(
         pr["base"] = {}
     pr["base"]["ref"] = wanted
     return wanted
+
+
+def versioned_staging_merge_blocked(pr: Dict[str, Any], repo: str) -> Optional[str]:
+    """Why auto-merge must not squash this PR onto production."""
+    current = (((pr.get("base") or {}).get("ref") or "")).strip()
+    if not current or version_from_feature_branch(current):
+        return None
+    from bigas.resources.product.release_branches import mapped_feature_prefix
+    from bigas.resources.product.release_workflow import (
+        labels_include_hotfix,
+        uses_versioned_feature_branches,
+    )
+    from bigas.tickets.releases import project_key_for_repo
+
+    project_key = (project_key_for_repo(repo) or "").strip().upper()
+    if not project_key:
+        return None
+    prefix, production = mapped_feature_prefix(project_key, repo)
+    if not uses_versioned_feature_branches(prefix, production):
+        return None
+    if labels_include_hotfix(_pr_label_names(pr)):
+        return None
+    if current not in {production, prefix, "main", "master"}:
+        return None
+    return (
+        f"{project_key} PRs must target {prefix}-x.y.z, not {current}. "
+        "Retarget failed or the versioned staging branch is missing."
+    )
 
 
 def _update_pr_title_and_body(

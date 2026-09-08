@@ -12,6 +12,7 @@ from bigas.resources.product.release_branches import (
     ensure_versioned_release_branch,
     newer_release_branch_names,
     rebase_newer_release_branches,
+    resolve_implement_base_branch,
     should_inherit_legacy_staging,
 )
 from bigas.tickets.releases import create_release, unreleased_versions_after
@@ -62,6 +63,28 @@ def test_ensure_creates_from_main_when_no_legacy_staging():
     client.ensure_branch_from_ref.assert_called_once_with(
         "mckort", "vcfieldassistant", "staging-0.3.0", "main"
     )
+
+
+def test_resolve_implement_base_branch_passes_review_token(monkeypatch):
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    seen = {}
+
+    def fake_ensure(**kwargs):
+        seen.update(kwargs)
+        return {"branch": kwargs.get("branch"), "created": True, "source": "main"}
+
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.ensure_versioned_release_branch",
+        fake_ensure,
+    )
+    branch = resolve_implement_base_branch(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        fix_version="0.3.0",
+        github_token="review-token",
+    )
+    assert branch == "staging-0.3.0"
+    assert seen.get("github_token") == "review-token"
 
 
 def test_ensure_migrates_from_unversioned_staging_for_oldest_cut():
