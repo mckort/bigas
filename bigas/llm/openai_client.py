@@ -55,12 +55,13 @@ class OpenAILLMClient(LLMClient):
         if temperature is not None and supports_temperature(self._model):
             create_kwargs["temperature"] = temperature
         if max_tokens is not None:
-            token_key = (
-                "max_completion_tokens"
-                if uses_max_completion_tokens(self._model)
-                else "max_tokens"
-            )
-            create_kwargs[token_key] = max_tokens
+            if uses_max_completion_tokens(self._model):
+                # openai==1.3.0 rejects max_completion_tokens as a kwarg; extra_body is supported.
+                extra = dict(create_kwargs.get("extra_body") or {})
+                extra["max_completion_tokens"] = max_tokens
+                create_kwargs["extra_body"] = extra
+            else:
+                create_kwargs["max_tokens"] = max_tokens
         completion = self._client.chat.completions.create(**create_kwargs)
         choice = completion.choices[0]
         finish = getattr(choice, "finish_reason", None)
