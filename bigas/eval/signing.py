@@ -26,7 +26,10 @@ def signing_secret() -> str:
 
 
 def sign_report(use_case: str, run_id: str, *, secret: Optional[str] = None) -> str:
-    key = (secret if secret is not None else signing_secret()).encode("utf-8")
+    sec = secret if secret is not None else signing_secret()
+    if not sec:
+        return ""
+    key = sec.encode("utf-8")
     msg = f"eval-report:{use_case}:{run_id}".encode("utf-8")
     return hmac.new(key, msg, hashlib.sha256).hexdigest()[:32]
 
@@ -38,7 +41,10 @@ def verify_report_token(
     *,
     secret: Optional[str] = None,
 ) -> bool:
-    expected = sign_report(use_case, run_id, secret=secret)
+    sec = secret if secret is not None else signing_secret()
+    if not sec:
+        return False
+    expected = sign_report(use_case, run_id, secret=sec)
     provided = (token or "").strip()
     if not expected or not provided:
         return False

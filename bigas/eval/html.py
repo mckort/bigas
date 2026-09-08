@@ -33,12 +33,12 @@ def _render_table(rows: List[str]) -> str:
     body_rows = [row for row in rows if not _is_table_divider(row)]
     if not body_rows:
         return ""
-    html_parts = ["<table>"]
+    html_parts = ['<div style="overflow-x: auto;"><table>']
     for index, row in enumerate(body_rows):
         cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
         tag = "th" if index == 0 else "td"
         html_parts.append("<tr>" + "".join(f"<{tag}>{_inline(cell)}</{tag}>" for cell in cells) + "</tr>")
-    html_parts.append("</table>")
+    html_parts.append("</table></div>")
     return "".join(html_parts)
 
 

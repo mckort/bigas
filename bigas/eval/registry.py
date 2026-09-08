@@ -268,9 +268,10 @@ def get_candidate_models(
         already.add(baseline.key)
 
     if champion:
-        champion_model = parse_model_ref(champion)
-        if champion_model is None and champion in by_id:
+        if ":" not in champion and champion in by_id:
             champion_model = by_id[champion]
+        else:
+            champion_model = parse_model_ref(champion)
         if champion_model is not None:
             _add(champion_model)
 

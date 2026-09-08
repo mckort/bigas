@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from bigas.eval.base import EvalModelResult, EvalRunResult
 
@@ -61,7 +61,13 @@ def _md_table(headers: Sequence[str], rows: Iterable[Sequence[str]]) -> str:
         "| " + " | ".join("---" for _ in headers) + " |",
     ]
     for row in rows:
-        lines.append("| " + " | ".join(cell.replace("|", "/") for cell in row) + " |")
+        lines.append(
+            "| "
+            + " | ".join(
+                cell.replace("|", "/").replace("\r", " ").replace("\n", " ") for cell in row
+            )
+            + " |"
+        )
     return "\n".join(lines)
 
 
