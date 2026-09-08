@@ -296,7 +296,7 @@ def test_ensure_board_ticket_creates_once_and_retitles(monkeypatch):
         def is_project_allowed(self, project_key: str) -> bool:
             return project_key == "FYDA"
 
-        def automerge_branch_for_project(self, project_key, repo, labels=None):
+        def automerge_branch_for_project(self, project_key, repo, labels=None, fix_version=None):
             return "main"
 
         def base_branch_for_repo(self, repo):
@@ -362,6 +362,77 @@ def test_ensure_board_ticket_creates_once_and_retitles(monkeypatch):
     reset_release_store_for_tests()
 
 
+def test_ensure_board_ticket_retargets_unversioned_staging_to_board_default(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.release_store import reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reset_release_store_for_tests()
+    create_release("VFA", name="0.2.4", is_default=True)
+
+    patched: list[dict] = []
+
+    class FakeCfg:
+        status_final_approval = "Final approval (manual)"
+        project_repos = {"VFA": "mckort/vcfieldassistant"}
+        project_branch_map = {"VFA": "staging", "DEFAULT": "main"}
+        repo_base_branches = {}
+        default_base_branch = "main"
+
+        def is_project_allowed(self, project_key: str) -> bool:
+            return project_key == "VFA"
+
+        def automerge_branch_for_project(self, project_key, repo, labels=None, fix_version=None):
+            if fix_version:
+                return f"staging-{fix_version}"
+            return "staging"
+
+        def base_branch_for_repo(self, repo):
+            return "main"
+
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: FakeCfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: None)
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.ensure_versioned_release_branch",
+        lambda **kwargs: {"branch": kwargs.get("branch"), "created": True, "source": "main"},
+    )
+
+    pr = {
+        "number": 201,
+        "title": "Keep meeting-notes colors readable in Apple Mail",
+        "body": "Fix iOS Mail colors.",
+        "user": {"login": "marcus"},
+        "head": {"ref": "fix/ios-mail-apple-colors"},
+        "base": {"ref": "staging"},
+    }
+    result = fa.ensure_board_ticket_for_pr(
+        repo="mckort/vcfieldassistant",
+        pr=pr,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/201",
+        github_token="tok",
+        pr_number=201,
+        status="To Do",
+        retitle=True,
+    )
+    assert result.get("ok") is True
+    assert result.get("retargeted_base") == "staging-0.2.4"
+    assert any(item.get("base") == "staging-0.2.4" for item in patched)
+    assert (((pr.get("base") or {}).get("ref")) == "staging-0.2.4")
+    ticket_store_module._store = None
+    reset_release_store_for_tests()
+
+
 def test_final_approval_creates_ticket_when_pr_has_no_key(monkeypatch):
     from bigas.resources.product.jira_automation import final_approval as fa
     from bigas.tickets import store as ticket_store_module
@@ -379,7 +450,7 @@ def test_final_approval_creates_ticket_when_pr_has_no_key(monkeypatch):
         def is_project_allowed(self, project_key: str) -> bool:
             return project_key == "FYDA"
 
-        def automerge_branch_for_project(self, project_key, repo, labels=None):
+        def automerge_branch_for_project(self, project_key, repo, labels=None, fix_version=None):
             return "main"
 
         def base_branch_for_repo(self, repo):
