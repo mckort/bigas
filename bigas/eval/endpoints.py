@@ -27,7 +27,7 @@ def run_eval_task(use_case: str):
         "company": "VC Field Assistant",
         "url": "https://vcfieldassistant.com",
         "extra_urls": [],
-        "models": ["gpt-4o", "gemini-2.5-pro"],
+        "models": ["gpt-6-astra", "gemini-3.1-pro-preview"],
         "dry_run": false,
         "skip_judge": false,
         "post_discord": true,

@@ -23,7 +23,6 @@ DEFAULT_PRO_MODELS: Tuple[Tuple[str, str], ...] = (
     ("anthropic", "claude-fable-5-1"),
     ("anthropic", "claude-opus-5"),
     ("gemini", "gemini-3.1-pro-preview"),
-    ("gemini", "gemini-2.5-pro"),
 )
 
 # Anthropic list prices (USD / 1M tokens) — input, output.

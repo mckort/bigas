@@ -46,6 +46,16 @@ def model_output_token_limit(model: str) -> Optional[int]:
     return None
 
 
+def uses_max_completion_tokens(model: str) -> bool:
+    """True when Chat Completions rejects ``max_tokens`` for this model id."""
+    name = (model or "").strip().lower()
+    if not name:
+        return False
+    if name.startswith(("o1", "o3", "o4")):
+        return True
+    return name.startswith("gpt-5") or name.startswith("gpt-6")
+
+
 def cap_output_tokens(model: str, requested: int) -> int:
     """Return ``requested`` capped to the model's known output limit."""
     if requested <= 0:

@@ -7,6 +7,7 @@ import openai
 
 from bigas.llm.client import LLMClient
 from bigas.llm.completion import LLMCompletion, ToolCall
+from bigas.llm.limits import uses_max_completion_tokens
 from bigas.llm.usage import TokenUsage, usage_from_mapping
 
 
@@ -46,13 +47,21 @@ class OpenAILLMClient(LLMClient):
         temperature: Optional[float] = None,
         **kwargs: Any,
     ) -> LLMCompletion:
-        completion = self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
+        create_kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
             **kwargs,
-        )
+        }
+        if temperature is not None:
+            create_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            token_key = (
+                "max_completion_tokens"
+                if uses_max_completion_tokens(self._model)
+                else "max_tokens"
+            )
+            create_kwargs[token_key] = max_tokens
+        completion = self._client.chat.completions.create(**create_kwargs)
         choice = completion.choices[0]
         finish = getattr(choice, "finish_reason", None)
         usage_obj = getattr(completion, "usage", None)

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from bigas.llm.limits import cap_output_tokens, model_output_token_limit
+from bigas.llm.limits import cap_output_tokens, model_output_token_limit, uses_max_completion_tokens
+from bigas.llm.openai_client import OpenAILLMClient
 
 
 class ModelOutputTokenLimitTests(unittest.TestCase):
@@ -27,6 +30,52 @@ class ModelOutputTokenLimitTests(unittest.TestCase):
     def test_bare_gpt4o_stays_conservative(self):
         self.assertEqual(model_output_token_limit("gpt-4o"), 4096)
         self.assertEqual(cap_output_tokens("gpt-4o", 8192), 4096)
+
+    def test_newer_openai_models_use_max_completion_tokens(self):
+        self.assertTrue(uses_max_completion_tokens("gpt-6-astra"))
+        self.assertTrue(uses_max_completion_tokens("gpt-5.6-sol"))
+        self.assertTrue(uses_max_completion_tokens("o3-mini"))
+        self.assertFalse(uses_max_completion_tokens("gpt-4o"))
+        self.assertFalse(uses_max_completion_tokens("gemini-3.1-pro-preview"))
+
+    def _complete_captured(self, model_id: str) -> dict:
+        captured: dict = {}
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content="ok", tool_calls=None),
+                            finish_reason="stop",
+                        )
+                    ],
+                    usage=None,
+                )
+
+        class FakeOpenAI:
+            def __init__(self, **_kwargs):
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        with patch("bigas.llm.openai_client.openai.OpenAI", FakeOpenAI):
+            client = OpenAILLMClient(api_key="test-key", model=model_id)
+            client.complete_detailed(
+                [{"role": "user", "content": "hi"}],
+                max_tokens=800,
+                temperature=0.2,
+            )
+        return captured
+
+    def test_gpt4o_request_keeps_max_tokens(self):
+        captured = self._complete_captured("gpt-4o")
+        self.assertEqual(captured["max_tokens"], 800)
+        self.assertNotIn("max_completion_tokens", captured)
+
+    def test_gpt6_astra_request_uses_max_completion_tokens(self):
+        captured = self._complete_captured("gpt-6-astra")
+        self.assertEqual(captured["max_completion_tokens"], 800)
+        self.assertNotIn("max_tokens", captured)
 
 
 if __name__ == "__main__":
