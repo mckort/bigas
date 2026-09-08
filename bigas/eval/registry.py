@@ -254,7 +254,7 @@ def get_candidate_models(
     if new_models:
         logger.info("Eval new flagship models: %s", ", ".join(m.key for m in new_models))
 
-    for model in discovered:
+    for model in new_models:
         _add(model)
 
     return candidates

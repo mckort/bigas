@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import re
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence
 
 from bigas.eval.registry import DEFAULT_PRO_MODELS, ModelCandidate
 
