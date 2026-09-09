@@ -145,5 +145,78 @@ def run_mechanical_checks(
         check.penalty += min(20.0, 5.0 * len(invented))
         check.notes.append("Figures not found in fixture page or research snippets: " + ", ".join(invented[:6]))
 
+    if str(output.get("pack_id") or "") == "okr-goal-loop":
+        _apply_okr_loop_checks(check, output, fixture)
     check.penalty = min(40.0, round(check.penalty, 1))
     return check
+
+
+_WIRE_RE = re.compile(r"^(wire weekly snapshot for\b|instrument:\s*)", re.I)
+_SAAS_KIT_RE = re.compile(
+    r"weekly active founders|7-day activation|nps\b|active users",
+    re.I,
+)
+
+
+def _okr_step_json(output: Mapping[str, Any], step_id: str) -> Dict[str, Any]:
+    steps = output.get("steps") if isinstance(output.get("steps"), Mapping) else {}
+    raw = steps.get(step_id) if isinstance(steps, Mapping) else None
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    parsed = _parse_jsonish(str(raw or ""))
+    return dict(parsed) if isinstance(parsed, Mapping) else {}
+
+
+def _apply_okr_loop_checks(
+    check: MechanicalCheck,
+    output: Mapping[str, Any],
+    fixture: EvalFixture,
+) -> None:
+    research = _okr_step_json(output, "research")
+    plan = _okr_step_json(output, "plan")
+    followup = _okr_step_json(output, "followup")
+    krs = research.get("key_results") if isinstance(research.get("key_results"), list) else []
+    if not krs:
+        check.notes.append("Research produced no Key Results.")
+        check.penalty += 8.0
+    elif not (2 <= len(krs) <= 4):
+        check.notes.append(f"Research should propose 2–4 KRs, got {len(krs)}.")
+        check.penalty += 4.0
+
+    corpus = _norm(_source_corpus(output, fixture) + " " + str(output.get("evidence") or ""))
+    for kr in krs:
+        if not isinstance(kr, Mapping):
+            continue
+        title = str(kr.get("title") or "")
+        if _SAAS_KIT_RE.search(title):
+            check.notes.append(f"SaaS-kit KR: {title}")
+            check.penalty += 6.0
+        if kr.get("measurable"):
+            baseline = str(kr.get("baseline") or "")
+            if baseline and _norm(baseline) not in corpus and baseline not in corpus:
+                check.notes.append(f"Measurable KR baseline {baseline} not in evidence.")
+                check.penalty += 4.0
+
+    plan_tasks = plan.get("tasks") if isinstance(plan.get("tasks"), list) else []
+    kr_titles = {
+        str(kr.get("title") or "").strip().lower()
+        for kr in krs
+        if isinstance(kr, Mapping) and str(kr.get("title") or "").strip()
+    }
+    for task in plan_tasks:
+        if not isinstance(task, Mapping):
+            continue
+        title = str(task.get("title") or task.get("summary") or "").strip()
+        if not title:
+            continue
+        if title.lower() in kr_titles or _WIRE_RE.match(title):
+            check.notes.append(f"Plan opened a KR clone or wiring ticket: {title}")
+            check.penalty += 6.0
+        if title.lower() == "update catalog":
+            check.notes.append("Plan duplicated open work `Update catalog`.")
+            check.penalty += 6.0
+
+    follow_tasks = followup.get("tasks") if isinstance(followup.get("tasks"), list) else []
+    if len(follow_tasks) > 10:
+        check.notes.append(f"Follow-up opened {len(follow_tasks)} tasks (max 10).")
+        check.penalty += 5.0

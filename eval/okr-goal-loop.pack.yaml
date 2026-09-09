@@ -1,0 +1,61 @@
+# Scores the Bigas OKR / Epic tool loop — not a live board or GA4 property.
+# Fixture numbers are frozen. Never include workspace or company ids.
+id: okr-goal-loop
+name: Bigas OKR goal loop
+source: https://github.com/mckort/bigas
+baseline_model: gemini:gemini-3.8-flash
+fixture:
+  company: Green Promo Wear
+  url: https://greenpromowear.com
+  input: |
+    {
+      "title": "10 paying customers before year end",
+      "key": "GPWW-15",
+      "brand": "Green Promo Wear",
+      "cycle": "2026-Q3",
+      "description": "Win 10 paying wholesale customers.",
+      "evidence": {
+        "brand": "Green Promo Wear",
+        "ga4": "Traffic: sessions 43 (prev 40), users 12, pageviews 80. Event sample_to_paid=2. Conversion 5%.",
+        "website": "Sustainable promotional apparel. Code SAMPLE30. Book a demo. Wholesale merch kits on /store.",
+        "board_tickets": "- GPWW-1 [Task/To Do]: Update catalog"
+      },
+      "open_work": [
+        {"key": "GPWW-1", "title": "Update catalog", "summary": "Update catalog", "status": "To Do"},
+        {"key": "GPWW-8", "title": "Increase website sessions from 43 to 1000", "summary": "Increase website sessions from 43 to 1000", "status": "To Do"}
+      ],
+      "key_results": [
+        {
+          "id": "kr-saas01",
+          "title": "40 weekly active founders",
+          "status": "proposed",
+          "measurable": true,
+          "baseline": 12,
+          "target": 40,
+          "current": 12
+        }
+      ],
+      "scoreboard": {
+        "kr_health": {"on_track": 0, "at_risk": 1, "off_track": 0},
+        "note": "sessions 43 vs expected pace toward 1000"
+      }
+    }
+steps:
+- id: research
+  prompt: |
+    Propose 2–4 Key Results for this Objective. Use tools. Ground every number in the
+    evidence pack. Do not keep “weekly active founders” or other SaaS kit metrics.
+- id: plan
+  prompt: |
+    Open concrete To Do work toward the committed KRs. Do not clone KR titles.
+    Do not create “wire weekly snapshot” cards. Do not duplicate Update catalog.
+- id: followup
+  prompt: |
+    Weekly in-progress pass. Only open work that covers a gap. Never auto-start cards.
+rubric: |
+  Ground every KR number in the fixture evidence. No SaaS kit metrics
+  (weekly active founders, NPS, generic activation).
+  Tasks are actions, not KR titles and not analytics wiring.
+  Do not duplicate the open catalog ticket.
+  Follow-up proposes at most a few To Do cards for gaps — never starts In Progress.
+  This scores the tool loop against a frozen snapshot, not live GA4.

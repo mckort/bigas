@@ -17,7 +17,7 @@ def main() -> int:
     parser.add_argument(
         "--use-case",
         dest="use_case",
-        help="Use case / pack id (e.g. vfa-living-analysis or vc-field-assistant)",
+        help="Use case / pack id (e.g. vfa-living-analysis or okr-goal-loop)",
     )
     parser.add_argument(
         "--pack",
@@ -40,6 +40,7 @@ def main() -> int:
         parser.error("one of --pack / --use-case is required")
 
     # Register pack evaluators
+    import bigas.eval.use_cases.okr_goal_loop  # noqa: F401
     import bigas.eval.use_cases.vc_field_assistant  # noqa: F401
     from bigas.eval.base import EvalFixture
     from bigas.eval.reporter import summarize_for_response
