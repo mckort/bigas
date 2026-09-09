@@ -2,8 +2,26 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from typing import Optional
+from zoneinfo import ZoneInfo
 
 from flask import Blueprint, Response, jsonify, request
+
+EVAL_TZ = ZoneInfo("Europe/Stockholm")
+
+
+def should_run_cadence(every_n_weeks: int, *, now: Optional[datetime] = None) -> bool:
+    """True when this Stockholm ISO week should fire (every_n_weeks=1 always)."""
+    interval = int(every_n_weeks or 1)
+    if interval <= 1:
+        return True
+    stamp = now or datetime.now(EVAL_TZ)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=EVAL_TZ)
+    else:
+        stamp = stamp.astimezone(EVAL_TZ)
+    return int(stamp.strftime("%V")) % interval == 0
 
 from bigas.eval.base import EvalFixture, reject_customer_identifiers
 from bigas.eval.html import build_html_report
@@ -40,10 +58,13 @@ def run_eval_task(use_case: str):
         "skip_judge": false,
         "post_discord": true,
         "post_to_chat": true,
-        "include_baseline": true
+        "include_baseline": true,
+        "every_n_weeks": 2
       }
 
     Omit company/url to run every pack fixture.
+    every_n_weeks=2 skips odd ISO weeks (Europe/Stockholm) so a Sunday
+    16:00 cron can share the CTO-report wake-up but only eval fortnightly.
     """
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
@@ -71,6 +92,22 @@ def run_eval_task(use_case: str):
                 "company_name": company,
                 "website_url": url,
                 "extra_urls": extra_urls or [],
+            }
+        )
+
+    try:
+        every_n_weeks = int(data.get("every_n_weeks") or 1)
+    except (TypeError, ValueError):
+        return jsonify({"error": "every_n_weeks must be an integer"}), 400
+    if every_n_weeks < 1:
+        return jsonify({"error": "every_n_weeks must be >= 1"}), 400
+    if not should_run_cadence(every_n_weeks):
+        return jsonify(
+            {
+                "status": "skipped",
+                "reason": "biweekly_cadence",
+                "every_n_weeks": every_n_weeks,
+                "use_case": use_case,
             }
         )
 

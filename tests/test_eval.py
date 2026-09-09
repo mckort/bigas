@@ -31,6 +31,7 @@ from bigas.eval.registry import (
     parse_model_ref,
     update_eval_state_after_run,
 )
+from bigas.eval.endpoints import should_run_cadence
 from bigas.eval.html import build_html_report
 from bigas.eval.reporter import build_markdown_report
 from bigas.eval.readable import build_full_markdown, humanize_step_output
@@ -39,6 +40,19 @@ from bigas.eval.pack import load_pack
 from bigas.eval.use_cases.vc_field_assistant import VCFieldAssistantEvaluator
 from bigas.llm.completion import LLMCompletion
 from bigas.llm.usage import TokenUsage
+
+
+class CadenceTests(unittest.TestCase):
+    def test_biweekly_even_iso_week_only(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Europe/Stockholm")
+        odd_sunday = datetime(2026, 9, 13, 16, 0, tzinfo=tz)
+        even_sunday = datetime(2026, 9, 20, 16, 0, tzinfo=tz)
+        self.assertFalse(should_run_cadence(2, now=odd_sunday))
+        self.assertTrue(should_run_cadence(2, now=even_sunday))
+        self.assertTrue(should_run_cadence(1, now=odd_sunday))
 
 
 class FixtureIsolationTests(unittest.TestCase):
