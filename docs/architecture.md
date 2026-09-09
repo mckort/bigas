@@ -319,7 +319,8 @@ EvalRunner → PackEvaluator.run(fixture, model)
 LLMJudge → ranking.json + report.html → GCS + signed link in PM chat + Discord
 ```
 
-- **Packs** (`eval/*.pack.yaml`): fixture, steps, optional web research, judge rubric, optional `baseline_model`. First pack is `vfa-living-analysis` (alias `vc-field-assistant`).
+- **Packs** (`eval/*.pack.yaml`): fixtures, steps, optional web research, judge rubric, optional `baseline_model`. First pack is `vfa-living-analysis` (alias `vc-field-assistant`).
+- **Scoring**: two different-family judges (mean + per-judge scores), weighted subscores, then mechanical penalty. Reports list judges and rubric at the top.
 - **Discovery** (`discover.py`): current flagship reasoning models from official overview pages (Anthropic, OpenAI, Gemini). At most two per provider; Tavily only if a page fetch fails. The pack/env production baseline is always included.
 - **Registry** (`registry.py`): catalogs for id confirmation, pricing estimates, champion/eliminated state in `model_eval_state.json`.
 - **Readable reports**: `GET /eval/reports/<use_case>/<run_id>?token=` (HMAC) renders stored HTML; `ranking.json` stays machine-readable.

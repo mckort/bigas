@@ -41,6 +41,8 @@ def run_eval_task(use_case: str):
         "post_to_chat": true,
         "include_baseline": true
       }
+
+    Omit company/url to run every pack fixture.
     """
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):

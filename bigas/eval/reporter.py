@@ -128,5 +128,7 @@ def summarize_for_response(run: EvalRunResult) -> dict:
         ),
         "models_tested": len(run.results),
         "models": [f"{r.provider}:{r.model_id}" for r in run.results],
+        "judge_models": list(run.judge_models),
+        "fixtures": [item.to_dict() for item in run.all_fixtures()],
         "dry_run": run.dry_run,
     }

@@ -12,7 +12,9 @@ from bigas.eval.base import (
     EvalUsage,
     reject_customer_identifiers,
 )
-from bigas.eval.judge import LLMJudge
+from bigas.eval.checks import run_mechanical_checks
+from bigas.eval.judge import LLMJudge, resolve_judge_models, weighted_score
+from bigas.eval.readable import format_motivation
 from bigas.eval.discover import (
     OFFICIAL_MODEL_PAGES,
     discover_flagship_models,
@@ -240,25 +242,39 @@ class DiscoverTests(unittest.TestCase):
 
 class JudgeTests(unittest.TestCase):
     def test_parse_structured_score(self):
-        judge = LLMJudge()
+        judge = LLMJudge(models=["gemini:gemini-3.1-pro-preview"])
         completion = LLMCompletion(
             text='{"score": 87.5, "rationale": "Strong structure and sourcing."}',
             usage=TokenUsage(),
         )
-        score, rationale = judge._parse_score(completion)
-        self.assertEqual(score, 87.5)
-        self.assertIn("Strong structure", rationale)
+        verdict = judge._parse_verdict(completion, "gemini-3.1-pro-preview", "gemini")
+        self.assertEqual(verdict.score, 87.5)
+        self.assertIn("Strong structure", verdict.rationale)
 
-    def test_score_uses_complete_detailed(self):
-        judge = LLMJudge()
+    def test_weighted_subscores(self):
+        self.assertEqual(
+            weighted_score({"grounding": 100, "structure": 0, "landscape": 0, "hallucination": 0}),
+            30.0,
+        )
+
+    @patch.dict("os.environ", {"MODEL_EVAL_JUDGE_MODELS": "", "MODEL_EVAL_JUDGE_MODEL": ""}, clear=False)
+    def test_default_judges_are_two_families(self):
+        models = resolve_judge_models()
+        self.assertEqual(len(models), 2)
+        self.assertTrue(models[0].startswith("gemini:"))
+        self.assertTrue(models[1].startswith("anthropic:"))
+
+    def test_score_uses_complete_eval_model(self):
+        judge = LLMJudge(models=["gemini:gemini-3.1-pro-preview"])
         evaluator = MagicMock()
         evaluator.get_judge_rubric.return_value = "Be accurate."
-        client = MagicMock()
-        client.complete_detailed.return_value = LLMCompletion(
-            text='{"score": 80, "rationale": "Solid."}',
-            usage=TokenUsage(),
-        )
-        with patch("bigas.llm.factory.get_llm_client", return_value=(client, "gemini-3.1-pro-preview")):
+        with patch(
+            "bigas.eval.complete.complete_eval_model",
+            return_value=LLMCompletion(
+                text='{"score": 80, "rationale": "Solid."}',
+                usage=TokenUsage(),
+            ),
+        ) as mock_complete:
             score, rationale = judge.score(
                 evaluator=evaluator,
                 fixture=EvalFixture("Co", "https://example.com"),
@@ -266,23 +282,64 @@ class JudgeTests(unittest.TestCase):
             )
         self.assertEqual(score, 80)
         self.assertIn("Solid", rationale)
-        client.complete_detailed.assert_called_once()
-        client.complete.assert_not_called()
+        mock_complete.assert_called_once()
 
-    def test_score_when_only_complete_returns_str(self):
-        judge = LLMJudge()
+    def test_two_judges_mean_and_rationale(self):
+        judge = LLMJudge(
+            models=["gemini:gemini-3.1-pro-preview", "anthropic:claude-sonnet-5"]
+        )
         evaluator = MagicMock()
         evaluator.get_judge_rubric.return_value = "Be accurate."
-        client = MagicMock(spec=["complete"])
-        client.complete.return_value = '{"score": 64, "rationale": "Plain string."}'
-        with patch("bigas.llm.factory.get_llm_client", return_value=(client, "gemini-3.1-pro-preview")):
+        replies = [
+            LLMCompletion(
+                text='{"grounding":80,"structure":80,"landscape":80,"hallucination":80,"rationale":"Gemini ok."}',
+                usage=TokenUsage(),
+            ),
+            LLMCompletion(
+                text='{"grounding":60,"structure":60,"landscape":60,"hallucination":60,"rationale":"Claude ok."}',
+                usage=TokenUsage(),
+            ),
+        ]
+        with patch("bigas.eval.complete.complete_eval_model", side_effect=replies):
             score, rationale = judge.score(
                 evaluator=evaluator,
                 fixture=EvalFixture("Co", "https://example.com"),
-                output={"summary": "ok"},
+                output={"steps": {"classify": "ok"}},
             )
-        self.assertEqual(score, 64)
-        self.assertIn("Plain string", rationale)
+        self.assertEqual(score, 70.0)
+        self.assertIn("Gemini ok", rationale)
+        self.assertIn("Claude ok", rationale)
+
+
+class MechanicalCheckTests(unittest.TestCase):
+    def test_missing_required_steps(self):
+        check = run_mechanical_checks(
+            {"steps": {"classify": "ok"}},
+            EvalFixture("Co", "https://example.com"),
+            required_steps=("classify", "landscape"),
+        )
+        self.assertIn("landscape", check.missing_steps)
+        self.assertGreater(check.penalty, 0)
+
+    def test_unsupported_landscape_name(self):
+        output = {
+            "steps": {
+                "landscape": '{"overlapping":[{"name":"InventedCo","product":"X","strength":"Y","relevance":"High"}]}'
+            },
+            "sources": {"page": "Acme makes widgets.", "snippets": ""},
+        }
+        check = run_mechanical_checks(output, EvalFixture("Acme", "https://acme.example"))
+        self.assertIn("InventedCo", check.unsupported_names)
+        self.assertGreater(check.penalty, 0)
+
+    def test_invented_figures(self):
+        output = {
+            "steps": {"primary": "Revenue is $50 million this year."},
+            "sources": {"page": "Acme makes widgets.", "snippets": ""},
+        }
+        check = run_mechanical_checks(output, EvalFixture("Acme", "https://acme.example"))
+        self.assertTrue(any("Figures" in note for note in check.notes))
+        self.assertGreater(check.penalty, 0)
 
 
 class ReporterTests(unittest.TestCase):
@@ -314,6 +371,8 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("Champion", md)
         self.assertIn("gpt-4o", md)
         self.assertIn("90.0", md)
+        self.assertIn("Mean", md)
+        self.assertNotIn('{"score"', md)
 
     def test_full_report_unwraps_json_steps(self):
         run = EvalRunResult(
@@ -346,6 +405,19 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("A portfolio workspace for VCs.", html_page)
         self.assertIn("<table>", html_page)
 
+    def test_motivation_strips_raw_judge_json(self):
+        result = EvalModelResult(
+            model_id="gpt-4o",
+            provider="openai",
+            output={},
+            usage=EvalUsage(),
+            score=90.0,
+            score_rationale='{"score": 90, "rationale": "Grounded and complete."}',
+        )
+        text = format_motivation(result)
+        self.assertIn("Grounded and complete.", text)
+        self.assertNotIn('{"score"', text)
+
     def test_humanize_classify_json(self):
         text = humanize_step_output(
             "classify",
@@ -375,6 +447,14 @@ class VFAPackEvaluatorTests(unittest.TestCase):
     def test_pack_exposes_baseline_model(self):
         pack = load_pack("vfa-living-analysis")
         self.assertEqual(pack.baseline_model, "gemini:gemini-3.1-pro-preview")
+        self.assertEqual(len(pack.fixtures), 2)
+        self.assertEqual(pack.fixtures[1].get("company") or pack.fixtures[1].get("company_name"), "Stripe")
+
+    def test_default_fixtures_include_stripe(self):
+        evaluator = VCFieldAssistantEvaluator()
+        fixtures = evaluator.default_fixtures()
+        self.assertGreaterEqual(len(fixtures), 2)
+        self.assertEqual(fixtures[1].company_name, "Stripe")
 
     def test_default_fixture(self):
         with patch.dict(
