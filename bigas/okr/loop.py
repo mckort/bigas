@@ -257,6 +257,33 @@ def _open_work_titles(snapshot: GoalSnapshot) -> set[str]:
     return titles
 
 
+def _session_task_titles(session: _Session) -> set[str]:
+    titles: set[str] = set()
+    for item in session.tasks:
+        text = (item.get("title") or item.get("summary") or "").strip().lower()
+        if text:
+            titles.add(text)
+    return titles
+
+
+def _parse_tool_arguments(arguments: Any) -> Dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _tool_call_arguments_json(arguments: Any) -> str:
+    if isinstance(arguments, str):
+        return arguments
+    return json.dumps(arguments or {})
+
+
 def _ground_key_results(raw: Any, *, snapshot: GoalSnapshot) -> List[Dict[str, Any]]:
     numbers = evidence_numbers(snapshot.evidence, extra=snapshot.title + " " + snapshot.description)
     grounded: List[Dict[str, Any]] = []
@@ -320,10 +347,13 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
             accepted = _normalize_plan_tasks(
                 raw,
                 key_results=krs,
-                existing_titles=_open_work_titles(snap) | {t["title"].lower() for t in session.tasks},
+                existing_titles=_open_work_titles(snap) | _session_task_titles(session),
             )
         else:
-            accepted = _normalize_epic_tasks(raw, existing_titles=_open_work_titles(snap) | {t["title"].lower() for t in session.tasks})
+            accepted = _normalize_epic_tasks(
+                raw,
+                existing_titles=_open_work_titles(snap) | _session_task_titles(session),
+            )
         dropped = max(0, len(raw) - len(accepted))
         session.tasks.extend(accepted)
         if dropped:
@@ -421,7 +451,10 @@ def _assistant_message(completion: LLMCompletion) -> Dict[str, Any]:
             {
                 "id": call.id,
                 "type": "function",
-                "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                "function": {
+                    "name": call.name,
+                    "arguments": _tool_call_arguments_json(call.arguments),
+                },
             }
         )
     message: Dict[str, Any] = {"role": "assistant", "content": completion.text or ""}
@@ -481,8 +514,10 @@ def run_goal_loop(
     trace: List[str] = []
     used_tools = False
     used_llm = False
+    executed_turns = 0
 
     for turn in range(1, turns + 1):
+        executed_turns = turn
         try:
             completion = _invoke(
                 llm,
@@ -504,7 +539,7 @@ def run_goal_loop(
         used_tools = True
         messages.append(_assistant_message(completion))
         for call in calls:
-            payload = _dispatch(session, call.name, call.arguments if isinstance(call.arguments, dict) else {})
+            payload = _dispatch(session, call.name, _parse_tool_arguments(call.arguments))
             trace.append(call.name)
             messages.append(
                 {
@@ -520,7 +555,12 @@ def run_goal_loop(
         session.done = True
         trace.append("max-turns")
 
-    return session.result(used_tools=used_tools, used_llm=used_llm, turns=min(turn, turns), trace=trace)
+    return session.result(
+        used_tools=used_tools,
+        used_llm=used_llm,
+        turns=min(executed_turns, turns),
+        trace=trace,
+    )
 
 
 def snapshot_from_okr(

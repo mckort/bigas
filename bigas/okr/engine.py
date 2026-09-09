@@ -192,7 +192,7 @@ def handle_objective_status_change(
             if spec.get("ai_doable"):
                 labels.append("ai-doable")
             child = service.create_ticket(
-                ticket["board_id"],
+                ticket.get("board_id"),
                 user_id=None,
                 title=title,
                 description=spec.get("description") or "",
@@ -330,7 +330,7 @@ def handle_objective_status_change(
                 if spec.get("ai_doable"):
                     labels.append("ai-doable")
                 child = service.create_ticket(
-                    ticket["board_id"],
+                    ticket.get("board_id"),
                     user_id=None,
                     title=title,
                     description=spec.get("description") or "",
