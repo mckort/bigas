@@ -6,10 +6,12 @@ import json
 
 from bigas.llm.completion import LLMCompletion, ToolCall
 from bigas.okr.loop import (
+    NUDGE_WRITE,
     GoalSnapshot,
     evidence_numbers,
     run_goal_loop,
     snapshot_from_okr,
+    system_prompt_for,
     tools_for_phase,
 )
 
@@ -275,9 +277,43 @@ def test_evidence_numbers_strip_commas():
     assert "12000" in evidence_numbers({"ga4": "sessions 12,000"})
 
 
-def test_read_only_research_drops_saas_kr_and_is_not_success():
-    from bigas.okr.loop import system_prompt_for
+def test_loop_prompt_omits_json_only_dump():
+    text = system_prompt_for(_snapshot())
+    lowered = text.lower()
+    assert "return json only" not in lowered
+    assert "output only valid json" not in lowered
+    assert "json shape:" not in lowered
+    assert "from <baseline> to <target>" in text or "from {baseline}" in text
 
+
+def test_silence_after_read_nudges_then_propose():
+    llm = _ScriptedLlm(
+        [
+            _call("get_evidence"),
+            LLMCompletion(text="I have enough context."),
+            _call(
+                "propose_key_results",
+                key_results=[
+                    {
+                        "title": "Increase sessions from 43 to 80",
+                        "baseline": 43,
+                        "target": 80,
+                        "current": 43,
+                        "measurable": True,
+                    }
+                ],
+            ),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(llm, snapshot=_snapshot())
+    assert "nudge-silence" in result.tool_trace
+    assert result.wrote
+    assert result.key_results[0]["title"].startswith("Increase")
+    assert any(NUDGE_WRITE[:20] in str(msg.get("content") or "") for msg in llm.calls[2]["messages"])
+
+
+def test_read_only_research_drops_saas_kr_and_is_not_success():
     llm = _ScriptedLlm([_call("get_evidence"), _call("done"), _call("done")])
     snap = _snapshot(
         key_results=[
