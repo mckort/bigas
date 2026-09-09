@@ -325,4 +325,4 @@ LLMJudge → ranking.json + report.html → GCS + signed link in PM chat + Disco
 - **Registry** (`registry.py`): catalogs for id confirmation, pricing estimates, champion/eliminated state in `model_eval_state.json`.
 - **Readable reports**: `GET /eval/reports/<use_case>/<run_id>?token=` (HMAC) renders stored HTML; `ranking.json` stays machine-readable.
 - **Isolation**: fixtures reject `workspaceId` / `companyId`; no writes to product customer workspaces.
-- **Scheduling**: `POST /tasks/eval/vfa-living-analysis` (Cloud Scheduler Sunday 16:00 Europe/Stockholm, even ISO weeks) or `python scripts/run_eval.py --pack vfa-living-analysis`.
+- **Scheduling**: `POST /tasks/eval/vfa-living-analysis` (Cloud Scheduler Sunday 16:00 Europe/Stockholm, every other week from a fixed epoch) or `python scripts/run_eval.py --pack vfa-living-analysis`.

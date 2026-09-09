@@ -896,7 +896,7 @@ python scripts/run_eval.py --pack vfa-living-analysis \
 
 `--use-case vc-field-assistant` is the same pack (kept for the existing scheduler path).
 
-Cloud Scheduler (same Sunday 16:00 slot as `weekly_cto_ai_report` / `progress_updates`, so Cloud Run is already warm). Body `every_n_weeks: 2` skips odd ISO weeks. Same auth as evaluate-goals (`X-Bigas-Access-Key` or `CRON_SECRET`):
+Cloud Scheduler (same Sunday 16:00 slot as `weekly_cto_ai_report` / `progress_updates`, so Cloud Run is already warm). Body `every_n_weeks: 2` runs every other week from a fixed Sunday epoch (true fortnightly cadence across ISO year boundaries). Same auth as evaluate-goals (`X-Bigas-Access-Key` or `CRON_SECRET`):
 
 ```bash
 gcloud scheduler jobs create http bigas-eval-vfa-models \
