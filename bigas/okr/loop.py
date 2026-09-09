@@ -667,9 +667,7 @@ def _phase_rules_for_loop(text: str) -> str:
     """Drop one-shot JSON instructions so Gemini does not stop talking instead of calling tools."""
     cut = len(text)
     for marker in _JSON_DUMP_MARKERS:
-        idx = text.find(marker)
-        if idx < 0:
-            idx = text.lower().find(marker.lower())
+        idx = text.lower().find(marker.lower())
         if idx >= 0:
             cut = min(cut, idx)
     return text[:cut].strip()
@@ -747,8 +745,9 @@ def run_goal_loop(
                 and turn < turns
             ):
                 session.nudged = True
-                if completion.text:
-                    messages.append({"role": "assistant", "content": completion.text})
+                messages.append(
+                    {"role": "assistant", "content": completion.text.strip() or "(no response)"}
+                )
                 messages.append({"role": "user", "content": NUDGE_WRITE})
                 trace.append("nudge-silence")
                 continue
