@@ -84,6 +84,28 @@ def is_malformed_function_call(value: Any) -> bool:
     return "MALFORMED_FUNCTION_CALL" in text.upper()
 
 
+def _gemini_tool_config(tool_choice: Any) -> Optional[Dict[str, Any]]:
+    """Map OpenAI-style tool_choice to Gemini function_calling_config."""
+    if tool_choice in (None, "auto"):
+        return None
+    if tool_choice in ("required", "any"):
+        return {"function_calling_config": {"mode": "ANY"}}
+    if tool_choice == "none":
+        return {"function_calling_config": {"mode": "NONE"}}
+    name = ""
+    if isinstance(tool_choice, dict):
+        fn = tool_choice.get("function") if isinstance(tool_choice.get("function"), dict) else {}
+        name = str((fn or {}).get("name") or tool_choice.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "function_calling_config": {
+            "mode": "ANY",
+            "allowed_function_names": [name],
+        }
+    }
+
+
 def _gemini_safe_schema(params: Any) -> Dict[str, Any]:
     """Strip JSON Schema keywords Gemini function calling cannot parse."""
     if not isinstance(params, dict):
@@ -324,9 +346,10 @@ class GeminiLLMClient(LLMClient):
         **kwargs: Any,
     ) -> LLMCompletion:
         tools = kwargs.pop("tools", None)
-        kwargs.pop("tool_choice", None)
+        tool_choice = kwargs.pop("tool_choice", None)
         function_decls = _openai_tools_to_gemini_decls(tools if isinstance(tools, list) else None)
         gemini_tools = [{"function_declarations": function_decls}] if function_decls else None
+        tool_config = _gemini_tool_config(tool_choice)
 
         system_instruction, rest = gemini_contents_from_messages(messages)
         if not rest:
@@ -377,6 +400,8 @@ class GeminiLLMClient(LLMClient):
             call_kwargs = dict(kwargs)
             if request_options is not None:
                 call_kwargs["request_options"] = request_options
+            if tool_config is not None:
+                call_kwargs["tool_config"] = tool_config
             if len(rest) == 1 and rest[0]["role"] == "user":
                 return active_model.generate_content(
                     _send_payload(rest[0]),

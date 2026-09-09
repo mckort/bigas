@@ -685,6 +685,24 @@ def system_prompt_for(snapshot: GoalSnapshot) -> str:
     return f"{LOOP_SYSTEM}\n\n{LOOP_PHASE_PREFACE}\n\n{_phase_rules_for_loop(phase_rules)}"
 
 
+def _forced_write_tool(session: _Session) -> Optional[str]:
+    need = session.required_write()
+    if need == "krs":
+        return "propose_key_results"
+    if need == "tasks":
+        return "propose_tasks"
+    return None
+
+
+def _tool_choice_for_turn(session: _Session, *, used_tools: bool, turn: int) -> Optional[Dict[str, Any]]:
+    name = _forced_write_tool(session)
+    if not name or session.write_ok():
+        return None
+    if used_tools or turn >= 2:
+        return {"type": "function", "function": {"name": name}}
+    return None
+
+
 def run_goal_loop(
     llm: Any,
     *,
@@ -719,6 +737,10 @@ def run_goal_loop(
 
     for turn in range(1, turns + 1):
         executed_turns = turn
+        turn_extra = dict(extra)
+        choice = _tool_choice_for_turn(session, used_tools=used_tools, turn=turn)
+        if choice:
+            turn_extra["tool_choice"] = choice
         try:
             completion = _invoke(
                 llm,
@@ -726,10 +748,20 @@ def run_goal_loop(
                 tools=tools,
                 max_tokens=4096,
                 temperature=0.2,
-                extra=extra,
+                extra=turn_extra,
             )
         except Exception:
             logger.warning("Goal loop LLM failed on turn %s", turn, exc_info=True)
+            if (
+                session.required_write()
+                and not session.write_ok()
+                and not session.nudged
+                and turn < turns
+            ):
+                session.nudged = True
+                messages.append({"role": "user", "content": NUDGE_WRITE})
+                trace.append("nudge-error")
+                continue
             break
         used_llm = True
         calls: Sequence[ToolCall] = completion.tool_calls or ()
