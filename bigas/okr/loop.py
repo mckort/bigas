@@ -58,8 +58,14 @@ Rules:
 """
 
 LOOP_PHASE_PREFACE = (
-    "The phase rules below still apply. Ignore any instruction to return JSON only — "
-    "use the tools instead of dumping a JSON object."
+    "The phase rules below still apply. Use the tools — do not dump a JSON object."
+)
+
+_JSON_DUMP_MARKERS = (
+    "Return JSON only",
+    "Output ONLY valid JSON",
+    "JSON shape:",
+    "JSON schema:",
 )
 
 NUDGE_WRITE = (
@@ -657,6 +663,18 @@ def _invoke(
     return LLMCompletion(text=text or "")
 
 
+def _phase_rules_for_loop(text: str) -> str:
+    """Drop one-shot JSON instructions so Gemini does not stop talking instead of calling tools."""
+    cut = len(text)
+    for marker in _JSON_DUMP_MARKERS:
+        idx = text.find(marker)
+        if idx < 0:
+            idx = text.lower().find(marker.lower())
+        if idx >= 0:
+            cut = min(cut, idx)
+    return text[:cut].strip()
+
+
 def system_prompt_for(snapshot: GoalSnapshot) -> str:
     if snapshot.kind == KIND_OBJECTIVE:
         phase_rules = OKR_RESEARCH_SYSTEM if snapshot.phase == PHASE_RESEARCH else OKR_PLAN_SYSTEM
@@ -666,7 +684,7 @@ def system_prompt_for(snapshot: GoalSnapshot) -> str:
         phase_rules = PLAN_EPIC_SYSTEM_PROMPT
     else:
         phase_rules = IN_PROGRESS_EPIC_SYSTEM_PROMPT
-    return f"{LOOP_SYSTEM}\n\n{LOOP_PHASE_PREFACE}\n\n{phase_rules}"
+    return f"{LOOP_SYSTEM}\n\n{LOOP_PHASE_PREFACE}\n\n{_phase_rules_for_loop(phase_rules)}"
 
 
 def run_goal_loop(
@@ -689,7 +707,8 @@ def run_goal_loop(
         f"Phase: {snapshot.phase}. Kind: {snapshot.kind}. "
         f"Goal {snapshot.key}: {snapshot.title or '(untitled)'}. "
         f"Brand: {snapshot.brand or 'unknown'}. "
-        "Inspect with tools, then propose, then call done."
+        "Inspect with tools, then propose, then call done. "
+        "Stopping after get_* without propose_* is a failure."
     )
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": system_prompt_for(snapshot)},
@@ -719,6 +738,20 @@ def run_goal_loop(
         if not calls:
             if completion.text and _apply_oneshot(session, completion.text):
                 trace.append(f"turn {turn}: oneshot-json")
+                if session.write_ok():
+                    break
+            if (
+                session.required_write()
+                and not session.write_ok()
+                and not session.nudged
+                and turn < turns
+            ):
+                session.nudged = True
+                if completion.text:
+                    messages.append({"role": "assistant", "content": completion.text})
+                messages.append({"role": "user", "content": NUDGE_WRITE})
+                trace.append("nudge-silence")
+                continue
             break
         used_tools = True
         messages.append(_assistant_message(completion))
