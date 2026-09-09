@@ -13,7 +13,13 @@ from bigas.eval.base import (
     reject_customer_identifiers,
 )
 from bigas.eval.checks import run_mechanical_checks
-from bigas.eval.judge import LLMJudge, resolve_judge_models, weighted_score
+from bigas.eval.judge import (
+    LLMJudge,
+    OKR_SUBSCORE_WEIGHTS,
+    judge_weights_for,
+    resolve_judge_models,
+    weighted_score,
+)
 from bigas.eval.readable import format_motivation
 from bigas.eval.discover import (
     OFFICIAL_MODEL_PAGES,
@@ -255,6 +261,26 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual(
             weighted_score({"grounding": 100, "structure": 0, "landscape": 0, "hallucination": 0}),
             30.0,
+        )
+
+    def test_okr_weights_drop_landscape(self):
+        evaluator = MagicMock()
+        evaluator.pack_id = "okr-goal-loop"
+        evaluator.use_case_id = "okr-goal-loop"
+        self.assertEqual(judge_weights_for(evaluator), OKR_SUBSCORE_WEIGHTS)
+        self.assertNotIn("landscape", judge_weights_for(evaluator))
+        self.assertEqual(
+            weighted_score(
+                {
+                    "grounding": 100,
+                    "replace_saas": 100,
+                    "concrete_tasks": 0,
+                    "no_clones": 100,
+                    "measurement": 100,
+                },
+                weights=OKR_SUBSCORE_WEIGHTS,
+            ),
+            80.0,
         )
 
     @patch.dict("os.environ", {"MODEL_EVAL_JUDGE_MODELS": "", "MODEL_EVAL_JUDGE_MODEL": ""}, clear=False)
@@ -519,7 +545,7 @@ class AnthropicCompleteTests(unittest.TestCase):
         return resp
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
-    @patch("bigas.eval.complete.requests.post")
+    @patch("bigas.llm.anthropic_client.requests.post")
     def test_claude_5_omits_temperature(self, mock_post):
         from bigas.eval.complete import complete_eval_model
 
@@ -529,7 +555,7 @@ class AnthropicCompleteTests(unittest.TestCase):
         self.assertNotIn("temperature", payload)
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
-    @patch("bigas.eval.complete.requests.post")
+    @patch("bigas.llm.anthropic_client.requests.post")
     def test_claude_4_keeps_temperature(self, mock_post):
         from bigas.eval.complete import complete_eval_model
 

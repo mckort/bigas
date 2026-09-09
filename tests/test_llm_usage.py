@@ -193,6 +193,15 @@ class LoggingLLMClientTests(unittest.TestCase):
         self.assertEqual(client._feature, "chat")
         self.assertEqual(model, "gemini-2.5-flash")
 
+    @patch("bigas.llm.factory.AnthropicLLMClient")
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}, clear=False)
+    def test_factory_routes_claude_to_anthropic(self, mock_cls):
+        mock_cls.return_value = MagicMock()
+        client, model = get_llm_client(feature="okr_research", explicit_model="claude-fable-5-1")
+        self.assertIsInstance(client, LoggingLLMClient)
+        self.assertEqual(model, "claude-fable-5-1")
+        mock_cls.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,9 +42,10 @@ How to work:
    change the site, run ads) — not restatements of the KR title.
 4. 1–3 tasks per KR, at most 10 total. Prefer fewer, sharper tickets.
 5. Same language as the Objective. Scoped to one person or AI agent.
-6. ai_doable=true only when an AI agent can do the first pass in the mapped
-   repo or with existing tools (copy, page, tracking snippet, small site change).
-   Human-only work (partnerships, pricing calls, budget) is ai_doable=false.
+6. ai_doable=true when an AI agent can do the first pass in the mapped repo
+   or with existing tools: landing page, first-pass site copy, tracking snippet,
+   small UI/copy change, draft outreach. Human-only work (partnerships, pricing
+   calls, budget, legal, in-person sales) is ai_doable=false.
 7. Do not duplicate open_tasks. Do not create Tasks named after a KR.
 
 Return JSON only — no markdown fences, no preamble.
@@ -333,6 +334,8 @@ def run_okr_plan(
                     model=model_name,
                     thinking_budget=_thinking_budget() if str(model_name or "").lower().startswith("gemini") else None,
                 )
+                if not looped.wrote:
+                    raise ValueError("Goal loop proposed no work")
                 tasks = _normalize_plan_tasks(
                     looped.tasks,
                     key_results=krs,

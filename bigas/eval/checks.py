@@ -236,3 +236,20 @@ def _apply_okr_loop_checks(
     if len(follow_tasks) > 10:
         check.notes.append(f"Follow-up opened {len(follow_tasks)} tasks (max 10).")
         check.penalty += 5.0
+
+    research_trace = research.get("tool_trace")
+    kept_founders = any(
+        isinstance(kr, Mapping) and "weekly active founders" in str(kr.get("title") or "").lower()
+        for kr in krs
+    )
+    if isinstance(research_trace, list):
+        if "propose_key_results" not in research_trace:
+            check.notes.append("Research used no write tool (propose_key_results).")
+            check.penalty += 10.0
+            if kept_founders:
+                check.notes.append("Kept weekly active founders because research never proposed KRs.")
+                check.penalty += 8.0
+    plan_trace = plan.get("tool_trace")
+    if isinstance(plan_trace, list) and "propose_tasks" not in plan_trace:
+        check.notes.append("Plan used no write tool (propose_tasks).")
+        check.penalty += 10.0

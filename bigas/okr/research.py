@@ -263,6 +263,8 @@ def run_okr_research(
                 model=model_name,
                 thinking_budget=_thinking_budget() if str(model_name or "").lower().startswith("gemini") else None,
             )
+            if not looped.wrote:
+                raise ValueError("Goal loop proposed nothing")
             merged = looped.key_results or _merge_key_results(committed=committed, proposed=[])
             if not merged:
                 raise ValueError("Goal loop returned no usable key results")
