@@ -30,6 +30,7 @@ def complete_eval_chat(
     messages: List[dict],
     *,
     tools: Optional[List[dict]] = None,
+    tool_choice: Optional[Any] = None,
     max_tokens: Optional[int] = None,
     temperature: float = 0.2,
 ) -> LLMCompletion:
@@ -50,6 +51,8 @@ def complete_eval_chat(
     kwargs: Dict[str, Any] = {}
     if tools:
         kwargs["tools"] = tools
+    if tool_choice is not None:
+        kwargs["tool_choice"] = tool_choice
     return client.complete_detailed(
         messages=messages,
         max_tokens=budget,
@@ -69,6 +72,7 @@ class EvalChatClient:
             self.model_id,
             messages,
             tools=kwargs.get("tools"),
+            tool_choice=kwargs.get("tool_choice"),
             max_tokens=max_tokens,
             temperature=0.2 if temperature is None else temperature,
         )

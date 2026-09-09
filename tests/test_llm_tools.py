@@ -323,3 +323,38 @@ def test_gemini_maps_timeout_to_request_options():
     kwargs = model.generate_content.call_args.kwargs
     assert "timeout" not in kwargs
     assert kwargs["request_options"] == {"timeout": 30}
+
+
+def test_gemini_maps_tool_choice_to_function_calling_config():
+    from unittest.mock import MagicMock, patch
+
+    from bigas.llm.gemini_client import GeminiLLMClient
+
+    model = MagicMock()
+    model.generate_content.return_value = _fake_gemini_text_response("done")
+
+    with patch("bigas.llm.gemini_client.genai") as genai:
+        genai.GenerativeModel.return_value = model
+        client = GeminiLLMClient(api_key="test-key", model="gemini-test")
+        client.complete_detailed(
+            [{"role": "user", "content": "propose now"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "propose_key_results",
+                        "description": "Write KRs",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            tool_choice={"type": "function", "function": {"name": "propose_key_results"}},
+        )
+
+    kwargs = model.generate_content.call_args.kwargs
+    assert kwargs["tool_config"] == {
+        "function_calling_config": {
+            "mode": "ANY",
+            "allowed_function_names": ["propose_key_results"],
+        }
+    }

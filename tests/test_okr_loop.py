@@ -418,3 +418,64 @@ def test_kr_title_normalizes_quotes_and_whitespace():
     result = run_goal_loop(llm, snapshot=_snapshot())
     assert result.wrote
     assert result.key_results[0]["title"] == "Increase sessions from 43 to 80"
+
+
+def test_forces_propose_tool_after_read():
+    llm = _ScriptedLlm(
+        [
+            _call("get_evidence"),
+            _call(
+                "propose_key_results",
+                key_results=[
+                    {
+                        "title": "Increase sessions from 43 to 80",
+                        "baseline": 43,
+                        "target": 80,
+                        "current": 43,
+                        "measurable": True,
+                    }
+                ],
+            ),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(llm, snapshot=_snapshot())
+    assert "tool_choice" not in llm.calls[0]["kwargs"]
+    choice = llm.calls[1]["kwargs"]["tool_choice"]
+    assert choice["function"]["name"] == "propose_key_results"
+    assert result.wrote
+
+
+def test_retries_with_nudge_when_forced_turn_raises():
+    class _Flaky(_ScriptedLlm):
+        def __init__(self, turns):
+            super().__init__(turns)
+            self.failed = False
+
+        def complete_detailed(self, messages, **kwargs):
+            if kwargs.get("tool_choice") and not self.failed:
+                self.failed = True
+                raise RuntimeError("gemini history")
+            return super().complete_detailed(messages, **kwargs)
+
+    llm = _Flaky(
+        [
+            _call("get_evidence"),
+            _call(
+                "propose_key_results",
+                key_results=[
+                    {
+                        "title": "Increase sessions from 43 to 80",
+                        "baseline": 43,
+                        "target": 80,
+                        "current": 43,
+                        "measurable": True,
+                    }
+                ],
+            ),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(llm, snapshot=_snapshot())
+    assert "nudge-error" in result.tool_trace
+    assert result.wrote
