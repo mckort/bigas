@@ -312,11 +312,48 @@ def run_okr_plan(
         heuristic_updates = heuristic_ga4_currents(krs, pack.get("ga4") or "")
 
         from bigas.llm.factory import get_llm_client
+        from bigas.okr.loop import llm_supports_tools, run_goal_loop, snapshot_from_okr
 
         client = llm
         model_name = model or ""
         if client is None:
             client, model_name = get_llm_client(feature="okr_plan")
+
+        if llm_supports_tools(client):
+            try:
+                looped = run_goal_loop(
+                    client,
+                    snapshot=snapshot_from_okr(
+                        ticket,
+                        phase="plan",
+                        evidence=pack,
+                        open_work=children,
+                        key_results=krs,
+                    ),
+                    model=model_name,
+                    thinking_budget=_thinking_budget() if str(model_name or "").lower().startswith("gemini") else None,
+                )
+                tasks = _normalize_plan_tasks(
+                    looped.tasks,
+                    key_results=krs,
+                    existing_titles=existing_titles,
+                )
+                updates = heuristic_updates + list(looped.current_updates)
+                if not tasks:
+                    raise ValueError("Goal loop returned no usable work items")
+                return OkrPlanResult(
+                    tasks=tasks,
+                    plan_markdown=looped.notes_markdown or format_evidence_pack(pack),
+                    briefing=looped.briefing
+                    or f"Proposed {len(tasks)} work items toward committed KRs. Review in Design approval.",
+                    current_updates=updates,
+                    model=model_name,
+                    used_llm=looped.used_llm,
+                    evidence=pack,
+                )
+            except Exception as exc:
+                logger.warning("OKR plan goal loop failed, falling back to one-shot: %s", exc)
+
         messages = [
             {"role": "system", "content": OKR_PLAN_SYSTEM},
             {

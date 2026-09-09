@@ -17,6 +17,7 @@ from bigas.eval.signing import verify_report_token
 from bigas.eval.storage import EvalStorage
 
 # Register use-case adapters on import.
+import bigas.eval.use_cases.okr_goal_loop  # noqa: F401
 import bigas.eval.use_cases.vc_field_assistant  # noqa: F401
 
 logger = logging.getLogger(__name__)
