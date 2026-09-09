@@ -191,9 +191,9 @@ def _apply_okr_loop_checks(
         if _SAAS_KIT_RE.search(title):
             check.notes.append(f"SaaS-kit KR: {title}")
             check.penalty += 6.0
-        if kr.get("measurable"):
-            baseline = str(kr.get("baseline") or "")
-            if baseline and _norm(baseline) not in corpus and baseline not in corpus:
+        if kr.get("measurable") and kr.get("baseline") is not None:
+            baseline = str(kr.get("baseline"))
+            if _norm(baseline) not in corpus and baseline not in corpus:
                 check.notes.append(f"Measurable KR baseline {baseline} not in evidence.")
                 check.penalty += 4.0
 

@@ -80,7 +80,10 @@ class OkrGoalLoopEvaluator(BaseUseCaseEvaluator):
         return self._pack
 
     def default_fixture(self) -> EvalFixture:
-        return self.default_fixtures()[0]
+        fixtures = self.default_fixtures()
+        if fixtures:
+            return fixtures[0]
+        return EvalFixture("Green Promo Wear", "https://greenpromowear.com")
 
     def default_fixtures(self) -> List[EvalFixture]:
         raws = list(self.pack.fixtures or [])
@@ -142,8 +145,12 @@ class OkrGoalLoopEvaluator(BaseUseCaseEvaluator):
             model=model_id,
         )
         follow_open = list(open_work) + [
-            {"title": item.get("title"), "summary": item.get("title"), "status": "To Do"}
-            for item in plan.tasks
+            {
+                "title": item.get("title") or item.get("summary"),
+                "summary": item.get("summary") or item.get("title"),
+                "status": "To Do",
+            }
+            for item in (plan.tasks or [])
         ]
         followup = run_goal_loop(
             llm,
@@ -151,6 +158,8 @@ class OkrGoalLoopEvaluator(BaseUseCaseEvaluator):
                 {
                     "key": payload.get("key") or "GPWW-15",
                     "title": payload.get("title") or fixture.company_name,
+                    "description": payload.get("description") or "",
+                    "okr_cycle": payload.get("cycle") or "",
                     "key_results": [
                         {**kr, "status": "committed"} for kr in (research.key_results or starting_krs)
                     ],
