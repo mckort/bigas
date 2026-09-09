@@ -2,8 +2,38 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime, timezone
+from typing import Optional
+from zoneinfo import ZoneInfo
 
 from flask import Blueprint, Response, jsonify, request
+
+EVAL_TZ = ZoneInfo("Europe/Stockholm")
+# Sunday anchor for fortnightly eval cadence (weeks since this date mod N).
+CADENCE_EPOCH = date(2025, 12, 28)
+
+
+def should_run_cadence(every_n_weeks: int, *, now: Optional[datetime] = None) -> bool:
+    """True when this Stockholm week should fire on the configured cadence.
+
+    ``every_n_weeks=1`` always returns True. For larger intervals, whole weeks
+    elapsed since ``CADENCE_EPOCH`` are used so bi-weekly pacing continues across
+    ISO year boundaries (unlike ISO week number modulo).
+
+    ``now`` defaults to the current time in ``EVAL_TZ``. Timezone-aware values
+    are converted to Stockholm. Naive values are treated as UTC before conversion;
+    pass an aware ``EVAL_TZ`` timestamp in tests when possible.
+    """
+    interval = int(every_n_weeks or 1)
+    if interval <= 1:
+        return True
+    stamp = now or datetime.now(EVAL_TZ)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc).astimezone(EVAL_TZ)
+    else:
+        stamp = stamp.astimezone(EVAL_TZ)
+    weeks_elapsed = (stamp.date() - CADENCE_EPOCH).days // 7
+    return weeks_elapsed % interval == 0
 
 from bigas.eval.base import EvalFixture, reject_customer_identifiers
 from bigas.eval.html import build_html_report
@@ -40,10 +70,14 @@ def run_eval_task(use_case: str):
         "skip_judge": false,
         "post_discord": true,
         "post_to_chat": true,
-        "include_baseline": true
+        "include_baseline": true,
+        "every_n_weeks": 2
       }
 
     Omit company/url to run every pack fixture.
+    every_n_weeks=2 runs every other week (Europe/Stockholm, from CADENCE_EPOCH)
+    so a Sunday 16:00 cron can share the CTO-report wake-up but only eval
+    fortnightly.
     """
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
@@ -71,6 +105,22 @@ def run_eval_task(use_case: str):
                 "company_name": company,
                 "website_url": url,
                 "extra_urls": extra_urls or [],
+            }
+        )
+
+    try:
+        every_n_weeks = int(data.get("every_n_weeks") or 1)
+    except (TypeError, ValueError):
+        return jsonify({"error": "every_n_weeks must be an integer"}), 400
+    if every_n_weeks < 1:
+        return jsonify({"error": "every_n_weeks must be >= 1"}), 400
+    if not should_run_cadence(every_n_weeks):
+        return jsonify(
+            {
+                "status": "skipped",
+                "reason": "biweekly_cadence",
+                "every_n_weeks": every_n_weeks,
+                "use_case": use_case,
             }
         )
 

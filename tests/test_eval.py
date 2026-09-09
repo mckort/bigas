@@ -31,6 +31,7 @@ from bigas.eval.registry import (
     parse_model_ref,
     update_eval_state_after_run,
 )
+from bigas.eval.endpoints import should_run_cadence
 from bigas.eval.html import build_html_report
 from bigas.eval.reporter import build_markdown_report
 from bigas.eval.readable import build_full_markdown, humanize_step_output
@@ -39,6 +40,37 @@ from bigas.eval.pack import load_pack
 from bigas.eval.use_cases.vc_field_assistant import VCFieldAssistantEvaluator
 from bigas.llm.completion import LLMCompletion
 from bigas.llm.usage import TokenUsage
+
+
+class CadenceTests(unittest.TestCase):
+    def test_biweekly_alternates_from_epoch(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Europe/Stockholm")
+        odd_sunday = datetime(2026, 9, 13, 16, 0, tzinfo=tz)
+        even_sunday = datetime(2026, 9, 20, 16, 0, tzinfo=tz)
+        self.assertFalse(should_run_cadence(2, now=odd_sunday))
+        self.assertTrue(should_run_cadence(2, now=even_sunday))
+        self.assertTrue(should_run_cadence(1, now=odd_sunday))
+
+    def test_biweekly_continues_across_iso_year_boundary(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Europe/Stockholm")
+        iso_week_53 = datetime(2027, 1, 3, 16, 0, tzinfo=tz)
+        iso_week_01 = datetime(2027, 1, 10, 16, 0, tzinfo=tz)
+        self.assertFalse(should_run_cadence(2, now=iso_week_53))
+        self.assertTrue(should_run_cadence(2, now=iso_week_01))
+
+    def test_naive_now_is_treated_as_utc(self):
+        from datetime import datetime, timezone
+
+        # 2026-09-20 14:00 UTC == 16:00 Europe/Stockholm (runs on bi-weekly cadence).
+        naive_utc = datetime(2026, 9, 20, 14, 0)
+        self.assertTrue(should_run_cadence(2, now=naive_utc))
+        self.assertEqual(naive_utc.tzinfo, None)
 
 
 class FixtureIsolationTests(unittest.TestCase):

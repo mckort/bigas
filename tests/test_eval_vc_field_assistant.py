@@ -51,6 +51,18 @@ class EvalEndpointTests(unittest.TestCase):
         data = resp.get_json()
         self.assertEqual(data["use_case"], "vc-field-assistant")
 
+    @patch("bigas.eval.endpoints.should_run_cadence", return_value=False)
+    @patch("bigas.eval.endpoints.EvalRunner")
+    def test_biweekly_skip_short_circuits(self, mock_runner, _cadence):
+        resp = self.client.post(
+            "/tasks/eval/vfa-living-analysis",
+            json={"every_n_weeks": 2, "dry_run": True},
+            headers={"X-Bigas-Access-Key": "test-key"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["status"], "skipped")
+        mock_runner.assert_not_called()
+
     @patch("bigas.eval.endpoints.EvalRunner")
     def test_pack_id_endpoint_works(self, mock_runner):
         from bigas.eval.base import EvalRunResult
