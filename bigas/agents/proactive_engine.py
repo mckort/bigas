@@ -213,6 +213,16 @@ def _expert_notes_from_evidence(evidence: Optional[Dict[str, str]]) -> Dict[str,
     return {str(k): str(v) for k, v in parsed.items() if str(v).strip()}
 
 
+def _epic_timeframe_days(evidence: Optional[Dict[str, str]]) -> int:
+    raw = (evidence or {}).get("timeframe_days")
+    if raw is not None and str(raw).strip():
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    return default_goal_timeframe_days()
+
+
 def _is_duplicate_task(summary: str, open_issues: Sequence[Dict[str, str]]) -> bool:
     candidate = re.sub(r"\s+", " ", (summary or "").strip().lower())
     if not candidate:
@@ -689,7 +699,7 @@ class ProactiveGoalEngine:
                     evidence=pack,
                     open_work=list(open_issues),
                 ),
-                model=self._model,
+                model=getattr(self, "_model", None) or "",
             )
             return {
                 "analysis": looped.analysis or looped.briefing,
@@ -708,7 +718,7 @@ class ProactiveGoalEngine:
         if phase == GOAL_PHASE_IN_PROGRESS:
             user_prompt = self._build_in_progress_user_prompt(
                 epic=epic,
-                timeframe_days=int((evidence or {}).get("timeframe_days") or default_goal_timeframe_days()),
+                timeframe_days=_epic_timeframe_days(evidence),
                 context_block=(evidence or {}).get("context") or "",
                 expert_notes=_expert_notes_from_evidence(evidence),
                 open_issues=open_issues,
