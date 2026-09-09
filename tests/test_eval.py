@@ -14,7 +14,7 @@ from bigas.eval.base import (
 )
 from bigas.eval.checks import run_mechanical_checks
 from bigas.eval.judge import LLMJudge, resolve_judge_models, weighted_score
-from bigas.eval.readable import format_motivation
+from bigas.eval.readable import format_motivation, format_run_label
 from bigas.eval.discover import (
     OFFICIAL_MODEL_PAGES,
     discover_flagship_models,
@@ -34,7 +34,7 @@ from bigas.eval.registry import (
 from bigas.eval.html import build_html_report
 from bigas.eval.reporter import build_markdown_report
 from bigas.eval.readable import build_full_markdown, humanize_step_output
-from bigas.eval.runner import EvalRunner
+from bigas.eval.runner import EvalRunner, new_eval_run_id
 from bigas.eval.pack import load_pack
 from bigas.eval.use_cases.vc_field_assistant import VCFieldAssistantEvaluator
 from bigas.llm.completion import LLMCompletion
@@ -343,10 +343,19 @@ class MechanicalCheckTests(unittest.TestCase):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_run_id_is_stockholm_datetime(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        stamp = datetime(2026, 9, 9, 7, 54, 12, tzinfo=ZoneInfo("Europe/Stockholm"))
+        self.assertEqual(new_eval_run_id(stamp), "2026-09-09-07-54-12")
+        self.assertEqual(format_run_label("2026-09-09-07-54-12"), "2026-09-09 07:54:12")
+        self.assertEqual(format_run_label("abc123"), "abc123")
+
     def test_build_markdown_report(self):
         run = EvalRunResult(
             use_case="vc-field-assistant",
-            run_id="abc123",
+            run_id="2026-09-09-07-54-12",
             fixture=EvalFixture("VC Field Assistant", "https://vcfieldassistant.com"),
             results=[
                 EvalModelResult(
@@ -372,6 +381,8 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("gpt-4o", md)
         self.assertIn("90.0", md)
         self.assertIn("Mean", md)
+        self.assertIn("2026-09-09 07:54:12", md)
+        self.assertNotIn("**Run ID:**", md)
         self.assertNotIn('{"score"', md)
 
     def test_full_report_unwraps_json_steps(self):

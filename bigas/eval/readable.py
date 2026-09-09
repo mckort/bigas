@@ -293,6 +293,15 @@ def _prose_only(text: str) -> str:
     return raw
 
 
+def format_run_label(run_id: str) -> str:
+    """Turn 2026-09-09-07-54-12 into 2026-09-09 07:54:12; leave other ids unchanged."""
+    raw = (run_id or "").strip()
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{2})-(\d{2})", raw)
+    if match:
+        return f"{match.group(1)} {match.group(2)}:{match.group(3)}:{match.group(4)}"
+    return raw
+
+
 def _scoring_header(run: EvalRunResult) -> List[str]:
     fixtures = run.all_fixtures()
     fixture_bits = [
@@ -302,7 +311,7 @@ def _scoring_header(run: EvalRunResult) -> List[str]:
     judges = run.judge_models or judge_column_keys(run)
     lines = [
         f"**Use case:** {run.use_case}",
-        f"**Run ID:** {run.run_id}",
+        f"**Run:** {format_run_label(run.run_id)}",
         f"**Fixtures:** {'; '.join(fixture_bits) or (run.fixture.company_name + ' — ' + run.fixture.website_url)}",
     ]
     if judges:

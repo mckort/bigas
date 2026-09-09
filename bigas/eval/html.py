@@ -6,7 +6,7 @@ import re
 from typing import List
 
 from bigas.eval.base import EvalRunResult
-from bigas.eval.readable import build_full_markdown
+from bigas.eval.readable import build_full_markdown, format_run_label
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
@@ -118,7 +118,7 @@ def markdown_to_html_body(markdown: str) -> str:
 
 
 def build_html_report(run: EvalRunResult) -> str:
-    title = f"Model eval {run.use_case} · {run.run_id}"
+    title = f"Model eval {run.use_case} · {format_run_label(run.run_id)}"
     body = markdown_to_html_body(build_full_markdown(run))
     return f"""<!doctype html>
 <html lang="en">

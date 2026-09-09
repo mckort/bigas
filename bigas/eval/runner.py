@@ -4,8 +4,21 @@ from __future__ import annotations
 import logging
 import os
 import time
-import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
+from zoneinfo import ZoneInfo
+
+EVAL_TZ = ZoneInfo("Europe/Stockholm")
+
+
+def new_eval_run_id(now: Optional[datetime] = None) -> str:
+    """URL-safe local timestamp, e.g. 2026-09-09-07-54-12."""
+    stamp = now or datetime.now(EVAL_TZ)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=EVAL_TZ)
+    else:
+        stamp = stamp.astimezone(EVAL_TZ)
+    return stamp.strftime("%Y-%m-%d-%H-%M-%S")
 
 from bigas.eval.base import (
     BaseUseCaseEvaluator,
@@ -168,7 +181,7 @@ class EvalRunner:
         evaluator = get_use_case_evaluator(use_case)
         fixtures = _resolve_fixtures(evaluator, fixture)
         resolved_fixture = fixtures[0]
-        run_id = uuid.uuid4().hex[:12]
+        run_id = new_eval_run_id()
         pack_baseline = _pack_baseline_model(evaluator)
         baseline = resolve_baseline_model(pack_baseline) if include_baseline else None
         candidates = get_candidate_models(
