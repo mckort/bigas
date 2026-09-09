@@ -200,7 +200,18 @@ class LoggingLLMClientTests(unittest.TestCase):
         client, model = get_llm_client(feature="okr_research", explicit_model="claude-fable-5-1")
         self.assertIsInstance(client, LoggingLLMClient)
         self.assertEqual(model, "claude-fable-5-1")
-        mock_cls.assert_called_once()
+        mock_cls.assert_called_once_with(api_key="test-key", model="claude-fable-5-1")
+
+    @patch("bigas.llm.factory.AnthropicLLMClient")
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "env-key"}, clear=False)
+    def test_factory_anthropic_api_key_override(self, mock_cls):
+        mock_cls.return_value = MagicMock()
+        get_llm_client(
+            feature="okr_research",
+            explicit_model="claude-fable-5-1",
+            anthropic_api_key="tenant-key",
+        )
+        mock_cls.assert_called_once_with(api_key="tenant-key", model="claude-fable-5-1")
 
 
 if __name__ == "__main__":

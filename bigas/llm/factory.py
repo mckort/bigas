@@ -30,6 +30,7 @@ def get_llm_client(
     explicit_model: Optional[str] = None,
     openai_api_key: Optional[str] = None,
     gemini_api_key: Optional[str] = None,
+    anthropic_api_key: Optional[str] = None,
 ) -> Tuple[LLMClient, str]:
     """
     Return a logging-wrapped LLM client and the resolved model name for a given feature.
@@ -43,8 +44,8 @@ def get_llm_client(
       3. LLM_MODEL (provider-agnostic)
       4. hard-coded default "gemini-3.1-pro-preview"
 
-    Optional openai_api_key / gemini_api_key override env (e.g. for per-tenant keys in SaaS).
-    Claude models (``claude-*``) use ``ANTHROPIC_API_KEY``.
+    Optional openai_api_key / gemini_api_key / anthropic_api_key override env
+    (e.g. for per-tenant keys in SaaS). Claude models (``claude-*``) use ``ANTHROPIC_API_KEY``.
     """
     feature_env_map = {
         "cto_pr_review": "BIGAS_CTO_PR_REVIEW_MODEL",
@@ -87,7 +88,7 @@ def get_llm_client(
         return LoggingLLMClient(client, feature=feature, model=model), model
 
     if provider == "anthropic":
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        api_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not set for Anthropic / Claude")
         client = AnthropicLLMClient(api_key=api_key, model=model)
