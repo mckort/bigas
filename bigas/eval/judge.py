@@ -121,26 +121,32 @@ def _clip(value: float) -> float:
     return max(0.0, min(100.0, value))
 
 
-def judge_weights_for(evaluator: Any) -> Dict[str, float]:
+def _is_okr_goal_loop_evaluator(evaluator: Any) -> bool:
     pack_id = getattr(evaluator, "pack_id", None)
     use_case = getattr(evaluator, "use_case_id", None)
-    if pack_id == "okr-goal-loop" or use_case == "okr-goal-loop":
+    pack = getattr(evaluator, "pack", None)
+    pack_obj_id = getattr(pack, "id", None) if pack is not None else None
+    return (
+        pack_id == "okr-goal-loop"
+        or use_case == "okr-goal-loop"
+        or pack_obj_id == "okr-goal-loop"
+    )
+
+
+def judge_weights_for(evaluator: Any) -> Dict[str, float]:
+    if _is_okr_goal_loop_evaluator(evaluator):
         return dict(OKR_SUBSCORE_WEIGHTS)
     return dict(SUBSCORE_WEIGHTS)
 
 
 def judge_intro_for(evaluator: Any) -> str:
-    pack_id = getattr(evaluator, "pack_id", None)
-    use_case = getattr(evaluator, "use_case_id", None)
-    if pack_id == "okr-goal-loop" or use_case == "okr-goal-loop":
+    if _is_okr_goal_loop_evaluator(evaluator):
         return OKR_JUDGE_INTRO
     return DEFAULT_JUDGE_INTRO
 
 
 def judge_dimensions_for(evaluator: Any) -> str:
-    pack_id = getattr(evaluator, "pack_id", None)
-    use_case = getattr(evaluator, "use_case_id", None)
-    if pack_id == "okr-goal-loop" or use_case == "okr-goal-loop":
+    if _is_okr_goal_loop_evaluator(evaluator):
         return OKR_JUDGE_DIMENSIONS
     return DEFAULT_JUDGE_DIMENSIONS
 

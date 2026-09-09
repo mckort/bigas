@@ -269,6 +269,13 @@ class JudgeTests(unittest.TestCase):
         evaluator.use_case_id = "okr-goal-loop"
         self.assertEqual(judge_weights_for(evaluator), OKR_SUBSCORE_WEIGHTS)
         self.assertNotIn("landscape", judge_weights_for(evaluator))
+
+    def test_okr_weights_from_pack_object(self):
+        evaluator = MagicMock()
+        evaluator.pack_id = None
+        evaluator.use_case_id = None
+        evaluator.pack = MagicMock(id="okr-goal-loop")
+        self.assertEqual(judge_weights_for(evaluator), OKR_SUBSCORE_WEIGHTS)
         self.assertEqual(
             weighted_score(
                 {

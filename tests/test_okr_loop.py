@@ -351,3 +351,34 @@ def test_rejects_saas_kit_title_shape():
     assert not result.wrote
     assert result.key_results == []
     assert any("Increase/Decrease" in note for note in result.rejected)
+
+
+def test_done_after_nudge_without_write_is_rejected():
+    llm = _ScriptedLlm([_call("get_evidence"), _call("done"), _call("done")])
+    result = run_goal_loop(llm, snapshot=_snapshot(), max_turns=3)
+    assert not result.wrote
+    assert any("done without propose_*" in note for note in result.rejected)
+    assert result.tool_trace.count("done") == 2
+
+
+def test_kr_title_normalizes_quotes_and_whitespace():
+    llm = _ScriptedLlm(
+        [
+            _call(
+                "propose_key_results",
+                key_results=[
+                    {
+                        "title": '"Increase sessions\nfrom 43\nto 80"',
+                        "baseline": 43,
+                        "target": 80,
+                        "current": 43,
+                        "measurable": True,
+                    }
+                ],
+            ),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(llm, snapshot=_snapshot())
+    assert result.wrote
+    assert result.key_results[0]["title"] == "Increase sessions from 43 to 80"

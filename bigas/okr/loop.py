@@ -75,6 +75,11 @@ _KR_TITLE_RE = re.compile(
 _KNOWN_SOURCES = frozenset({"ga4", "stripe", "ads", "github", "jira", "manual", "unknown"})
 
 
+def _normalize_kr_title(title: str) -> str:
+    title = title.strip().strip("\"'")
+    return re.sub(r"\s+", " ", title)
+
+
 def _fn(name: str, description: str, properties: Dict[str, Any], required: Optional[List[str]] = None) -> Dict[str, Any]:
     schema: Dict[str, Any] = {"type": "object", "properties": properties}
     if required:
@@ -402,10 +407,12 @@ def _ground_key_results(raw: Any, *, snapshot: GoalSnapshot) -> tuple[List[Dict[
     grounded: List[Dict[str, Any]] = []
     rejected_titles: List[str] = []
     for kr in normalize_key_results(raw if isinstance(raw, list) else []):
-        title = str(kr.get("title") or "").strip()
+        title = _normalize_kr_title(str(kr.get("title") or ""))
         if kr.get("measurable") and not _KR_TITLE_RE.match(title):
             rejected_titles.append(title or "(untitled)")
             continue
+        if title:
+            kr["title"] = title
         kr["source"] = _infer_kr_source(kr, snapshot)
         if not kr.get("measurable"):
             grounded.append(kr)
@@ -542,10 +549,10 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
         return {"ok": True}
     if name == "done":
         if not session.write_ok():
-            if not session.nudged:
-                session.nudged = True
-                return {"ok": False, "error": NUDGE_WRITE}
-            session.rejected.append("done without propose_*")
+            if session.nudged:
+                session.rejected.append("done without propose_*")
+            session.nudged = True
+            return {"ok": False, "error": NUDGE_WRITE}
         session.done = True
         return {"ok": True}
     return {"ok": False, "error": f"Unknown tool {name}"}
