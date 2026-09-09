@@ -355,6 +355,18 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
                 existing_titles=_open_work_titles(snap) | _session_task_titles(session),
             )
         dropped = max(0, len(raw) - len(accepted))
+        remaining_slots = MAX_TASKS_TOTAL - len(session.tasks)
+        if remaining_slots <= 0:
+            session.rejected.append(
+                f"propose_tasks: session already at {MAX_TASKS_TOTAL} tasks; dropped {len(accepted)}"
+            )
+            return {"ok": True, "accepted": 0, "dropped": dropped + len(accepted)}
+        if len(accepted) > remaining_slots:
+            overflow = len(accepted) - remaining_slots
+            accepted = accepted[:remaining_slots]
+            session.rejected.append(
+                f"propose_tasks: capped session at {MAX_TASKS_TOTAL} total ({overflow} dropped)"
+            )
         session.tasks.extend(accepted)
         if dropped:
             session.rejected.append(f"propose_tasks: dropped {dropped} clone/wiring/duplicate items")

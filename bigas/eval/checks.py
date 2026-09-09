@@ -153,9 +153,25 @@ def run_mechanical_checks(
 
 _WIRE_RE = re.compile(r"^(wire weekly snapshot for\b|instrument:\s*)", re.I)
 _SAAS_KIT_RE = re.compile(
-    r"weekly active founders|7-day activation|nps\b|active users",
+    r"weekly active founders|7-day activation|\bnps\b|\bactive users\b",
     re.I,
 )
+
+
+def _baseline_in_corpus(baseline: Any, corpus: str) -> bool:
+    baseline_str = str(baseline)
+    if _norm(baseline_str) in corpus or baseline_str in corpus:
+        return True
+    try:
+        num = float(baseline)
+    except (TypeError, ValueError):
+        return False
+    if num == int(num):
+        int_token = str(int(num))
+        if _norm(int_token) in corpus or int_token in corpus:
+            return True
+    float_token = str(num)
+    return _norm(float_token) in corpus or float_token in corpus
 
 
 def _okr_step_json(output: Mapping[str, Any], step_id: str) -> Dict[str, Any]:
@@ -192,8 +208,8 @@ def _apply_okr_loop_checks(
             check.notes.append(f"SaaS-kit KR: {title}")
             check.penalty += 6.0
         if kr.get("measurable") and kr.get("baseline") is not None:
-            baseline = str(kr.get("baseline"))
-            if _norm(baseline) not in corpus and baseline not in corpus:
+            baseline = kr.get("baseline")
+            if not _baseline_in_corpus(baseline, corpus):
                 check.notes.append(f"Measurable KR baseline {baseline} not in evidence.")
                 check.penalty += 4.0
 

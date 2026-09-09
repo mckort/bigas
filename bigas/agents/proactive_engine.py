@@ -699,7 +699,8 @@ class ProactiveGoalEngine:
                     evidence=pack,
                     open_work=list(open_issues),
                 ),
-                model=getattr(self, "_model", None) or "",
+                model=getattr(self, "_model", None)
+                or os.environ.get("BIGAS_PROACTIVE_GOALS_MODEL", ""),
             )
             return {
                 "analysis": looped.analysis or looped.briefing,

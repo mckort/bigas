@@ -111,9 +111,9 @@ def _openai_tools_to_anthropic(tools: Optional[List[dict]]) -> List[dict]:
 def _parse_tool_call_raw(raw: Any) -> tuple[str, dict, str]:
     if isinstance(raw, ToolCall):
         name = str(raw.name or "").strip()
-        args = raw.arguments if isinstance(raw.arguments, dict) else {}
-        return name, args, str(raw.id or f"tool_{name}")
-    if isinstance(raw, dict):
+        args = raw.arguments
+        tool_id = str(raw.id or f"tool_{name}")
+    elif isinstance(raw, dict):
         fn = raw.get("function") if isinstance(raw.get("function"), dict) else raw
         name = str((fn or {}).get("name") or raw.get("name") or "").strip()
         args = (fn or {}).get("arguments") if isinstance(fn, dict) else raw.get("arguments")
@@ -225,7 +225,12 @@ def _complete_anthropic_chat(
         timeout=180,
     )
     if resp.status_code >= 400:
-        raise RuntimeError(f"Anthropic eval complete failed HTTP {resp.status_code}: {resp.text[:400]}")
+        content_type = (resp.headers.get("content-type") or "").lower()
+        if "json" in content_type or "text" in content_type:
+            detail = resp.text[:400]
+        else:
+            detail = f"(non-text body, {len(resp.content)} bytes)"
+        raise RuntimeError(f"Anthropic eval complete failed HTTP {resp.status_code}: {detail}")
     data = resp.json()
     parts = []
     calls = []
