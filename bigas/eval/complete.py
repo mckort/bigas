@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -51,7 +51,7 @@ def complete_eval_chat(
     from bigas.llm.factory import get_llm_client
 
     client, _resolved = get_llm_client(feature="model_eval", explicit_model=model_id)
-    kwargs = {}
+    kwargs: Dict[str, Any] = {}
     if tools:
         kwargs["tools"] = tools
     return client.complete_detailed(
@@ -90,21 +90,6 @@ def _step_max_tokens() -> int:
         return 8192
 
 
-def _complete_anthropic(
-    model_id: str,
-    prompt: str,
-    *,
-    max_tokens: int,
-    temperature: float,
-) -> LLMCompletion:
-    return _complete_anthropic_chat(
-        model_id,
-        _messages(prompt),
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-
-
 def _openai_tools_to_anthropic(tools: Optional[List[dict]]) -> List[dict]:
     out: List[dict] = []
     for tool in tools or []:
@@ -123,15 +108,44 @@ def _openai_tools_to_anthropic(tools: Optional[List[dict]]) -> List[dict]:
     return out
 
 
+def _parse_tool_call_raw(raw: Any) -> tuple[str, dict, str]:
+    if isinstance(raw, ToolCall):
+        name = str(raw.name or "").strip()
+        args = raw.arguments if isinstance(raw.arguments, dict) else {}
+        return name, args, str(raw.id or f"tool_{name}")
+    if isinstance(raw, dict):
+        fn = raw.get("function") if isinstance(raw.get("function"), dict) else raw
+        name = str((fn or {}).get("name") or raw.get("name") or "").strip()
+        args = (fn or {}).get("arguments") if isinstance(fn, dict) else raw.get("arguments")
+        tool_id = str(raw.get("id") or f"tool_{name}")
+    else:
+        fn = getattr(raw, "function", None)
+        fn_dict = fn if isinstance(fn, dict) else {}
+        name = str(fn_dict.get("name") or getattr(raw, "name", "") or "").strip()
+        args = fn_dict.get("arguments") if fn_dict else getattr(raw, "arguments", None)
+        tool_id = str(getattr(raw, "id", None) or f"tool_{name}")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args or "{}")
+        except json.JSONDecodeError:
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    return name, args, tool_id
+
+
 def _anthropic_messages(messages: List[dict]) -> tuple:
     system_parts: List[str] = []
     converted: List[dict] = []
     pending_tools: List[dict] = []
 
-    def _flush_tools() -> None:
-        if pending_tools:
-            converted.append({"role": "user", "content": list(pending_tools)})
-            pending_tools.clear()
+    def _flush_tools(*, user_text: str = "") -> None:
+        content_blocks = list(pending_tools)
+        pending_tools.clear()
+        if user_text:
+            content_blocks.append({"type": "text", "text": user_text})
+        if content_blocks:
+            converted.append({"role": "user", "content": content_blocks})
 
     for message in messages:
         role = (message.get("role") or "user").lower()
@@ -150,35 +164,29 @@ def _anthropic_messages(messages: List[dict]) -> tuple:
                 }
             )
             continue
-        _flush_tools()
         if role == "assistant":
+            if pending_tools:
+                _flush_tools()
             parts: List[dict] = []
             if text:
                 parts.append({"type": "text", "text": text})
             for raw in message.get("tool_calls") or []:
-                fn = raw.get("function") if isinstance(raw.get("function"), dict) else raw
-                name = str((fn or {}).get("name") or raw.get("name") or "").strip()
-                args = (fn or {}).get("arguments") if isinstance(fn, dict) else raw.get("arguments")
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
-                if not isinstance(args, dict):
-                    args = {}
+                name, args, tool_id = _parse_tool_call_raw(raw)
                 if name:
                     parts.append(
                         {
                             "type": "tool_use",
-                            "id": raw.get("id") or f"tool_{name}",
+                            "id": tool_id,
                             "name": name,
                             "input": args,
                         }
                     )
-            converted.append({"role": "assistant", "content": parts or text})
+            if parts:
+                converted.append({"role": "assistant", "content": parts})
             continue
-        converted.append({"role": "user", "content": text})
-    _flush_tools()
+        _flush_tools(user_text=text)
+    if pending_tools:
+        _flush_tools()
     return "\n\n".join(system_parts), converted
 
 
