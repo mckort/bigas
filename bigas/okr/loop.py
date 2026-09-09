@@ -14,11 +14,16 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from bigas.agents.proactive_prompts import (
+    IN_PROGRESS_EPIC_SYSTEM_PROMPT,
+    PLAN_EPIC_SYSTEM_PROMPT,
+    RESEARCH_EPIC_SYSTEM_PROMPT,
+)
 from bigas.llm.completion import LLMCompletion, ToolCall
 from bigas.okr.context import format_evidence_pack
 from bigas.okr.model import normalize_key_results
-from bigas.okr.plan import MAX_TASKS_TOTAL, _normalize_plan_tasks, is_mechanical_okr_task
-from bigas.okr.research import _extract_json_object, _merge_key_results
+from bigas.okr.plan import MAX_TASKS_TOTAL, OKR_PLAN_SYSTEM, _normalize_plan_tasks, is_mechanical_okr_task
+from bigas.okr.research import OKR_RESEARCH_SYSTEM, _extract_json_object, _merge_key_results
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +43,41 @@ Key Result title into a ticket. Do not create analytics-wiring tickets
 
 Rules:
 - Key Results are measurable from→to improvements grounded in evidence.
+- Title shape: Increase <parameter> from <baseline> to <target> (or Decrease).
+- Set source to ga4|stripe|ads|github|jira|manual when you know where the number is.
 - Tasks are concrete actions that would move a KR (or an Epic), scoped to one
   person or AI agent. Prefer fewer, sharper tickets (1–3 per KR, at most 10).
-- ai_doable=true only when an AI agent can do the first pass in the mapped repo.
+- ai_doable=true when an AI agent can do the first pass: landing page, site copy,
+  tracking snippet, small UI change, draft outreach. Human-only work (partnerships,
+  pricing calls, budget, legal) is ai_doable=false.
 - Off-track KRs get proposed To Do work. Never auto-start or auto-advance cards.
 - If a number is missing from evidence, mark the KR measurable=false.
+- Research/plan that only reads is a failure. You must call propose_key_results
+  or propose_tasks (empty list + set_notes reason is ok). Do not keep leftover
+  SaaS-kit Key Results such as “weekly active founders”.
 """
+
+LOOP_PHASE_PREFACE = (
+    "The phase rules below still apply. Ignore any instruction to return JSON only — "
+    "use the tools instead of dumping a JSON object."
+)
+
+NUDGE_WRITE = (
+    "You looked but proposed nothing. Call propose_key_results or propose_tasks now. "
+    "If the honest answer is an empty list, set_notes with the reason and call the "
+    "propose tool with []. Do not keep leftover SaaS-kit Key Results."
+)
+
+_KR_TITLE_RE = re.compile(
+    r"^(Increase|Decrease|Öka|Minska)\s+.+\s+(from|från)\s+.+\s+(to|till)\s+.+$",
+    re.I,
+)
+_KNOWN_SOURCES = frozenset({"ga4", "stripe", "ads", "github", "jira", "manual", "unknown"})
+
+
+def _normalize_kr_title(title: str) -> str:
+    title = title.strip().strip("\"'")
+    return re.sub(r"\s+", " ", title)
 
 
 def _fn(name: str, description: str, properties: Dict[str, Any], required: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -59,13 +93,19 @@ def _fn(name: str, description: str, properties: Dict[str, Any], required: Optio
 KR_ITEM_SCHEMA = {
     "type": "object",
     "properties": {
-        "title": {"type": "string"},
+        "title": {
+            "type": "string",
+            "description": "Increase <parameter> from <baseline> to <target> (or Decrease).",
+        },
         "metric": {"type": "string"},
         "unit": {"type": "string"},
         "baseline": {"type": "number"},
         "target": {"type": "number"},
         "current": {"type": "number"},
-        "source": {"type": "string"},
+        "source": {
+            "type": "string",
+            "description": "ga4|stripe|ads|github|jira|manual|unknown. Use ga4 when the number is in the GA4 evidence.",
+        },
         "measurable": {"type": "boolean"},
         "measurement_gap": {"type": "string"},
         "direction": {"type": "string"},
@@ -81,7 +121,15 @@ TASK_ITEM_SCHEMA = {
         "summary": {"type": "string"},
         "description": {"type": "string"},
         "kr_id": {"type": "string"},
-        "ai_doable": {"type": "boolean"},
+        "ai_doable": {
+            "type": "boolean",
+            "description": (
+                "true if an AI agent can do the first pass in the mapped repo or with "
+                "existing tools: landing page, first-pass site copy, tracking snippet, "
+                "small UI/copy change, draft outreach. false for partnerships, pricing "
+                "calls, budget, legal, in-person sales."
+            ),
+        },
         "issue_type": {"type": "string"},
         "marketing": {"type": "boolean"},
     },
@@ -97,14 +145,22 @@ READ_TOOLS = [
 WRITE_TOOLS = [
     _fn(
         "propose_key_results",
-        "Replace proposed Key Results. Committed KRs stay. Research phase only.",
-        {"key_results": {"type": "array", "items": KR_ITEM_SCHEMA}},
+        "Replace proposed Key Results. Committed KRs stay. Research phase only. "
+        "Empty list is allowed only with reason (or after set_notes).",
+        {
+            "key_results": {"type": "array", "items": KR_ITEM_SCHEMA},
+            "reason": {"type": "string", "description": "Required when key_results is empty."},
+        },
         ["key_results"],
     ),
     _fn(
         "propose_tasks",
-        "Propose To Do tasks. Not KR titles. Not analytics wiring.",
-        {"tasks": {"type": "array", "items": TASK_ITEM_SCHEMA}},
+        "Propose To Do tasks. Not KR titles. Not analytics wiring. "
+        "Empty list is allowed only with reason (or after set_notes).",
+        {
+            "tasks": {"type": "array", "items": TASK_ITEM_SCHEMA},
+            "reason": {"type": "string", "description": "Required when tasks is empty."},
+        },
         ["tasks"],
     ),
     _fn(
@@ -175,6 +231,7 @@ class GoalLoopResult:
     analysis: str = ""
     used_tools: bool = False
     used_llm: bool = False
+    wrote: bool = False
     turns: int = 0
     tool_trace: List[str] = field(default_factory=list)
     rejected: List[str] = field(default_factory=list)
@@ -224,8 +281,34 @@ class _Session:
         self.analysis = ""
         self.rejected: List[str] = []
         self.done = False
+        self.proposed_krs = False
+        self.proposed_tasks = False
+        self.nudged = False
+
+    def required_write(self) -> Optional[str]:
+        snap = self.snapshot
+        if snap.kind == KIND_OBJECTIVE and snap.phase == PHASE_RESEARCH:
+            return "krs"
+        if snap.phase == PHASE_PLAN:
+            return "tasks"
+        if snap.kind == KIND_EPIC and snap.phase == PHASE_RESEARCH:
+            return "tasks"
+        return None
+
+    def write_ok(self) -> bool:
+        need = self.required_write()
+        if need == "krs":
+            return self.proposed_krs
+        if need == "tasks":
+            return self.proposed_tasks or bool(self.tasks)
+        return True
 
     def result(self, *, used_tools: bool, used_llm: bool, turns: int, trace: List[str]) -> GoalLoopResult:
+        wrote = self.write_ok()
+        if not wrote and self.required_write() == "krs":
+            self.proposed = []
+        if self.required_write() and not wrote:
+            used_llm = False
         merged = (
             _merge_key_results(committed=self.committed, proposed=self.proposed)
             if self.snapshot.kind == KIND_OBJECTIVE
@@ -240,6 +323,7 @@ class _Session:
             analysis=self.analysis,
             used_tools=used_tools,
             used_llm=used_llm,
+            wrote=wrote,
             turns=turns,
             tool_trace=list(trace),
             rejected=list(self.rejected),
@@ -284,10 +368,52 @@ def _tool_call_arguments_json(arguments: Any) -> str:
     return json.dumps(arguments or {})
 
 
-def _ground_key_results(raw: Any, *, snapshot: GoalSnapshot) -> List[Dict[str, Any]]:
+def _infer_kr_source(kr: Dict[str, Any], snapshot: GoalSnapshot) -> str:
+    raw = str(kr.get("source") or "").strip().lower()
+    if raw in _KNOWN_SOURCES and raw != "unknown":
+        return raw
+    tokens: List[str] = []
+    for key in ("baseline", "current"):
+        val = kr.get(key)
+        if val in (None, ""):
+            continue
+        token = str(val).replace(",", "")
+        tokens.append(token)
+        if _NUMBER_RE.fullmatch(token):
+            try:
+                tokens.append(str(int(float(token))))
+            except ValueError:
+                pass
+    for ev_key, ev_val in snapshot.evidence.items():
+        blob = str(ev_val).replace(",", "")
+        if not any(token and token in blob for token in tokens):
+            continue
+        key = ev_key.lower()
+        if "ga4" in key or "analytics" in key:
+            return "ga4"
+        if "stripe" in key:
+            return "stripe"
+        if "ad" in key:
+            return "ads"
+        if "git" in key:
+            return "github"
+        if "jira" in key or "board" in key:
+            return "jira"
+    return raw if raw in _KNOWN_SOURCES else "unknown"
+
+
+def _ground_key_results(raw: Any, *, snapshot: GoalSnapshot) -> tuple[List[Dict[str, Any]], List[str]]:
     numbers = evidence_numbers(snapshot.evidence, extra=snapshot.title + " " + snapshot.description)
     grounded: List[Dict[str, Any]] = []
+    rejected_titles: List[str] = []
     for kr in normalize_key_results(raw if isinstance(raw, list) else []):
+        title = _normalize_kr_title(str(kr.get("title") or ""))
+        if kr.get("measurable") and not _KR_TITLE_RE.match(title):
+            rejected_titles.append(title or "(untitled)")
+            continue
+        if title:
+            kr["title"] = title
+        kr["source"] = _infer_kr_source(kr, snapshot)
         if not kr.get("measurable"):
             grounded.append(kr)
             continue
@@ -309,7 +435,7 @@ def _ground_key_results(raw: Any, *, snapshot: GoalSnapshot) -> List[Dict[str, A
                 or f"Number not in evidence: {', '.join(missing)}."
             )
         grounded.append(kr)
-    return grounded
+    return grounded, rejected_titles
 
 
 def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -334,14 +460,39 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
     if name == "propose_key_results":
         if snap.kind != KIND_OBJECTIVE or snap.phase != PHASE_RESEARCH:
             return {"ok": False, "error": "propose_key_results is only valid during Objective research."}
-        grounded = _ground_key_results(arguments.get("key_results"), snapshot=snap)
+        raw_krs = arguments.get("key_results")
+        reason = str(arguments.get("reason") or "").strip()
+        if isinstance(raw_krs, list) and not raw_krs:
+            if reason or session.briefing or session.notes_markdown:
+                session.proposed = []
+                session.proposed_krs = True
+                return {"ok": True, "accepted": 0}
+            return {
+                "ok": False,
+                "error": "Empty key_results needs a reason (or set_notes first).",
+            }
+        grounded, rejected_titles = _ground_key_results(raw_krs, snapshot=snap)
+        for title in rejected_titles:
+            session.rejected.append(
+                f"propose_key_results: title must be Increase/Decrease X from A to B ({title})"
+            )
         if not grounded:
             session.rejected.append("propose_key_results: empty after grounding")
-            return {"ok": False, "error": "No usable Key Results."}
+            return {
+                "ok": False,
+                "error": "No usable Key Results. Titles must be Increase/Decrease X from A to B.",
+            }
         session.proposed = grounded
-        return {"ok": True, "accepted": len(grounded)}
+        session.proposed_krs = True
+        return {"ok": True, "accepted": len(grounded), "rejected_titles": rejected_titles}
     if name == "propose_tasks":
         raw = arguments.get("tasks") if isinstance(arguments.get("tasks"), list) else []
+        reason = str(arguments.get("reason") or "").strip()
+        if isinstance(arguments.get("tasks"), list) and not raw:
+            if reason or session.briefing or session.notes_markdown:
+                session.proposed_tasks = True
+                return {"ok": True, "accepted": 0}
+            return {"ok": False, "error": "Empty tasks needs a reason (or set_notes first)."}
         if snap.kind == KIND_OBJECTIVE:
             krs = _merge_key_results(committed=session.committed, proposed=session.proposed) or snap.key_results
             accepted = _normalize_plan_tasks(
@@ -357,6 +508,7 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
         dropped = max(0, len(raw) - len(accepted))
         remaining_slots = MAX_TASKS_TOTAL - len(session.tasks)
         if remaining_slots <= 0:
+            session.proposed_tasks = True
             session.rejected.append(
                 f"propose_tasks: session already at {MAX_TASKS_TOTAL} tasks; dropped {len(accepted)}"
             )
@@ -368,6 +520,7 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
                 f"propose_tasks: capped session at {MAX_TASKS_TOTAL} total ({overflow} dropped)"
             )
         session.tasks.extend(accepted)
+        session.proposed_tasks = True
         if dropped:
             session.rejected.append(f"propose_tasks: dropped {dropped} clone/wiring/duplicate items")
         return {"ok": True, "accepted": len(accepted), "dropped": dropped}
@@ -395,6 +548,11 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
         session.analysis = str(arguments.get("analysis") or session.analysis).strip()
         return {"ok": True}
     if name == "done":
+        if not session.write_ok():
+            if session.nudged:
+                session.rejected.append("done without propose_*")
+            session.nudged = True
+            return {"ok": False, "error": NUDGE_WRITE}
         session.done = True
         return {"ok": True}
     return {"ok": False, "error": f"Unknown tool {name}"}
@@ -441,7 +599,9 @@ def _apply_oneshot(session: _Session, text: str) -> bool:
     if not isinstance(parsed, dict):
         return False
     if parsed.get("key_results"):
-        session.proposed = _ground_key_results(parsed.get("key_results"), snapshot=session.snapshot)
+        grounded, _rejected = _ground_key_results(parsed.get("key_results"), snapshot=session.snapshot)
+        session.proposed = grounded
+        session.proposed_krs = True
     raw_tasks = parsed.get("tasks_to_create") or parsed.get("tasks")
     if raw_tasks:
         _dispatch(session, "propose_tasks", {"tasks": raw_tasks})
@@ -497,6 +657,18 @@ def _invoke(
     return LLMCompletion(text=text or "")
 
 
+def system_prompt_for(snapshot: GoalSnapshot) -> str:
+    if snapshot.kind == KIND_OBJECTIVE:
+        phase_rules = OKR_RESEARCH_SYSTEM if snapshot.phase == PHASE_RESEARCH else OKR_PLAN_SYSTEM
+    elif snapshot.phase == PHASE_RESEARCH:
+        phase_rules = RESEARCH_EPIC_SYSTEM_PROMPT
+    elif snapshot.phase == PHASE_PLAN:
+        phase_rules = PLAN_EPIC_SYSTEM_PROMPT
+    else:
+        phase_rules = IN_PROGRESS_EPIC_SYSTEM_PROMPT
+    return f"{LOOP_SYSTEM}\n\n{LOOP_PHASE_PREFACE}\n\n{phase_rules}"
+
+
 def run_goal_loop(
     llm: Any,
     *,
@@ -520,7 +692,7 @@ def run_goal_loop(
         "Inspect with tools, then propose, then call done."
     )
     messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": LOOP_SYSTEM},
+        {"role": "system", "content": system_prompt_for(snapshot)},
         {"role": "user", "content": user},
     ]
     trace: List[str] = []

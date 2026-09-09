@@ -65,6 +65,35 @@ class OkrMechanicalCheckTests(unittest.TestCase):
         self.assertIn("saas-kit", blob)
         self.assertIn("clone", blob)
 
+    def test_penalizes_read_only_research_that_keeps_founders(self):
+        steps = {
+            "research": json.dumps(
+                {
+                    "key_results": [
+                        {"title": "40 weekly active founders", "measurable": True, "baseline": 12}
+                    ],
+                    "tool_trace": ["get_goal", "get_evidence", "list_open_work", "done"],
+                    "wrote": False,
+                }
+            ),
+            "plan": json.dumps({"tasks": [], "tool_trace": ["get_evidence", "done"]}),
+            "followup": json.dumps({"tasks": []}),
+        }
+        check = run_mechanical_checks(
+            {
+                "pack_id": "okr-goal-loop",
+                "steps": steps,
+                "evidence": {"ga4": "sessions 43 conversion 5"},
+                "sources": {"page": "sessions 43 conversion 5", "snippets": "GPWW-1 Update catalog"},
+            },
+            EvalFixture("Green Promo Wear", "https://greenpromowear.com", input_text="sessions 43"),
+            required_steps=("research", "plan", "followup"),
+        )
+        blob = " ".join(check.notes).lower()
+        self.assertIn("write tool", blob)
+        self.assertIn("weekly active founders", blob)
+        self.assertGreaterEqual(check.penalty, 18.0)
+
     def test_clean_plan_has_no_penalty_for_action_task(self):
         check = run_mechanical_checks(
             self._output(
@@ -124,7 +153,7 @@ class OkrGoalLoopRunTests(unittest.TestCase):
 
 class AnthropicToolCompleteTests(unittest.TestCase):
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}, clear=False)
-    @patch("bigas.eval.complete.requests.post")
+    @patch("bigas.llm.anthropic_client.requests.post")
     def test_forwards_tools_and_parses_tool_use(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = {

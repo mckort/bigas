@@ -263,22 +263,27 @@ def run_okr_research(
                 model=model_name,
                 thinking_budget=_thinking_budget() if str(model_name or "").lower().startswith("gemini") else None,
             )
-            merged = looped.key_results or _merge_key_results(committed=committed, proposed=[])
-            if not merged:
-                raise ValueError("Goal loop returned no usable key results")
-            research_md = looped.notes_markdown or format_evidence_pack(pack)
-            briefing = looped.briefing or (
-                f"Proposed {len(merged)} Key Results for {pack.get('brand')} grounded in live sources. "
-                "Review, edit, then drag to Design and plan."
-            )
-            return OkrResearchResult(
-                key_results=merged,
-                research_markdown=research_md,
-                briefing=briefing,
-                model=model_name,
-                used_llm=looped.used_llm,
-                evidence=pack,
-            )
+            if looped.wrote:
+                merged = looped.key_results or _merge_key_results(committed=committed, proposed=[])
+                if merged:
+                    research_md = looped.notes_markdown or format_evidence_pack(pack)
+                    briefing = looped.briefing or (
+                        f"Proposed {len(merged)} Key Results for {pack.get('brand')} grounded in live sources. "
+                        "Review, edit, then drag to Design and plan."
+                    )
+                    return OkrResearchResult(
+                        key_results=merged,
+                        research_markdown=research_md,
+                        briefing=briefing,
+                        model=model_name,
+                        used_llm=looped.used_llm,
+                        evidence=pack,
+                    )
+                logger.warning(
+                    "Goal loop returned no usable key results; falling back to one-shot"
+                )
+            else:
+                logger.warning("Goal loop proposed nothing; falling back to one-shot")
 
         messages = [
             {"role": "system", "content": OKR_RESEARCH_SYSTEM},

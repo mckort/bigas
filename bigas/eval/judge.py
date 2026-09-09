@@ -21,6 +21,32 @@ SUBSCORE_WEIGHTS: Dict[str, float] = {
     "landscape": 0.25,
     "hallucination": 0.25,
 }
+OKR_SUBSCORE_WEIGHTS: Dict[str, float] = {
+    "grounding": 0.25,
+    "replace_saas": 0.25,
+    "concrete_tasks": 0.20,
+    "no_clones": 0.15,
+    "measurement": 0.15,
+}
+DEFAULT_JUDGE_INTRO = (
+    "You are an expert evaluator for AI model quality on investment analysis tasks.\n"
+)
+OKR_JUDGE_INTRO = (
+    "You are an expert evaluator for AI model quality on OKR / goal-loop work.\n"
+)
+DEFAULT_JUDGE_DIMENSIONS = (
+    "- grounding: no invented figures, claims tied to the fixture page / research.\n"
+    "- structure: required analysis sections present and usable.\n"
+    "- landscape: three buckets (overlapping, ad-hoc, complementary); names evidenced.\n"
+    "- hallucination: does not invent competitors, metrics, or citations.\n"
+)
+OKR_JUDGE_DIMENSIONS = (
+    "- grounding: every KR number appears in the fixture evidence.\n"
+    "- replace_saas: drops weekly active founders / SaaS kit; proposes brand-specific KRs.\n"
+    "- concrete_tasks: actions that move a KR (landing page, campaign), not a KR restatement.\n"
+    "- no_clones: no KR-title tickets, no wire-weekly/Instrument tickets, no Update catalog dupe.\n"
+    "- measurement: honest measurable=false / source when a number is missing; no invented currents.\n"
+)
 DEFAULT_JUDGE_MODELS = (
     "gemini:gemini-3.1-pro-preview",
     "anthropic:claude-sonnet-5",
@@ -95,12 +121,46 @@ def _clip(value: float) -> float:
     return max(0.0, min(100.0, value))
 
 
-def weighted_score(subscores: Mapping[str, float]) -> Optional[float]:
+def _is_okr_goal_loop_evaluator(evaluator: Any) -> bool:
+    pack_id = getattr(evaluator, "pack_id", None)
+    use_case = getattr(evaluator, "use_case_id", None)
+    pack = getattr(evaluator, "pack", None)
+    pack_obj_id = getattr(pack, "id", None) if pack is not None else None
+    return (
+        pack_id == "okr-goal-loop"
+        or use_case == "okr-goal-loop"
+        or pack_obj_id == "okr-goal-loop"
+    )
+
+
+def judge_weights_for(evaluator: Any) -> Dict[str, float]:
+    if _is_okr_goal_loop_evaluator(evaluator):
+        return dict(OKR_SUBSCORE_WEIGHTS)
+    return dict(SUBSCORE_WEIGHTS)
+
+
+def judge_intro_for(evaluator: Any) -> str:
+    if _is_okr_goal_loop_evaluator(evaluator):
+        return OKR_JUDGE_INTRO
+    return DEFAULT_JUDGE_INTRO
+
+
+def judge_dimensions_for(evaluator: Any) -> str:
+    if _is_okr_goal_loop_evaluator(evaluator):
+        return OKR_JUDGE_DIMENSIONS
+    return DEFAULT_JUDGE_DIMENSIONS
+
+
+def weighted_score(
+    subscores: Mapping[str, float],
+    weights: Optional[Mapping[str, float]] = None,
+) -> Optional[float]:
     if not subscores:
         return None
+    table = dict(weights or SUBSCORE_WEIGHTS)
     total = 0.0
     weight = 0.0
-    for key, share in SUBSCORE_WEIGHTS.items():
+    for key, share in table.items():
         if key in subscores:
             total += _clip(float(subscores[key])) * share
             weight += share
@@ -164,7 +224,14 @@ class LLMJudge:
         output: Dict[str, Any],
     ) -> List[JudgeVerdict]:
         rubric = evaluator.get_judge_rubric()
-        prompt = self._build_prompt(rubric=rubric, fixture=fixture, output=output)
+        weights = judge_weights_for(evaluator)
+        prompt = self._build_prompt(
+            rubric=rubric,
+            fixture=fixture,
+            output=output,
+            evaluator=evaluator,
+            weights=weights,
+        )
         verdicts: List[JudgeVerdict] = []
         for raw in self.models:
             parsed = parse_model_ref(raw)
@@ -172,7 +239,11 @@ class LLMJudge:
                 continue
             try:
                 completion = self._complete(parsed.model_id, prompt)
-                verdicts.append(self._parse_verdict(completion, parsed.model_id, parsed.provider))
+                verdicts.append(
+                    self._parse_verdict(
+                        completion, parsed.model_id, parsed.provider, weights=weights
+                    )
+                )
             except Exception as exc:
                 logger.exception("Judge %s failed", parsed.key)
                 verdicts.append(
@@ -191,24 +262,25 @@ class LLMJudge:
         rubric: str,
         fixture: EvalFixture,
         output: Mapping[str, Any],
+        evaluator: Any = None,
+        weights: Optional[Mapping[str, float]] = None,
     ) -> str:
+        table = dict(weights or judge_weights_for(evaluator))
+        keys = list(table)
+        json_keys = ", ".join(f'"{key}": 0-100' for key in keys)
         return (
-            "You are an expert evaluator for AI model quality on investment analysis tasks.\n"
+            f"{judge_intro_for(evaluator)}"
             "Score each dimension 0-100 independently, then write a short prose rationale "
             "(no JSON in the rationale).\n\n"
             f"Fixture company: {fixture.company_name}\n"
             f"Website: {fixture.website_url}\n\n"
             f"Rubric:\n{rubric}\n\n"
             "Dimensions:\n"
-            "- grounding: no invented figures, claims tied to the fixture page / research.\n"
-            "- structure: required analysis sections present and usable.\n"
-            "- landscape: three buckets (overlapping, ad-hoc, complementary); names evidenced.\n"
-            "- hallucination: does not invent competitors, metrics, or citations.\n\n"
+            f"{judge_dimensions_for(evaluator)}\n"
             "Model output:\n"
             f"{_output_for_judge(output)}\n\n"
             "Respond with JSON only:\n"
-            '{"grounding": 0-100, "structure": 0-100, "landscape": 0-100, '
-            '"hallucination": 0-100, "rationale": "<2-4 sentences of prose>"}\n'
+            "{" + json_keys + ', "rationale": "<2-4 sentences of prose>"}\n'
             "Legacy {\"score\": N, \"rationale\": \"...\"} is also accepted."
         )
 
@@ -217,17 +289,24 @@ class LLMJudge:
 
         return complete_eval_model(model_id, prompt, max_tokens=1200, temperature=0.1)
 
-    def _parse_verdict(self, completion: LLMCompletion, model_id: str, provider: str) -> JudgeVerdict:
+    def _parse_verdict(
+        self,
+        completion: LLMCompletion,
+        model_id: str,
+        provider: str,
+        weights: Optional[Mapping[str, float]] = None,
+    ) -> JudgeVerdict:
         text = (completion.text or "").strip()
         parsed = self._extract_json(text) or {}
+        table = dict(weights or SUBSCORE_WEIGHTS)
         subscores: Dict[str, float] = {}
-        for key in SUBSCORE_WEIGHTS:
+        for key in table:
             if key in parsed:
                 try:
                     subscores[key] = _clip(float(parsed[key]))
                 except (TypeError, ValueError):
                     pass
-        score = weighted_score(subscores)
+        score = weighted_score(subscores, weights=table)
         if score is None and parsed.get("score") is not None:
             try:
                 score = _clip(float(parsed["score"]))

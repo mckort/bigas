@@ -254,6 +254,8 @@ def test_oneshot_json_still_works_without_tool_calls():
     result = run_goal_loop(llm, snapshot=_snapshot())
     assert not result.used_tools
     assert result.key_results
+    assert result.wrote
+    assert result.key_results[0].get("source") == "ga4"
     assert result.notes_markdown == "from dump"
 
 
@@ -271,3 +273,112 @@ def test_snapshot_from_okr_copies_open_work():
 
 def test_evidence_numbers_strip_commas():
     assert "12000" in evidence_numbers({"ga4": "sessions 12,000"})
+
+
+def test_read_only_research_drops_saas_kr_and_is_not_success():
+    from bigas.okr.loop import system_prompt_for
+
+    llm = _ScriptedLlm([_call("get_evidence"), _call("done"), _call("done")])
+    snap = _snapshot(
+        key_results=[
+            {
+                "id": "kr-saas01",
+                "title": "40 weekly active founders",
+                "status": "proposed",
+                "measurable": True,
+                "baseline": 12,
+                "target": 40,
+                "current": 12,
+            }
+        ]
+    )
+    result = run_goal_loop(llm, snapshot=snap)
+    assert not result.used_llm
+    assert not result.wrote
+    assert result.key_results == []
+    system = llm.calls[0]["messages"][0]["content"]
+    assert "from <baseline> to <target>" in system
+    assert "weekly active founders" in system_prompt_for(snap).lower() or "SaaS-kit" in system
+
+
+def test_nudge_then_propose_counts_as_write():
+    llm = _ScriptedLlm(
+        [
+            _call("get_evidence"),
+            _call("done"),
+            _call(
+                "propose_key_results",
+                key_results=[
+                    {
+                        "title": "Increase sessions from 43 to 80",
+                        "baseline": 43,
+                        "target": 80,
+                        "current": 43,
+                        "measurable": True,
+                    }
+                ],
+            ),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(llm, snapshot=_snapshot())
+    assert result.wrote
+    assert result.used_llm
+    assert result.key_results[0]["title"].startswith("Increase")
+    assert result.key_results[0].get("source") == "ga4"
+
+
+def test_rejects_saas_kit_title_shape():
+    llm = _ScriptedLlm(
+        [
+            _call(
+                "propose_key_results",
+                key_results=[
+                    {
+                        "title": "40 weekly active founders",
+                        "baseline": 12,
+                        "target": 40,
+                        "current": 12,
+                        "measurable": True,
+                    }
+                ],
+            ),
+            _call("done"),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(llm, snapshot=_snapshot())
+    assert not result.wrote
+    assert result.key_results == []
+    assert any("Increase/Decrease" in note for note in result.rejected)
+
+
+def test_done_after_nudge_without_write_is_rejected():
+    llm = _ScriptedLlm([_call("get_evidence"), _call("done"), _call("done")])
+    result = run_goal_loop(llm, snapshot=_snapshot(), max_turns=3)
+    assert not result.wrote
+    assert any("done without propose_*" in note for note in result.rejected)
+    assert result.tool_trace.count("done") == 2
+
+
+def test_kr_title_normalizes_quotes_and_whitespace():
+    llm = _ScriptedLlm(
+        [
+            _call(
+                "propose_key_results",
+                key_results=[
+                    {
+                        "title": '"Increase sessions\nfrom 43\nto 80"',
+                        "baseline": 43,
+                        "target": 80,
+                        "current": 43,
+                        "measurable": True,
+                    }
+                ],
+            ),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(llm, snapshot=_snapshot())
+    assert result.wrote
+    assert result.key_results[0]["title"] == "Increase sessions from 43 to 80"

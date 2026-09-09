@@ -59,6 +59,7 @@ def _step_payload(result: Any) -> Dict[str, Any]:
         "briefing": result.briefing,
         "notes_markdown": result.notes_markdown,
         "used_tools": result.used_tools,
+        "wrote": result.wrote,
         "tool_trace": list(result.tool_trace),
         "rejected": list(result.rejected),
     }
@@ -96,9 +97,9 @@ class OkrGoalLoopEvaluator(BaseUseCaseEvaluator):
     def get_judge_rubric(self) -> str:
         extra = self.pack.rubric or ""
         return (
-            "Score the model output on a 0-100 scale.\n"
-            "This evaluates the Bigas OKR tool loop on a frozen public fixture "
-            "(not a live board or GA4 property).\n\n"
+            "Score the Bigas OKR tool loop on a frozen public fixture "
+            "(not a live board, GA4 property, or investment memo).\n"
+            "Do not score competitive landscape.\n\n"
             f"{extra}"
         )
 

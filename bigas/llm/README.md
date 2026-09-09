@@ -1,4 +1,4 @@
-# LLM abstraction (OpenAI + Gemini)
+# LLM abstraction (OpenAI + Gemini + Anthropic)
 
 The `bigas.llm` package provides a single provider-agnostic interface for chat-style LLM calls used across CTO PR review, progress updates, release notes, marketing analytics, and SaaS duplicate recommendation checks.
 
@@ -16,6 +16,7 @@ The `bigas.llm` package provides a single provider-agnostic interface for chat-s
 - **Provider** is inferred from the **model name**:
   - `gpt-*` → OpenAI (requires `OPENAI_API_KEY`)
   - `gemini-*` → Gemini (requires `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey))
+  - `claude-*` → Anthropic (requires `ANTHROPIC_API_KEY`)
 
 - **Model resolution** (same for all features):
   1. `explicit_model` (e.g. request body `llm_model`)
@@ -42,7 +43,6 @@ Set `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey)
 | Monday OKR pulse comment  | `BIGAS_OKR_PULSE_MODEL`                |
 | Proactive goals / Epics   | `BIGAS_PROACTIVE_GOALS_MODEL`          |
 
-## Adding another provider (e.g. Claude)
+## Anthropic (Claude)
 
-1. Implement a class that satisfies the `LLMClient` protocol (`complete(messages, *, max_tokens, temperature, **kwargs) -> str`).
-2. In `factory.py`, extend `_infer_provider_from_model` and add a branch that builds and returns the new client.
+Set `ANTHROPIC_API_KEY`. Use a Claude model name (e.g. `BIGAS_OKR_RESEARCH_MODEL=claude-fable-5-1`) so the provider is inferred. Leave `LLM_MODEL` on Gemini unless you want Claude for every feature.
