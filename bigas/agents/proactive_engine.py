@@ -202,6 +202,17 @@ def _parse_llm_json(text: str) -> Dict[str, Any]:
         return {}
 
 
+def _expert_notes_from_evidence(evidence: Optional[Dict[str, str]]) -> Dict[str, str]:
+    raw = (evidence or {}).get("experts") or ""
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(k): str(v) for k, v in parsed.items() if str(v).strip()}
+
+
 def _is_duplicate_task(summary: str, open_issues: Sequence[Dict[str, str]]) -> bool:
     candidate = re.sub(r"\s+", " ", (summary or "").strip().lower())
     if not candidate:
@@ -455,8 +466,12 @@ class ProactiveGoalEngine:
             status_clause="AND status != Done",
         )
         open_issues = [_normalize_issue_line(i) for i in open_raw]
-        user_prompt = self._build_planning_user_prompt(epic, open_issues)
-        parsed = self._llm_json_completion(RESEARCH_EPIC_SYSTEM_PROMPT, user_prompt)
+        parsed = self._epic_llm_plan(
+            phase=GOAL_PHASE_RESEARCH,
+            epic=epic,
+            open_issues=open_issues,
+            system=RESEARCH_EPIC_SYSTEM_PROMPT,
+        )
         created = _create_tasks_from_proposals(
             project_key=project_key,
             epic_key=epic_key,
@@ -487,8 +502,12 @@ class ProactiveGoalEngine:
             status_clause="AND status != Done",
         )
         open_issues = [_normalize_issue_line(i) for i in open_raw]
-        user_prompt = self._build_planning_user_prompt(epic, open_issues)
-        parsed = self._llm_json_completion(PLAN_EPIC_SYSTEM_PROMPT, user_prompt)
+        parsed = self._epic_llm_plan(
+            phase=GOAL_PHASE_PLAN,
+            epic=epic,
+            open_issues=open_issues,
+            system=PLAN_EPIC_SYSTEM_PROMPT,
+        )
         created = _create_tasks_from_proposals(
             project_key=project_key,
             epic_key=epic_key,
@@ -571,14 +590,17 @@ class ProactiveGoalEngine:
             )
             expert_notes[agent_id] = self._delegate_to_expert(agent_id, prompt)
 
-        user_prompt = self._build_in_progress_user_prompt(
+        parsed = self._epic_llm_plan(
+            phase=GOAL_PHASE_IN_PROGRESS,
             epic=epic,
-            timeframe_days=timeframe_days,
-            context_block=context_block,
-            expert_notes=expert_notes,
             open_issues=open_issues,
+            system=IN_PROGRESS_EPIC_SYSTEM_PROMPT,
+            evidence={
+                "context": context_block,
+                "experts": json.dumps(expert_notes, ensure_ascii=False),
+                "timeframe_days": str(timeframe_days),
+            },
         )
-        parsed = self._llm_json_completion(IN_PROGRESS_EPIC_SYSTEM_PROMPT, user_prompt)
         progress_report = (parsed.get("progress_report") or "").strip()
         if progress_report:
             self._post_progress_report(progress_report, epic_key=epic_key)
@@ -641,6 +663,59 @@ class ProactiveGoalEngine:
                 or "(none)",
             ]
         )
+
+    def _epic_llm_plan(
+        self,
+        *,
+        phase: str,
+        epic: Dict[str, Any],
+        open_issues: Sequence[Dict[str, str]],
+        system: str,
+        evidence: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        from bigas.okr.loop import llm_supports_tools, run_goal_loop, snapshot_from_epic
+
+        if llm_supports_tools(self._llm):
+            pack = dict(evidence or {})
+            if phase != GOAL_PHASE_IN_PROGRESS:
+                pack.setdefault("description", _issue_description(epic) or "")
+            looped = run_goal_loop(
+                self._llm,
+                snapshot=snapshot_from_epic(
+                    phase=phase,
+                    key=(epic.get("key") or "").strip(),
+                    title=_issue_summary(epic),
+                    description=_issue_description(epic),
+                    evidence=pack,
+                    open_work=list(open_issues),
+                ),
+                model=self._model,
+            )
+            return {
+                "analysis": looped.analysis or looped.briefing,
+                "plan_summary": looped.analysis or looped.briefing,
+                "progress_report": looped.notes_markdown or looped.briefing,
+                "tasks_to_create": [
+                    {
+                        "summary": item.get("summary") or item.get("title") or "",
+                        "description": item.get("description") or "",
+                        "issue_type": item.get("issue_type") or "Task",
+                        "marketing": bool(item.get("marketing")),
+                    }
+                    for item in looped.tasks
+                ],
+            }
+        if phase == GOAL_PHASE_IN_PROGRESS:
+            user_prompt = self._build_in_progress_user_prompt(
+                epic=epic,
+                timeframe_days=int((evidence or {}).get("timeframe_days") or default_goal_timeframe_days()),
+                context_block=(evidence or {}).get("context") or "",
+                expert_notes=_expert_notes_from_evidence(evidence),
+                open_issues=open_issues,
+            )
+        else:
+            user_prompt = self._build_planning_user_prompt(epic, open_issues)
+        return self._llm_json_completion(system, user_prompt)
 
     def _llm_json_completion(self, system: str, user: str) -> Dict[str, Any]:
         try:
