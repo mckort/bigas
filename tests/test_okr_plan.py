@@ -6,10 +6,13 @@ import json
 
 from bigas.okr.plan import (
     OKR_PLAN_SYSTEM,
+    already_in_evidence,
     apply_current_updates,
     heuristic_ga4_currents,
+    is_duplicate_work,
     is_mechanical_okr_task,
     run_okr_plan,
+    titles_are_same_work,
 )
 
 
@@ -30,6 +33,36 @@ def test_plan_prompt_forbids_kr_clones_and_wiring():
     assert "wire weekly" in text
     assert "do not invent currents" in text
     assert "ai_doable" in text
+
+
+def test_titles_are_same_work_catches_near_duplicates():
+    assert titles_are_same_work(
+        "Add 'Star on GitHub' CTA to bigas.me homepage",
+        "Add 'Star on GitHub' CTA to the Bigas web interface",
+    )
+    assert titles_are_same_work(
+        "Add X follow badge to bigas.me and chat UI",
+        "Add X follow link and Twitter card metadata to web interface",
+    )
+    assert not titles_are_same_work(
+        "Publish a wholesale kit landing page on /store",
+        "Draft 10 AI Team Tips for automated X posting",
+    )
+
+
+def test_duplicate_work_includes_done_and_evidence():
+    assert is_duplicate_work(
+        "Add 'Star on GitHub' CTA to the Bigas web interface",
+        {"Add 'Star on GitHub' CTA to bigas.me homepage"},
+    )
+    assert already_in_evidence(
+        "Add 'Star on GitHub' CTA to the Bigas web interface",
+        {"site": "Welcome to Bigas. Star on GitHub to follow along."},
+    )
+    assert not already_in_evidence(
+        "Add 'Star on GitHub' CTA to the Bigas web interface",
+        {"site": "Welcome. No repository mentions here."},
+    )
 
 
 def test_mechanical_task_detection():

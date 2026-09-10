@@ -201,6 +201,16 @@ def _apply_ticket_field_updates(
             st = (value or "").strip()
             if not is_valid_status(st, project_key=project_key):
                 continue
+            from bigas.okr.model import objective_terminal_block_reason
+
+            incoming_krs = fields.get("key_results")
+            if incoming_krs is not None:
+                incoming_krs = normalize_key_results(incoming_krs)
+            blocked = objective_terminal_block_reason(
+                ticket, st, key_results=incoming_krs
+            )
+            if blocked:
+                raise ValueError(blocked)
             updates["status"] = st
             old_status = (ticket.get("status") or "").strip()
             if st == "Done" and old_status != "Done":

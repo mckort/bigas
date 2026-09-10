@@ -17,7 +17,13 @@ os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 from flask import Flask
 
 from bigas.okr.engine import handle_objective_status_change
-from bigas.okr.model import is_objective, kr_health, kr_progress, promote_objective_type
+from bigas.okr.model import (
+    is_objective,
+    kr_health,
+    kr_progress,
+    objective_achieved,
+    promote_objective_type,
+)
 from bigas.okr.research import OkrResearchResult
 from bigas.resources.tickets.endpoints import tickets_bp
 from bigas.tickets import store as ticket_store_module
@@ -173,6 +179,22 @@ def test_kr_progress_and_health():
     assert kr_health(kr, expected=0.5) == "at_risk"
     assert kr_health({**kr, "current": 80}, expected=0.5) == "on_track"
     assert kr_health({"measurable": False}, expected=0.5) == "unmeasured"
+
+
+def test_objective_achieved_requires_every_kr_at_target():
+    hit = {
+        "title": "Increase orders from 0 to 10",
+        "measurable": True,
+        "baseline": 0,
+        "target": 10,
+        "current": 10,
+        "direction": "increase",
+    }
+    short = {**hit, "id": "kr-short001", "current": 4}
+    assert objective_achieved([hit, {**hit, "id": "kr-two00001"}])
+    assert not objective_achieved([hit, short])
+    assert not objective_achieved([hit, {"measurable": False, "title": "NPS"}])
+    assert not objective_achieved([])
 
 
 def test_create_objective_and_link_task_to_kr(client):
@@ -380,6 +402,48 @@ def test_in_progress_does_not_auto_start_tasks(client):
     ]
     assert children
     assert all(c.get("status") == "To Do" for c in children)
+
+
+def test_objective_cannot_enter_final_approval_before_krs_hit():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="GPWW", project_key="GPWW")
+    ticket = store.create_ticket(
+        board["board_id"],
+        title="Win the quarter",
+        issue_type="Objective",
+        user_id="dev-user",
+        status="In Progress (AI)",
+        key_results=[
+            {
+                "title": "Increase orders from 1 to 10",
+                "baseline": 1,
+                "target": 10,
+                "current": 2,
+                "measurable": True,
+                "source": "ga4",
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="In Progress"):
+        store.update_ticket(ticket["ticket_id"], status="Final approval (manual)")
+    with pytest.raises(ValueError, match="In Progress"):
+        store.update_ticket(ticket["ticket_id"], status="Done")
+    assert store.get_ticket(ticket["ticket_id"])["status"] == "In Progress (AI)"
+    store.update_ticket(
+        ticket["ticket_id"],
+        key_results=[
+            {
+                "title": "Increase orders from 1 to 10",
+                "baseline": 1,
+                "target": 10,
+                "current": 10,
+                "measurable": True,
+                "source": "ga4",
+            }
+        ],
+    )
+    store.update_ticket(ticket["ticket_id"], status="Done")
+    assert store.get_ticket(ticket["ticket_id"])["status"] == "Done"
 
 
 def test_epic_stays_epic_on_create(client):

@@ -183,6 +183,47 @@ def test_loop_drops_kr_clone_and_wiring_tasks():
     assert titles == ["Publish a wholesale kit landing page"]
 
 
+def test_loop_rejects_done_near_duplicate_and_live_evidence():
+    krs = [
+        {
+            "id": "kr-stars01",
+            "title": "Increase GitHub stars from 0 to 1000",
+            "status": "committed",
+            "measurable": True,
+        }
+    ]
+    llm = _ScriptedLlm(
+        [
+            _call(
+                "propose_tasks",
+                tasks=[
+                    {
+                        "title": "Add 'Star on GitHub' CTA to the Bigas web interface",
+                        "description": "Already shipped.",
+                        "kr_id": "kr-stars01",
+                    }
+                ],
+            ),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(
+        llm,
+        snapshot=_snapshot(
+            phase="plan",
+            key_results=krs,
+            open_work=[
+                {
+                    "title": "Add 'Star on GitHub' CTA to bigas.me homepage",
+                    "status": "Done",
+                }
+            ],
+            evidence={"site": "Footer: Star on GitHub"},
+        ),
+    )
+    assert result.tasks == []
+
+
 def test_loop_rejects_duplicate_open_work():
     krs = [
         {

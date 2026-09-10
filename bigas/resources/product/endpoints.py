@@ -325,7 +325,7 @@ def weekly_okr_pulse():
 
     Request JSON (all optional):
       { "days": 7, "post_to_discord": true, "post_to_chat": true,
-        "include_comment": true, "user_id": "..." }
+        "include_comment": true, "propose_work": true, "user_id": "..." }
     """
     from bigas.okr.pulse import build_weekly_okr_pulse, publish_weekly_okr_pulse
     from bigas.okr.scoreboard import DEFAULT_LOOKBACK_DAYS
@@ -346,6 +346,7 @@ def weekly_okr_pulse():
     include_comment = (
         True if data.get("include_comment") is None else bool(data.get("include_comment"))
     )
+    propose_work = True if data.get("propose_work") is None else bool(data.get("propose_work"))
     user_id = str(data.get("user_id") or "").strip() or None
 
     try:
@@ -353,6 +354,7 @@ def weekly_okr_pulse():
             user_id=user_id,
             lookback_days=days,
             include_comment=include_comment,
+            propose_work=propose_work,
         )
         posted = {"posted_to_discord": False, "posted_to_chat": False}
         if post_to_discord or post_to_chat:
@@ -944,10 +946,10 @@ def get_manifest():
             {
                 "name": "weekly_okr_pulse",
                 "description": (
-                    "Mechanical Monday OKR pulse from live Objectives: KR health, "
-                    "expected vs actual pace, stale currents, unlinked Done (with sample size), "
-                    "and pending human gates. Posts to Chief of Staff chat. "
-                    "Optional LLM comment cannot replace the counts."
+                    "Monday OKR pulse from live Objectives: mechanical KR health, "
+                    "then a tool loop on In Progress Objectives that may open To Do "
+                    "(never auto-start; skips Done and work already live in evidence). "
+                    "Posts to Chief of Staff chat. Optional LLM comment cannot replace the counts."
                 ),
                 "path": "/mcp/tools/weekly_okr_pulse",
                 "method": "POST",
@@ -972,6 +974,14 @@ def get_manifest():
                         "include_comment": {
                             "type": "boolean",
                             "description": "Append a short LLM comment under the counts. Default true.",
+                            "default": True,
+                        },
+                        "propose_work": {
+                            "type": "boolean",
+                            "description": (
+                                "After the numbers, run the In Progress OKR loop and open "
+                                "To Do cards toward off-track KRs. Default true."
+                            ),
                             "default": True,
                         },
                     },

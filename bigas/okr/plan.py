@@ -8,7 +8,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from bigas.okr.context import format_evidence_pack, gather_okr_evidence
 from bigas.okr.model import normalize_key_results
@@ -23,6 +23,57 @@ MAX_TASKS_TOTAL = 10
 _WIRE_TITLE_RE = re.compile(r"^wire weekly snapshot for\b", re.I)
 _INSTRUMENT_TITLE_RE = re.compile(r"^instrument:\s*", re.I)
 _DONE_STATUSES = frozenset({"done"})
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "at",
+        "for",
+        "from",
+        "in",
+        "into",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+        "via",
+        "add",
+        "update",
+        "create",
+        "make",
+        "write",
+    }
+)
+_SURFACE_WORDS = frozenset(
+    {
+        "homepage",
+        "website",
+        "web",
+        "interface",
+        "site",
+        "page",
+        "readme",
+        "chat",
+        "ui",
+        "docs",
+        "documentation",
+        "bigas",
+        "me",
+    }
+)
+_DISTINCTIVE_PAIRS = frozenset(
+    {
+        ("star", "github"),
+        ("github", "star"),
+        ("x", "follow"),
+        ("twitter", "card"),
+        ("fork", "deploy"),
+        ("fork", "run"),
+    }
+)
 
 OKR_PLAN_SYSTEM = """You are a Chief of Staff planning work toward committed Key Results.
 
@@ -46,7 +97,9 @@ How to work:
    or with existing tools: landing page, first-pass site copy, tracking snippet,
    small UI/copy change, draft outreach. Human-only work (partnerships, pricing
    calls, budget, legal, in-person sales) is ai_doable=false.
-7. Do not duplicate open_tasks. Do not create Tasks named after a KR.
+7. Do not duplicate linked work — open or Done. Do not recreate something
+   the site or repo already has (a CTA, badge, page, or guide that is live).
+   Do not create Tasks named after a KR.
 
 Return JSON only — no markdown fences, no preamble.
 
@@ -114,6 +167,101 @@ def is_mechanical_okr_task(
 def is_open_task(ticket: Dict[str, Any]) -> bool:
     status = str(ticket.get("status") or "").strip().lower()
     return status not in _DONE_STATUSES
+
+
+def _content_tokens(title: str) -> List[str]:
+    raw = re.findall(r"[a-z0-9]+", (title or "").lower())
+    out: List[str] = []
+    for tok in raw:
+        if tok in _STOPWORDS or tok in _SURFACE_WORDS:
+            continue
+        if len(tok) < 2 and tok != "x":
+            continue
+        out.append(tok)
+    if "x" in raw or "twitter" in raw:
+        if "x" not in out:
+            out.insert(0, "x")
+    return out
+
+
+def titles_are_same_work(left: str, right: str) -> bool:
+    """True when two titles describe the same deliverable, including Done vs To Do wording."""
+    a = (left or "").strip()
+    b = (right or "").strip()
+    if not a or not b:
+        return False
+    if a.lower() == b.lower():
+        return True
+    for phrase in re.findall(r"[\"']([^\"']{4,})[\"']", a):
+        if phrase.lower() in b.lower():
+            return True
+    for phrase in re.findall(r"[\"']([^\"']{4,})[\"']", b):
+        if phrase.lower() in a.lower():
+            return True
+    ta, tb = _content_tokens(a), _content_tokens(b)
+    if not ta or not tb:
+        return False
+    sa, sb = set(ta), set(tb)
+    overlap = sa & sb
+    if (sa <= sb or sb <= sa) and len(overlap) >= 2:
+        return True
+    grams_a = set(zip(ta, ta[1:]))
+    grams_b = set(zip(tb, tb[1:]))
+    if grams_a & grams_b & _DISTINCTIVE_PAIRS:
+        return True
+    union = sa | sb
+    return len(overlap) >= 3 and (len(overlap) / len(union)) >= 0.45
+
+
+def already_in_evidence(title: str, evidence: Optional[Dict[str, str]]) -> bool:
+    """True when site/repo evidence already shows the proposed deliverable."""
+    if not evidence:
+        return False
+    blob = " ".join(str(v) for v in evidence.values()).lower()
+    if not blob.strip():
+        return False
+    compact_blob = re.sub(r"[^a-z0-9]+", " ", blob)
+    for phrase in re.findall(r"[\"']([^\"']{4,})[\"']", title or ""):
+        normalized = re.sub(r"[^a-z0-9]+", " ", phrase.lower()).strip()
+        if normalized and normalized in compact_blob:
+            return True
+    tokens = _content_tokens(title)
+    for left, right in zip(tokens, tokens[1:]):
+        pair = f"{left} {right}"
+        if (left, right) in _DISTINCTIVE_PAIRS:
+            compact = re.sub(r"[^a-z0-9]+", " ", blob)
+            if pair in compact or f"{left} on {right}" in compact:
+                return True
+    return False
+
+
+def is_duplicate_work(
+    title: str,
+    existing_titles: Iterable[str],
+    *,
+    evidence: Optional[Dict[str, str]] = None,
+) -> bool:
+    text = (title or "").strip()
+    if not text:
+        return True
+    for other in existing_titles:
+        if titles_are_same_work(text, str(other or "")):
+            return True
+    return already_in_evidence(text, evidence)
+
+
+def linked_work_titles(
+    tickets: Sequence[Dict[str, Any]],
+    key_results: Sequence[Dict[str, Any]],
+) -> set[str]:
+    """Titles of linked work including Done. Mechanical KR clones are ignored."""
+    titles: set[str] = set()
+    for ticket in tickets:
+        title = str(ticket.get("title") or "").strip()
+        if not title or is_mechanical_okr_task(ticket, key_results):
+            continue
+        titles.add(title)
+    return titles
 
 
 def apply_current_updates(
@@ -203,6 +351,7 @@ def _normalize_plan_tasks(
     *,
     key_results: Sequence[Dict[str, Any]],
     existing_titles: set[str],
+    evidence: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     kr_by_id = {str(kr.get("id") or ""): kr for kr in key_results}
     kr_titles = {
@@ -227,9 +376,9 @@ def _normalize_plan_tasks(
             continue
         if title.lower() in kr_titles:
             continue
-        key = title.lower()
-        if key in seen:
+        if is_duplicate_work(title, seen, evidence=evidence):
             continue
+        key = title.lower()
         if per_kr.get(kr_id, 0) >= MAX_TASKS_PER_KR:
             continue
         kr = kr_by_id[kr_id]
@@ -262,7 +411,7 @@ def _build_user_prompt(
     key_results: Sequence[Dict[str, Any]],
     existing_tasks: Sequence[Dict[str, Any]],
 ) -> str:
-    open_tasks = [
+    linked = [
         {
             "key": t.get("key"),
             "title": t.get("title"),
@@ -270,18 +419,19 @@ def _build_user_prompt(
             "parent_kr_id": t.get("parent_kr_id"),
         }
         for t in existing_tasks
-        if is_open_task(t) and not is_mechanical_okr_task(t, key_results)
+        if not is_mechanical_okr_task(t, key_results)
     ]
     return f"""Plan work toward these committed Key Results. Update currents from evidence.
 Do not clone KR titles into tasks. Do not create analytics-wiring tasks.
+Do not recreate Done work or something already live in the evidence pack.
 
 Objective: {ticket.get('title') or ''}
 
 Committed KRs:
 {json.dumps(list(key_results), ensure_ascii=False, indent=2)}
 
-Open tasks (do not duplicate):
-{json.dumps(open_tasks, ensure_ascii=False, indent=2)}
+Linked work (open and Done — do not duplicate):
+{json.dumps(linked, ensure_ascii=False, indent=2)}
 
 Evidence pack:
 {format_evidence_pack(evidence)}
@@ -299,11 +449,7 @@ def run_okr_plan(
 ) -> OkrPlanResult:
     krs = normalize_key_results(key_results if key_results is not None else ticket.get("key_results"))
     children = list(existing_tasks or [])
-    existing_titles = {
-        str(t.get("title") or "").strip().lower()
-        for t in children
-        if is_open_task(t) and not is_mechanical_okr_task(t, krs)
-    }
+    existing_titles = linked_work_titles(children, krs)
     pack: Dict[str, str] = dict(evidence) if evidence is not None else {}
     heuristic_updates: List[Dict[str, Any]] = []
 
@@ -342,6 +488,7 @@ def run_okr_plan(
                         looped.tasks,
                         key_results=krs,
                         existing_titles=existing_titles,
+                        evidence=pack,
                     )
                     updates = heuristic_updates + list(looped.current_updates)
                     if tasks:
@@ -384,6 +531,7 @@ def run_okr_plan(
             parsed.get("tasks_to_create"),
             key_results=krs,
             existing_titles=existing_titles,
+            evidence=pack,
         )
         llm_updates = parsed.get("key_result_updates")
         updates = heuristic_updates + (
