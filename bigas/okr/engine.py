@@ -149,7 +149,7 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
                 evidence=evidence,
             ):
                 title = (spec.get("title") or "").strip()
-                if not title or is_duplicate_work(title, existing_titles, evidence=evidence):
+                if not title:
                     continue
                 labels = ["okr"]
                 if spec.get("ai_doable"):

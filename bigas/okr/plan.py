@@ -195,10 +195,6 @@ def titles_are_same_work(left: str, right: str) -> bool:
     overlap = sa & sb
     if (sa <= sb or sb <= sa) and len(overlap) >= 2:
         return True
-    grams_a = set(zip(ta, ta[1:]))
-    grams_b = set(zip(tb, tb[1:]))
-    if grams_a and grams_b and grams_a & grams_b:
-        return True
     union = sa | sb
     return len(overlap) >= 3 and (len(overlap) / len(union)) >= 0.45
 
@@ -210,9 +206,10 @@ def already_in_evidence(title: str, evidence: Optional[Dict[str, str]]) -> bool:
     blob = " ".join(str(v) for v in evidence.values()).lower()
     if not blob.strip():
         return False
+    compact_blob = re.sub(r"[^a-z0-9]+", " ", blob)
     for phrase in re.findall(r"[\"']([^\"']{4,})[\"']", title or ""):
-        words = [w for w in re.findall(r"[a-z0-9]+", phrase.lower()) if w not in _STOPWORDS]
-        if len(words) >= 2 and all(word in blob for word in words):
+        normalized = re.sub(r"[^a-z0-9]+", " ", phrase.lower()).strip()
+        if normalized and normalized in compact_blob:
             return True
     tokens = _content_tokens(title)
     for left, right in zip(tokens, tokens[1:]):
