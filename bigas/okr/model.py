@@ -229,6 +229,8 @@ def objective_achieved(key_results: Sequence[Dict[str, Any]]) -> bool:
 def objective_terminal_block_reason(
     ticket: Optional[Dict[str, Any]],
     new_status: str,
+    *,
+    key_results: Any = None,
 ) -> Optional[str]:
     """Why an Objective may not enter Final approval or Done, or None if allowed."""
     if not is_objective(ticket):
@@ -236,7 +238,11 @@ def objective_terminal_block_reason(
     status = (new_status or "").strip()
     if status not in OBJECTIVE_TERMINAL_STATUSES:
         return None
-    if objective_achieved((ticket or {}).get("key_results")):
+    current_status = ((ticket or {}).get("status") or "").strip()
+    if current_status == status:
+        return None
+    krs = (ticket or {}).get("key_results") if key_results is None else key_results
+    if objective_achieved(krs):
         return None
     return (
         "This Objective stays in In Progress until every Key Result has reached its target."

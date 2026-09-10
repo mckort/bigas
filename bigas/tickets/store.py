@@ -203,7 +203,12 @@ def _apply_ticket_field_updates(
                 continue
             from bigas.okr.model import objective_terminal_block_reason
 
-            blocked = objective_terminal_block_reason(ticket, st)
+            incoming_krs = fields.get("key_results")
+            if incoming_krs is not None:
+                incoming_krs = normalize_key_results(incoming_krs)
+            blocked = objective_terminal_block_reason(
+                ticket, st, key_results=incoming_krs
+            )
             if blocked:
                 raise ValueError(blocked)
             updates["status"] = st
