@@ -64,6 +64,16 @@ _SURFACE_WORDS = frozenset(
         "me",
     }
 )
+_DISTINCTIVE_PAIRS = frozenset(
+    {
+        ("star", "github"),
+        ("github", "star"),
+        ("x", "follow"),
+        ("twitter", "card"),
+        ("fork", "deploy"),
+        ("fork", "run"),
+    }
+)
 
 OKR_PLAN_SYSTEM = """You are a Chief of Staff planning work toward committed Key Results.
 
@@ -195,6 +205,10 @@ def titles_are_same_work(left: str, right: str) -> bool:
     overlap = sa & sb
     if (sa <= sb or sb <= sa) and len(overlap) >= 2:
         return True
+    grams_a = set(zip(ta, ta[1:]))
+    grams_b = set(zip(tb, tb[1:]))
+    if grams_a & grams_b & _DISTINCTIVE_PAIRS:
+        return True
     union = sa | sb
     return len(overlap) >= 3 and (len(overlap) / len(union)) >= 0.45
 
@@ -214,7 +228,7 @@ def already_in_evidence(title: str, evidence: Optional[Dict[str, str]]) -> bool:
     tokens = _content_tokens(title)
     for left, right in zip(tokens, tokens[1:]):
         pair = f"{left} {right}"
-        if pair in {"star github", "github star", "x follow", "twitter card", "fork deploy", "fork run"}:
+        if (left, right) in _DISTINCTIVE_PAIRS:
             compact = re.sub(r"[^a-z0-9]+", " ", blob)
             if pair in compact or f"{left} on {right}" in compact:
                 return True

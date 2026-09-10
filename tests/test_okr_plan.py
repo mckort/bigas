@@ -40,7 +40,7 @@ def test_titles_are_same_work_catches_near_duplicates():
         "Add 'Star on GitHub' CTA to bigas.me homepage",
         "Add 'Star on GitHub' CTA to the Bigas web interface",
     )
-    assert not titles_are_same_work(
+    assert titles_are_same_work(
         "Add X follow badge to bigas.me and chat UI",
         "Add X follow link and Twitter card metadata to web interface",
     )
