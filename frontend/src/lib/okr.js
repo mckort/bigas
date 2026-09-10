@@ -82,6 +82,26 @@ function asFloat(value, fallback = 0) {
   return Number.isFinite(num) ? num : fallback
 }
 
+export const OBJECTIVE_TERMINAL_STATUSES = ['Final approval (manual)', 'Done']
+
+export function objectiveAchieved(ticket) {
+  const krs = keyResultsOf(ticket)
+  if (!krs.length) return false
+  return krs.every((kr) => {
+    const progress = krProgress(kr)
+    return progress != null && progress >= 0.999
+  })
+}
+
+export function columnsForTicket(ticket, columns) {
+  const cols = Array.isArray(columns) ? columns : []
+  if (!isObjective(ticket) || objectiveAchieved(ticket)) return cols
+  const current = String(ticket?.status || '')
+  return cols.filter(
+    (col) => col === current || !OBJECTIVE_TERMINAL_STATUSES.includes(col),
+  )
+}
+
 export function krProgress(kr) {
   if (!kr?.measurable) return null
   const baseline = asFloat(kr.baseline)

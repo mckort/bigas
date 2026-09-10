@@ -292,12 +292,15 @@ def ticket_detail(ticket_id: str):
     ):
         if key in body:
             fields[key] = body[key]
-    ticket = service.update_ticket(
-        ticket_id,
-        user_id=user_id,
-        previous_status=existing.get("status"),
-        **fields,
-    )
+    try:
+        ticket = service.update_ticket(
+            ticket_id,
+            user_id=user_id,
+            previous_status=existing.get("status"),
+            **fields,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not ticket:
         return jsonify({"error": "Ticket not found"}), 404
     return jsonify({"ticket": ticket})

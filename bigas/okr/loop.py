@@ -22,7 +22,13 @@ from bigas.agents.proactive_prompts import (
 from bigas.llm.completion import LLMCompletion, ToolCall
 from bigas.okr.context import format_evidence_pack
 from bigas.okr.model import normalize_key_results
-from bigas.okr.plan import MAX_TASKS_TOTAL, OKR_PLAN_SYSTEM, _normalize_plan_tasks, is_mechanical_okr_task
+from bigas.okr.plan import (
+    MAX_TASKS_TOTAL,
+    OKR_PLAN_SYSTEM,
+    _normalize_plan_tasks,
+    is_duplicate_work,
+    is_mechanical_okr_task,
+)
 from bigas.okr.research import OKR_RESEARCH_SYSTEM, _extract_json_object, _merge_key_results
 
 logger = logging.getLogger(__name__)
@@ -51,6 +57,8 @@ Rules:
   tracking snippet, small UI change, draft outreach. Human-only work (partnerships,
   pricing calls, budget, legal) is ai_doable=false.
 - Off-track KRs get proposed To Do work. Never auto-start or auto-advance cards.
+- Do not recreate Done work or a near-duplicate title. Do not propose work
+  already visible in site/repo evidence (live CTA, badge, page, or guide).
 - If a number is missing from evidence, mark the KR measurable=false.
 - Research/plan that only reads is a failure. You must call propose_key_results
   or propose_tasks (empty list + set_notes reason is ok). Do not keep leftover
@@ -146,7 +154,11 @@ READ_TOOLS = [
     _fn("get_goal", "Goal, committed/proposed Key Results, and cycle.", {}),
     _fn("get_evidence", "Live evidence pack (brand, GA4, site, repo, board).", {}),
     _fn("get_scoreboard", "Mechanical KR health, pace, stale currents, open work.", {}),
-    _fn("list_open_work", "Open tickets already linked to this goal. Do not duplicate.", {}),
+    _fn(
+        "list_open_work",
+        "Linked tickets for this goal, including Done. Do not recreate either.",
+        {},
+    ),
 ]
 WRITE_TOOLS = [
     _fn(
@@ -505,6 +517,7 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
                 raw,
                 key_results=krs,
                 existing_titles=_open_work_titles(snap) | _session_task_titles(session),
+                evidence=snap.evidence,
             )
         else:
             accepted = _normalize_epic_tasks(
@@ -578,8 +591,7 @@ def _normalize_epic_tasks(raw: Any, *, existing_titles: set[str]) -> List[Dict[s
             continue
         if is_mechanical_okr_task({"title": title}, []):
             continue
-        key = title.lower()
-        if key in seen:
+        if is_duplicate_work(title, seen):
             continue
         out.append(
             {
@@ -591,7 +603,7 @@ def _normalize_epic_tasks(raw: Any, *, existing_titles: set[str]) -> List[Dict[s
                 "ai_doable": bool(item.get("ai_doable")),
             }
         )
-        seen.add(key)
+        seen.add(title.lower())
         if len(out) >= MAX_TASKS_TOTAL:
             break
     return out

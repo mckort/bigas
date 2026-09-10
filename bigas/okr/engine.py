@@ -18,8 +18,10 @@ from bigas.okr.plan import (
     _normalize_plan_tasks,
     apply_current_updates,
     heuristic_ga4_currents,
+    is_duplicate_work,
     is_mechanical_okr_task,
     is_open_task,
+    linked_work_titles,
     run_okr_plan,
 )
 from bigas.okr.research import run_okr_research
@@ -90,6 +92,168 @@ def _retire_mechanical_children(store, children: List[Dict[str, Any]], key_resul
         )
         closed.append(str(child.get("key") or ticket_id))
     return closed
+
+
+def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
+    """Refresh KR currents and open To Do for gaps. Never moves the Objective."""
+    from bigas.okr.context import gather_okr_evidence
+    from bigas.okr.loop import llm_supports_tools, run_goal_loop, snapshot_from_okr
+    from bigas.tickets.service import TicketService
+    from bigas.tickets.store import get_ticket_store
+
+    store = get_ticket_store()
+    ticket_id = ticket.get("ticket_id") or ""
+    key = ticket.get("key") or ""
+    key_results = normalize_key_results(ticket.get("key_results"))
+    children = store.list_tickets_for_parent(key)
+    linked = [t for t in children if not is_mechanical_okr_task(t, key_results)]
+    evidence: Dict[str, str] = {}
+    heuristic_updates: List[Dict[str, Any]] = []
+    try:
+        evidence = gather_okr_evidence(ticket)
+        heuristic_updates = heuristic_ga4_currents(key_results, evidence.get("ga4") or "")
+    except Exception:
+        logger.warning("OKR pulse could not refresh KR currents for %s", key, exc_info=True)
+    created: List[Dict[str, str]] = []
+    extra_briefing = ""
+    try:
+        from bigas.llm.factory import get_llm_client
+
+        client, model_name = get_llm_client(feature="okr_plan")
+        if llm_supports_tools(client):
+            snapshot_krs = apply_current_updates(
+                [dict(kr) for kr in key_results],
+                heuristic_updates,
+            )
+            looped = run_goal_loop(
+                client,
+                snapshot=snapshot_from_okr(
+                    ticket,
+                    phase="in_progress",
+                    evidence=evidence,
+                    open_work=linked,
+                    key_results=snapshot_krs,
+                ),
+                model=model_name,
+            )
+            key_results = apply_current_updates(
+                key_results,
+                heuristic_updates + list(looped.current_updates),
+            )
+            existing_titles = linked_work_titles(linked, key_results)
+            service = TicketService()
+            for spec in _normalize_plan_tasks(
+                looped.tasks,
+                key_results=key_results,
+                existing_titles=existing_titles,
+                evidence=evidence,
+            ):
+                title = (spec.get("title") or "").strip()
+                if not title or is_duplicate_work(title, existing_titles, evidence=evidence):
+                    continue
+                labels = ["okr"]
+                if spec.get("ai_doable"):
+                    labels.append("ai-doable")
+                child = service.create_ticket(
+                    ticket.get("board_id"),
+                    user_id=None,
+                    title=title,
+                    description=spec.get("description") or "",
+                    status="To Do",
+                    issue_type="Task",
+                    labels=labels,
+                    parent_key=key,
+                    parent_kr_id=spec.get("kr_id"),
+                )
+                created.append({"key": child.get("key") or "", "kr_id": spec.get("kr_id") or ""})
+                existing_titles.add(title)
+            extra_briefing = looped.briefing or ""
+        else:
+            key_results = apply_current_updates(key_results, heuristic_updates)
+    except Exception:
+        logger.warning("OKR in-progress goal loop failed for %s", key, exc_info=True)
+        extra_briefing = ""
+        key_results = apply_current_updates(key_results, heuristic_updates)
+    expected = expected_progress(
+        created_at=ticket.get("created_at"),
+        cycle_end=cycle_end_for(ticket.get("okr_cycle") or "", created_at=ticket.get("created_at")),
+    )
+    annotated = [
+        annotate_key_result(
+            kr,
+            expected=expected,
+            child_tickets=[c for c in children if (c.get("parent_kr_id") or "") == kr.get("id")],
+        )
+        for kr in key_results
+    ]
+    risks = [kr for kr in annotated if kr.get("health") in {"at_risk", "off_track", "unmeasured"}]
+    activity = [kr for kr in annotated if kr.get("activity_without_outcome")]
+    briefing_bits = [
+        f"Weekly pulse for {key}.",
+        f"{len(annotated) - len(risks)}/{len(annotated) or 1} KRs on track vs expected {round(expected * 100)}% of cycle.",
+        "No In Progress cards were started — a human moves work from To Do.",
+    ]
+    if created:
+        briefing_bits.append(
+            "Opened To Do: " + ", ".join(item["key"] for item in created if item["key"]) + "."
+        )
+    if extra_briefing:
+        briefing_bits.append(extra_briefing)
+    if risks:
+        briefing_bits.append(
+            "Watch: " + "; ".join(f"{kr['title']} ({kr['health']})" for kr in risks[:3])
+        )
+    if activity:
+        briefing_bits.append(
+            "Activity without outcome on: "
+            + ", ".join(kr["title"] for kr in activity[:2])
+            + ". Stop opening tasks; change the work."
+        )
+    briefing = " ".join(briefing_bits)
+    if ticket_id:
+        store.update_ticket(
+            ticket_id,
+            key_results=key_results,
+            okr_phase="in_progress",
+            okr_briefing=briefing,
+        )
+        _comment(store, ticket_id, f"**OKR weekly pulse**\n\n{briefing}")
+    return {
+        "ok": True,
+        "handler": "okr_in_progress",
+        "issue_key": key,
+        "phase": "in_progress",
+        "started": [],
+        "tasks_created": created,
+        "progress": objective_progress(key_results),
+        "briefing": briefing,
+    }
+
+
+def pulse_in_progress_objectives(*, user_id: str) -> List[Dict[str, Any]]:
+    """Run the in-progress OKR loop for every Objective still in In Progress."""
+    from bigas.tickets.store import get_ticket_store
+
+    store = get_ticket_store()
+    results: List[Dict[str, Any]] = []
+    for ticket in store.list_tickets_for_user(user_id):
+        if not is_objective(ticket):
+            continue
+        if _phase_for_status(ticket.get("status") or "") != "in_progress":
+            continue
+        try:
+            results.append(run_okr_in_progress(ticket))
+        except Exception:
+            logger.exception("Weekly OKR loop failed for %s", ticket.get("key"))
+            results.append(
+                {
+                    "ok": False,
+                    "issue_key": ticket.get("key") or "",
+                    "tasks_created": [],
+                    "error": "loop failed",
+                }
+            )
+    return results
 
 
 def handle_objective_status_change(
@@ -175,19 +339,19 @@ def handle_objective_status_change(
             kr["status"] = "committed"
         existing = store.list_tickets_for_parent(key)
         closed = _retire_mechanical_children(store, existing, key_results)
-        remaining = [
+        linked = [
             t
             for t in store.list_tickets_for_parent(key)
-            if is_open_task(t) and not is_mechanical_okr_task(t, key_results)
+            if not is_mechanical_okr_task(t, key_results)
         ]
-        planned = run_okr_plan(ticket, key_results=key_results, existing_tasks=remaining)
+        planned = run_okr_plan(ticket, key_results=key_results, existing_tasks=linked)
         key_results = apply_current_updates(key_results, planned.current_updates)
         created: List[Dict[str, str]] = []
-        existing_titles = {(t.get("title") or "").strip().lower() for t in remaining}
+        existing_titles = linked_work_titles(linked, key_results)
         service = TicketService()
         for spec in planned.tasks:
             title = (spec.get("title") or "").strip()
-            if not title or title.lower() in existing_titles:
+            if not title or is_duplicate_work(title, existing_titles):
                 continue
             labels = ["okr"]
             if spec.get("ai_doable"):
@@ -282,135 +446,6 @@ def handle_objective_status_change(
             "used_llm": planned.used_llm,
         }
 
-    # in_progress
-    from bigas.okr.context import gather_okr_evidence
-    from bigas.okr.loop import llm_supports_tools, run_goal_loop, snapshot_from_okr
-    from bigas.tickets.service import TicketService
-
-    key_results = normalize_key_results(ticket.get("key_results"))
-    children = store.list_tickets_for_parent(key)
-    evidence: Dict[str, str] = {}
-    heuristic_updates: List[Dict[str, Any]] = []
-    try:
-        evidence = gather_okr_evidence(ticket)
-        heuristic_updates = heuristic_ga4_currents(key_results, evidence.get("ga4") or "")
-    except Exception:
-        logger.warning("OKR pulse could not refresh KR currents for %s", key, exc_info=True)
-    created: List[Dict[str, str]] = []
-    extra_briefing = ""
-    try:
-        from bigas.llm.factory import get_llm_client
-
-        client, model_name = get_llm_client(feature="okr_plan")
-        if llm_supports_tools(client):
-            remaining = [
-                t
-                for t in children
-                if is_open_task(t) and not is_mechanical_okr_task(t, key_results)
-            ]
-            snapshot_krs = apply_current_updates(
-                [dict(kr) for kr in key_results],
-                heuristic_updates,
-            )
-            looped = run_goal_loop(
-                client,
-                snapshot=snapshot_from_okr(
-                    ticket,
-                    phase="in_progress",
-                    evidence=evidence,
-                    open_work=remaining,
-                    key_results=snapshot_krs,
-                ),
-                model=model_name,
-            )
-            key_results = apply_current_updates(
-                key_results,
-                heuristic_updates + list(looped.current_updates),
-            )
-            existing_titles = {
-                (t.get("title") or "").strip().lower()
-                for t in children
-                if (t.get("title") or "").strip()
-                and not is_mechanical_okr_task(t, key_results)
-            }
-            service = TicketService()
-            for spec in _normalize_plan_tasks(
-                looped.tasks,
-                key_results=key_results,
-                existing_titles=existing_titles,
-            ):
-                title = (spec.get("title") or "").strip()
-                labels = ["okr"]
-                if spec.get("ai_doable"):
-                    labels.append("ai-doable")
-                child = service.create_ticket(
-                    ticket.get("board_id"),
-                    user_id=None,
-                    title=title,
-                    description=spec.get("description") or "",
-                    status="To Do",
-                    issue_type="Task",
-                    labels=labels,
-                    parent_key=key,
-                    parent_kr_id=spec.get("kr_id"),
-                )
-                created.append({"key": child.get("key") or "", "kr_id": spec.get("kr_id") or ""})
-            extra_briefing = looped.briefing or ""
-        else:
-            key_results = apply_current_updates(key_results, heuristic_updates)
-    except Exception:
-        logger.warning("OKR in-progress goal loop failed for %s", key, exc_info=True)
-        extra_briefing = ""
-        key_results = apply_current_updates(key_results, heuristic_updates)
-    expected = expected_progress(
-        created_at=ticket.get("created_at"),
-        cycle_end=cycle_end_for(ticket.get("okr_cycle") or "", created_at=ticket.get("created_at")),
-    )
-    annotated = [
-        annotate_key_result(
-            kr,
-            expected=expected,
-            child_tickets=[c for c in children if (c.get("parent_kr_id") or "") == kr.get("id")],
-        )
-        for kr in key_results
-    ]
-    risks = [kr for kr in annotated if kr.get("health") in {"at_risk", "off_track", "unmeasured"}]
-    activity = [kr for kr in annotated if kr.get("activity_without_outcome")]
-    briefing_bits = [
-        f"Weekly pulse for {key}.",
-        f"{len(annotated) - len(risks)}/{len(annotated) or 1} KRs on track vs expected {round(expected * 100)}% of cycle.",
-        "No In Progress cards were started — a human moves work from To Do.",
-    ]
-    if created:
-        briefing_bits.append(
-            "Opened To Do: " + ", ".join(item["key"] for item in created if item["key"]) + "."
-        )
-    if extra_briefing:
-        briefing_bits.append(extra_briefing)
-    if risks:
-        briefing_bits.append(
-            "Watch: " + "; ".join(f"{kr['title']} ({kr['health']})" for kr in risks[:3])
-        )
-    if activity:
-        briefing_bits.append(
-            "Activity without outcome on: "
-            + ", ".join(kr["title"] for kr in activity[:2])
-            + ". Stop opening tasks; change the work."
-        )
-    briefing = " ".join(briefing_bits)
-    store.update_ticket(
-        ticket_id,
-        key_results=key_results,
-        okr_phase="in_progress",
-        okr_briefing=briefing,
-    )
-    _comment(store, ticket_id, f"**OKR weekly pulse**\n\n{briefing}")
-    return {
-        "ok": True,
-        "handler": "okr_in_progress",
-        "issue_key": key,
-        "phase": phase,
-        "started": [],
-        "tasks_created": created,
-        "progress": objective_progress(key_results),
-    }
+    result = run_okr_in_progress(ticket)
+    result["phase"] = phase
+    return result

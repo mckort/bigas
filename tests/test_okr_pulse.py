@@ -17,7 +17,7 @@ os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 from app import create_app
 from bigas.agents.chief_of_staff import _agent_system_prompt
 from bigas.okr.priming import format_okr_priming_block, okr_priming_block_for_agent
-from bigas.okr.pulse import format_okr_pulse
+from bigas.okr.pulse import _format_work_opened, format_okr_pulse
 from bigas.okr.scoreboard import (
     build_okr_scoreboard,
     clear_okr_scoreboard_cache,
@@ -186,6 +186,58 @@ def test_priming_is_injected_for_chief_not_cto():
     assert not okr_priming_block_for_agent("devops", user_id=USER)
 
 
+def test_format_work_opened_lists_new_todos():
+    text = _format_work_opened(
+        [
+            {
+                "ok": True,
+                "issue_key": "GPWW-17",
+                "tasks_created": [{"key": "GPWW-40", "kr_id": "kr-sess"}],
+            },
+            {"ok": True, "issue_key": "BIG-44", "tasks_created": []},
+        ]
+    )
+    assert "GPWW-40" in text
+    assert "BIG-44: no new work" in text
+    assert "cannot flatter" not in text
+
+
+def test_weekly_okr_pulse_appends_opened_work(client, monkeypatch):
+    _seed_objective()
+    monkeypatch.setattr("bigas.okr.pulse.comment_on_okr_pulse", lambda numbers: None)
+    monkeypatch.setattr(
+        "bigas.okr.engine.pulse_in_progress_objectives",
+        lambda user_id: [
+            {
+                "ok": True,
+                "issue_key": "GPWW-17",
+                "tasks_created": [{"key": "GPWW-40", "kr_id": "kr-sess"}],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "bigas.okr.pulse.publish_weekly_okr_pulse",
+        lambda message, **kwargs: {"posted_to_discord": False, "posted_to_chat": True},
+    )
+    resp = client.post(
+        "/mcp/tools/weekly_okr_pulse",
+        data=json.dumps(
+            {
+                "include_comment": False,
+                "post_to_discord": False,
+                "user_id": USER,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert "GPWW-40" in body["message"]
+    assert "cannot flatter" in body["numbers"]
+    assert "GPWW-40" not in body["numbers"]
+    assert body["work_results"][0]["issue_key"] == "GPWW-17"
+
+
 def test_weekly_okr_pulse_endpoint_posts_numbers(client, monkeypatch):
     _seed_objective()
     monkeypatch.setattr(
@@ -206,6 +258,7 @@ def test_weekly_okr_pulse_endpoint_posts_numbers(client, monkeypatch):
             {
                 "include_comment": False,
                 "post_to_discord": False,
+                "propose_work": False,
                 "user_id": USER,
             }
         ),

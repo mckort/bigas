@@ -212,6 +212,37 @@ def objective_progress(key_results: Sequence[Dict[str, Any]]) -> Optional[float]
     return sum(measured) / len(measured)
 
 
+OBJECTIVE_TERMINAL_STATUSES = frozenset({"Final approval (manual)", "Done"})
+
+
+def objective_achieved(key_results: Sequence[Dict[str, Any]]) -> bool:
+    """True only when every KR can be scored and has reached its target."""
+    krs = normalize_key_results(key_results)
+    if not krs:
+        return False
+    scores = [kr_progress(kr) for kr in krs]
+    if any(score is None for score in scores):
+        return False
+    return all(score >= 0.999 for score in scores)
+
+
+def objective_terminal_block_reason(
+    ticket: Optional[Dict[str, Any]],
+    new_status: str,
+) -> Optional[str]:
+    """Why an Objective may not enter Final approval or Done, or None if allowed."""
+    if not is_objective(ticket):
+        return None
+    status = (new_status or "").strip()
+    if status not in OBJECTIVE_TERMINAL_STATUSES:
+        return None
+    if objective_achieved((ticket or {}).get("key_results")):
+        return None
+    return (
+        "This Objective stays in In Progress until every Key Result has reached its target."
+    )
+
+
 def cycle_end_for(cycle: str, *, created_at: Any = None) -> Optional[str]:
     text = (cycle or "").strip().upper()
     match = re.match(r"^(\d{4})-Q([1-4])$", text)

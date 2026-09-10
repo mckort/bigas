@@ -28,7 +28,10 @@ import {
   keyResultsOf,
   normalizeLabel,
   objectiveChipLabel,
+  columnsForTicket,
   krProgress,
+  OBJECTIVE_TERMINAL_STATUSES,
+  objectiveAchieved,
   objectiveOptionsFromTickets,
   percentLabel,
   ticketLabels,
@@ -348,7 +351,7 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
         </div>
         <StatusSelect
           value={ticket.status}
-          columns={columns}
+          columns={columnsForTicket(ticket, columns)}
           onChange={(st) => onStatusChange(ticket, st)}
           className="lg:hidden flex-shrink-0 max-w-[140px]"
         />
@@ -869,6 +872,10 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
   })
   const isNew = !ticket?.ticket_id
   const isObjectiveType = form.issue_type === 'Objective'
+  const statusColumns = columnsForTicket(
+    { ...ticket, issue_type: form.issue_type, key_results: form.key_results, status: form.status },
+    columns,
+  )
   const isParentType = form.issue_type === 'Objective' || form.issue_type === 'Epic'
   const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
   const parentGoal = selectableEpics.find((item) => item.key === form.parent_key)
@@ -1093,7 +1100,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               onChange={(e) => setForm({ ...form, status: e.target.value })}
               className="mt-1 input-field"
             >
-              {columns.map((col) => (
+              {statusColumns.map((col) => (
                 <option key={col} value={col}>
                   {col}
                 </option>
@@ -1539,6 +1546,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   const [ticketSearch, setTicketSearch] = useState('')
   const [searchBusy, setSearchBusy] = useState(false)
   const [searchError, setSearchError] = useState('')
+  const [boardError, setBoardError] = useState('')
   const [showOlderDone, setShowOlderDone] = useState(false)
   const [releases, setReleases] = useState([])
   const [showReleases, setShowReleases] = useState(false)
@@ -1722,8 +1730,14 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }, [pendingTicketKey, tickets, activeBoardId])
 
   const handleStatusChange = async (ticket, status) => {
-    await updateTicket(ticket.ticket_id, { status })
-    await loadTickets()
+    setBoardError('')
+    try {
+      await updateTicket(ticket.ticket_id, { status })
+      await loadTickets()
+    } catch (err) {
+      setBoardError(err.message || 'Could not move ticket')
+      await loadTickets()
+    }
   }
 
   const handleSearchKeyDown = async (event) => {
@@ -1758,6 +1772,15 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
 
   const handleDrop = async (status) => {
     if (!dragTicket || dragTicket.status === status) {
+      setDragTicket(null)
+      return
+    }
+    if (
+      isObjective(dragTicket) &&
+      !objectiveAchieved(dragTicket) &&
+      OBJECTIVE_TERMINAL_STATUSES.includes(status)
+    ) {
+      setBoardError('This Objective stays in In Progress until every Key Result has reached its target.')
       setDragTicket(null)
       return
     }
@@ -2053,6 +2076,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
           </label>
           {searchBusy && <p className="text-sm text-muted">Searching…</p>}
           {searchError && <p className="text-sm text-red-600">{searchError}</p>}
+          {boardError && <p className="text-sm text-red-600">{boardError}</p>}
           {!searchBusy && ticketSearch.trim() && visibleTickets.length === 0 && !searchError && (
             <p className="text-sm text-muted">No tickets match that search.</p>
           )}

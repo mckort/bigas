@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from bigas.chat.activity import post_to_agent_thread, resolve_chat_target_user_id
 from bigas.okr.scoreboard import (
@@ -116,11 +116,37 @@ def comment_on_okr_pulse(numbers: str) -> Optional[str]:
         return None
 
 
+def _format_work_opened(results: List[Dict[str, Any]]) -> str:
+    if not results:
+        return ""
+    lines = ["**Weekly KR check** (In Progress Objectives — To Do only, never auto-start)"]
+    opened = 0
+    for item in results:
+        key = item.get("issue_key") or "?"
+        if not item.get("ok"):
+            lines.append(f"- {key}: loop failed.")
+            continue
+        created = [
+            (task.get("key") or "").strip()
+            for task in (item.get("tasks_created") or [])
+            if isinstance(task, dict) and (task.get("key") or "").strip()
+        ]
+        opened += len(created)
+        if created:
+            lines.append(f"- {key}: opened {', '.join(created)}.")
+        else:
+            lines.append(f"- {key}: no new work (already linked, Done, or live in evidence).")
+    if opened:
+        lines.append(f"Opened {opened} To Do card(s). Humans still drag work into In Progress.")
+    return "\n".join(lines)
+
+
 def build_weekly_okr_pulse(
     *,
     user_id: Optional[str] = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     include_comment: bool = True,
+    propose_work: bool = True,
 ) -> Dict[str, Any]:
     uid = (user_id or "").strip() or (resolve_chat_target_user_id() or "")
     snapshot = load_okr_scoreboard(
@@ -130,14 +156,32 @@ def build_weekly_okr_pulse(
     )
     numbers = format_okr_pulse(snapshot)
     comment = comment_on_okr_pulse(numbers) if include_comment else None
+    work_results: List[Dict[str, Any]] = []
+    work_opened = ""
+    if propose_work and uid:
+        from bigas.okr.engine import pulse_in_progress_objectives
+
+        work_results = pulse_in_progress_objectives(user_id=uid)
+        work_opened = _format_work_opened(work_results)
     message = numbers
+    if work_opened:
+        message = f"{message}\n\n{work_opened}"
     if comment:
-        message = f"{numbers}\n\n**Comment (not a substitute for the counts)**\n{comment}"
+        message = f"{message}\n\n**Comment (not a substitute for the counts)**\n{comment}"
     return {
         "ok": True,
         "user_id": uid,
         "numbers": numbers,
         "comment": comment,
+        "work_opened": work_opened,
+        "work_results": [
+            {
+                "issue_key": item.get("issue_key"),
+                "ok": item.get("ok"),
+                "tasks_created": item.get("tasks_created") or [],
+            }
+            for item in work_results
+        ],
         "message": message,
         "snapshot": {
             "objective_count": snapshot.get("objective_count"),
