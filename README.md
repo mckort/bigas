@@ -53,6 +53,8 @@ Three surfaces, one story:
 | **Board** | `/board` | The default work surface: tickets, columns, releases, and a human-gated AI workflow (research → plan → implement). Jira is optional — connect it only if you already run a Jira board you want to keep. |
 | **Chat** | `/` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |
 
+See the [Objectives](#walkthrough-from-quarterly-objective-to-shipped-work), [board](#walkthrough-from-jira-card-to-merged-pr), and [chat](#walkthrough-from-chat-to-production-deploy) walkthroughs for screenshots of each surface.
+
 It currently ships six specialists:
 
 | Specialist | What it does |
@@ -448,6 +450,8 @@ Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_M
 
 This is the flow that makes Bigas a **goal-oriented engine**: you name what winning the quarter looks like, Key Results hold the numbers, and humans and AI agents work the same board until those numbers move.
 
+![Objectives scoreboard with Key Results, expected pace, and this-week / watch lists](assets/images/objectives.png)
+
 **Objective** is its own issue type. **Epic stays Epic** — a delivery container, not a stand-in for the quarter's aim. Jira import keeps that split: Epic → Epic, Objective → Objective.
 
 1. Open `/objectives` (or the project board) and write the Objective in plain language.
@@ -463,6 +467,8 @@ Humans decide. Agents execute the work you put in front of them. The Objective i
 ## Walkthrough: from Jira card to merged PR
 
 This is the flow that makes the **Product Manager** and **CTO** specialists work together: dragging a card triggers AI research, then AI design, then an AI-implemented pull request — with a human approval gate between every AI step. The default board is Bigas's own Kanban at `/board`. Jira is optional: same columns and the same drag if you already have a Jira project (`JIRA_*`, `USE_INTERNAL_BOARD=false`).
+
+![Kanban board with To Do, AI research/plan columns, and KR-linked cards](assets/images/board.png)
 
 Say you write a card with just a **Brief** — a couple of sentences on what you want and why — and drag it into the first AI column.
 
@@ -578,6 +584,8 @@ Setup, request bodies, and model/token knobs: **[docs/cto-pr-review.md](docs/cto
 ## Walkthrough: from chat to production deploy
 
 This is the flow that makes the **DevOps** specialist work: you ask in chat, Bigas never SSH:es into a server, and GitHub Actions runs the **same deploy scripts** you already use locally.
+
+![DevOps chat: deploy risk check, confirm, and activity sidebar](assets/images/chat-devops.png)
 
 Think of three layers:
 
