@@ -195,15 +195,39 @@ def _authorize_page(params: dict[str, Any]) -> str:
     let authConfigPromise = fetch("/api/auth/config").then((r) => r.json());
     let firebaseReadyPromise = null;
 
-    function token() {{ return localStorage.getItem("bigas_chat_token") || ""; }}
+    function storedToken() {{ return localStorage.getItem("bigas_chat_token") || ""; }}
     function showError(msg) {{ errorEl.textContent = msg || "Could not connect."; }}
+    function showLogin() {{
+      signedIn.hidden = true;
+      loginForm.hidden = false;
+    }}
+    function showSignedIn() {{
+      signedIn.hidden = false;
+      loginForm.hidden = true;
+    }}
+    function showSessionCheckPending() {{
+      signedIn.hidden = true;
+      loginForm.hidden = true;
+    }}
+    function clearRejectedSession() {{
+      localStorage.removeItem("bigas_chat_token");
+      if (window.firebase && firebase.auth) {{
+        firebase.auth().signOut().catch(() => {{}});
+      }}
+      showLogin();
+    }}
 
     function ensureFirebaseReady(cfg) {{
       if ((cfg.auth_mode || "dev") !== "firebase" || !cfg.firebase || !cfg.firebase.apiKey) {{
         return Promise.resolve(false);
       }}
       if (window.firebase && firebase.auth) {{
-        return Promise.resolve(true);
+        try {{
+          if (!firebase.apps.length) firebase.initializeApp(cfg.firebase);
+          return Promise.resolve(true);
+        }} catch (err) {{
+          return Promise.reject(err);
+        }}
       }}
       if (!firebaseReadyPromise) {{
         firebaseReadyPromise = new Promise((resolve, reject) => {{
@@ -212,13 +236,55 @@ def _authorize_page(params: dict[str, Any]) -> str:
           const s2 = document.createElement("script");
           s2.src = "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js";
           s1.onload = () => document.body.appendChild(s2);
-          s2.onload = () => resolve(true);
-          s1.onerror = () => reject(new Error("Could not load Firebase SDK."));
-          s2.onerror = () => reject(new Error("Could not load Firebase Auth SDK."));
+          s2.onload = () => {{
+            try {{
+              if (!firebase.apps.length) firebase.initializeApp(cfg.firebase);
+              resolve(true);
+            }} catch (err) {{
+              firebaseReadyPromise = null;
+              reject(err);
+            }}
+          }};
+          s1.onerror = () => {{
+            firebaseReadyPromise = null;
+            reject(new Error("Could not load Firebase SDK."));
+          }};
+          s2.onerror = () => {{
+            firebaseReadyPromise = null;
+            reject(new Error("Could not load Firebase Auth SDK."));
+          }};
           document.body.appendChild(s1);
         }});
       }}
       return firebaseReadyPromise;
+    }}
+
+    function waitForFirebaseUser() {{
+      return new Promise((resolve) => {{
+        let unsub;
+        const timeout = setTimeout(() => {{
+          if (typeof unsub === "function") unsub();
+          resolve(null);
+        }}, 5000);
+        unsub = firebase.auth().onAuthStateChanged((user) => {{
+          clearTimeout(timeout);
+          if (typeof unsub === "function") unsub();
+          resolve(user || null);
+        }});
+      }});
+    }}
+
+    async function freshToken(forceRefresh = false) {{
+      const cfg = await authConfigPromise;
+      if ((cfg.auth_mode || "dev") === "firebase" && cfg.firebase && cfg.firebase.apiKey) {{
+        await ensureFirebaseReady(cfg);
+        const user = firebase.auth().currentUser || await waitForFirebaseUser();
+        if (!user) return "";
+        const idToken = await user.getIdToken(forceRefresh);
+        localStorage.setItem("bigas_chat_token", idToken);
+        return idToken;
+      }}
+      return storedToken();
     }}
 
     async function complete(extra = {{}}, bearer = "") {{
@@ -231,16 +297,54 @@ def _authorize_page(params: dict[str, Any]) -> str:
       }});
       const data = await res.json().catch(() => ({{}}));
       if (!res.ok || !data.redirect_to) {{
+        if (res.status === 401 || res.status === 403) {{
+          clearRejectedSession();
+        }}
         throw new Error(data.error_description || data.error || "Authorization failed");
       }}
       window.location.assign(data.redirect_to);
     }}
 
-    if (token()) {{
-      signedIn.hidden = false;
-      loginForm.hidden = true;
+    async function restoreSession() {{
+      try {{
+        const bearer = await freshToken();
+        if (!bearer) {{
+          showLogin();
+          return;
+        }}
+        const res = await fetch("/api/auth/verify", {{
+          method: "POST",
+          headers: {{ Authorization: "Bearer " + bearer }},
+        }});
+        if (!res.ok) {{
+          if (res.status === 401 || res.status === 403) {{
+            clearRejectedSession();
+          }} else {{
+            localStorage.removeItem("bigas_chat_token");
+            showLogin();
+          }}
+          return;
+        }}
+        showSignedIn();
+      }} catch (err) {{
+        showLogin();
+        if (err && err.message) showError(err.message);
+      }}
     }}
-    document.getElementById("continue-btn").onclick = () => complete({{}}, token()).catch((err) => showError(err.message));
+
+    showSessionCheckPending();
+    restoreSession();
+    document.getElementById("continue-btn").onclick = () => {{
+      freshToken()
+        .then((bearer) => {{
+          if (!bearer) {{
+            showLogin();
+            throw new Error("Sign in with Google or email to continue.");
+          }}
+          return complete({{}}, bearer);
+        }})
+        .catch((err) => showError(err.message));
+    }};
     document.getElementById("key-btn").onclick = () => {{
       const access_key = document.getElementById("access-key").value.trim();
       complete({{ access_key }}).catch((err) => showError(err.message));
@@ -257,13 +361,10 @@ def _authorize_page(params: dict[str, Any]) -> str:
           return;
         }}
         if (cfg.firebase && cfg.firebase.apiKey) {{
-          await ensureFirebaseReady(cfg);
-          if (!window.firebase) {{
-            throw new Error("Sign-in is still loading. Please try again.");
-          }}
-          if (!firebase.apps.length) firebase.initializeApp(cfg.firebase);
+          const latest = await authConfigPromise;
+          await ensureFirebaseReady(latest);
           const cred = await firebase.auth().signInWithEmailAndPassword(email, password);
-          const idToken = await cred.user.getIdToken();
+          const idToken = await cred.user.getIdToken(true);
           localStorage.setItem("bigas_chat_token", idToken);
           await complete({{}}, idToken);
           return;
@@ -281,9 +382,8 @@ def _authorize_page(params: dict[str, Any]) -> str:
             try {{
               const latest = await authConfigPromise;
               await ensureFirebaseReady(latest);
-              if (!firebase.apps.length) firebase.initializeApp(latest.firebase);
               const cred = await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
-              const idToken = await cred.user.getIdToken();
+              const idToken = await cred.user.getIdToken(true);
               localStorage.setItem("bigas_chat_token", idToken);
               await complete({{}}, idToken);
             }} catch (err) {{
