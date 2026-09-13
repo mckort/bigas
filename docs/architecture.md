@@ -166,9 +166,10 @@ The `/mcp` endpoint in `app.py` implements Streamable HTTP MCP for Cursor, Claud
 
 - **POST /mcp** accepts JSON-RPC 2.0 requests: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. The handler builds the combined tool manifest and, for `tools/call`, dispatches to the corresponding `/mcp/tools/*` route via the Flask test client. Tool responses are returned as MCP result content.
 - **GET /mcp** returns `405 Method Not Allowed`. Optional GET SSE is omitted on purpose: a long-lived stream pinned gunicorn's single worker, and Cursor Cloud Agents do not support SSE.
-- **GET /.well-known/mcp.json** is public. OAuth discovery URLs under `/.well-known/oauth-*` return 404 (Bigas uses a static access key, not OAuth).
+- **GET /.well-known/mcp.json** is public.
+- **GET /.well-known/oauth-protected-resource** and **GET /.well-known/oauth-authorization-server** advertise a same-host OAuth 2.1 authorization server (DCR + PKCE). Claude.ai custom connectors use this path. Cursor and cron keep sending the static access key.
 
-Access control (`BIGAS_ACCESS_MODE`, `BIGAS_ACCESS_KEYS`) applies to POST `/mcp`. Clients send `X-Bigas-Access-Key` or `Authorization: Bearer <key>`. A 401 includes `WWW-Authenticate: Bearer`.
+Access control (`BIGAS_ACCESS_MODE`, `BIGAS_ACCESS_KEYS`) applies to POST `/mcp`. Clients send `X-Bigas-Access-Key`, `Authorization: Bearer <access-key>`, or a Bearer token issued by `/oauth/token`. A 401 includes `WWW-Authenticate: Bearer` with a `resource_metadata` pointer.
 
 ### Caching (ads reports)
 

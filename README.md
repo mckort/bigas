@@ -651,10 +651,17 @@ MCP clients (Claude, Cursor, Grok Bot, etc.) connect with Streamable HTTP (JSON-
 - **POST /mcp** — JSON-RPC: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - **GET /mcp** — Returns `405 Method Not Allowed`. Long-lived SSE is not used; it blocked the Cloud Run worker and is not supported by Cursor Cloud / Grok Bot.
 - **GET /.well-known/mcp.json** — Server card (public). Restricted mode still requires a key on `POST /mcp`.
+- **GET /.well-known/oauth-protected-resource** and **GET /.well-known/oauth-authorization-server** — OAuth discovery for Claude.ai / Claude Desktop custom connectors (RFC 9728 / RFC 8414).
+- **POST /oauth/register**, **GET /oauth/authorize**, **POST /oauth/token** — Dynamic client registration, Bigas sign-in (same allowlist as chat, or an access key), and PKCE token exchange.
 
-Tools are the same as in the HTTP API. When using restricted access (`BIGAS_ACCESS_MODE=restricted`), send your access key as `X-Bigas-Access-Key` or `Authorization: Bearer <key>` on `POST /mcp`.
+Tools are the same as in the HTTP API. When using restricted access (`BIGAS_ACCESS_MODE=restricted`), clients may authenticate in either of these ways:
+
+- **Access key** (Cursor, Grok Bot, cron): `X-Bigas-Access-Key` or `Authorization: Bearer <key>` on `POST /mcp`.
+- **OAuth** (Claude custom connectors): leave the connector Client ID empty. Claude registers itself, you sign in on `/oauth/authorize`, and Claude sends the issued Bearer token.
 
 Cursor IDE: `~/.cursor/mcp.json` with `"type": "http"` and the access header. Grok Bot / Cloud Agents: add the same URL and header at [cursor.com/agents](https://cursor.com/agents) (they do not inherit the IDE file).
+
+Claude.ai / Claude Desktop: add a custom connector pointing at `https://your-service-url/mcp`. Do not paste an OAuth Client ID — Bigas supports Dynamic Client Registration. Sign in with the same Google/email account you use on the Bigas site (or the access key).
 
 ---
 

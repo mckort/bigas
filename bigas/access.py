@@ -7,14 +7,44 @@ from typing import Callable, Optional
 
 from flask import current_app, jsonify, request
 
+from bigas.mcp_urls import oauth_protected_resource_url
 from bigas.resources.product.jira_automation.service import verify_webhook_secret
 
 
-def _unauthorized(payload):
+def www_authenticate_value() -> str:
+    return f'Bearer realm="bigas-mcp", resource_metadata="{oauth_protected_resource_url()}"'
+
+
+def unauthorized_response(payload):
+    """401 with resource_metadata so Claude can discover OAuth; Cursor still sends a key."""
     response = jsonify(payload)
     response.status_code = 401
-    response.headers["WWW-Authenticate"] = 'Bearer realm="bigas-mcp"'
+    response.headers["WWW-Authenticate"] = www_authenticate_value()
     return response
+
+
+def _unauthorized(payload):
+    return unauthorized_response(payload)
+
+
+def provided_mcp_credential() -> Optional[str]:
+    header_name = current_app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+    return (
+        request.headers.get(header_name)
+        or request.args.get("access_key")
+        or (request.headers.get("Authorization", "").replace("Bearer ", "", 1).strip() or None)
+    )
+
+
+def is_valid_mcp_credential(provided_key: Optional[str]) -> bool:
+    if not provided_key:
+        return False
+    expected_keys = current_app.config.get("BIGAS_ACCESS_KEYS") or set()
+    if provided_key in expected_keys:
+        return True
+    from bigas.oauth.service import verify_access_token
+
+    return verify_access_token(provided_key) is not None
 
 
 def verify_bigas_access_key():
@@ -23,15 +53,8 @@ def verify_bigas_access_key():
     if mode != "restricted":
         return None
 
-    header_name = current_app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
-    expected_keys = current_app.config.get("BIGAS_ACCESS_KEYS") or set()
-
-    provided_key = (
-        request.headers.get(header_name)
-        or request.args.get("access_key")
-        or (request.headers.get("Authorization", "").replace("Bearer ", "", 1).strip() or None)
-    )
-    if not provided_key or provided_key not in expected_keys:
+    provided_key = provided_mcp_credential()
+    if not is_valid_mcp_credential(provided_key):
         return _unauthorized({"detail": "Invalid or missing access key"})
     return None
 

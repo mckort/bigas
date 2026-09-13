@@ -4,14 +4,13 @@ import logging
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 
+from bigas.access import is_valid_mcp_credential, provided_mcp_credential, unauthorized_response
+from bigas.mcp_urls import mcp_public_base_url
 from bigas.registry import registry
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-DEFAULT_MCP_SERVER_URL = "https://mcp-marketing-343105851187.europe-north1.run.app"
-
 
 def _jsonrpc_result(request_id, result):
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
@@ -25,25 +24,11 @@ def _jsonrpc_error(request_id, code: int, message: str, data=None):
 
 
 def _unauthorized(payload):
-    """401 with WWW-Authenticate so MCP clients treat this as Bearer auth, not OAuth discovery."""
-    response = jsonify(payload)
-    response.status_code = 401
-    response.headers["WWW-Authenticate"] = 'Bearer realm="bigas-mcp"'
-    return response
-
-
-def _mcp_base_url():
-    base = (os.environ.get("SERVER_URL") or "").strip().rstrip("/")
-    if base:
-        return base
-    try:
-        return (request.host_url or "").rstrip("/")
-    except RuntimeError:
-        return DEFAULT_MCP_SERVER_URL
+    return unauthorized_response(payload)
 
 
 def _mcp_server_card(app: Flask):
-    base = _mcp_base_url()
+    base = mcp_public_base_url()
     header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
     restricted = app.config.get("BIGAS_ACCESS_MODE") == "restricted"
     return {
@@ -236,6 +221,7 @@ def create_app():
             or path.startswith("/api/auth/")
             or path.startswith("/assets/")
             or path.startswith("/.well-known/")
+            or path.startswith("/oauth")
             or path.lstrip("/") in BRAND_ICON_FILES
         )
 
@@ -271,14 +257,7 @@ def create_app():
             return
 
         header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
-        expected_keys = app.config.get("BIGAS_ACCESS_KEYS") or set()
-
-        provided_key = (
-            request.headers.get(header_name)
-            or request.args.get("access_key")
-            or (request.headers.get("Authorization", "").replace("Bearer ", "", 1).strip() or None)
-        )
-        if not provided_key or provided_key not in expected_keys:
+        if not is_valid_mcp_credential(provided_mcp_credential()):
             logger.warning(
                 "Rejected request to %s due to invalid or missing access key (header: %s).",
                 request.path,
@@ -352,6 +331,9 @@ def create_app():
         return jsonify(manifest)
 
     register_mcp_jsonrpc_routes(app, lambda: combined_manifest().get_json() or {})
+    from bigas.oauth.endpoints import register_mcp_oauth_routes
+
+    register_mcp_oauth_routes(app)
     return app
 
 
@@ -371,14 +353,8 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
 
         mode = app.config.get("BIGAS_ACCESS_MODE", "open")
         header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
-        expected_keys = app.config.get("BIGAS_ACCESS_KEYS") or set()
-
-        provided_key = (
-            request.headers.get(header_name)
-            or request.args.get("access_key")
-            or (request.headers.get("Authorization", "").replace("Bearer ", "", 1).strip() or None)
-        )
-        if mode == "restricted" and (not provided_key or provided_key not in expected_keys):
+        provided_key = provided_mcp_credential()
+        if mode == "restricted" and not is_valid_mcp_credential(provided_key):
             return _unauthorized({"error": "Invalid or missing access key for /mcp"})
 
         payload = request.get_json(silent=True)
@@ -477,12 +453,6 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
     def well_known_mcp():
         """Expose the MCP server card at the standard well-known location."""
         return jsonify(_mcp_server_card(app))
-
-    @app.route("/.well-known/oauth-authorization-server", methods=["GET"])
-    @app.route("/.well-known/oauth-protected-resource", methods=["GET"])
-    def oauth_not_configured():
-        """Bigas uses a static access key, not OAuth. Return 404 instead of 401."""
-        return jsonify({"error": "oauth_not_supported"}), 404
 
 if __name__ == '__main__':
     app = create_app()

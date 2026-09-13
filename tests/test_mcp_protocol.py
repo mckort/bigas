@@ -4,10 +4,14 @@ from __future__ import annotations
 from flask import Flask
 
 from app import register_mcp_jsonrpc_routes
+from bigas.oauth.endpoints import register_mcp_oauth_routes
+from bigas.oauth.store import reset_oauth_store_for_tests
 
 
 def _client(monkeypatch):
     monkeypatch.setenv("SERVER_URL", "https://mcp.example.test")
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    reset_oauth_store_for_tests()
     app = Flask(__name__)
     app.config["BIGAS_ACCESS_MODE"] = "restricted"
     app.config["BIGAS_ACCESS_KEYS"] = {"test-key"}
@@ -25,6 +29,7 @@ def _client(monkeypatch):
         }
 
     register_mcp_jsonrpc_routes(app, manifest)
+    register_mcp_oauth_routes(app)
     return app.test_client()
 
 
@@ -50,7 +55,10 @@ def test_post_mcp_requires_key_and_sends_www_authenticate(monkeypatch):
         },
     )
     assert resp.status_code == 401
-    assert "Bearer" in (resp.headers.get("WWW-Authenticate") or "")
+    authenticate = resp.headers.get("WWW-Authenticate") or ""
+    assert "Bearer" in authenticate
+    assert "resource_metadata=" in authenticate
+    assert "oauth-protected-resource" in authenticate
 
 
 def test_initialize_and_tools_list_with_bearer(monkeypatch):
@@ -93,15 +101,19 @@ def test_well_known_mcp_card_is_public(monkeypatch):
     assert card["auth"]["header"] == "X-Bigas-Access-Key"
 
 
-def test_oauth_discovery_is_404_not_401(monkeypatch):
+def test_oauth_discovery_is_public(monkeypatch):
     client = _client(monkeypatch)
-    for path in (
-        "/.well-known/oauth-authorization-server",
-        "/.well-known/oauth-protected-resource",
-    ):
-        resp = client.get(path)
-        assert resp.status_code == 404, path
-        assert resp.get_json()["error"] == "oauth_not_supported"
+    protected = client.get("/.well-known/oauth-protected-resource")
+    assert protected.status_code == 200
+    assert protected.get_json()["resource"] == "https://mcp.example.test/mcp"
+    assert protected.get_json()["authorization_servers"] == ["https://mcp.example.test"]
+
+    server = client.get("/.well-known/oauth-authorization-server")
+    assert server.status_code == 200
+    body = server.get_json()
+    assert body["issuer"] == "https://mcp.example.test"
+    assert body["registration_endpoint"].endswith("/oauth/register")
+    assert "S256" in body["code_challenge_methods_supported"]
 
 
 def test_tools_call_uses_summary_as_text(monkeypatch):
