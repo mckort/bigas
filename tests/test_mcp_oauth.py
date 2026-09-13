@@ -101,8 +101,11 @@ def test_authorize_page_and_complete_with_dev_token(monkeypatch):
         },
     )
     assert page.status_code == 200
-    assert "Connect to Bigas" in page.get_data(as_text=True)
-    assert "claude.ai" in page.get_data(as_text=True)
+    html = page.get_data(as_text=True)
+    assert "Connect to Bigas" in html
+    assert "claude.ai" in html
+    assert "getIdToken(true)" in html
+    assert "/api/auth/verify" in html
 
     complete = client.post(
         "/oauth/authorize/complete",
@@ -122,6 +125,20 @@ def test_authorize_page_and_complete_with_dev_token(monkeypatch):
     assert redirect_to.startswith(CLAUDE_REDIRECT)
     assert "code=" in redirect_to
     assert "state=xyz" in redirect_to
+
+    expired = client.post(
+        "/oauth/authorize/complete",
+        headers={"Authorization": "Bearer stale-firebase-token"},
+        json={
+            "response_type": "code",
+            "client_id": registered["client_id"],
+            "redirect_uri": CLAUDE_REDIRECT,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        },
+    )
+    assert expired.status_code == 401
+    assert "expired" in (expired.get_json() or {}).get("error", "").lower()
 
 
 def test_token_exchange_and_mcp_initialize(monkeypatch):
