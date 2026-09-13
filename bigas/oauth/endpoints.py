@@ -20,6 +20,23 @@ def _json_for_script(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True).replace("<", "\\u003c")
 
 
+def apply_mcp_cors(response):
+    path = request.path or ""
+    if path == "/mcp" or path.startswith("/oauth") or path.startswith("/.well-known/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Authorization, Content-Type, MCP-Protocol-Version"
+        )
+        response.headers["Access-Control-Expose-Headers"] = "WWW-Authenticate, MCP-Protocol-Version"
+        response.headers["Access-Control-Max-Age"] = "86400"
+    return response
+
+
+def _preflight():
+    return apply_mcp_cors(Response(status=204))
+
+
 def _oauth_error(error: str, description: str = "", status: int = 400):
     payload = {"error": error}
     if description:
@@ -283,25 +300,35 @@ def _authorize_page(params: dict[str, Any]) -> str:
 
 
 def register_mcp_oauth_routes(app: Flask) -> None:
-    @app.route("/.well-known/oauth-protected-resource", methods=["GET"])
-    @app.route("/.well-known/oauth-protected-resource/mcp", methods=["GET"])
+    app.after_request(apply_mcp_cors)
+
+    @app.route("/.well-known/oauth-protected-resource", methods=["GET", "OPTIONS"])
+    @app.route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"])
     def oauth_protected_resource():
+        if request.method == "OPTIONS":
+            return _preflight()
         return jsonify(service.protected_resource_metadata())
 
-    @app.route("/.well-known/oauth-authorization-server", methods=["GET"])
-    @app.route("/.well-known/openid-configuration", methods=["GET"])
+    @app.route("/.well-known/oauth-authorization-server", methods=["GET", "OPTIONS"])
+    @app.route("/.well-known/openid-configuration", methods=["GET", "OPTIONS"])
     def oauth_authorization_server():
+        if request.method == "OPTIONS":
+            return _preflight()
         return jsonify(service.authorization_server_metadata())
 
-    @app.route("/oauth/register", methods=["POST"])
+    @app.route("/oauth/register", methods=["POST", "OPTIONS"])
     def oauth_register():
+        if request.method == "OPTIONS":
+            return _preflight()
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             return _oauth_error("invalid_client_metadata", "Expected a JSON object.")
         try:
             record = service.register_client(body)
         except ValueError as exc:
+            logger.warning("MCP OAuth DCR rejected: %s body_keys=%s", exc, sorted(body.keys()))
             return _oauth_error(str(exc) or "invalid_client_metadata", "Could not register the OAuth client.")
+        logger.info("MCP OAuth DCR registered client_id=%s", record.get("client_id"))
         return jsonify(record), 201
 
     @app.route("/oauth/authorize", methods=["GET"])
@@ -342,8 +369,10 @@ def register_mcp_oauth_routes(app: Flask) -> None:
         )
         return jsonify({"redirect_to": redirect_to})
 
-    @app.route("/oauth/token", methods=["POST"])
+    @app.route("/oauth/token", methods=["POST", "OPTIONS"])
     def oauth_token():
+        if request.method == "OPTIONS":
+            return _preflight()
         data = _form_or_json()
         grant_type = (data.get("grant_type") or "").strip()
         client_id = (data.get("client_id") or "").strip()

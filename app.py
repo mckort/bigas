@@ -339,8 +339,13 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
     open a long-lived SSE stream that would block gunicorn's worker.
     """
 
-    @app.route("/mcp", methods=["GET", "POST"])
+    @app.route("/mcp", methods=["GET", "POST", "OPTIONS"])
     def mcp_endpoint():
+        if request.method == "OPTIONS":
+            from bigas.oauth.endpoints import apply_mcp_cors
+
+            response = app.make_default_options_response()
+            return apply_mcp_cors(response)
         if request.method == "GET":
             response = jsonify({"error": "Method Not Allowed. Use POST /mcp for JSON-RPC."})
             response.status_code = 405

@@ -22,6 +22,12 @@ ALLOWED_HTTPS_REDIRECTS = {
     "https://claude.ai/api/mcp/auth_callback",
     "https://claude.com/api/mcp/auth_callback",
 }
+CLAUDE_REDIRECT_HOSTS = {
+    "claude.ai",
+    "www.claude.ai",
+    "claude.com",
+    "www.claude.com",
+}
 _DEV_TOKEN_SECRET = b"bigas-mcp-oauth-dev"
 
 
@@ -138,6 +144,10 @@ def is_allowed_redirect(uri: str) -> bool:
     if not uri:
         return False
     if uri.rstrip("/") in _allowed_https_redirects():
+        return True
+    parsed = urlparse(uri)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "https" and host in CLAUDE_REDIRECT_HOSTS and "auth_callback" in (parsed.path or ""):
         return True
     return is_loopback_redirect(uri)
 
