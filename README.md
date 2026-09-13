@@ -418,7 +418,9 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `CHAT_STORAGE_MODE` | `memory` (local) or `firestore` (production) |
 | `CHAT_ALLOWED_EMAILS` | Comma-separated emails allowed to use chat in Firebase mode. Set to `*` to allow any Firebase user while keeping `CHAT_ADMIN_EMAILS` for admin-only actions. Falls back to `CHAT_ADMIN_EMAILS` if unset. Empty both = any Firebase user. |
 | `CHAT_ADMIN_EMAILS` | Comma-separated emails allowed to update global agent configs (defaults to `dev@bigas.local` in dev auth mode) |
-| `FIREBASE_PROJECT_ID` | Firebase/GCP project for Auth + Firestore (often the same as `GOOGLE_PROJECT_ID`) |
+| `FIREBASE_PROJECT_ID` | Firebase/GCP project for Auth + Firestore (often the same as `GOOGLE_PROJECT_ID`; Cloud Run also sets `GOOGLE_CLOUD_PROJECT`) |
+| `MCP_OAUTH_TOKEN_SECRET` | HMAC secret for Claude MCP OAuth access tokens (defaults to first `BIGAS_ACCESS_KEYS` entry; required outside `CHAT_AUTH_MODE=dev` if keys are only in Flask config) |
+| `MCP_OAUTH_ALLOWED_HTTPS_REDIRECTS` | Comma-separated extra HTTPS redirect URIs for MCP dynamic client registration (in addition to Claude callbacks) |
 | `FIREBASE_WEB_API_KEY` | Firebase **web** API key (public client key; also exposed via `GET /api/auth/config`) |
 | `VITE_FIREBASE_API_KEY` | Same web API key — required at `./deploy.sh` Docker build time |
 | `VITE_FIREBASE_AUTH_DOMAIN` | e.g. `your-project.firebaseapp.com`. **Required** in production (`/api/auth/config` has no fallback without the `VITE_` prefix) |
@@ -658,6 +660,8 @@ Tools are the same as in the HTTP API. When using restricted access (`BIGAS_ACCE
 
 - **Access key** (Cursor, Grok Bot, cron): `X-Bigas-Access-Key` or `Authorization: Bearer <key>` on `POST /mcp`.
 - **OAuth** (Claude custom connectors): leave the connector Client ID empty. Claude registers itself, you sign in on `/oauth/authorize`, and Claude sends the issued Bearer token.
+
+OAuth clients, authorization codes, and refresh tokens use the same persistence rules as chat: `CHAT_STORAGE_MODE=firestore`, or Firestore when a GCP project id is set (`FIREBASE_PROJECT_ID`, `GOOGLE_PROJECT_ID`, or `GOOGLE_CLOUD_PROJECT` on Cloud Run). Set `MCP_OAUTH_TOKEN_SECRET` (or rely on `BIGAS_ACCESS_KEYS`) in production; optional `MCP_OAUTH_ALLOWED_HTTPS_REDIRECTS` extends HTTPS callback allowlists beyond Claude defaults.
 
 Cursor IDE: `~/.cursor/mcp.json` with `"type": "http"` and the access header. Grok Bot / Cloud Agents: add the same URL and header at [cursor.com/agents](https://cursor.com/agents) (they do not inherit the IDE file).
 
