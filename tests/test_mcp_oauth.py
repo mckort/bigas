@@ -52,6 +52,18 @@ def _register(client, redirect_uri=CLAUDE_REDIRECT):
     return resp.get_json()
 
 
+def test_dcr_rejects_claude_open_redirect_path(monkeypatch):
+    client = _app(monkeypatch).test_client()
+    resp = client.post(
+        "/oauth/register",
+        json={
+            "redirect_uris": ["https://claude.ai/projects/foo/auth_callback/exfil"],
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["error"] == "invalid_redirect_uri"
+
+
 def test_dcr_rejects_unknown_redirect(monkeypatch):
     client = _app(monkeypatch).test_client()
     resp = client.post(

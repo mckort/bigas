@@ -26,7 +26,7 @@ def apply_mcp_cors(response):
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = (
-            "Authorization, Content-Type, MCP-Protocol-Version"
+            "Authorization, Content-Type, MCP-Protocol-Version, X-Bigas-Access-Key"
         )
         response.headers["Access-Control-Expose-Headers"] = "WWW-Authenticate, MCP-Protocol-Version"
         response.headers["Access-Control-Max-Age"] = "86400"
@@ -34,7 +34,7 @@ def apply_mcp_cors(response):
 
 
 def _preflight():
-    return apply_mcp_cors(Response(status=204))
+    return Response(status=204)
 
 
 def _oauth_error(error: str, description: str = "", status: int = 400):

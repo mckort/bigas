@@ -116,6 +116,17 @@ def test_oauth_discovery_is_public(monkeypatch):
     assert "S256" in body["code_challenge_methods_supported"]
 
 
+def test_oauth_metadata_rejects_untrusted_host(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setenv("SERVER_URL", "https://bigas.me")
+    server = client.get(
+        "/.well-known/oauth-authorization-server",
+        headers={"Host": "evil.com"},
+    )
+    assert server.status_code == 200
+    assert server.get_json()["issuer"] == "https://bigas.me"
+
+
 def test_oauth_metadata_follows_request_host(monkeypatch):
     client = _client(monkeypatch)
     monkeypatch.setenv("SERVER_URL", "https://bigas.me")

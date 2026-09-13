@@ -167,7 +167,7 @@ The `/mcp` endpoint in `app.py` implements Streamable HTTP MCP for Cursor, Claud
 - **POST /mcp** accepts JSON-RPC 2.0 requests: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. The handler builds the combined tool manifest and, for `tools/call`, dispatches to the corresponding `/mcp/tools/*` route via the Flask test client. Tool responses are returned as MCP result content.
 - **GET /mcp** returns `405 Method Not Allowed`. Optional GET SSE is omitted on purpose: a long-lived stream pinned gunicorn's single worker, and Cursor Cloud Agents do not support SSE.
 - **GET /.well-known/mcp.json** is public.
-- **GET /.well-known/oauth-protected-resource** and **GET /.well-known/oauth-authorization-server** advertise a same-host OAuth 2.1 authorization server (DCR + PKCE). Issuer, resource, and `resource_metadata` follow the request host so Cloud Run and `bigas.me` both match the URL entered in Claude. Cursor and cron keep sending the static access key.
+- **GET /.well-known/oauth-protected-resource** and **GET /.well-known/oauth-authorization-server** advertise a same-host OAuth 2.1 authorization server (DCR + PKCE). Issuer, resource, and `resource_metadata` follow the request host only when `Host` matches `SERVER_URL`, `DEFAULT_MCP_SERVER_URL`, optional `MCP_PUBLIC_ALLOWED_HOSTS`, or a `*.run.app` Cloud Run hostname; otherwise discovery falls back to `SERVER_URL`. Cursor and cron keep sending the static access key.
 
 Access control (`BIGAS_ACCESS_MODE`, `BIGAS_ACCESS_KEYS`) applies to POST `/mcp`. Clients send `X-Bigas-Access-Key`, `Authorization: Bearer <access-key>`, or a Bearer token issued by `/oauth/token`. A 401 includes `WWW-Authenticate: Bearer` with a `resource_metadata` pointer.
 
