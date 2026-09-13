@@ -21,6 +21,8 @@ LOOPBACK_HOSTS = {"localhost", "127.0.0.1"}
 ALLOWED_HTTPS_REDIRECTS = {
     "https://claude.ai/api/mcp/auth_callback",
     "https://claude.com/api/mcp/auth_callback",
+    "https://www.claude.ai/api/mcp/auth_callback",
+    "https://www.claude.com/api/mcp/auth_callback",
 }
 _DEV_TOKEN_SECRET = b"bigas-mcp-oauth-dev"
 

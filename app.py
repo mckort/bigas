@@ -100,6 +100,16 @@ def create_app():
 
     app = Flask(__name__)
 
+    trust_proxy = os.environ.get("TRUST_PROXY_HEADERS", "true").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if trust_proxy:
+        from werkzeug.middleware.proxy_fix import ProxyFix
+
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
     # Check deployment mode
     deployment_mode = os.environ.get("DEPLOYMENT_MODE", "standalone")
 
@@ -339,8 +349,10 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
     open a long-lived SSE stream that would block gunicorn's worker.
     """
 
-    @app.route("/mcp", methods=["GET", "POST"])
+    @app.route("/mcp", methods=["GET", "POST", "OPTIONS"])
     def mcp_endpoint():
+        if request.method == "OPTIONS":
+            return app.make_default_options_response()
         if request.method == "GET":
             response = jsonify({"error": "Method Not Allowed. Use POST /mcp for JSON-RPC."})
             response.status_code = 405

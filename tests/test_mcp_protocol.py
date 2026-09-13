@@ -116,6 +116,52 @@ def test_oauth_discovery_is_public(monkeypatch):
     assert "S256" in body["code_challenge_methods_supported"]
 
 
+def test_oauth_metadata_rejects_untrusted_host(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setenv("SERVER_URL", "https://bigas.me")
+    server = client.get(
+        "/.well-known/oauth-authorization-server",
+        headers={"Host": "evil.com"},
+    )
+    assert server.status_code == 200
+    assert server.get_json()["issuer"] == "https://bigas.me"
+
+
+def test_oauth_metadata_follows_request_host(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setenv("SERVER_URL", "https://bigas.me")
+    host = "mcp-marketing-343105851187.europe-north1.run.app"
+    server = client.get("/.well-known/oauth-authorization-server", headers={"Host": host})
+    assert server.status_code == 200
+    assert server.get_json()["issuer"] == f"https://{host}"
+    assert server.get_json()["registration_endpoint"] == f"https://{host}/oauth/register"
+
+    denied = client.post(
+        "/mcp",
+        headers={"Host": host},
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+    )
+    assert denied.status_code == 401
+    authenticate = denied.headers.get("WWW-Authenticate") or ""
+    assert f'resource_metadata="https://{host}/.well-known/oauth-protected-resource"' in authenticate
+
+
+def test_oauth_discovery_sends_cors(monkeypatch):
+    client = _client(monkeypatch)
+    preflight = client.options(
+        "/oauth/register",
+        headers={
+            "Origin": "https://claude.ai",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert preflight.status_code == 204
+    assert preflight.headers.get("Access-Control-Allow-Origin") == "*"
+
+    listed = client.get("/.well-known/oauth-authorization-server")
+    assert listed.headers.get("Access-Control-Allow-Origin") == "*"
+
+
 def test_tools_call_uses_summary_as_text(monkeypatch):
     from flask import jsonify
 
