@@ -15,6 +15,11 @@ from bigas.oauth import service
 logger = logging.getLogger(__name__)
 
 
+def _json_for_script(value: Any) -> str:
+    """Serialize JSON for embedding in HTML <script> tags (mitigate XSS)."""
+    return json.dumps(value, ensure_ascii=True).replace("<", "\\u003c")
+
+
 def _oauth_error(error: str, description: str = "", status: int = 400):
     payload = {"error": error}
     if description:
@@ -65,7 +70,7 @@ def _validate_authorize_request(params: dict[str, Any]):
     resource = (params.get("resource") or "").strip()
     scope = (params.get("scope") or "mcp").strip() or "mcp"
 
-    if response_type and response_type != "code":
+    if response_type != "code":
         return None, _oauth_error("unsupported_response_type", "Only response_type=code is supported.")
     client = service.get_client(client_id)
     if not client:
@@ -92,7 +97,7 @@ def _validate_authorize_request(params: dict[str, Any]):
 def _authorize_page(params: dict[str, Any]) -> str:
     redirect_host = urlparse(params["redirect_uri"]).hostname or params["redirect_uri"]
     loopback = service.is_loopback_redirect(params["redirect_uri"])
-    payload = json.dumps(
+    auth_payload = _json_for_script(
         {
             "client_id": params["client_id"],
             "redirect_uri": params["redirect_uri"],
@@ -102,9 +107,9 @@ def _authorize_page(params: dict[str, Any]) -> str:
             "resource": params["resource"],
             "scope": params["scope"],
             "response_type": "code",
-        },
-        ensure_ascii=True,
+        }
     )
+    client_name_json = _json_for_script(params["client_name"])
     warning = (
         "<p class=\"warn\">This client will receive the code on your local machine. Confirm the app is Claude or Claude Code.</p>"
         if loopback
@@ -164,15 +169,40 @@ def _authorize_page(params: dict[str, Any]) -> str:
     </details>
   </div>
   <script>
-    const AUTH = {payload};
-    document.getElementById("client-name").textContent = {json.dumps(params["client_name"])};
+    const AUTH = {auth_payload};
+    document.getElementById("client-name").textContent = {client_name_json};
     const errorEl = document.getElementById("error");
     const signedIn = document.getElementById("signed-in");
     const loginForm = document.getElementById("login-form");
     const googleBtn = document.getElementById("google-btn");
+    let authConfigPromise = fetch("/api/auth/config").then((r) => r.json());
+    let firebaseReadyPromise = null;
 
     function token() {{ return localStorage.getItem("bigas_chat_token") || ""; }}
     function showError(msg) {{ errorEl.textContent = msg || "Could not connect."; }}
+
+    function ensureFirebaseReady(cfg) {{
+      if ((cfg.auth_mode || "dev") !== "firebase" || !cfg.firebase || !cfg.firebase.apiKey) {{
+        return Promise.resolve(false);
+      }}
+      if (window.firebase && firebase.auth) {{
+        return Promise.resolve(true);
+      }}
+      if (!firebaseReadyPromise) {{
+        firebaseReadyPromise = new Promise((resolve, reject) => {{
+          const s1 = document.createElement("script");
+          s1.src = "https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js";
+          const s2 = document.createElement("script");
+          s2.src = "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js";
+          s1.onload = () => document.body.appendChild(s2);
+          s2.onload = () => resolve(true);
+          s1.onerror = () => reject(new Error("Could not load Firebase SDK."));
+          s2.onerror = () => reject(new Error("Could not load Firebase Auth SDK."));
+          document.body.appendChild(s1);
+        }});
+      }}
+      return firebaseReadyPromise;
+    }}
 
     async function complete(extra = {{}}, bearer = "") {{
       const headers = {{ "Content-Type": "application/json" }};
@@ -203,13 +233,17 @@ def _authorize_page(params: dict[str, Any]) -> str:
       const email = document.getElementById("email").value.trim();
       const password = document.getElementById("password").value;
       try {{
-        const cfg = await fetch("/api/auth/config").then((r) => r.json());
+        const cfg = await authConfigPromise;
         if ((cfg.auth_mode || "dev") === "dev") {{
           localStorage.setItem("bigas_chat_token", password || "bigas-dev-token");
           await complete({{}}, password || "bigas-dev-token");
           return;
         }}
-        if (window.firebase && cfg.firebase && cfg.firebase.apiKey) {{
+        if (cfg.firebase && cfg.firebase.apiKey) {{
+          await ensureFirebaseReady(cfg);
+          if (!window.firebase) {{
+            throw new Error("Sign-in is still loading. Please try again.");
+          }}
           if (!firebase.apps.length) firebase.initializeApp(cfg.firebase);
           const cred = await firebase.auth().signInWithEmailAndPassword(email, password);
           const idToken = await cred.user.getIdToken();
@@ -222,18 +256,15 @@ def _authorize_page(params: dict[str, Any]) -> str:
         showError(err.message);
       }}
     }};
-    fetch("/api/auth/config").then((r) => r.json()).then((cfg) => {{
+    authConfigPromise.then((cfg) => {{
       if (cfg.auth_mode === "firebase" && cfg.firebase && cfg.firebase.apiKey) {{
-        const s1 = document.createElement("script");
-        s1.src = "https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js";
-        const s2 = document.createElement("script");
-        s2.src = "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js";
-        s1.onload = () => document.body.appendChild(s2);
-        s2.onload = () => {{
+        ensureFirebaseReady(cfg).then(() => {{
           googleBtn.hidden = false;
           googleBtn.onclick = async () => {{
             try {{
-              if (!firebase.apps.length) firebase.initializeApp(cfg.firebase);
+              const latest = await authConfigPromise;
+              await ensureFirebaseReady(latest);
+              if (!firebase.apps.length) firebase.initializeApp(latest.firebase);
               const cred = await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
               const idToken = await cred.user.getIdToken();
               localStorage.setItem("bigas_chat_token", idToken);
@@ -242,8 +273,7 @@ def _authorize_page(params: dict[str, Any]) -> str:
               showError(err.message);
             }}
           }};
-        }};
-        document.body.appendChild(s1);
+        }}).catch((err) => showError(err.message));
       }}
     }}).catch(() => {{}});
   </script>

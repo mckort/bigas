@@ -1,10 +1,13 @@
 """Persist MCP OAuth clients, auth codes, and refresh tokens."""
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> float:
@@ -18,6 +21,19 @@ class MemoryOAuthStore:
         self.codes: dict[str, dict[str, Any]] = {}
         self.refresh: dict[str, dict[str, Any]] = {}
 
+    def _prune_expired(self) -> None:
+        now = _now()
+        self.codes = {
+            key: value
+            for key, value in self.codes.items()
+            if float(value.get("exp") or 0) >= now
+        }
+        self.refresh = {
+            key: value
+            for key, value in self.refresh.items()
+            if float(value.get("exp") or 0) >= now
+        }
+
     def put_client(self, client_id: str, record: dict[str, Any]) -> None:
         with self._lock:
             self.clients[client_id] = dict(record)
@@ -29,15 +45,21 @@ class MemoryOAuthStore:
 
     def put_code(self, code: str, record: dict[str, Any]) -> None:
         with self._lock:
+            self._prune_expired()
             self.codes[code] = dict(record)
 
     def pop_code(self, code: str) -> Optional[dict[str, Any]]:
         with self._lock:
             record = self.codes.pop(code, None)
-            return dict(record) if record else None
+            if not record:
+                return None
+            if float(record.get("exp") or 0) < _now():
+                return None
+            return dict(record)
 
     def put_refresh(self, token_hash: str, record: dict[str, Any]) -> None:
         with self._lock:
+            self._prune_expired()
             self.refresh[token_hash] = dict(record)
 
     def get_refresh(self, token_hash: str) -> Optional[dict[str, Any]]:
@@ -56,13 +78,25 @@ class MemoryOAuthStore:
 
 
 class FirestoreOAuthStore:
+    _PRUNE_BATCH = 50
+
     def __init__(self, project_id: str):
         from google.cloud import firestore
 
-        self._db = firestore.Client(project=project_id)
+        self._db = firestore.Client(project=project_id or None)
         self._clients = self._db.collection("mcp_oauth_clients")
         self._codes = self._db.collection("mcp_oauth_codes")
         self._refresh = self._db.collection("mcp_oauth_refresh")
+
+    def _prune_expired_codes(self) -> None:
+        now = _now()
+        for doc in self._codes.where("exp", "<", now).limit(self._PRUNE_BATCH).stream():
+            doc.reference.delete()
+
+    def _prune_expired_refresh(self) -> None:
+        now = _now()
+        for doc in self._refresh.where("exp", "<", now).limit(self._PRUNE_BATCH).stream():
+            doc.reference.delete()
 
     def put_client(self, client_id: str, record: dict[str, Any]) -> None:
         self._clients.document(client_id).set(record)
@@ -72,6 +106,7 @@ class FirestoreOAuthStore:
         return snap.to_dict() if snap.exists else None
 
     def put_code(self, code: str, record: dict[str, Any]) -> None:
+        self._prune_expired_codes()
         self._codes.document(code).set(record)
 
     def pop_code(self, code: str) -> Optional[dict[str, Any]]:
@@ -79,10 +114,14 @@ class FirestoreOAuthStore:
         snap = ref.get()
         if not snap.exists:
             return None
+        record = snap.to_dict() or {}
         ref.delete()
-        return snap.to_dict()
+        if float(record.get("exp") or 0) < _now():
+            return None
+        return record
 
     def put_refresh(self, token_hash: str, record: dict[str, Any]) -> None:
+        self._prune_expired_refresh()
         self._refresh.document(token_hash).set(record)
 
     def get_refresh(self, token_hash: str) -> Optional[dict[str, Any]]:
@@ -117,7 +156,11 @@ def get_oauth_store():
 
         storage_mode = (os.environ.get("CHAT_STORAGE_MODE") or "").strip().lower()
         project_id = (
-            os.environ.get("FIREBASE_PROJECT_ID") or os.environ.get("GOOGLE_PROJECT_ID") or ""
+            os.environ.get("FIREBASE_PROJECT_ID")
+            or os.environ.get("GOOGLE_PROJECT_ID")
+            or os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or os.environ.get("GCLOUD_PROJECT")
+            or ""
         ).strip()
 
         if storage_mode == "memory" or (storage_mode != "firestore" and not project_id):
@@ -126,5 +169,9 @@ def get_oauth_store():
             try:
                 _store = FirestoreOAuthStore(project_id)
             except Exception:
+                logger.exception(
+                    "Failed to initialize Firestore OAuth store (project_id=%r); falling back to memory",
+                    project_id or None,
+                )
                 _store = MemoryOAuthStore()
         return _store

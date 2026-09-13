@@ -22,16 +22,86 @@ ALLOWED_HTTPS_REDIRECTS = {
     "https://claude.ai/api/mcp/auth_callback",
     "https://claude.com/api/mcp/auth_callback",
 }
+_DEV_TOKEN_SECRET = b"bigas-mcp-oauth-dev"
+
+
+def _config_or_env(name: str) -> str:
+    value = (os.environ.get(name) or "").strip()
+    if value:
+        return value
+    try:
+        from flask import has_app_context, current_app
+
+        if has_app_context():
+            cfg_val = current_app.config.get(name)
+            if isinstance(cfg_val, str) and cfg_val.strip():
+                return cfg_val.strip()
+    except RuntimeError:
+        pass
+    return ""
+
+
+def _first_access_key() -> str:
+    raw = (os.environ.get("BIGAS_ACCESS_KEYS") or "").strip()
+    if raw:
+        return raw.split(",")[0].strip()
+    try:
+        from flask import has_app_context, current_app
+
+        if has_app_context():
+            keys = current_app.config.get("BIGAS_ACCESS_KEYS") or set()
+            if keys:
+                return sorted(str(key) for key in keys)[0]
+    except RuntimeError:
+        pass
+    return ""
+
+
+def _is_dev_auth_mode() -> bool:
+    mode = (_config_or_env("CHAT_AUTH_MODE") or "dev").strip().lower()
+    return mode == "dev"
+
+
+def _allowed_https_redirects() -> set[str]:
+    allowed = {item.rstrip("/") for item in ALLOWED_HTTPS_REDIRECTS}
+    extra = (os.environ.get("MCP_OAUTH_ALLOWED_HTTPS_REDIRECTS") or "").strip()
+    if extra:
+        for uri in extra.split(","):
+            part = uri.strip()
+            if part:
+                allowed.add(part.rstrip("/"))
+    try:
+        from flask import has_app_context, current_app
+
+        if has_app_context():
+            cfg_extra = current_app.config.get("MCP_OAUTH_ALLOWED_HTTPS_REDIRECTS")
+            if isinstance(cfg_extra, str) and cfg_extra.strip():
+                for uri in cfg_extra.split(","):
+                    part = uri.strip()
+                    if part:
+                        allowed.add(part.rstrip("/"))
+            elif isinstance(cfg_extra, (list, tuple, set)):
+                for uri in cfg_extra:
+                    part = str(uri).strip()
+                    if part:
+                        allowed.add(part.rstrip("/"))
+    except RuntimeError:
+        pass
+    return allowed
 
 
 def token_secret() -> bytes:
-    explicit = (os.environ.get("MCP_OAUTH_TOKEN_SECRET") or "").strip()
+    explicit = _config_or_env("MCP_OAUTH_TOKEN_SECRET")
     if explicit:
         return explicit.encode("utf-8")
-    first_key = (os.environ.get("BIGAS_ACCESS_KEYS") or "").split(",")[0].strip()
+    first_key = _first_access_key()
     if first_key:
         return first_key.encode("utf-8")
-    return b"bigas-mcp-oauth-dev"
+    if _is_dev_auth_mode():
+        return _DEV_TOKEN_SECRET
+    raise RuntimeError(
+        "MCP OAuth token secret is not configured. Set MCP_OAUTH_TOKEN_SECRET or BIGAS_ACCESS_KEYS."
+    )
 
 
 def _b64url(data: bytes) -> str:
@@ -67,7 +137,7 @@ def is_loopback_redirect(uri: str) -> bool:
 def is_allowed_redirect(uri: str) -> bool:
     if not uri:
         return False
-    if uri.rstrip("/") in {item.rstrip("/") for item in ALLOWED_HTTPS_REDIRECTS}:
+    if uri.rstrip("/") in _allowed_https_redirects():
         return True
     return is_loopback_redirect(uri)
 

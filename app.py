@@ -23,10 +23,6 @@ def _jsonrpc_error(request_id, code: int, message: str, data=None):
     return {"jsonrpc": "2.0", "id": request_id, "error": err}
 
 
-def _unauthorized(payload):
-    return unauthorized_response(payload)
-
-
 def _mcp_server_card(app: Flask):
     base = mcp_public_base_url()
     header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
@@ -263,7 +259,7 @@ def create_app():
                 request.path,
                 header_name,
             )
-            return _unauthorized({"detail": "Invalid or missing access key"})
+            return unauthorized_response({"detail": "Invalid or missing access key"})
 
     @app.route('/health', methods=['GET'])
     def health_check():
@@ -352,10 +348,9 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
             return response
 
         mode = app.config.get("BIGAS_ACCESS_MODE", "open")
-        header_name = app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
         provided_key = provided_mcp_credential()
         if mode == "restricted" and not is_valid_mcp_credential(provided_key):
-            return _unauthorized({"error": "Invalid or missing access key for /mcp"})
+            return unauthorized_response({"error": "Invalid or missing access key for /mcp"})
 
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
@@ -418,7 +413,7 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
 
             headers = {}
             if mode == "restricted" and provided_key:
-                headers[header_name] = provided_key
+                headers[app.config.get("BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")] = provided_key
 
             with app.test_client() as client:
                 if tool_method == "GET":
