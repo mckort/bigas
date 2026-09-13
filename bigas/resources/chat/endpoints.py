@@ -483,7 +483,7 @@ def serve_frontend_assets(path: str):
 @chat_bp.route("/<path:path>")
 def serve_frontend_static(path: str):
     """Serve other built frontend files; never swallow API or MCP routes."""
-    if path.startswith(("api/", "mcp/", ".well-known/")):
+    if path.startswith(("api/", "mcp/", "oauth/", ".well-known/")):
         return jsonify({"error": "Not found"}), 404
     if not FRONTEND_DIST.is_dir():
         return jsonify({"error": "Not found"}), 404
