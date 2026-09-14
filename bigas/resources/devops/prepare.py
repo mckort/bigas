@@ -866,18 +866,17 @@ def review_and_merge_release_pr(
 
     needs, reason = review_needs_autofix(review_body)
     if not needs:
-        return _merge_or_wait(
-            gh,
-            owner=owner,
-            repo_name=repo_name,
-            repo=repo,
-            pr_number=pr_number,
-            pr_url=pr_url,
-            thread_id=thread_id,
-            project_key=project_key,
-            version=version,
-            cut_keys=cut_keys,
+        _complete_pipeline_progress(thread_id)
+        _post(
+            thread_id,
+            "Release PR review is not ready to merge "
+            f"({reason}). Remaining comments need a human: {pr_url}",
         )
+        return {
+            "status": "failed",
+            "summary": f"Release review not ready ({reason}).",
+            "pr_url": pr_url,
+        }
 
     return _launch_autofix_and_poll(
         repo=repo,
