@@ -97,7 +97,7 @@ def _section_bodies(review_body: str) -> dict[str, str]:
 
 
 def _section_has_findings(body: str) -> bool:
-    text = (body or "").strip()
+    text = _strip_section_closer(body)
     if not text:
         return False
     # Common empty markers from the structured prompt.
@@ -108,6 +108,18 @@ def _section_has_findings(body: str) -> bool:
     if re.fullmatch(r"(?is)no (issues|findings|blockers|important issues)\.?", text):
         return False
     return True
+
+
+def _strip_section_closer(body: str) -> str:
+    """Drop a trailing LGTM / ready-to-merge closer so it is not a finding."""
+    lines = (body or "").splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    while lines and _CLEAN.search(lines[-1]) and not _ACTIONABLE.search(lines[-1]):
+        lines.pop()
+        while lines and not lines[-1].strip():
+            lines.pop()
+    return "\n".join(lines).strip()
 
 
 def review_needs_autofix(review_body: str) -> Tuple[bool, str]:
@@ -177,21 +189,23 @@ def autofix_pushed_new_commit(
 
 
 def review_is_ready_to_merge(review_body: str) -> bool:
-    """True when the review reads as clean enough to merge (no actionable findings)."""
+    """True when the review has no leftover findings (including Minor)."""
     should_fix, _reason = review_needs_autofix(review_body)
     if should_fix:
         return False
     body = (review_body or "").strip()
     if not body:
         return False
-    # Explicit clean signal, or only nits / ambiguous-but-not-actionable after a review ran.
-    if _CLEAN.search(body):
-        return True
     sections = _section_bodies(body)
-    if sections and not _section_has_findings(sections.get("blockers", "")) and not _section_has_findings(
-        sections.get("important", "")
-    ):
-        return True
-    if _NIT_ONLY.search(body) and not _ACTIONABLE.search(body):
+    if sections:
+        # A trailing "ready to merge" line must not override leftover nits.
+        return not (
+            _section_has_findings(sections.get("blockers", ""))
+            or _section_has_findings(sections.get("important", ""))
+            or _section_has_findings(sections.get("minor", ""))
+        )
+    if _NIT_ONLY.search(body):
+        return False
+    if _CLEAN.search(body):
         return True
     return False

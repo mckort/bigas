@@ -2,6 +2,7 @@ from bigas.resources.cto.autofix.heuristics import (
     auto_merge_enabled,
     autofix_pushed_new_commit,
     latest_commit_is_autofix,
+    review_is_ready_to_merge,
     review_needs_autofix,
 )
 from bigas.resources.cto.autofix.service import (
@@ -63,6 +64,26 @@ def test_structured_minor_only_skips():
     )
     assert ok is False
     assert "nit" in reason or "non-blocking" in reason
+
+
+_CLEAN_STRUCTURED = (
+    "### Blockers\nNone.\n\n### Important\nNone.\n\n### Minor\nNone.\n\nReady to merge.\n"
+)
+_MINOR_LEFTOVER = (
+    "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+    "### Minor\n- Deduplicate query tokens.\n\n"
+    "This pull request is clean, well-tested, and ready to merge.\n"
+)
+
+
+def test_ready_to_merge_requires_empty_minor():
+    assert review_is_ready_to_merge(_CLEAN_STRUCTURED) is True
+    assert review_is_ready_to_merge(_MINOR_LEFTOVER) is False
+
+
+def test_ready_to_merge_ignores_ready_line_when_minor_has_findings():
+    assert "ready to merge" in _MINOR_LEFTOVER.lower()
+    assert review_is_ready_to_merge(_MINOR_LEFTOVER) is False
 
 
 def test_soft_consider_only_skips():

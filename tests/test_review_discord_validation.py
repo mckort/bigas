@@ -324,3 +324,124 @@ def test_autofix_followup_skips_rereview_when_agent_asks_confirmation(
     assert body.get("fixes_pushed") is False
     assert body.get("asked_confirmation") is True
     mock_review.return_value.review.assert_not_called()
+
+
+_CLEAN_REVIEW = (
+    "### Blockers\nNone.\n\n### Important\nNone.\n\n### Minor\nNone.\n\nReady to merge.\n"
+)
+
+
+@patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
+@patch("bigas.resources.cto.endpoints._maybe_auto_merge_pr")
+@patch("bigas.resources.cto.endpoints.PRReviewService")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+@patch(
+    "bigas.resources.cto.endpoints._fetch_pull_request",
+    return_value={"title": "BIG-77: Stop accidental merge", "merged": False},
+)
+@patch(
+    "bigas.resources.cto.endpoints._resolve_pr_diff_text",
+    return_value="diff --git a/x b/x\n+",
+)
+@patch(
+    "bigas.resources.product.jira_automation.final_approval.ensure_board_ticket_for_pr",
+    return_value={"skipped": True},
+)
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto_chunks")
+def test_chat_review_does_not_auto_merge(
+    _chunks,
+    _discord,
+    _ticket,
+    _diff,
+    _pr,
+    mock_gh,
+    mock_review,
+    mock_merge,
+    _usage,
+):
+    from bigas.llm.usage import TokenUsage
+    from bigas.resources.cto.pr_review.service import PRReviewResult
+
+    mock_review.return_value.review.return_value = PRReviewResult(
+        text=_CLEAN_REVIEW,
+        model="gemini-pro-latest",
+        usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+    )
+    mock_gh.return_value.post_or_update_pr_comment.return_value = {
+        "html_url": "https://github.com/acme/app/pull/1#issuecomment-1"
+    }
+
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/review_and_comment_pr",
+        json={"repo": "acme/app", "pr_number": 1, "github_token": "tok"},
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    assert body.get("ready_to_merge") is True
+    assert (body.get("auto_merge") or {}).get("reason") == "chat_review_does_not_merge"
+    mock_merge.assert_not_called()
+
+
+@patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
+@patch("bigas.resources.cto.endpoints._final_approval_after_merge", return_value={"skipped": True})
+@patch(
+    "bigas.resources.cto.endpoints._maybe_auto_merge_pr",
+    return_value={"merged": True},
+)
+@patch("bigas.resources.cto.endpoints.PRReviewService")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+@patch(
+    "bigas.resources.cto.endpoints._fetch_pull_request",
+    return_value={"title": "BIG-77: Stop accidental merge", "merged": False},
+)
+@patch(
+    "bigas.resources.cto.endpoints._resolve_pr_diff_text",
+    return_value="diff --git a/x b/x\n+",
+)
+@patch(
+    "bigas.resources.product.jira_automation.final_approval.ensure_board_ticket_for_pr",
+    return_value={"skipped": True},
+)
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto_chunks")
+def test_actions_review_may_auto_merge(
+    _chunks,
+    _discord,
+    _ticket,
+    _diff,
+    _pr,
+    mock_gh,
+    mock_review,
+    mock_merge,
+    _jira,
+    _usage,
+):
+    from bigas.llm.usage import TokenUsage
+    from bigas.resources.cto.pr_review.service import PRReviewResult
+
+    mock_review.return_value.review.return_value = PRReviewResult(
+        text=_CLEAN_REVIEW,
+        model="gemini-pro-latest",
+        usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+    )
+    mock_gh.return_value.post_or_update_pr_comment.return_value = {
+        "html_url": "https://github.com/acme/app/pull/1#issuecomment-1"
+    }
+
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/review_and_comment_pr",
+        json={
+            "repo": "acme/app",
+            "pr_number": 1,
+            "github_token": "tok",
+            "auto_merge": True,
+        },
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    assert body.get("ready_to_merge") is True
+    assert (body.get("auto_merge") or {}).get("merged") is True
+    mock_merge.assert_called_once()

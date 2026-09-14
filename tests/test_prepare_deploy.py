@@ -34,6 +34,7 @@ from bigas.resources.devops.prepare import (
     release_commit_title,
     release_pr_body,
     release_pr_title,
+    review_and_merge_release_pr,
     run_prepare_deploy,
 )
 from bigas.tickets.release_store import reset_release_store_for_tests
@@ -819,6 +820,65 @@ def test_list_shortcut_projects_only_deploy_targets(monkeypatch):
     keys = [item["key"] for item in list_shortcut_projects()]
     assert keys == ["VFA", "BIG"]
     assert "WAYW" not in keys
+
+
+def test_release_review_does_not_merge_when_not_ready(monkeypatch):
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    merged = {"called": False}
+
+    class _FakeGH:
+        def get_pull_request(self, owner, repo, pr_number):
+            return {
+                "html_url": "https://github.com/mckort/vcfieldassistant/pull/210",
+                "merged": False,
+                "draft": False,
+            }
+
+        def get_pr_diff(self, owner, repo, pr_number):
+            return "diff --git a/x b/x\n+"
+
+        def post_or_update_pr_comment(self, **kwargs):
+            return {"html_url": "https://github.com/mckort/vcfieldassistant/pull/210#issuecomment-1"}
+
+        def merge_pull_request(self, *args, **kwargs):
+            merged["called"] = True
+
+    class _FakeReview:
+        def review(self, **kwargs):
+            from bigas.llm.usage import TokenUsage
+            from bigas.resources.cto.pr_review.service import PRReviewResult
+
+            return PRReviewResult(
+                text=(
+                    "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+                    "### Minor\n- Leftover nit.\n\nReady to merge.\n"
+                ),
+                model="test",
+                usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+            )
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.pr_review.github_client.GitHubPRCommentClient",
+        lambda *args, **kwargs: _FakeGH(),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.pr_review.service.PRReviewService",
+        lambda *args, **kwargs: _FakeReview(),
+    )
+
+    result = review_and_merge_release_pr(
+        repo="mckort/vcfieldassistant",
+        pr_number=210,
+        thread_id=thread["thread_id"],
+        project_key="VFA",
+        version="0.3.0",
+    )
+    assert result["status"] == "failed"
+    assert "not ready" in (result.get("summary") or "").lower()
+    assert merged["called"] is False
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "not ready to merge" in blob.lower()
 
 
 def test_compare_ahead_count_uses_commits_and_files():

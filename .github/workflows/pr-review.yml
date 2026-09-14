@@ -189,7 +189,8 @@ jobs:
               'repo': os.environ['GITHUB_REPOSITORY'],
               'pr_number': ${{ github.event.pull_request.number }},
               'diff': diff,
-              'github_token': os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_PAT', '')
+              'github_token': os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_PAT', ''),
+              'auto_merge': True,
           }
           with open('payload.json', 'w') as f:
               json.dump(payload, f)

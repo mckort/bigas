@@ -264,6 +264,13 @@ def _pr_title_of(pr: dict | None) -> str:
     return ((pr or {}).get("title") or "").strip()
 
 
+def _request_flag(value) -> bool:
+    """Parse a JSON/query flag. Missing or unknown values are false."""
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _jira_issue_context_from_pr(pr: dict) -> tuple[str, str]:
     """Best-effort Jira issue key and summary from a PR dict (no status change)."""
     from bigas.resources.product.jira_automation.final_approval import (
@@ -700,11 +707,14 @@ def review_and_comment_pr():
       - instructions (str, optional): extra instructions for the reviewer
       - github_token (str, optional): override GitHub PAT (else uses GITHUB_TOKEN env)
       - llm_model (str, optional): override model for this request (default: gemini-3.1-pro-preview)
+      - auto_merge (bool, optional): when true (Actions loop), squash-merge if the
+        review is ready. Chat/MCP callers omit this — default is false.
 
     Returns:
       - success, comment_url, review_posted; or error with status 4xx/5xx.
     """
     data = request.get_json(silent=True) or {}
+    allow_auto_merge = _request_flag(data.get("auto_merge"))
     phase = (data.get("phase") or "initial").strip().lower()
     if phase not in {"initial", "post_autofix"}:
         phase = "initial"
@@ -906,22 +916,26 @@ def review_and_comment_pr():
             f"**Ready to merge**\n{pr_ref}\n"
             + (f"Comment: {comment_url}" if comment_url else "")
         )
-        issue_key, issue_summary = _jira_issue_context_from_pr(pr)
-        auto_merge = _maybe_auto_merge_pr(
-            repo=repo,
-            pr_number=pr_number,
-            pr_url=pr_url,
-            github_token=github_token,
-            issue_key=issue_key,
-            issue_summary=issue_summary,
-        )
-        jira_final = _final_approval_after_merge(
-            repo=repo,
-            pr_number=pr_number,
-            pr_url=pr_url,
-            github_token=github_token,
-            merged=bool(auto_merge.get("merged")),
-        )
+        if allow_auto_merge:
+            issue_key, issue_summary = _jira_issue_context_from_pr(pr)
+            auto_merge = _maybe_auto_merge_pr(
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=pr_url,
+                github_token=github_token,
+                issue_key=issue_key,
+                issue_summary=issue_summary,
+            )
+            jira_final = _final_approval_after_merge(
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=pr_url,
+                github_token=github_token,
+                merged=bool(auto_merge.get("merged")),
+            )
+        else:
+            auto_merge = {"skipped": True, "reason": "chat_review_does_not_merge"}
+            jira_final = {"skipped": True, "reason": "auto_merge_not_requested"}
     else:
         jira_final = {"skipped": True, "reason": "not_ready"}
 
@@ -1895,6 +1909,13 @@ def get_manifest():
                         "llm_model": {
                             "type": "string",
                             "description": "Optional model override (default: gemini-3.1-pro-preview)",
+                        },
+                        "auto_merge": {
+                            "type": "boolean",
+                            "description": (
+                                "When true, squash-merge if the review is clean (Actions loop). "
+                                "Default false — chat/MCP reviews only post the comment."
+                            ),
                         },
                     },
                     "required": [],
