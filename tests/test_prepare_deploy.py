@@ -881,6 +881,67 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
     assert "not ready to merge" in blob.lower()
 
 
+def test_release_review_merges_when_review_is_clean(monkeypatch):
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    merged = {"called": False}
+    clean_review = (
+        "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+        "### Minor\nNone.\n\nReady to merge.\n"
+    )
+
+    class _FakeGH:
+        def get_pull_request(self, owner, repo, pr_number):
+            return {
+                "html_url": "https://github.com/mckort/vcfieldassistant/pull/211",
+                "merged": False,
+                "draft": False,
+            }
+
+        def get_pr_diff(self, owner, repo, pr_number):
+            return "diff --git a/x b/x\n+"
+
+        def post_or_update_pr_comment(self, **kwargs):
+            return {"html_url": "https://github.com/mckort/vcfieldassistant/pull/211#issuecomment-1"}
+
+        def merge_pull_request(self, *args, **kwargs):
+            merged["called"] = True
+
+    class _FakeReview:
+        def review(self, **kwargs):
+            from bigas.llm.usage import TokenUsage
+            from bigas.resources.cto.pr_review.service import PRReviewResult
+
+            return PRReviewResult(
+                text=clean_review,
+                model="test",
+                usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+            )
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.pr_review.github_client.GitHubPRCommentClient",
+        lambda *args, **kwargs: _FakeGH(),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.pr_review.service.PRReviewService",
+        lambda *args, **kwargs: _FakeReview(),
+    )
+
+    result = review_and_merge_release_pr(
+        repo="mckort/vcfieldassistant",
+        pr_number=211,
+        thread_id=thread["thread_id"],
+        project_key="VFA",
+        version="0.3.0",
+        cut_keys=["VFA-1"],
+    )
+    assert result["status"] == "merged"
+    assert merged["called"] is True
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "not ready to merge" not in blob.lower()
+    assert "merged release pr" in blob.lower()
+
+
 def test_compare_ahead_count_uses_commits_and_files():
     assert compare_ahead_count({"ahead_by": 3}) == 3
     assert compare_ahead_count({"ahead_by": 0, "total_commits": 7}) == 7
