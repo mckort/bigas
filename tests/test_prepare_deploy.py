@@ -34,6 +34,7 @@ from bigas.resources.devops.prepare import (
     release_commit_title,
     release_pr_body,
     release_pr_title,
+    poll_prepare_followup,
     review_and_merge_release_pr,
     run_prepare_deploy,
 )
@@ -873,7 +874,6 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
         lambda *args, **kwargs: _FakeReview(),
     )
     monkeypatch.setattr("bigas.resources.devops.prepare._ACTIONS_REVIEW_WAIT_SEC", 0)
-    monkeypatch.setattr("bigas.resources.devops.prepare.time.sleep", lambda _s: None)
 
     result = review_and_merge_release_pr(
         repo="mckort/vcfieldassistant",
@@ -882,10 +882,11 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
         project_key="VFA",
         version="0.3.0",
     )
-    assert result["status"] == "failed"
-    assert "not ready" in (result.get("summary") or "").lower()
+    assert result["status"] == "polling"
+    poll_prepare_followup(thread["thread_id"])
     assert merged["called"] is False
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "timed out waiting for github actions" in blob.lower()
     assert "not ready to merge" in blob.lower()
 
 
@@ -945,9 +946,6 @@ def test_release_review_merges_after_actions_refreshes_nits_review(monkeypatch):
         "bigas.resources.cto.pr_review.service.PRReviewService",
         lambda *args, **kwargs: _FakeReview(),
     )
-    monkeypatch.setattr("bigas.resources.devops.prepare._ACTIONS_REVIEW_WAIT_SEC", 30)
-    monkeypatch.setattr("bigas.resources.devops.prepare.time.sleep", lambda _s: None)
-
     result = review_and_merge_release_pr(
         repo="mckort/vcfieldassistant",
         pr_number=212,
@@ -956,7 +954,9 @@ def test_release_review_merges_after_actions_refreshes_nits_review(monkeypatch):
         version="0.3.0",
         cut_keys=["VFA-1"],
     )
-    assert result["status"] == "merged"
+    assert result["status"] == "polling"
+    poll_prepare_followup(thread["thread_id"])
+    poll_prepare_followup(thread["thread_id"])
     assert merged["called"] is True
     assert poll["calls"] >= 2
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
