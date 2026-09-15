@@ -102,6 +102,9 @@ def _compose_ticket(
         "okr_phase": (okr_phase or "").strip(),
         "comments": [],
         "attachments": [],
+        "agent_url": "",
+        "agent_id": "",
+        "review": {"pr_url": "", "pr_title": "", "items": []},
         "done_processed": False,
         "project_key": project_key,
         "created_at": now,
@@ -193,6 +196,9 @@ def _apply_ticket_field_updates(
         "okr_phase",
         "created_at",
         "done_processed",
+        "agent_url",
+        "agent_id",
+        "review",
     }
     for key, value in fields.items():
         if key not in allowed:
@@ -250,6 +256,14 @@ def _apply_ticket_field_updates(
                 updates["created_at"] = stamp
         elif key == "done_processed":
             updates["done_processed"] = bool(value)
+        elif key == "agent_url":
+            updates["agent_url"] = str(value or "").strip()
+        elif key == "agent_id":
+            updates["agent_id"] = str(value or "").strip()
+        elif key == "review":
+            from bigas.tickets.review import normalize_review
+
+            updates["review"] = normalize_review(value)
         elif key == "issue_type":
             itype = (value or "Task").strip().title() or "Task"
             if itype in _GOAL_ISSUE_TYPES:

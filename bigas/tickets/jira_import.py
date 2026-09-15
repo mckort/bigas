@@ -231,6 +231,7 @@ def sync_jira_board(
                 labels=labels,
                 parent_key=_issue_parent_key(fields),
                 key=key,
+                start_automation=False,
             )
             existing_by_key[key] = ticket
             created += 1

@@ -505,6 +505,16 @@ class ImplementHandler:
         agent_url = launched.get("agent_url") or ""
         agent_id = launched.get("agent_id") or ""
         run_id = launched.get("run_id") or ""
+        try:
+            from bigas.tickets.review import attach_implement_agent
+
+            attach_implement_agent(
+                issue_key, agent_url=agent_url, agent_id=agent_id
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist implement agent URL on %s", issue_key, exc_info=True
+            )
 
         skip_note = (
             " Direct implement from title/brief/screenshot (no Research/Plan)."
