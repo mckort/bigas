@@ -5,9 +5,11 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from bigas.portfolio import brand_name, jira_project_keys, normalize_project_key, resolve_project
+from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge, review_needs_autofix
+from bigas.resources.cto.pr_review.github_client import GitHubPRCommentError
 from bigas.resources.devops.service import DevOpsError, check_deployment_risk, list_shipping_commits
 from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
 from bigas.tickets.constants import is_in_release_cut
@@ -24,6 +26,9 @@ _PREPARE_RE = re.compile(
     re.I,
 )
 _POLL_TIMEOUT_SEC = 45 * 60
+# After a nits-only inline review, GitHub Actions may re-run review_and_comment_pr
+# and overwrite the marked comment moments later.
+_ACTIONS_REVIEW_WAIT_SEC = 90
 
 
 def is_prepare_start(text: str) -> bool:
@@ -783,6 +788,110 @@ def ensure_release_on_main(
     )
 
 
+def _strip_bigas_review_marker(body: str, *, marker: str) -> str:
+    text = (body or "").strip()
+    if marker and marker in text:
+        text = text.replace(marker, "").strip()
+    return text
+
+
+class _ActionsReviewPollState(NamedTuple):
+    body: Optional[str]
+    ready: bool
+    actions_refreshed: bool
+
+
+def _poll_actions_review_comment(
+    gh: Any,
+    *,
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    marker: str,
+    initial_body: str,
+) -> _ActionsReviewPollState:
+    """
+    Read the marked Bigas PR comment once and compare to prepare-deploy's review.
+
+    GitHub Actions often overwrites the comment shortly after prepare-deploy posts.
+    """
+    initial = _strip_bigas_review_marker(initial_body, marker=marker).strip()
+    try:
+        raw = gh.get_marked_comment_body(owner, repo_name, pr_number)
+    except GitHubPRCommentError:
+        raw = None
+    if not raw:
+        return _ActionsReviewPollState(body=None, ready=False, actions_refreshed=False)
+    body = _strip_bigas_review_marker(raw, marker=marker)
+    stripped = body.strip()
+    if review_is_ready_to_merge(body):
+        return _ActionsReviewPollState(
+            body=body,
+            ready=True,
+            actions_refreshed=stripped != initial,
+        )
+    if stripped != initial:
+        return _ActionsReviewPollState(
+            body=body,
+            ready=False,
+            actions_refreshed=True,
+        )
+    return _ActionsReviewPollState(body=body, ready=False, actions_refreshed=False)
+
+
+def _continue_release_review_from_body(
+    gh: Any,
+    *,
+    review_body: str,
+    owner: str,
+    repo_name: str,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    thread_id: Optional[str],
+    project_key: str,
+    version: str,
+    cut_keys: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    if review_is_ready_to_merge(review_body):
+        return _merge_or_wait(
+            gh,
+            owner=owner,
+            repo_name=repo_name,
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            thread_id=thread_id,
+            project_key=project_key,
+            version=version,
+            cut_keys=cut_keys,
+        )
+    needs, reason = review_needs_autofix(review_body)
+    if needs:
+        return _launch_autofix_and_poll(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            review_body=review_body,
+            thread_id=thread_id,
+            project_key=project_key,
+            version=version,
+            reason=reason,
+            cut_keys=cut_keys,
+        )
+    _complete_pipeline_progress(thread_id)
+    _post(
+        thread_id,
+        "Release PR review is not ready to merge "
+        f"({reason}). Remaining comments need a human: {pr_url}",
+    )
+    return {
+        "status": "failed",
+        "summary": f"Release review not ready ({reason}).",
+        "pr_url": pr_url,
+    }
+
+
 def review_and_merge_release_pr(
     *,
     repo: str,
@@ -793,14 +902,9 @@ def review_and_merge_release_pr(
     phase: str = "initial",
     cut_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    from bigas.resources.cto.autofix.heuristics import (
-        review_is_ready_to_merge,
-        review_needs_autofix,
-    )
     from bigas.resources.cto.pr_review.github_client import (
         BIGAS_REVIEW_MARKER,
         GitHubPRCommentClient,
-        GitHubPRCommentError,
     )
     from bigas.resources.cto.pr_review.service import PRReviewError, PRReviewService
 
@@ -866,6 +970,30 @@ def review_and_merge_release_pr(
 
     needs, reason = review_needs_autofix(review_body)
     if not needs:
+        if reason == "only non-blocking / nit suggestions":
+            _post(
+                thread_id,
+                "Release review has only non-blocking nits; waiting briefly for "
+                "GitHub Actions to refresh the Bigas review comment…",
+                role="system",
+                status="in_progress",
+            )
+            _thread_set(
+                thread_id,
+                pending_prepare_poll={
+                    "phase": "wait_actions_review",
+                    "repo": repo,
+                    "pr_number": pr_number,
+                    "pr_url": pr_url,
+                    "project_key": project_key,
+                    "version": version,
+                    "cut_keys": list(cut_keys or []),
+                    "initial_review_body": review_body,
+                    "nit_only_reason": reason,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
         _complete_pipeline_progress(thread_id)
         _post(
             thread_id,
@@ -1084,6 +1212,73 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
         )
 
     phase = poll.get("phase") or "autofix"
+    if phase == "wait_actions_review":
+        from bigas.resources.cto.pr_review.github_client import BIGAS_REVIEW_MARKER
+
+        actions_started = poll.get("started_at") or started
+        try:
+            actions_started_dt = datetime.fromisoformat(
+                actions_started.replace("Z", "+00:00")
+            )
+        except ValueError:
+            actions_started_dt = started_dt
+        if datetime.now(timezone.utc) >= actions_started_dt + timedelta(
+            seconds=_ACTIONS_REVIEW_WAIT_SEC
+        ):
+            nit_reason = (poll.get("nit_only_reason") or "").strip()
+            if not nit_reason:
+                nit_reason = "only non-blocking / nit suggestions"
+            _thread_set(thread_id, pending_prepare_poll=None)
+            _complete_pipeline_progress(thread_id)
+            _post(
+                thread_id,
+                "Timed out waiting for GitHub Actions to refresh the Bigas review comment "
+                f"({_ACTIONS_REVIEW_WAIT_SEC}s). Release PR review is not ready to merge "
+                f"({nit_reason}). Remaining comments need a human: {poll.get('pr_url')}",
+            )
+            return {"status": "complete", "active": False}
+
+        state = _poll_actions_review_comment(
+            gh,
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            marker=BIGAS_REVIEW_MARKER,
+            initial_body=(poll.get("initial_review_body") or ""),
+        )
+        if state.ready and state.body:
+            _thread_set(thread_id, pending_prepare_poll=None)
+            result = _merge_or_wait(
+                gh,
+                owner=owner,
+                repo_name=repo_name,
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=(poll.get("pr_url") or "").strip(),
+                thread_id=thread_id,
+                project_key=poll.get("project_key") or "",
+                version=poll.get("version") or "",
+                cut_keys=list(poll.get("cut_keys") or []),
+            )
+            return _prepare_result_to_poll(thread_id, result)
+        if state.actions_refreshed and state.body:
+            _thread_set(thread_id, pending_prepare_poll=None)
+            result = _continue_release_review_from_body(
+                gh,
+                review_body=state.body,
+                owner=owner,
+                repo_name=repo_name,
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=(poll.get("pr_url") or "").strip(),
+                thread_id=thread_id,
+                project_key=poll.get("project_key") or "",
+                version=poll.get("version") or "",
+                cut_keys=list(poll.get("cut_keys") or []),
+            )
+            return _prepare_result_to_poll(thread_id, result)
+        return {"status": "in_progress", "active": True}
+
     if phase == "autofix":
         agent_id = (poll.get("agent_id") or "").strip()
         if agent_id:
