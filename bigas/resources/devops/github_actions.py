@@ -12,6 +12,11 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# GitHub rulesets API: RepositoryRole actor id for repository admins (standard bypass).
+GITHUB_RULESET_REPOSITORY_ADMIN_ROLE_ACTOR_ID = int(
+    os.environ.get("GITHUB_RULESET_ADMIN_BYPASS_ACTOR_ID", "5")
+)
+
 
 class GitHubActionsError(RuntimeError):
     pass
@@ -628,7 +633,7 @@ class GitHubActionsClient:
             "enforcement": "active",
             "bypass_actors": [
                 {
-                    "actor_id": 5,
+                    "actor_id": GITHUB_RULESET_REPOSITORY_ADMIN_ROLE_ACTOR_ID,
                     "actor_type": "RepositoryRole",
                     "bypass_mode": "always",
                 }

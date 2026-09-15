@@ -90,6 +90,12 @@ def is_board_version_released(project_key: str, version: str) -> bool:
 
 def lookup_board_release_defaults(project_key: str) -> Dict[str, Any]:
     """Board releases plus the default version and suggested PR base."""
+    from bigas.resources.product.release_workflow import (
+        feature_branch_prefix,
+        uses_versioned_feature_branches,
+        versioned_feature_branch,
+    )
+
     proj = (project_key or "").strip().upper()
     releases = [
         {
@@ -103,29 +109,48 @@ def lookup_board_release_defaults(project_key: str) -> Dict[str, Any]:
     default = default_fix_version(proj)
     pr_base = None
     prefix = "staging"
+    production = "main"
+    mapped_branch = prefix
     try:
         from bigas.resources.product.jira_automation.config import JiraAutomationConfig
         from bigas.resources.product.release_branches import mapped_feature_prefix
-        from bigas.resources.product.release_workflow import (
-            uses_versioned_feature_branches,
-            versioned_feature_branch,
-        )
 
         cfg = JiraAutomationConfig.from_env()
         repo = (cfg.project_repos or {}).get(proj) or ""
+        production = (
+            cfg.base_branch_for_repo(repo) if repo else cfg.default_base_branch
+        ) or "main"
+        production = production.strip() or "main"
+        mapped_branch = (
+            cfg.automerge_branch_for_project(proj, repo) or production
+        ).strip()
         if repo:
             mapped_prefix, production = mapped_feature_prefix(proj, repo, config=cfg)
             prefix = mapped_prefix or prefix
-            if default and uses_versioned_feature_branches(prefix, production):
+        else:
+            prefix = feature_branch_prefix(mapped_branch) or prefix
+
+        if default and uses_versioned_feature_branches(mapped_branch, production):
+            pr_base = versioned_feature_branch(prefix, default)
+        else:
+            pr_base = production
+    except Exception:
+        try:
+            from bigas.resources.product.jira_automation.config import JiraAutomationConfig
+
+            cfg = JiraAutomationConfig.from_env()
+            production = (cfg.default_base_branch or "main").strip() or "main"
+            mapped_branch = (
+                cfg.automerge_branch_for_project(proj, "") or production
+            ).strip()
+            prefix = feature_branch_prefix(mapped_branch) or prefix
+        except Exception:
+            pass
+        if default:
+            if uses_versioned_feature_branches(mapped_branch, production):
                 pr_base = versioned_feature_branch(prefix, default)
             else:
                 pr_base = production
-        elif default:
-            pr_base = f"{prefix}-{default}"
-    except Exception:
-        if default:
-            pr_base = f"{prefix}-{default}"
-    from bigas.resources.product.release_workflow import versioned_feature_branch
 
     forbidden_pr_bases = [
         versioned_feature_branch(prefix, item["name"])

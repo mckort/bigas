@@ -1441,6 +1441,24 @@ def analyze_trends():
         sanitized_error = sanitize_error_message(str(e))
         return jsonify({"error": sanitized_error}), 500
 
+
+@marketing_bp.route('/mcp/tools/lookup_board_releases', methods=['POST'])
+def lookup_board_releases():
+    """
+    Return board releases and the default unreleased version for a project.
+
+    Request JSON: { "project_key": "VFA" }
+    """
+    data = request.json or {}
+    project_key = str(data.get("project_key") or "").strip().upper()
+    if not project_key:
+        return jsonify({"ok": False, "error": "project_key is required"}), 400
+    from bigas.tickets.releases import lookup_board_release_defaults
+
+    result = lookup_board_release_defaults(project_key)
+    return jsonify({"ok": True, **result})
+
+
 def get_manifest():
     """Returns the manifest for the marketing tools."""
     return {
