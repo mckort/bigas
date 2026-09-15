@@ -100,6 +100,8 @@ class CreateJiraIssueService:
                 "project_key": proj,
                 "source": "internal_board",
             }
+            if ticket.get("fix_version"):
+                out["fix_version"] = ticket.get("fix_version")
             if ticket.get("labels"):
                 out["labels"] = ticket.get("labels")
             if epic:

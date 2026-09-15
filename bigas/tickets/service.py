@@ -689,6 +689,7 @@ class TicketService:
                         "status": ticket.get("status"),
                         "url": ticket.get("url"),
                         "issue_type": ticket.get("issue_type"),
+                        "fix_version": ticket.get("fix_version"),
                     }
                 )
         return out

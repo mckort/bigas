@@ -20,6 +20,8 @@ from bigas.tickets.releases import (
     close_release_from_deploy_ref,
     create_release,
     delete_release,
+    lookup_board_release_defaults,
+    fix_version_for_new_ticket,
     mark_release_released,
     maybe_close_board_release_from_workflow,
     ship_release,
@@ -53,6 +55,24 @@ def test_versions_match_ignores_v_prefix():
     assert not versions_match("0.1.0", "0.2.0")
     assert not versions_match("", "0.1.0")
     assert not versions_match("0.1.0", "")
+
+
+def test_lookup_board_release_defaults_prefers_board_default(monkeypatch):
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    create_release("VFA", name="0.3.0", is_default=False)
+    create_release("VFA", name="0.4.0", is_default=True)
+    result = lookup_board_release_defaults("VFA")
+    assert result["default_version"] == "0.4.0"
+    assert result["pr_base"] == "staging-0.4.0"
+    assert result["forbidden_pr_bases"] == []
+    assert {item["name"] for item in result["releases"]} == {"0.3.0", "0.4.0"}
+
+    item = get_release_store().get_release_by_name("VFA", "0.3.0")
+    get_release_store().update_release(item["release_id"], released=True)
+    closed = lookup_board_release_defaults("VFA")
+    assert closed["pr_base"] == "staging-0.4.0"
+    assert closed["forbidden_pr_bases"] == ["staging-0.3.0"]
+    assert fix_version_for_new_ticket("VFA", git_ref="staging-0.3.0") == "0.4.0"
 
 
 def test_create_list_delete_release():
@@ -178,6 +198,20 @@ def test_close_without_creating_next_moves_to_existing(monkeypatch):
     result = close_release("VFA", "0.1.0", create_github=False, create_next_if_missing=False)
     assert result["next_version"] == "0.2.0"
     assert store.get_ticket(open_ticket["ticket_id"])["fix_version"] == "0.2.0"
+
+
+def test_close_release_locks_versioned_staging_branch(monkeypatch):
+    monkeypatch.setattr("bigas.tickets.releases._publish_github_release", lambda *a, **k: None)
+    monkeypatch.setattr("bigas.chat.activity.post_to_agent_thread", lambda *a, **k: None)
+    locked = []
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.lock_released_feature_branch",
+        lambda **kwargs: locked.append(kwargs) or {"locked": True},
+    )
+    create_release("VFA", name="0.3.0")
+    close_release("VFA", "0.3.0", create_github=False)
+    assert locked and locked[0]["version"] == "0.3.0"
+    assert locked[0]["project_key"] == "VFA"
 
 
 def test_close_from_semver_deploy_ref(monkeypatch):

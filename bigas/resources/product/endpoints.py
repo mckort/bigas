@@ -609,6 +609,24 @@ def lookup_ticket():
         return jsonify({"ok": False, "error": sanitize_error_message(str(e))}), 500
 
 
+@product_bp.route('/lookup_board_releases', methods=['POST'])
+@require_bigas_access_key
+def lookup_board_releases():
+    """
+    Return board releases and the default unreleased version for a project.
+
+    Request JSON: { "project_key": "VFA" }
+    """
+    data = request.json or {}
+    project_key = str(data.get("project_key") or "").strip().upper()
+    if not project_key:
+        return jsonify({"ok": False, "error": "project_key is required"}), 400
+    from bigas.tickets.releases import lookup_board_release_defaults
+
+    result = lookup_board_release_defaults(project_key)
+    return jsonify({"ok": True, **result})
+
+
 @product_bp.route('/fetch_github_activity', methods=['POST'])
 @require_bigas_access_key
 def fetch_github_activity_endpoint():
@@ -1031,7 +1049,9 @@ def get_manifest():
                     "For marketing-related tickets (website, SEO, content, ads), set marketing=true "
                     "to add the label \"marketing\" (no other labels are needed). "
                     "Optional status sets the board column (e.g. \"Final Review\" or "
-                    "\"Final approval (manual)\")."
+                    "\"Final approval (manual)\"). "
+                    "Returns fix_version when the board stamps a default release; "
+                    "use that as the VFA PR base (staging-<version>)."
                 ),
                 "path": "/mcp/tools/create_ticket",
                 "method": "POST",
@@ -1144,6 +1164,31 @@ def get_manifest():
                             "description": "Project whose open Epics should be listed, e.g. GPWW.",
                         },
                     },
+                },
+            },
+            {
+                "name": "lookup_board_releases",
+                "description": (
+                    "Required before opening a VFA pull request. Returns pr_base "
+                    "(current unreleased staging-x.y.z), forbidden_pr_bases "
+                    "(already released cuts — never open or push there), and "
+                    "releases[].released. Use pr_base. Ignore ticket fix_version "
+                    "when that version is released, unless the PR is a labeled hotfix. "
+                    "Do not guess from git staging-* branches or the current checkout. "
+                    "If this tool is unavailable, fail closed with `gh release list` "
+                    "instead of targeting a released branch."
+                ),
+                "path": "/mcp/tools/lookup_board_releases",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_key": {
+                            "type": "string",
+                            "description": "Board project key, e.g. VFA or BIG.",
+                        },
+                    },
+                    "required": ["project_key"],
                 },
             },
             {

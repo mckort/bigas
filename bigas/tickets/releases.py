@@ -79,6 +79,82 @@ def default_fix_version(project_key: str) -> Optional[str]:
     return active_fix_version_from_env(project_key)
 
 
+def is_board_version_released(project_key: str, version: str) -> bool:
+    """True when the board has this semver and it is marked released."""
+    name = (version or "").strip()
+    if not name:
+        return False
+    item = get_release_store().get_release_by_name(project_key, name)
+    return bool(item and item.get("released"))
+
+
+def lookup_board_release_defaults(project_key: str) -> Dict[str, Any]:
+    """Board releases plus the default version and suggested PR base."""
+    proj = (project_key or "").strip().upper()
+    releases = [
+        {
+            "name": (item.get("name") or "").strip(),
+            "is_default": bool(item.get("is_default")),
+            "released": bool(item.get("released")),
+        }
+        for item in list_releases(proj)
+        if (item.get("name") or "").strip()
+    ]
+    default = default_fix_version(proj)
+    pr_base = None
+    prefix = "staging"
+    try:
+        from bigas.resources.product.jira_automation.config import JiraAutomationConfig
+        from bigas.resources.product.release_branches import mapped_feature_prefix
+        from bigas.resources.product.release_workflow import (
+            uses_versioned_feature_branches,
+            versioned_feature_branch,
+        )
+
+        cfg = JiraAutomationConfig.from_env()
+        repo = (cfg.project_repos or {}).get(proj) or ""
+        if repo:
+            mapped_prefix, production = mapped_feature_prefix(proj, repo, config=cfg)
+            prefix = mapped_prefix or prefix
+            if default and uses_versioned_feature_branches(prefix, production):
+                pr_base = versioned_feature_branch(prefix, default)
+            else:
+                pr_base = production
+        elif default:
+            pr_base = f"{prefix}-{default}"
+    except Exception:
+        if default:
+            pr_base = f"{prefix}-{default}"
+    from bigas.resources.product.release_workflow import versioned_feature_branch
+
+    forbidden_pr_bases = [
+        versioned_feature_branch(prefix, item["name"])
+        for item in releases
+        if item.get("released") and item.get("name")
+    ]
+    return {
+        "project_key": proj,
+        "default_version": default,
+        "pr_base": pr_base,
+        "forbidden_pr_bases": [base for base in forbidden_pr_bases if base],
+        "releases": releases,
+    }
+
+
+def _lock_released_cut(project_key: str, version: str) -> None:
+    try:
+        from bigas.resources.product.release_branches import lock_released_feature_branch
+
+        lock_released_feature_branch(project_key=project_key, version=version)
+    except Exception:
+        logger.warning(
+            "Could not lock released staging branch for %s %s",
+            project_key,
+            version,
+            exc_info=True,
+        )
+
+
 def lowest_unreleased_version(project_key: str) -> Optional[str]:
     """Lowest unreleased board version, or None when the project has none."""
     candidates: List[tuple] = []
@@ -108,7 +184,7 @@ def fix_version_for_new_ticket(
     from bigas.resources.product.release_workflow import version_from_feature_branch
 
     from_branch = version_from_feature_branch(git_ref or "")
-    if from_branch:
+    if from_branch and not is_board_version_released(project_key, from_branch):
         return from_branch
     return default_fix_version(project_key) or lowest_unreleased_version(project_key)
 
@@ -345,6 +421,7 @@ def close_release(
         git_tag=tag_name,
     )
     _notify_devops(proj, name, next_version, moved)
+    _lock_released_cut(proj, name)
     return {
         "release": updated or item,
         "already_released": False,
@@ -446,6 +523,8 @@ def ship_release(
                 item["release_id"],
                 git_tag=tag_name,
             )
+
+    _lock_released_cut(proj, name)
 
     deploy_result = None
     if deploy:

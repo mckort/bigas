@@ -166,6 +166,7 @@ def test_jira_formatting_rules_follow_user_language():
     assert "Never tell the user to create the issue themselves" in prompt
     assert "lookup_ticket" in prompt
     assert "search_tickets" in prompt
+    assert "lookup_board_releases" in prompt
     assert "does not mean the new work belongs under the same Epic" in prompt
     assert "Never reply with only ticket links" in JIRA_FORMATTING_RULES
     from bigas.agents.chief_of_staff import REASONING_APPROACH

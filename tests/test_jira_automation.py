@@ -536,6 +536,232 @@ def test_versioned_staging_merge_allows_versioned_base(monkeypatch):
     )
 
 
+def test_ensure_board_ticket_retargets_stale_versioned_base_to_default(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.release_store import reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reset_release_store_for_tests()
+    create_release("VFA", name="0.3.0", is_default=False)
+    create_release("VFA", name="0.4.0", is_default=True)
+
+    patched: list[dict] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: _vfa_retarget_cfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: None)
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.ensure_versioned_release_branch",
+        lambda **kwargs: {"branch": kwargs.get("branch"), "created": True, "source": "main"},
+    )
+
+    pr = {
+        "number": 212,
+        "title": "Allow adding investment rounds before status is Invested",
+        "body": "Show Add round even when status is not Invested.",
+        "user": {"login": "marcus"},
+        "head": {"ref": "feat/add-round-without-invested"},
+        "base": {"ref": "staging-0.3.0"},
+    }
+    result = fa.ensure_board_ticket_for_pr(
+        repo="mckort/vcfieldassistant",
+        pr=pr,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/212",
+        github_token="tok",
+        pr_number=212,
+        status="To Do",
+        retitle=True,
+    )
+    assert result.get("ok") is True
+    assert result.get("retargeted_base") == "staging-0.4.0"
+    assert any(item.get("base") == "staging-0.4.0" for item in patched)
+    assert (((pr.get("base") or {}).get("ref")) == "staging-0.4.0")
+    ticket_store_module._store = None
+    reset_release_store_for_tests()
+
+
+def test_ensure_board_ticket_keeps_explicit_ticket_version(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.release_store import reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+    from bigas.tickets.service import TicketService
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reset_release_store_for_tests()
+    create_release("VFA", name="0.3.0", is_default=False)
+    create_release("VFA", name="0.4.0", is_default=True)
+
+    ticket = TicketService().create_ticket_for_project(
+        "VFA",
+        title="Stay on 0.3.0",
+        description="Explicit older cut.",
+        git_ref="staging-0.3.0",
+    )
+    key = ticket["key"]
+
+    patched: list[dict] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: _vfa_retarget_cfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: None)
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.ensure_versioned_release_branch",
+        lambda **kwargs: {"branch": kwargs.get("branch"), "created": True, "source": "main"},
+    )
+
+    pr = {
+        "number": 213,
+        "title": f"{key}: Stay on 0.3.0",
+        "body": key,
+        "user": {"login": "marcus"},
+        "head": {"ref": "feat/stay-on-030"},
+        "base": {"ref": "staging-0.3.0"},
+    }
+    result = fa.ensure_board_ticket_for_pr(
+        repo="mckort/vcfieldassistant",
+        pr=pr,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/213",
+        github_token="tok",
+        pr_number=213,
+        status="To Do",
+        retitle=True,
+    )
+    assert result.get("ok") is True
+    assert result.get("retargeted_base") is None
+    assert not any(item.get("base") for item in patched)
+    assert (((pr.get("base") or {}).get("ref")) == "staging-0.3.0")
+    ticket_store_module._store = None
+    reset_release_store_for_tests()
+
+
+def test_ensure_board_ticket_retargets_released_ticket_version(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.release_store import get_release_store, reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+    from bigas.tickets.service import TicketService
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reset_release_store_for_tests()
+    create_release("VFA", name="0.3.0", is_default=False)
+    create_release("VFA", name="0.4.0", is_default=True)
+    item = get_release_store().get_release_by_name("VFA", "0.3.0")
+    get_release_store().update_release(item["release_id"], released=True)
+
+    ticket = TicketService().create_ticket_for_project(
+        "VFA",
+        title="Opened on a released cut",
+        description="Should move to 0.4.0.",
+        git_ref="staging-0.3.0",
+    )
+    key = ticket["key"]
+    assert ticket.get("fix_version") == "0.4.0"
+
+    patched: list[dict] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: _vfa_retarget_cfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: None)
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.ensure_versioned_release_branch",
+        lambda **kwargs: {"branch": kwargs.get("branch"), "created": True, "source": "main"},
+    )
+
+    pr = {
+        "number": 214,
+        "title": f"{key}: Opened on a released cut",
+        "body": key,
+        "user": {"login": "marcus"},
+        "head": {"ref": "feat/released-cut"},
+        "base": {"ref": "staging-0.3.0"},
+    }
+    result = fa.ensure_board_ticket_for_pr(
+        repo="mckort/vcfieldassistant",
+        pr=pr,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/214",
+        github_token="tok",
+        pr_number=214,
+        status="To Do",
+        retitle=True,
+    )
+    assert result.get("ok") is True
+    assert result.get("retargeted_base") == "staging-0.4.0"
+    assert any(item.get("base") == "staging-0.4.0" for item in patched)
+    assert (((pr.get("base") or {}).get("ref")) == "staging-0.4.0")
+    ticket_store_module._store = None
+    reset_release_store_for_tests()
+
+
+def test_ensure_board_ticket_skips_rebase_pr(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.release_store import reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reset_release_store_for_tests()
+    create_release("VFA", name="0.4.0", is_default=True)
+
+    patched: list[dict] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: _vfa_retarget_cfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: None)
+
+    pr = {
+        "number": 214,
+        "title": "Resolve conflicts: staging-0.3.0 onto main",
+        "body": "Rebase leftover work.",
+        "user": {"login": "bigas"},
+        "head": {"ref": "bigas-rebase/staging-0.3.0"},
+        "base": {"ref": "staging-0.3.0"},
+    }
+    result = fa.ensure_board_ticket_for_pr(
+        repo="mckort/vcfieldassistant",
+        pr=pr,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/214",
+        github_token="tok",
+        pr_number=214,
+        status="To Do",
+        retitle=True,
+    )
+    assert result.get("skipped") or result.get("retargeted_base") is None
+    assert not any(item.get("base") for item in patched)
+    ticket_store_module._store = None
+    reset_release_store_for_tests()
+
+
 def test_ensure_board_ticket_hotfix_on_main_is_not_retargeted(monkeypatch):
     from bigas.resources.product.jira_automation import final_approval as fa
     from bigas.tickets import store as ticket_store_module

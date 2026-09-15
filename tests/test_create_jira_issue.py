@@ -210,6 +210,11 @@ def test_manifest_includes_create_ticket():
     assert search["path"] == "/mcp/tools/search_tickets"
     assert search["parameters"]["required"] == ["jql"]
     assert "jql" in search["description"].lower()
+    releases = tools["lookup_board_releases"]
+    assert releases["path"] == "/mcp/tools/lookup_board_releases"
+    assert releases["parameters"]["required"] == ["project_key"]
+    assert "pr_base" in releases["description"]
+    assert "forbidden_pr_bases" in releases["description"]
 
 
 @pytest.fixture

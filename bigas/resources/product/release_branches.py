@@ -176,6 +176,32 @@ def resolve_implement_base_branch(
     return branch
 
 
+def lock_released_feature_branch(
+    *,
+    project_key: str,
+    version: str,
+    github_token: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Make ``staging-x.y.z`` read-only after that cut is released on GitHub."""
+    cfg = JiraAutomationConfig.from_env()
+    repo = (cfg.repo_for_project(project_key) or "").strip()
+    if not repo:
+        return None
+    prefix, production = mapped_feature_prefix(project_key, repo, config=cfg)
+    if not uses_versioned_feature_branches(prefix, production):
+        return None
+    branch = versioned_feature_branch(prefix, version)
+    if not branch:
+        return None
+    gh = _github_client(github_token)
+    owner, name = _split_repo(repo)
+    if not gh.branch_exists(owner, name, branch):
+        return {"branch": branch, "locked": False, "reason": "missing"}
+    result = gh.upsert_lock_branch_ruleset(owner, name, branch)
+    logger.info("Locked released branch %s on %s", branch, repo)
+    return result
+
+
 def newer_release_branch_names(
     *,
     project_key: str,

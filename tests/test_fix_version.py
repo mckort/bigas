@@ -7,7 +7,7 @@ import pytest
 
 from bigas.resources.product.fix_version import ensure_active_fix_version
 from bigas.tickets.jira_adapter import TicketJiraAdapter
-from bigas.tickets.release_store import reset_release_store_for_tests
+from bigas.tickets.release_store import get_release_store, reset_release_store_for_tests
 
 
 def test_ensure_active_fix_version_jira_client():
@@ -76,3 +76,28 @@ def test_ticket_adapter_keeps_existing_fix_version(monkeypatch):
     assert adapter.ensure_issue_fix_version("VFA-101", project_key="VFA") == "1.0.0"
     updated = store.get_ticket_by_key("VFA-101")
     assert updated["fix_version"] == "1.0.0"
+
+
+def test_ticket_adapter_replaces_released_fix_version(monkeypatch):
+    reset_release_store_for_tests()
+    monkeypatch.delenv("BIGAS_PROJECT_ACTIVE_FIX_VERSION", raising=False)
+    from bigas.tickets.releases import create_release
+
+    create_release("VFA", name="0.3.0")
+    create_release("VFA", name="0.4.0", is_default=True)
+    item = get_release_store().get_release_by_name("VFA", "0.3.0")
+    get_release_store().update_release(item["release_id"], released=True)
+
+    store = TicketJiraAdapter()._store
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Stale cut",
+        user_id="dev-user",
+        key="VFA-103",
+        fix_version="0.3.0",
+    )
+    adapter = TicketJiraAdapter()
+    assert adapter.ensure_issue_fix_version("VFA-103", project_key="VFA") == "0.4.0"
+    updated = store.get_ticket_by_key("VFA-103")
+    assert updated["fix_version"] == "0.4.0"

@@ -15,6 +15,9 @@ def test_manifest_includes_question_and_async_weekly():
     from bigas.resources.marketing.endpoints import get_manifest
 
     tools = {t["name"]: t for t in get_manifest()["tools"]}
+    releases = tools["lookup_board_releases"]
+    assert releases["path"] == "/mcp/tools/lookup_board_releases"
+    assert "forbidden_pr_bases" in releases["description"]
     ask = tools["ask_analytics_question"]
     assert "question" in ask["parameters"]["required"]
     assert "factual GA4" in ask["description"]
