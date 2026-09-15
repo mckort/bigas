@@ -1237,6 +1237,73 @@ def test_implement_handler_launches_simple_ticket_without_plan(monkeypatch):
     assert "Direct implement" in comments[0]
 
 
+def test_implement_handler_persists_agent_url_on_internal_ticket(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+    from bigas.resources.product.jira_automation.implement import ImplementHandler
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.store import get_ticket_store
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA", project_key="VFA")
+    ticket = store.create_ticket(
+        board["board_id"],
+        title="Check margins in button text",
+        description="Green button, tight padding",
+        user_id="dev-user",
+    )
+
+    class FakeCursor:
+        def __init__(self, api_key):
+            pass
+
+        def launch_implementation(self, **kwargs):
+            return {
+                "agent_url": "https://cursor.com/agents/bc-simple",
+                "agent_id": "bc-simple",
+                "run_id": "run-1",
+            }
+
+    class FakeJira:
+        def get_issue(self, key, fields=None):
+            return {
+                "fields": {
+                    "summary": ticket["title"],
+                    "description": ticket["description"],
+                    "status": {"name": "In Progress (AI)"},
+                    "labels": [],
+                    "issuelinks": [],
+                    "parent": None,
+                    "project": {"key": "VFA"},
+                }
+            }
+
+        def list_comments(self, key, max_results=50):
+            return []
+
+        def add_comment(self, key, body):
+            store.add_comment(ticket["ticket_id"], body)
+
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    monkeypatch.setattr(impl, "CursorCloudAgentClient", FakeCursor)
+    monkeypatch.setattr(impl, "_poll_budget_seconds", lambda: 0)
+    monkeypatch.setattr(impl, "attachments_text_for_issue", lambda *_a, **_k: "")
+
+    result = ImplementHandler(jira=FakeJira(), cursor_api_key="test-key").run(
+        issue_key=ticket["key"],
+        repo="mckort/vcfieldassistant",
+    )
+    assert result["ok"] is True
+    saved = store.get_ticket(ticket["ticket_id"])
+    assert saved["agent_url"] == "https://cursor.com/agents/bc-simple"
+    assert saved["agent_id"] == "bc-simple"
+    ticket_store_module._store = None
+
+
 def test_implement_handler_rejects_empty_ticket(monkeypatch):
     from bigas.resources.product.jira_automation import implement as impl
     from bigas.resources.product.jira_automation.implement import (

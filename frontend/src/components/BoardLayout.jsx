@@ -41,6 +41,7 @@ import {
 } from '../lib/okr'
 import { isDoneStatus, ticketSearchKey, ticketVisibleOnBoard } from '../lib/boardFilters'
 import { ticketFixVersion, ticketMatchesReleaseFilter } from '../lib/releases'
+import { linkify } from '../lib/linkify'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
 
@@ -319,6 +320,50 @@ function LabelEditor({ labels, onChange }, ref) {
 
 const LabelEditorWithRef = forwardRef(LabelEditor)
 
+function ticketAgentUrl(ticket) {
+  return String(ticket?.agent_url || ticket?.review?.agent_url || '').trim()
+}
+
+function ticketPrUrl(ticket) {
+  return String(ticket?.review?.pr_url || '').trim()
+}
+
+function TicketLinks({ ticket, className = '' }) {
+  const agentUrl = ticketAgentUrl(ticket)
+  const prUrl = ticketPrUrl(ticket)
+  if (!agentUrl && !prUrl) return null
+  const chip =
+    'text-[11px] leading-tight px-1.5 py-0.5 rounded-md border border-border text-accent hover:bg-surface'
+  return (
+    <div className={`flex flex-wrap gap-1.5 ${className}`.trim()}>
+      {agentUrl && (
+        <a
+          href={agentUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={chip}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          Agent
+        </a>
+      )}
+      {prUrl && (
+        <a
+          href={prUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={chip}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          PR
+        </a>
+      )}
+    </div>
+  )
+}
+
 function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusChange, onDiscuss, onFilterEpic, onFilterVersion, dragging, onDragStart, onDragEnd }) {
   const results = keyResultsOf(ticket)
   const fixVersion = ticketFixVersion(ticket)
@@ -413,6 +458,7 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
           ) : null
         }
       />
+      <TicketLinks ticket={ticket} className="mt-2" />
       {ticket.attachment_count > 0 && (
         <p className="text-[11px] text-muted mt-2">
           {ticket.attachment_count} attachment{ticket.attachment_count === 1 ? '' : 's'}
@@ -818,7 +864,7 @@ function TicketComments({ ticketId }) {
                   {formatCommentTime(comment.created_at)}
                 </span>
               </div>
-              <p className="whitespace-pre-wrap break-words text-sm leading-snug">{commentBody(comment)}</p>
+              <p className="whitespace-pre-wrap break-words text-sm leading-snug">{linkify(commentBody(comment))}</p>
             </div>
           )
         })}
@@ -888,8 +934,11 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 modal-overlay" onClick={onClose} aria-hidden="true" />
       <div className="relative bg-elevated w-full sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl rounded-t-xl sm:rounded-xl shadow-card max-h-[90vh] sm:max-h-[85vh] flex flex-col">
-        <div className="p-4 border-b border-border flex items-center justify-between">
-          <h3 className="font-semibold">{isNew ? 'New ticket' : ticket.key}</h3>
+        <div className="p-4 border-b border-border flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold">{isNew ? 'New ticket' : ticket.key}</h3>
+            {!isNew && <TicketLinks ticket={ticket} className="mt-1.5" />}
+          </div>
           <button type="button" onClick={onClose} className="p-2 min-w-[44px] min-h-[44px]" aria-label="Close">
             ✕
           </button>

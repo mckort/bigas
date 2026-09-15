@@ -193,6 +193,8 @@ def comment_author_name(user: Optional[Dict[str, Any]]) -> str:
 
 
 def ticket_to_api(ticket: Dict[str, Any], *, include_comments: bool = True) -> Dict[str, Any]:
+    from bigas.tickets.review import infer_agent_url, normalize_review
+
     key = ticket.get("key") or ""
     comments = list(ticket.get("comments") or [])
     attachments = list(ticket.get("attachments") or [])
@@ -203,6 +205,8 @@ def ticket_to_api(ticket: Dict[str, Any], *, include_comments: bool = True) -> D
         "marketing": any(label == "marketing" for label in labels),
         "url": ticket_url(key),
         "summary": ticket.get("title") or key,
+        "agent_url": infer_agent_url(ticket),
+        "review": normalize_review(ticket.get("review")),
     }
     if include_comments:
         payload["comments"] = comments
@@ -485,6 +489,7 @@ class TicketService:
         okr_owner: Optional[str] = None,
         okr_briefing: Optional[str] = None,
         okr_phase: Optional[str] = None,
+        start_automation: bool = True,
     ) -> Dict[str, Any]:
         ticket = self._store.create_ticket(
             board_id,
@@ -507,6 +512,8 @@ class TicketService:
             okr_briefing=okr_briefing,
             okr_phase=okr_phase,
         )
+        if start_automation:
+            self._maybe_dispatch_create_automation(ticket)
         return ticket_to_api(ticket)
 
     def update_ticket(
@@ -545,6 +552,7 @@ class TicketService:
         key: Optional[str] = None,
         status: str = "To Do",
         git_ref: Optional[str] = None,
+        start_automation: bool = True,
     ) -> Dict[str, Any]:
         uid = user_id or _sync_user_id()
         board = self._store.find_board_for_project(project_key, uid)
@@ -574,6 +582,8 @@ class TicketService:
             status=resolved,
             fix_version=fix_version_for_new_ticket(project_key, git_ref=git_ref),
         )
+        if start_automation:
+            self._maybe_dispatch_create_automation(ticket)
         return ticket_to_api(ticket)
 
     def set_status(
@@ -660,6 +670,12 @@ class TicketService:
             project_key=project_key,
         )
 
+    def _maybe_dispatch_create_automation(self, ticket: Dict[str, Any]) -> None:
+        status = (ticket.get("status") or "").strip()
+        if status not in AI_TRIGGER_STATUSES:
+            return
+        self._on_status_change(ticket, old_status="", new_status=status)
+
     def _handle_done(self, ticket: Dict[str, Any], *, project_key: str) -> None:
         from bigas.chat.activity import mirror_to_activity_feed, post_to_agent_thread
 
@@ -690,6 +706,7 @@ class TicketService:
                         "url": ticket.get("url"),
                         "issue_type": ticket.get("issue_type"),
                         "fix_version": ticket.get("fix_version"),
+                        "agent_url": ticket.get("agent_url") or "",
                     }
                 )
         return out

@@ -24,7 +24,13 @@ from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 from bigas.tickets.jira_adapter import TicketJiraAdapter
 from bigas.tickets.jira_import import sync_jira_board
 from bigas.tickets.labels import normalize_label, normalize_labels
-from bigas.tickets.service import comment_author_name, dispatch_ticket_status_automation
+from bigas.tickets.review import attach_implement_agent, infer_agent_url
+from bigas.tickets.service import (
+    TicketService,
+    comment_author_name,
+    dispatch_ticket_status_automation,
+    ticket_to_api,
+)
 from bigas.tickets.attachments import reset_attachment_blob_store_for_tests, set_image_describer
 from bigas.tickets.release_store import reset_release_store_for_tests
 from bigas.tickets.store import get_ticket_store
@@ -693,3 +699,92 @@ def test_allocate_key_skips_occupied_auto_keys(client):
         user_id="dev-user",
     )
     assert ticket["key"] == "PERS-2"
+
+
+def test_update_ticket_persists_review_and_agent_url():
+    store = get_ticket_store()
+    boards = store.ensure_default_boards("test-user")
+    vfa = next(b for b in boards if b.get("project_key") == "VFA")
+    ticket = store.create_ticket(vfa["board_id"], title="Work", user_id="test-user")
+    store.update_ticket(
+        ticket["ticket_id"],
+        review={
+            "pr_url": "https://github.com/mckort/vcfieldassistant/pull/1",
+            "pr_title": "Fix",
+        },
+        agent_url="https://cursor.com/agents/bc-1",
+        agent_id="bc-1",
+    )
+    fetched = store.get_ticket(ticket["ticket_id"])
+    assert fetched["review"]["pr_url"].endswith("/pull/1")
+    assert fetched["agent_url"] == "https://cursor.com/agents/bc-1"
+    assert fetched["agent_id"] == "bc-1"
+
+
+def test_attach_implement_agent_persists_url():
+    store = get_ticket_store()
+    boards = store.ensure_default_boards("test-user")
+    vfa = next(b for b in boards if b.get("project_key") == "VFA")
+    ticket = store.create_ticket(vfa["board_id"], title="Work", user_id="test-user")
+    attach_implement_agent(
+        ticket["key"], agent_url="https://cursor.com/agents/bc-1", agent_id="bc-1"
+    )
+    fetched = store.get_ticket(ticket["ticket_id"])
+    assert fetched["agent_url"] == "https://cursor.com/agents/bc-1"
+    assert fetched["agent_id"] == "bc-1"
+
+
+def test_ticket_to_api_infers_agent_url_from_comments():
+    store = get_ticket_store()
+    boards = store.ensure_default_boards("test-user")
+    vfa = next(b for b in boards if b.get("project_key") == "VFA")
+    ticket = store.create_ticket(vfa["board_id"], title="Stuck", user_id="test-user")
+    store.add_comment(
+        ticket["ticket_id"],
+        f"{BIGAS_COMMENT_MARKER} Implementation started\n"
+        "Agent: https://cursor.com/agents/bc-stuck",
+    )
+    raw = store.get_ticket(ticket["ticket_id"])
+    assert infer_agent_url(raw) == "https://cursor.com/agents/bc-stuck"
+    api = ticket_to_api(raw, include_comments=False)
+    assert api["agent_url"] == "https://cursor.com/agents/bc-stuck"
+    assert "comments" not in api
+
+
+def test_create_in_progress_dispatches_automation(monkeypatch):
+    called = {}
+
+    def fake_dispatch(ticket, **kwargs):
+        called["key"] = ticket.get("key")
+        called.update(kwargs)
+
+    monkeypatch.setattr(
+        "bigas.tickets.service.dispatch_ticket_status_automation", fake_dispatch
+    )
+    ticket = TicketService().create_ticket_for_project(
+        "VFA",
+        title="Fail released staging PRs",
+        description="CI should fail",
+        status="In Progress (AI)",
+    )
+    assert ticket["status"] == "In Progress (AI)"
+    assert called.get("new_status") == "In Progress (AI)"
+    assert called.get("old_status") == ""
+    assert called.get("key") == ticket["key"]
+
+
+def test_create_todo_does_not_dispatch_automation(monkeypatch):
+    called = {}
+
+    def fake_dispatch(ticket, **kwargs):
+        called["hit"] = True
+
+    monkeypatch.setattr(
+        "bigas.tickets.service.dispatch_ticket_status_automation", fake_dispatch
+    )
+    TicketService().create_ticket_for_project(
+        "VFA",
+        title="Stay in To Do",
+        description="No AI yet",
+    )
+    assert not called
