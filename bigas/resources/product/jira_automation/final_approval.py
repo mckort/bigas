@@ -24,6 +24,7 @@ from bigas.resources.product.jira_automation.config import (
 from bigas.resources.product.release_workflow import (
     feature_branch_prefix,
     is_versioned_feature_head,
+    labels_include_hotfix,
     version_from_feature_branch,
 )
 
@@ -151,23 +152,33 @@ def _align_pr_base_to_board_release(
     github_token: str,
     pr_number: Optional[int],
 ) -> Optional[str]:
-    """Create staging-x.y.z from the board default and retarget main or unversioned staging."""
+    """Retarget the PR onto the ticket version, or the board default if untagged."""
     current = (((pr.get("base") or {}).get("ref") or "")).strip()
-    if not current or version_from_feature_branch(current):
+    if not current:
+        return None
+    title = (pr.get("title") or "").strip()
+    if _RELEASE_TITLE_RE.match(title):
+        return None
+    head = (((pr.get("head") or {}).get("ref") or "")).strip()
+    if head.startswith("bigas-rebase/"):
+        return None
+    if labels_include_hotfix(_pr_label_names(pr)):
         return None
 
     from bigas.resources.product.fix_version import ensure_active_fix_version
     from bigas.resources.product.release_branches import resolve_implement_base_branch
     from bigas.tickets.jira_adapter import TicketJiraAdapter
 
+    from bigas.tickets.releases import default_fix_version, is_board_version_released
+
     fix_version = ensure_active_fix_version(
         TicketJiraAdapter(),
         issue_key=issue_key,
         project_key=project_key,
     ) or _ticket_fix_version(issue_key)
+    if fix_version and is_board_version_released(project_key, fix_version):
+        fix_version = default_fix_version(project_key)
     if not fix_version:
-        from bigas.tickets.releases import default_fix_version
-
         fix_version = default_fix_version(project_key)
     if not fix_version:
         return None
@@ -192,8 +203,14 @@ def _align_pr_base_to_board_release(
     if not wanted or wanted == current or not version_from_feature_branch(wanted):
         return None
     production = (JiraAutomationConfig.from_env().base_branch_for_repo(repo) or "").strip()
-    allowed = {feature_branch_prefix(wanted), production}
-    if current not in allowed:
+    prefix = feature_branch_prefix(wanted)
+    if is_versioned_feature_head(head, prefix):
+        return None
+    allowed = {prefix, production, "main", "master"}
+    current_is_same_line = bool(
+        version_from_feature_branch(current) and feature_branch_prefix(current) == prefix
+    )
+    if current not in allowed and not current_is_same_line:
         return None
 
     number = pr_number or pr.get("number")
@@ -351,7 +368,7 @@ def ensure_board_ticket_for_pr(
                     description="\n\n".join(desc_parts),
                     issue_type="Task",
                     status=status,
-                    git_ref=head_ref or (((pr.get("base") or {}).get("ref") or "")).strip(),
+                    git_ref=head_ref if version_from_feature_branch(head_ref) else None,
                 )
             except Exception as exc:
                 logger.warning("Auto-create board ticket failed for %s", pr_url, exc_info=True)

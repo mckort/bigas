@@ -12,6 +12,11 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# GitHub rulesets API: RepositoryRole actor id for repository admins (standard bypass).
+GITHUB_RULESET_REPOSITORY_ADMIN_ROLE_ACTOR_ID = int(
+    os.environ.get("GITHUB_RULESET_ADMIN_BYPASS_ACTOR_ID", "5")
+)
+
 
 class GitHubActionsError(RuntimeError):
     pass
@@ -600,6 +605,72 @@ class GitHubActionsClient:
             )
         resp.raise_for_status()
         return resp.json() or {}
+
+    def list_repo_rulesets(self, owner: str, repo: str) -> List[Dict[str, Any]]:
+        url = f"https://api.github.com/repos/{owner}/{repo}/rulesets"
+        resp = requests.get(url, headers=self._headers, timeout=30)
+        if resp.status_code == 404:
+            return []
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        data = resp.json() or []
+        return data if isinstance(data, list) else []
+
+    def upsert_lock_branch_ruleset(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+    ) -> Dict[str, Any]:
+        """Lock ``branch`` so only repository admins can push or merge."""
+        name = f"Lock released {branch}"
+        payload: Dict[str, Any] = {
+            "name": name,
+            "target": "branch",
+            "enforcement": "active",
+            "bypass_actors": [
+                {
+                    "actor_id": GITHUB_RULESET_REPOSITORY_ADMIN_ROLE_ACTOR_ID,
+                    "actor_type": "RepositoryRole",
+                    "bypass_mode": "always",
+                }
+            ],
+            "conditions": {
+                "ref_name": {
+                    "include": [f"refs/heads/{branch}"],
+                    "exclude": [],
+                }
+            },
+            "rules": [
+                {"type": "update"},
+                {"type": "deletion"},
+                {"type": "non_fast_forward"},
+            ],
+        }
+        existing_id = None
+        for item in self.list_repo_rulesets(owner, repo):
+            if isinstance(item, dict) and (item.get("name") or "") == name:
+                existing_id = item.get("id")
+                break
+        if existing_id:
+            url = f"https://api.github.com/repos/{owner}/{repo}/rulesets/{existing_id}"
+            resp = requests.put(url, headers=self._headers, json=payload, timeout=30)
+        else:
+            url = f"https://api.github.com/repos/{owner}/{repo}/rulesets"
+            resp = requests.post(url, headers=self._headers, json=payload, timeout=30)
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        data = resp.json() if resp.text else {}
+        result = data if isinstance(data, dict) else {}
+        result["branch"] = branch
+        result["locked"] = True
+        return result
 
 
 def clean_gha_log_line(line: str) -> str:

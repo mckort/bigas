@@ -275,15 +275,14 @@ class TicketJiraAdapter:
         project_key: Optional[str] = None,
     ) -> Optional[str]:
         """Assign the board default, env fallback, or lowest unreleased version."""
-        from bigas.tickets.releases import fix_version_for_new_ticket
+        from bigas.tickets.releases import (
+            fix_version_for_new_ticket,
+            is_board_version_released,
+        )
 
         ticket = self._ticket(issue_key)
         if not ticket:
             raise JiraError(f"Ticket {issue_key} not found")
-
-        existing = (ticket.get("fix_version") or "").strip()
-        if existing:
-            return existing
 
         board = self._board(ticket)
         proj = (
@@ -295,9 +294,15 @@ class TicketJiraAdapter:
         if not proj and issue_key and "-" in issue_key:
             proj = issue_key.split("-", 1)[0].upper()
 
+        existing = (ticket.get("fix_version") or "").strip()
+        if existing and not (proj and is_board_version_released(proj, existing)):
+            return existing
+
         active = fix_version_for_new_ticket(proj) or active_fix_version_from_env(proj)
         if not active:
-            return None
+            return existing or None
+        if existing and versions_match(existing, active):
+            return existing
 
         self._store.update_ticket(ticket["ticket_id"], fix_version=active)
         return active

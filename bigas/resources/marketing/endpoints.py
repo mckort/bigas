@@ -1441,12 +1441,55 @@ def analyze_trends():
         sanitized_error = sanitize_error_message(str(e))
         return jsonify({"error": sanitized_error}), 500
 
+
+@marketing_bp.route('/mcp/tools/lookup_board_releases', methods=['POST'])
+def lookup_board_releases():
+    """
+    Return board releases and the default unreleased version for a project.
+
+    Request JSON: { "project_key": "VFA" }
+    """
+    data = request.json or {}
+    project_key = str(data.get("project_key") or "").strip().upper()
+    if not project_key:
+        return jsonify({"ok": False, "error": "project_key is required"}), 400
+    from bigas.tickets.releases import lookup_board_release_defaults
+
+    result = lookup_board_release_defaults(project_key)
+    return jsonify({"ok": True, **result})
+
+
 def get_manifest():
     """Returns the manifest for the marketing tools."""
     return {
         "name": "Marketing Tools",
         "description": "Tools for Google Analytics reporting, natural language queries, trend analysis, and report storage.",
         "tools": [
+            {
+                "name": "lookup_board_releases",
+                "description": (
+                    "Required before opening a VFA pull request. Returns pr_base "
+                    "(current unreleased staging-x.y.z), forbidden_pr_bases "
+                    "(already released cuts — never open or push there), and "
+                    "releases[].released. Use pr_base. Ignore ticket fix_version "
+                    "when that version is released, unless the PR is a labeled hotfix. "
+                    "Do not guess from git staging-* branches or the current checkout. "
+                    "If this tool is unavailable, fail closed with `gh release list` "
+                    "instead of targeting a released branch."
+                ),
+                "path": "/mcp/tools/lookup_board_releases",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_key": {
+                            "type": "string",
+                            "description": "Board project key, e.g. VFA or BIG.",
+                        },
+                    },
+                    "required": ["project_key"],
+                },
+            },
             {"name": "fetch_analytics_report", "description": "Fetches a standard Google Analytics report.", "path": "/mcp/tools/fetch_analytics_report", "method": "POST"},
             {"name": "fetch_custom_report", "description": "Fetches a custom Google Analytics report with specific dimensions and metrics.", "path": "/mcp/tools/fetch_custom_report", "method": "POST"},
             {"name": "ask_analytics_question", "description": "Fetch a factual GA4 metric or breakdown only (sessions, users, sources, landing pages, event counts). Requires 'question' as a specific data question, e.g. 'Sessions last 28 days by sessionDefaultChannelGroup'. Optional 'project_key' (VFA, WAYW, BIG, REM, GPWW, FYDA, MYL) selects which site's GA4 property. Do not use this for strategy, SEO ideas, or 'how do we grow traffic' — gather numbers here, then write the plan yourself. Empty results are a valid finding (the event/metric is missing), not an error. Does not post to Discord.", "path": "/mcp/tools/ask_analytics_question", "method": "POST", "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "Factual GA4 question only, e.g. 'Sessions last 28 days' or 'outbound_store_click events last 7 days'. Not strategy or recommendations."}, "project_key": {"type": "string", "description": "Jira project key to select the GA4 property (e.g. GPWW, VFA)."}}, "required": ["question"]}},
