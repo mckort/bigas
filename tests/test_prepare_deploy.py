@@ -841,6 +841,12 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
         def post_or_update_pr_comment(self, **kwargs):
             return {"html_url": "https://github.com/mckort/vcfieldassistant/pull/210#issuecomment-1"}
 
+        def get_marked_comment_body(self, owner, repo, pr_number):
+            return (
+                "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+                "### Minor\n- Leftover nit.\n\nReady to merge.\n"
+            )
+
         def merge_pull_request(self, *args, **kwargs):
             merged["called"] = True
 
@@ -866,6 +872,8 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
         "bigas.resources.cto.pr_review.service.PRReviewService",
         lambda *args, **kwargs: _FakeReview(),
     )
+    monkeypatch.setattr("bigas.resources.devops.prepare._ACTIONS_REVIEW_WAIT_SEC", 0)
+    monkeypatch.setattr("bigas.resources.devops.prepare.time.sleep", lambda _s: None)
 
     result = review_and_merge_release_pr(
         repo="mckort/vcfieldassistant",
@@ -879,6 +887,81 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
     assert merged["called"] is False
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
     assert "not ready to merge" in blob.lower()
+
+
+def test_release_review_merges_after_actions_refreshes_nits_review(monkeypatch):
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    merged = {"called": False}
+    nit_review = (
+        "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+        "### Minor\n- Leftover nit.\n\nReady to merge.\n"
+    )
+    clean_review = (
+        "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+        "### Minor\nNone.\n\nReady to merge.\n"
+    )
+    poll = {"calls": 0}
+
+    class _FakeGH:
+        def get_pull_request(self, owner, repo, pr_number):
+            return {
+                "html_url": "https://github.com/mckort/vcfieldassistant/pull/212",
+                "merged": False,
+                "draft": False,
+            }
+
+        def get_pr_diff(self, owner, repo, pr_number):
+            return "diff --git a/x b/x\n+"
+
+        def post_or_update_pr_comment(self, **kwargs):
+            return {"html_url": "https://github.com/mckort/vcfieldassistant/pull/212#issuecomment-1"}
+
+        def get_marked_comment_body(self, owner, repo, pr_number):
+            poll["calls"] += 1
+            if poll["calls"] == 1:
+                return nit_review
+            return clean_review
+
+        def merge_pull_request(self, *args, **kwargs):
+            merged["called"] = True
+
+    class _FakeReview:
+        def review(self, **kwargs):
+            from bigas.llm.usage import TokenUsage
+            from bigas.resources.cto.pr_review.service import PRReviewResult
+
+            return PRReviewResult(
+                text=nit_review,
+                model="test",
+                usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+            )
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.pr_review.github_client.GitHubPRCommentClient",
+        lambda *args, **kwargs: _FakeGH(),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.pr_review.service.PRReviewService",
+        lambda *args, **kwargs: _FakeReview(),
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare._ACTIONS_REVIEW_WAIT_SEC", 30)
+    monkeypatch.setattr("bigas.resources.devops.prepare.time.sleep", lambda _s: None)
+
+    result = review_and_merge_release_pr(
+        repo="mckort/vcfieldassistant",
+        pr_number=212,
+        thread_id=thread["thread_id"],
+        project_key="VFA",
+        version="0.3.0",
+        cut_keys=["VFA-1"],
+    )
+    assert result["status"] == "merged"
+    assert merged["called"] is True
+    assert poll["calls"] >= 2
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "waiting briefly" in blob.lower()
+    assert "merged release pr" in blob.lower()
 
 
 def test_release_review_merges_when_review_is_clean(monkeypatch):

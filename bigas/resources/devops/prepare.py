@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,6 +25,10 @@ _PREPARE_RE = re.compile(
     re.I,
 )
 _POLL_TIMEOUT_SEC = 45 * 60
+# After a nits-only inline review, GitHub Actions may re-run review_and_comment_pr
+# and overwrite the marked comment moments later.
+_ACTIONS_REVIEW_WAIT_SEC = 90
+_ACTIONS_REVIEW_POLL_INTERVAL_SEC = 5
 
 
 def is_prepare_start(text: str) -> bool:
@@ -783,6 +788,46 @@ def ensure_release_on_main(
     )
 
 
+def _strip_bigas_review_marker(body: str, *, marker: str) -> str:
+    text = (body or "").strip()
+    if marker and marker in text:
+        text = text.replace(marker, "").strip()
+    return text
+
+
+def _wait_for_actions_review_ready(
+    gh: Any,
+    *,
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    marker: str,
+) -> Optional[str]:
+    """
+    Poll the marked Bigas PR comment until it is ready to merge or we time out.
+
+    Prepare-deploy posts its own CTO review; the repo's Actions workflow often
+    overwrites that comment with a fresh review seconds later.
+    """
+    from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
+    from bigas.resources.cto.pr_review.github_client import GitHubPRCommentError
+
+    deadline = time.monotonic() + _ACTIONS_REVIEW_WAIT_SEC
+    while True:
+        try:
+            raw = gh.get_marked_comment_body(owner, repo_name, pr_number)
+        except GitHubPRCommentError:
+            raw = None
+        if raw:
+            body = _strip_bigas_review_marker(raw, marker=marker)
+            if review_is_ready_to_merge(body):
+                return body
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(_ACTIONS_REVIEW_POLL_INTERVAL_SEC)
+    return None
+
+
 def review_and_merge_release_pr(
     *,
     repo: str,
@@ -866,6 +911,34 @@ def review_and_merge_release_pr(
 
     needs, reason = review_needs_autofix(review_body)
     if not needs:
+        if reason == "only non-blocking / nit suggestions":
+            _post(
+                thread_id,
+                "Release review has only non-blocking nits; waiting briefly for "
+                "GitHub Actions to refresh the Bigas review comment…",
+                role="system",
+                status="in_progress",
+            )
+            refreshed = _wait_for_actions_review_ready(
+                gh,
+                owner=owner,
+                repo_name=repo_name,
+                pr_number=pr_number,
+                marker=BIGAS_REVIEW_MARKER,
+            )
+            if refreshed:
+                return _merge_or_wait(
+                    gh,
+                    owner=owner,
+                    repo_name=repo_name,
+                    repo=repo,
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    thread_id=thread_id,
+                    project_key=project_key,
+                    version=version,
+                    cut_keys=cut_keys,
+                )
         _complete_pipeline_progress(thread_id)
         _post(
             thread_id,
