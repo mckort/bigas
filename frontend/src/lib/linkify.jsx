@@ -1,11 +1,20 @@
-const URL_RE = /(https?:\/\/[^\s<>"'`\]},]+(?:\([^\s<>"'`\]},)]*\)[^\s<>"'`\]},]*)*)/g
+const URL_RE = /(https?:\/\/[^\s<>"'`\]},]+)/g
 const MD_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g
 
+function isSafeHttpUrl(href) {
+  const url = (href || '').trim()
+  return /^https?:\/\//i.test(url) ? url : ''
+}
+
 function linkAnchor(href, label, key, className) {
+  const safeHref = isSafeHttpUrl(href)
+  if (!safeHref) {
+    return label
+  }
   return (
     <a
       key={key}
-      href={href}
+      href={safeHref}
       target="_blank"
       rel="noopener noreferrer"
       className={

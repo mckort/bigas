@@ -19,13 +19,6 @@ from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 
 logger = logging.getLogger(__name__)
 
-REVIEW_COMMENT_HINTS = (
-    "ready for review",
-    "pr merged",
-    "implementation pr opened",
-    "implementation agent opened a pr",
-)
-
 _SKIP_DIR_PREFIXES = (
     "assets/",
     "css/",
@@ -46,9 +39,6 @@ _SKIP_NAMES = {
     "package.json",
     "package-lock.json",
 }
-
-MAX_LOOKUP_COMMENTS = 5
-
 
 _CURSOR_AGENT_RE = re.compile(
     r"https?://(?:www\.)?cursor\.com/agents/[A-Za-z0-9._-]+",
@@ -253,31 +243,6 @@ def format_review_comment(review: Dict[str, Any]) -> str:
         for item in items:
             lines.append(f"- [{item['label']}]({item['url']})")
     return "\n".join(lines)
-
-
-def is_review_comment(body: str) -> bool:
-    text = (body or "").lower()
-    if "pr:" in text or "](https://github.com/" in text:
-        return True
-    return any(hint in text for hint in REVIEW_COMMENT_HINTS)
-
-
-def comments_for_lookup(comments: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
-    out: List[Dict[str, str]] = []
-    for comment in list(comments or [])[-MAX_LOOKUP_COMMENTS:]:
-        if not isinstance(comment, dict):
-            continue
-        body = str(comment.get("body") or "").replace(BIGAS_COMMENT_MARKER, "").strip()
-        if not body:
-            continue
-        out.append(
-            {
-                "author_name": str(comment.get("author_name") or "Bigas"),
-                "body": body,
-                "created_at": str(comment.get("created_at") or ""),
-            }
-        )
-    return out
 
 
 def attach_review_from_pr(

@@ -514,6 +514,9 @@ class TicketService:
         )
         if start_automation:
             self._maybe_dispatch_create_automation(ticket)
+            refreshed = self._store.get_ticket(ticket["ticket_id"])
+            if refreshed:
+                ticket = refreshed
         return ticket_to_api(ticket)
 
     def update_ticket(
@@ -584,6 +587,9 @@ class TicketService:
         )
         if start_automation:
             self._maybe_dispatch_create_automation(ticket)
+            refreshed = self._store.get_ticket(ticket["ticket_id"])
+            if refreshed:
+                ticket = refreshed
         return ticket_to_api(ticket)
 
     def set_status(
@@ -694,6 +700,8 @@ class TicketService:
         return ticket_to_api(ticket) if ticket else None
 
     def lookup_tickets(self, keys: List[str]) -> List[Dict[str, Any]]:
+        from bigas.tickets.review import infer_agent_url
+
         out = []
         for key in keys:
             ticket = self.lookup_ticket(key)
@@ -706,7 +714,7 @@ class TicketService:
                         "url": ticket.get("url"),
                         "issue_type": ticket.get("issue_type"),
                         "fix_version": ticket.get("fix_version"),
-                        "agent_url": ticket.get("agent_url") or "",
+                        "agent_url": infer_agent_url(ticket) or "",
                     }
                 )
         return out
