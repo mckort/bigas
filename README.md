@@ -671,7 +671,7 @@ Claude.ai / Claude Desktop: add a custom connector pointing at `https://your-ser
 
 ## Chat web interface
 
-Bigas includes a **clean, brand-aligned web chat UI** (when the frontend is built). Signed-out visitors see a public landing page at `/` with a GitHub CTA; sign in at `/login`. After login, `/` is chat. The interface uses the Bigas logo palette (white, `#73cdfb` blue, and black). Chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, **CFO**, and **DevOps** specialists — each with their own icon. The UI is **mobile-responsive** (phones and small tablets): use the bottom tab bar to switch between Chat, Board, and Objectives. On iOS/Android you can **Add to Home Screen** (PWA) for a standalone app experience.
+Bigas includes a **clean, brand-aligned web chat UI** (when the frontend is built). Signed-out visitors see a **one-page marketing landing** at `/` (hero, product surfaces, quickstart, FAQ); primary CTA is fork-and-run on GitHub, with Star and Sign in as secondary actions. Sign in at `/login`. After login, `/` is chat. Public SEO assets: `robots.txt`, `sitemap.xml`, and Open Graph / Twitter meta (plus SoftwareApplication JSON-LD on the landing route). The interface uses the Bigas logo palette (white, `#73cdfb` blue, and black). Chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, **CFO**, and **DevOps** specialists — each with their own icon. The UI is **mobile-responsive** (phones and small tablets): use the bottom tab bar to switch between Chat, Board, and Objectives. On iOS/Android you can **Add to Home Screen** (PWA) for a standalone app experience.
 
 | Feature | Description |
 |---|---|

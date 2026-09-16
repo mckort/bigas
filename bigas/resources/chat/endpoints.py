@@ -446,6 +446,23 @@ def serve_robots():
     )
 
 
+@chat_bp.route("/sitemap.xml")
+def serve_sitemap():
+    """Public sitemap for the marketing landing at `/`."""
+    for folder in (FRONTEND_DIST, FRONTEND_PUBLIC):
+        path = folder / "sitemap.xml"
+        if path.is_file():
+            return send_from_directory(folder, "sitemap.xml", mimetype="application/xml")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        "  <url><loc>https://bigas.me/</loc></url>\n"
+        "</urlset>\n",
+        200,
+        {"Content-Type": "application/xml; charset=utf-8"},
+    )
+
+
 def _send_brand_icon(filename: str):
     for folder in (FRONTEND_DIST, FRONTEND_PUBLIC):
         path = folder / filename

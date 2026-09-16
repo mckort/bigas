@@ -205,6 +205,7 @@ def create_app():
             or path == "/login"
             or path.startswith("/login/")
             or path == "/robots.txt"
+            or path == "/sitemap.xml"
             or path == "/board"
             or path.startswith("/board/")
             or path == "/objectives"

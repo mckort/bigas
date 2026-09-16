@@ -1473,6 +1473,22 @@ def test_robots_txt_hides_app_routes():
     assert "Disallow: /login" in body
     assert "Disallow: /board" in body
     assert "Disallow: /objectives" in body
+    assert "Sitemap:" in body
+
+
+def test_sitemap_xml_served():
+    from flask import Flask
+
+    from bigas.resources.chat.endpoints import chat_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(chat_bp)
+    client = app.test_client()
+    resp = client.get("/sitemap.xml")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "<urlset" in body
+    assert "bigas.me" in body
 
 
 def test_logo_bypasses_restricted_access():

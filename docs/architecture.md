@@ -237,7 +237,7 @@ When `SECRET_MANAGER=true`, the app loads env vars listed in `SECRET_MANAGER_SEC
 
 ## Chat web interface (BIG-6)
 
-The chat UI is a React SPA (`frontend/`) served from `frontend/dist` at `/`. Flask exposes REST endpoints under `/api/*` in `bigas/resources/chat/endpoints.py`.
+The chat UI is a React SPA (`frontend/`) served from `frontend/dist` at `/`. Signed-out users get the marketing landing (`frontend/src/components/Landing.jsx`); authenticated users get chat. Static crawl files live in `frontend/public/` (`robots.txt`, `sitemap.xml`) and are served by Flask at the same paths (see `serve_robots` / `serve_sitemap` in `bigas/resources/chat/endpoints.py`). Base OG/Twitter tags are in `frontend/index.html`; the landing route also sets JSON-LD via `frontend/src/lib/landingSeo.js`. Flask exposes REST endpoints under `/api/*` in `bigas/resources/chat/endpoints.py`.
 
 ```text
 +-------------+     Firebase Auth (prod)     +------------------+
