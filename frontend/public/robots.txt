@@ -5,3 +5,5 @@ Disallow: /board
 Disallow: /objectives
 Disallow: /api/
 Disallow: /mcp/
+
+Sitemap: https://bigas.me/sitemap.xml
