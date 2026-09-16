@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import ThemeToggle from './ThemeToggle'
 
-const SITE_URL = 'https://bigas.me/'
 const GITHUB_REPO_URL = 'https://github.com/mckort/bigas'
 const GITHUB_FORK_URL = 'https://github.com/mckort/bigas/fork'
 const TUTORIAL_URL =
@@ -142,15 +141,17 @@ export default function Landing({ onSignIn }) {
   }, [])
 
   function handleSignIn(e) {
-    e.preventDefault()
-    onSignIn?.()
+    if (onSignIn) {
+      e.preventDefault()
+      onSignIn()
+    }
   }
 
   return (
     <div className="min-h-screen-safe bg-bg flex flex-col">
       <header className="header-bar">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-3">
-          <a href={SITE_URL} className="flex items-center gap-2.5 min-w-0 shrink-0">
+          <a href="/" className="flex items-center gap-2.5 min-w-0 shrink-0">
             <img
               src="/bigas-logo.png"
               alt=""
@@ -268,8 +269,8 @@ export default function Landing({ onSignIn }) {
               lead="After you sign in to an instance, these are the main places work lives."
             />
             <div className="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-              {SURFACES.map(({ title, path, summary, body }) => (
-                <article key={title} className="card-interactive p-5 sm:p-6 flex flex-col h-full">
+              {SURFACES.map(({ id, title, path, summary, body }) => (
+                <article key={id} className="card p-5 sm:p-6 flex flex-col h-full">
                   <p className="text-xs font-mono text-muted">{path}</p>
                   <h3 className="mt-2 text-xl font-semibold">
                     {title}
@@ -380,7 +381,7 @@ docker compose up --build        # or: pip install -r requirements.txt && python
         <section className="py-12 sm:py-16">
           <div className="max-w-6xl mx-auto px-4 sm:px-6">
             <SectionHeading id="faq" eyebrow="FAQ" title="Common questions" />
-            <dl className="mt-8 space-y-3 max-w-3xl">
+            <div className="mt-8 space-y-3 max-w-3xl">
               {FAQ.map(({ q, a }) => (
                 <details key={q} className="card group">
                   <summary className="cursor-pointer list-none px-4 sm:px-5 py-4 font-medium text-sm sm:text-base flex items-center justify-between gap-3">
@@ -397,7 +398,7 @@ docker compose up --build        # or: pip install -r requirements.txt && python
                   </div>
                 </details>
               ))}
-            </dl>
+            </div>
           </div>
         </section>
       </main>
