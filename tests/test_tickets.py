@@ -788,3 +788,75 @@ def test_create_todo_does_not_dispatch_automation(monkeypatch):
         description="No AI yet",
     )
     assert not called
+
+
+def test_create_ticket_deduplicates_open_near_duplicate_title(client):
+    first = client.post(
+        "/mcp/tools/create_ticket",
+        data=json.dumps(
+            {
+                "project_key": "VFA",
+                "summary": "Fix login timeout on mobile",
+                "description": "Users see 504 after 30s",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert first.status_code == 200
+    first_body = first.get_json()
+    assert first_body["ok"] is True
+    key_one = first_body["key"]
+
+    second = client.post(
+        "/mcp/tools/create_ticket",
+        data=json.dumps(
+            {
+                "project_key": "VFA",
+                "summary": "Fix login timeout on mobile app",
+                "description": "Retry after MCP timeout — same bug",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert second.status_code == 200
+    second_body = second.get_json()
+    assert second_body["ok"] is True
+    assert second_body["key"] == key_one
+    assert second_body.get("deduplicated") is True
+
+
+def test_create_ticket_deduplicate_skips_second_in_progress_agent(client, monkeypatch):
+    dispatch_count = {"n": 0}
+
+    def fake_dispatch(ticket, **kwargs):
+        dispatch_count["n"] += 1
+
+    monkeypatch.setattr(
+        "bigas.tickets.service.dispatch_ticket_status_automation", fake_dispatch
+    )
+
+    payload = {
+        "project_key": "VFA",
+        "summary": "Deduplicate In Progress agent launch",
+        "description": "First create starts AI",
+        "status": "In Progress (AI)",
+    }
+    first = client.post(
+        "/mcp/tools/create_ticket",
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+    assert first.status_code == 200
+    key_one = first.get_json()["key"]
+    assert dispatch_count["n"] == 1
+
+    payload["description"] = "Retry should not launch another agent"
+    second = client.post(
+        "/mcp/tools/create_ticket",
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+    assert second.status_code == 200
+    assert second.get_json()["key"] == key_one
+    assert second.get_json().get("deduplicated") is True
+    assert dispatch_count["n"] == 1

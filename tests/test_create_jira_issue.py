@@ -70,6 +70,52 @@ def test_create_jira_issue_validates_issue_type():
         )
 
 
+def test_create_jira_issue_deduplicates_open_jira_issue(monkeypatch):
+    create_calls = {"n": 0}
+
+    class FakeClient:
+        def __init__(self, config):
+            self._config = type("Cfg", (), {"base_url": "https://example.atlassian.net"})()
+
+        def search_jql(self, **kwargs):
+            return [
+                {
+                    "key": "VFA-89",
+                    "fields": {
+                        "summary": "Fix login timeout on mobile",
+                        "status": {"name": "In Progress (AI)"},
+                        "issuetype": {"name": "Bug"},
+                        "project": {"key": "VFA"},
+                    },
+                }
+            ]
+
+        def create_issue(self, **kwargs):
+            create_calls["n"] += 1
+            return {"ok": True, "key": "VFA-90", "url": "https://example.atlassian.net/browse/VFA-90"}
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraConfig",
+        type("C", (), {"from_env": staticmethod(lambda: object())})(),
+    )
+
+    service = CreateJiraIssueService()
+    result = service.create(
+        project_key="VFA",
+        summary="Fix login timeout on mobile app",
+        description="Retry after timeout",
+        issue_type="Bug",
+    )
+    assert result["ok"] is True
+    assert result["key"] == "VFA-89"
+    assert result.get("deduplicated") is True
+    assert create_calls["n"] == 0
+
+
 def test_create_jira_issue_success(monkeypatch):
     captured = {}
 

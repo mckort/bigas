@@ -72,6 +72,50 @@ class CreateJiraIssueService:
                 f"issue_type must be one of: {allowed} (got {issue_type!r})"
             )
 
+        from bigas.resources.product.create_jira_issue.dedup import (
+            find_open_duplicate_internal,
+            find_open_duplicate_jira,
+        )
+
+        if use_internal_board():
+            existing = find_open_duplicate_internal(proj, title, itype)
+            if existing:
+                out = {
+                    "ok": True,
+                    "key": existing.get("key"),
+                    "url": existing.get("url"),
+                    "summary": existing.get("title") or title,
+                    "issue_type": itype,
+                    "status": existing.get("status"),
+                    "project_key": proj,
+                    "source": "internal_board",
+                    "deduplicated": True,
+                }
+                if existing.get("fix_version"):
+                    out["fix_version"] = existing.get("fix_version")
+                if existing.get("labels"):
+                    out["labels"] = existing.get("labels")
+                return out
+        else:
+            try:
+                client = JiraClient(JiraConfig.from_env())
+                dup = find_open_duplicate_jira(
+                    client, project_key=proj, title=title, issue_type=itype
+                )
+                if dup:
+                    return {
+                        "ok": True,
+                        "key": dup.get("key"),
+                        "url": dup.get("url"),
+                        "summary": dup.get("summary") or title,
+                        "issue_type": itype,
+                        "status": dup.get("status"),
+                        "project_key": proj,
+                        "deduplicated": True,
+                    }
+            except JiraError:
+                pass
+
         if use_internal_board():
             from bigas.tickets.service import TicketService
 

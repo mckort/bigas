@@ -837,7 +837,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 
 | Endpoint | Description |
 |---|---|
-| `POST create_ticket` | Create a Task or Bug on the internal board (or Jira); returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket. Optional `status` sets the column. Alias: `create_jira_issue` |
+| `POST create_ticket` | Create a Task or Bug on the internal board (or Jira); returns issue key + URL. If an open ticket in the same project already has the same (or near-duplicate) title, returns that issue instead of creating another card (`deduplicated: true`) so retries do not spawn a second In Progress (AI) agent. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket. Optional `status` sets the column. Alias: `create_jira_issue` |
 | `POST lookup_ticket` | Look up one or more tickets (including parent Epic) and/or list open Epics. Accepts a range such as `BIG-15 to BIG-18`. Shared by every chat agent. Does not decide whether a new ticket should use that parent. Alias: `lookup_jira` |
 | `POST search_tickets` | Search the board (or Jira) with JQL. Alias: `search_jira` |
 | `POST update_ticket` | Move an existing ticket to a board column (`issue_key` + `status`) |
