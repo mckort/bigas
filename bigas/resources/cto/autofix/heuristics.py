@@ -83,11 +83,13 @@ _SOFT_ONLY = re.compile(
     r"nit\b|minor suggestion|style only)\b"
 )
 # Overall verdict lines that mention severity words only in negation (post-autofix closers).
+_SEV = r"(?:blockers?|important(?:\s+\w+){0,6}?\s+issues?)"
+_SEV_PAIR = rf"{_SEV}(?:\s+(?:or|and)\s+{_SEV})?"
 _NEGATED_SEVERITY_VERDICT = re.compile(
-    r"(?i)\bno new (?:blockers?|important(?:\s+\w+){0,6}?\s+issues?)\b"
-    r"|\bno (?:blockers?|important(?:\s+\w+){0,6}?\s+issues?)\b"
-    r"|\b(?:blockers?|important(?:\s+\w+){0,6}?\s+issues?) (?:were|are|was) not found\b"
-    r"|\bwithout (?:any )?(?:blockers?|important(?:\s+\w+){0,6}?\s+issues?)\b"
+    rf"(?i)\bno new {_SEV_PAIR}\b"
+    rf"|\bno {_SEV_PAIR}\b"
+    rf"|\b{_SEV_PAIR} (?:were|are|was) not found\b"
+    rf"|\bwithout (?:any )?{_SEV_PAIR}\b"
 )
 
 
@@ -124,17 +126,12 @@ def _line_is_verdict_closer(line: str) -> bool:
     stripped = (line or "").strip()
     if not stripped:
         return False
-    if stripped == BIGAS_REVIEW_MARKER or BIGAS_REVIEW_MARKER in stripped:
-        return True
-    if _NEGATED_SEVERITY_VERDICT.search(stripped):
-        return True
+    if not (_CLEAN.search(stripped) or _NEGATED_SEVERITY_VERDICT.search(stripped)):
+        return False
     if _CLEAN.search(stripped) and not _ACTIONABLE.search(stripped):
         return True
-    if _CLEAN.search(stripped):
-        # e.g. "no new blocker or important issues … ready to merge" matches _ACTIONABLE.
-        remainder = _NEGATED_SEVERITY_VERDICT.sub("", stripped)
-        return not _ACTIONABLE.search(remainder)
-    return False
+    remainder = _NEGATED_SEVERITY_VERDICT.sub("", stripped)
+    return not _ACTIONABLE.search(remainder)
 
 
 def _strip_section_closer(body: str) -> str:
