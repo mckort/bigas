@@ -17,7 +17,7 @@ def _is_epic_ticket(ticket: Optional[Dict[str, Any]]) -> bool:
     return str((ticket or {}).get("issue_type") or "").strip().title() == "Epic"
 
 
-_GOAL_ISSUE_TYPES = ("Task", "Bug", "Epic", "Objective")
+_GOAL_ISSUE_TYPES = ("Task", "Bug", "Feature", "Epic", "Objective")
 
 _ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
@@ -716,6 +716,29 @@ class MemoryTicketStore:
                 tickets.append(dict(ticket))
         return sorted(tickets, key=lambda t: t.get("key", ""))
 
+    def list_project_keys(self) -> List[str]:
+        keys: set[str] = set()
+        with self._lock:
+            for board in self._boards.values():
+                pk = (board.get("project_key") or "").strip().upper()
+                if pk:
+                    keys.add(pk)
+            for ticket in self._tickets.values():
+                board = self._boards.get(ticket.get("board_id") or "")
+                proj = (
+                    (board.get("project_key") if board else None)
+                    or ticket.get("project_key")
+                    or ""
+                )
+                proj = str(proj).strip().upper()
+                if proj:
+                    keys.add(proj)
+                    continue
+                key = (ticket.get("key") or "").strip().upper()
+                if "-" in key:
+                    keys.add(key.split("-", 1)[0])
+        return sorted(keys)
+
     def list_epics(self, project_key: str) -> List[Dict[str, Any]]:
         return [
             t
@@ -1289,6 +1312,27 @@ class FirestoreTicketStore:
             _collect(self._tickets.where("status", "==", st))
 
         return sorted(tickets, key=lambda t: t.get("key", ""))
+
+    def list_project_keys(self) -> List[str]:
+        keys: set[str] = set()
+        for doc in self._boards.stream():
+            if not doc.exists:
+                continue
+            pk = (doc.to_dict().get("project_key") or "").strip().upper()
+            if pk:
+                keys.add(pk)
+        for doc in self._tickets.stream():
+            if not doc.exists:
+                continue
+            ticket = doc.to_dict() or {}
+            proj = (ticket.get("project_key") or "").strip().upper()
+            if proj:
+                keys.add(proj)
+                continue
+            key = (ticket.get("key") or "").strip().upper()
+            if "-" in key:
+                keys.add(key.split("-", 1)[0])
+        return sorted(keys)
 
     def list_epics(self, project_key: str) -> List[Dict[str, Any]]:
         proj = (project_key or "").strip().upper()

@@ -70,6 +70,42 @@ def test_create_jira_issue_validates_issue_type():
         )
 
 
+def test_create_jira_issue_accepts_feature(monkeypatch):
+    captured = {}
+
+    def fake_create_issue(**kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "key": "VFA-72",
+            "url": "https://example.atlassian.net/browse/VFA-72",
+        }
+
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        create_issue = staticmethod(lambda **kw: fake_create_issue(**kw))
+
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.create_jira_issue.service.JiraConfig",
+        type("C", (), {"from_env": staticmethod(lambda: object())})(),
+    )
+
+    result = CreateJiraIssueService().create(
+        project_key="VFA",
+        summary="News search for competitors",
+        description="Cover overlapping competitors",
+        issue_type="feature",
+    )
+    assert result["issue_type"] == "Feature"
+    assert captured["issue_type"] == "Feature"
+
+
 def test_create_jira_issue_success(monkeypatch):
     captured = {}
 

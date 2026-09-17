@@ -26,6 +26,7 @@ from bigas.resources.product.create_release_notes.prompts import (
     build_comms_pack_user_prompt,
 )
 from bigas.resources.product.create_release_notes.formatter import group_issues, render_customer_markdown
+from bigas.tickets.constants import is_in_release_cut
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,58 @@ def _deterministic_release_notes_result(
     }
 
 
+def _default_issue_client() -> Any:
+    """Use the internal board when that is the ticket source (same as progress updates)."""
+    from bigas.tickets.config import use_internal_board
+
+    if use_internal_board():
+        from bigas.tickets.jira_adapter import TicketJiraAdapter
+
+        return TicketJiraAdapter()
+    return JiraClient(JiraConfig.from_env())
+
+
+def _project_key_from_issue_key(key: str) -> str:
+    raw = (key or "").strip().upper()
+    if "-" not in raw:
+        return ""
+    return raw.split("-", 1)[0]
+
+
+def _resolved_project_keys(client: Any, project_keys: Optional[Any]) -> List[str]:
+    keys = normalize_project_keys(project_keys) if project_keys is not None else []
+    if keys:
+        return keys
+    config = getattr(client, "_config", None)
+    cfg_keys = getattr(config, "project_keys", None) if config is not None else None
+    if cfg_keys:
+        return [str(k).strip().upper() for k in cfg_keys if str(k).strip()]
+    from bigas.portfolio import jira_project_keys
+    from bigas.tickets.config import use_internal_board
+    from bigas.tickets.jira_adapter import TicketJiraAdapter
+    from bigas.tickets.store import get_ticket_store
+
+    portfolio_keys = [str(k).strip().upper() for k in jira_project_keys() if str(k).strip()]
+    if use_internal_board() and isinstance(client, TicketJiraAdapter):
+        store_keys = get_ticket_store().list_project_keys()
+        merged = sorted({*portfolio_keys, *store_keys})
+        if merged:
+            return merged
+    return portfolio_keys
+
+
+def filter_release_cut_issues(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep Done and Final approval — the shipped cut, including prod-tested cards."""
+    return [
+        issue
+        for issue in issues
+        if is_in_release_cut(
+            issue.get("_status") or issue.get("status") or "",
+            project_key=_project_key_from_issue_key(issue.get("key") or ""),
+        )
+    ]
+
+
 def _validate_fix_version(fix_version: str) -> None:
     if not fix_version or not isinstance(fix_version, str):
         raise ReleaseNotesError("fix_version is required.")
@@ -170,7 +223,7 @@ class CreateReleaseNotesService:
         openai_model: Optional[str] = None,
     ):
         if jira_client is None:
-            jira_client = JiraClient(JiraConfig.from_env())
+            jira_client = _default_issue_client()
         self._jira = jira_client
 
         # Use shared LLM abstraction; ignore openai_api_key in favor of env-based config.
@@ -197,16 +250,17 @@ class CreateReleaseNotesService:
     ) -> Dict[str, Any]:
         _validate_fix_version(fix_version)
 
+        keys = _resolved_project_keys(self._jira, project_keys)
         try:
             raw_issues = self._jira.search_issues_by_fix_version(
                 fix_version=fix_version,
                 jql_extra=(jql_extra or "").strip(),
-                project_keys=project_keys,
+                project_keys=keys,
             )
         except JiraError as e:
             raise ReleaseNotesError(str(e))
 
-        normalized = [_normalize_issue(i) for i in raw_issues]
+        normalized = filter_release_cut_issues([_normalize_issue(i) for i in raw_issues])
 
         logger.info(
             "Release notes: fetched %d Jira issue(s) for fix_version=%s",

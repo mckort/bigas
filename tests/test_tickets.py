@@ -819,6 +819,20 @@ def test_create_after_done_allows_new_ticket_with_same_title():
     assert not second.get("reused")
 
 
+def test_store_keeps_feature_issue_type():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    created = store.create_ticket(
+        board["board_id"],
+        title="News search for competitors",
+        user_id="dev-user",
+        issue_type="feature",
+    )
+    assert created["issue_type"] == "Feature"
+    fetched = store.get_ticket(created["ticket_id"])
+    assert fetched["issue_type"] == "Feature"
+
+
 def test_create_todo_does_not_dispatch_automation(monkeypatch):
     called = {}
 

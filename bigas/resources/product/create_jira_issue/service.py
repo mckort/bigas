@@ -13,7 +13,7 @@ from bigas.resources.product.create_release_notes.jira_client import (
     normalize_project_keys,
 )
 
-ALLOWED_ISSUE_TYPES = frozenset({"Task", "Bug"})
+ALLOWED_ISSUE_TYPES = frozenset({"Task", "Bug", "Feature"})
 _MARKETING_LABEL = "marketing"
 
 
