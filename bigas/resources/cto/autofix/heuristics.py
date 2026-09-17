@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from typing import Tuple
 
+from bigas.resources.cto.pr_review.github_client import BIGAS_REVIEW_MARKER
+
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
 DEFAULT_AUTOFIX_MAX_ITERATIONS = 5
 # Short window is enough to avoid overlapping launches; Actions also skips cooldown
@@ -80,6 +82,13 @@ _SOFT_ONLY = re.compile(
     r"(?i)\b(consider|optional|todo\b|nice to have|future cleanup|non[- ]blocking|"
     r"nit\b|minor suggestion|style only)\b"
 )
+# Overall verdict lines that mention severity words only in negation (post-autofix closers).
+_NEGATED_SEVERITY_VERDICT = re.compile(
+    r"(?i)\bno new (?:blockers?|important(?:\s+\w+){0,6}?\s+issues?)\b"
+    r"|\bno (?:blockers?|important(?:\s+\w+){0,6}?\s+issues?)\b"
+    r"|\b(?:blockers?|important(?:\s+\w+){0,6}?\s+issues?) (?:were|are|was) not found\b"
+    r"|\bwithout (?:any )?(?:blockers?|important(?:\s+\w+){0,6}?\s+issues?)\b"
+)
 
 
 def _section_bodies(review_body: str) -> dict[str, str]:
@@ -110,12 +119,31 @@ def _section_has_findings(body: str) -> bool:
     return True
 
 
+def _line_is_verdict_closer(line: str) -> bool:
+    """True for LGTM / ready-to-merge lines, including negated blocker/important wording."""
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    if stripped == BIGAS_REVIEW_MARKER or BIGAS_REVIEW_MARKER in stripped:
+        return True
+    if _NEGATED_SEVERITY_VERDICT.search(stripped):
+        return True
+    if _CLEAN.search(stripped) and not _ACTIONABLE.search(stripped):
+        return True
+    if _CLEAN.search(stripped):
+        # e.g. "no new blocker or important issues … ready to merge" matches _ACTIONABLE.
+        remainder = _NEGATED_SEVERITY_VERDICT.sub("", stripped)
+        return not _ACTIONABLE.search(remainder)
+    return False
+
+
 def _strip_section_closer(body: str) -> str:
     """Drop a trailing LGTM / ready-to-merge closer so it is not a finding."""
-    lines = (body or "").splitlines()
+    text = (body or "").replace(BIGAS_REVIEW_MARKER, "").strip()
+    lines = text.splitlines()
     while lines and not lines[-1].strip():
         lines.pop()
-    while lines and _CLEAN.search(lines[-1]) and not _ACTIONABLE.search(lines[-1]):
+    while lines and _line_is_verdict_closer(lines[-1]):
         lines.pop()
         while lines and not lines[-1].strip():
             lines.pop()
