@@ -22,6 +22,7 @@ from bigas.resources.cto.autofix.heuristics import (
     autofix_max_iterations,
     autofix_pushed_new_commit,
     format_loop_protection_message,
+    minor_autofix_max_iterations,
     review_is_ready_to_merge,
 )
 from bigas.resources.cto.autofix.service import (
@@ -325,7 +326,7 @@ def _pr_autofix_round_counts(
         counts = GitHubPRCommentClient(token=token).count_autofix_rounds(
             owner, repo_name, pr_number
         )
-    except GitHubPRCommentError:
+    except Exception:
         logger.warning(
             "Could not count autofix commits for %s/%s#%s",
             owner,
@@ -1540,6 +1541,7 @@ def autofix_followup():
         autofix_count=autofix_count,
         minor_autofix_count=minor_autofix_count,
         max_iterations=max_iters,
+        minor_max_iterations=minor_autofix_max_iterations(),
     )
     cost_line = _discord_llm_cost_line(review_result)
     cost_suffix = f"\n{cost_line}" if cost_line else ""

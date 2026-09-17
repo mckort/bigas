@@ -104,9 +104,7 @@ def _build_prompt(
     if nits_only:
         focus = (
             "1. This review has only Minor / non-blocking items. Fix those leftover nits "
-            "so the review can become fully clean.\n"
-            "2. Do not invent extra polish beyond what the review lists. Do not expand "
-            "scope or refactor unrelated code."
+            "so the review can become fully clean."
         )
     else:
         focus = (
