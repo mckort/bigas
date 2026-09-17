@@ -424,6 +424,7 @@ def _normalize_plan_tasks(
         if str(kr.get("title") or "").strip()
     }
     seen = set(existing_titles)
+    seen_existing_keys: set[str] = set()
     out: List[Dict[str, Any]] = []
     per_kr: Dict[str, int] = {}
     if not isinstance(raw_tasks, list):
@@ -442,10 +443,14 @@ def _normalize_plan_tasks(
             continue
         existing_key = str(item.get("existing_key") or "").strip().upper()
         if existing_key and _ISSUE_KEY_RE.match(existing_key):
+            gate_key = f"{kr_id}:{existing_key}"
+            if gate_key in seen_existing_keys:
+                continue
             if per_kr.get(kr_id, 0) >= MAX_TASKS_PER_KR:
                 continue
             kr = kr_by_id[kr_id]
             body = description or f"Human gate for KR: {kr.get('title') or kr_id}."
+            seen_existing_keys.add(gate_key)
             out.append(
                 {
                     "title": title[:120] if title else f"Approve {existing_key}",

@@ -580,10 +580,19 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
         return {"ok": True}
     if name == "done":
         if not session.write_ok():
-            if session.nudged:
-                session.rejected.append("done without propose_*")
-            session.nudged = True
-            return {"ok": False, "error": NUDGE_WRITE}
+            at_risk = (snap.scoreboard or {}).get("at_risk_krs") or []
+            if (
+                snap.kind == KIND_OBJECTIVE
+                and snap.phase == PHASE_IN_PROGRESS
+                and at_risk
+                and (session.briefing or session.notes_markdown)
+            ):
+                session.proposed_tasks = True
+            if not session.write_ok():
+                if session.nudged:
+                    session.rejected.append("done without propose_*")
+                session.nudged = True
+                return {"ok": False, "error": NUDGE_WRITE}
         session.done = True
         return {"ok": True}
     return {"ok": False, "error": f"Unknown tool {name}"}

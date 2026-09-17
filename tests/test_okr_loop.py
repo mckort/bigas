@@ -487,6 +487,66 @@ def test_forces_propose_tool_after_read():
     assert result.wrote
 
 
+def test_in_progress_at_risk_accepts_set_notes_without_new_tasks():
+    llm = _ScriptedLlm(
+        [
+            _call("get_scoreboard"),
+            _call("set_notes", briefing="Existing gates cover the lever; no new To Do."),
+            _call("done"),
+        ]
+    )
+    snap = _snapshot(
+        phase="in_progress",
+        key_results=[
+            {
+                "id": "kr-1",
+                "title": "Increase sessions from 43 to 80",
+                "status": "committed",
+                "baseline": 43,
+                "target": 80,
+                "current": 43,
+            }
+        ],
+        scoreboard={
+            "at_risk_krs": [
+                {"id": "kr-1", "title": "Increase sessions from 43 to 80", "health": "at_risk"}
+            ]
+        },
+    )
+    result = run_goal_loop(llm, snapshot=snap)
+    assert result.wrote
+    assert result.tasks == []
+    assert result.briefing == "Existing gates cover the lever; no new To Do."
+
+
+def test_in_progress_at_risk_accepts_empty_propose_tasks_with_reason():
+    llm = _ScriptedLlm(
+        [
+            _call("get_scoreboard"),
+            _call("propose_tasks", tasks=[], reason="All levers already tracked on the board."),
+            _call("done"),
+        ]
+    )
+    snap = _snapshot(
+        phase="in_progress",
+        key_results=[
+            {
+                "id": "kr-1",
+                "title": "Increase sessions from 43 to 80",
+                "status": "committed",
+            }
+        ],
+        scoreboard={
+            "at_risk_krs": [
+                {"id": "kr-1", "title": "Increase sessions from 43 to 80", "health": "off_track"}
+            ]
+        },
+    )
+    result = run_goal_loop(llm, snapshot=snap)
+    assert result.wrote
+    assert result.tasks == []
+
+
 def test_retries_with_nudge_when_forced_turn_raises():
     class _Flaky(_ScriptedLlm):
         def __init__(self, turns):

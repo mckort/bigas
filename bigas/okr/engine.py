@@ -246,7 +246,7 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         briefing_bits.append(
             "Opened To Do: " + ", ".join(item["key"] for item in created if item["key"]) + "."
         )
-    if extra_briefing and not next_steps:
+    if extra_briefing:
         briefing_bits.append(extra_briefing)
     if risks:
         briefing_bits.append(

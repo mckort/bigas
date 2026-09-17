@@ -48,6 +48,19 @@ def test_normalize_plan_tasks_accepts_existing_key_gate():
     assert tasks[0]["ai_doable"] is False
 
 
+def test_normalize_plan_tasks_deduplicates_existing_key_gates():
+    krs = [{"id": "kr-abc", "title": "Increase add-to-cart from 1 to 3"}]
+    gate = {
+        "title": "Approve landing copy",
+        "description": "Human gate blocking add-to-cart improvements.",
+        "kr_id": "kr-abc",
+        "ai_doable": False,
+        "existing_key": "GPWW-36",
+    }
+    tasks = _normalize_plan_tasks([gate, dict(gate)], key_results=krs, existing_titles=set())
+    assert len(tasks) == 1
+
+
 def test_plan_prompt_forbids_kr_clones_and_wiring():
     text = OKR_PLAN_SYSTEM.lower()
     assert "turn a kr into a ticket" in text
