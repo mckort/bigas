@@ -12,21 +12,25 @@ PR opened/push
          → when the PR is actually merged (auto-merge or someone else merges): move ticket to Final approval
   → if repo var BIGAS_AUTO_FIX=true (Actions loop, up to 5 rounds):
       → autofix_pr
-          → skip if review is LGTM / nits-only
+          → skip if review is fully clean (LGTM, no leftover Minor)
+          → leftover Minor / nits launch up to 2 extra `[bigas-autofix] [nits-only]` rounds
           → skip with loop protection if PR already has ≥5 [bigas-autofix] commits
+            and Blockers/Important remain
+          → leftover Minor after 2 nits-only rounds, or at the 5-round cap, is accepted
+            (ready to merge / auto-merge)
           → if cooldown (fresh [bigas-autofix] head): Discord + PR notice, wait, retry
           → else launch Cursor cloud agent (workOnCurrentBranch)
       → poll autofix_followup until agent terminal
           → Discord + Activity: autofix completed / failed / without commits (not the CTO chat thread)
           → re-review updated diff
-          → if LGTM: Discord "Ready to merge"
+          → if LGTM, or leftover Minor after the nits budget / 5-round cap: Discord "Ready to merge"
             → if BIGAS_CTO_AUTO_MERGE=true: squash-merge or enable GitHub auto-merge + Discord
             → when the PR is actually merged: move ticket to Final approval
           → else if under 5 rounds: next autofix round with updated review
           → else: Discord + Jira comment — loop protection, manual handling
 ```
 
-Optional auto-merge is off by default (`BIGAS_CTO_AUTO_MERGE=false`). When enabled, the **Actions loop** (`auto_merge: true` on `review_and_comment_pr`) tries an immediate squash-merge once the review has no leftover findings (Blockers, Important, and Minor empty). Chat/MCP review calls omit that flag and never merge. If the PR is still a draft, it is marked ready for review first. If required checks block the merge, Bigas enables GitHub native auto-merge instead. The linked ticket moves to Final approval only after the PR is merged (including a later GitHub auto-merge or a human merge).
+Optional auto-merge is off by default (`BIGAS_CTO_AUTO_MERGE=false`). When enabled, the **Actions loop** (`auto_merge: true` on `review_and_comment_pr`) tries an immediate squash-merge once the review is fully clean, or leftover Minor remains after two nits-only autofix rounds or the five-round cap. Chat/MCP review calls omit that flag and never merge. If the PR is still a draft, it is marked ready for review first. If required checks block the merge, Bigas enables GitHub native auto-merge instead. The linked ticket moves to Final approval only after the PR is merged (including a later GitHub auto-merge or a human merge).
 
 After each autofix round finalizes, Discord includes Cursor token usage + a list-price estimate when available. For weekly rollups across Cursor autofix and LLM review logs, see [cto-ai-usage.md](./cto-ai-usage.md).
 
@@ -39,9 +43,10 @@ After each autofix round finalizes, Discord includes Cursor token usage + a list
 Optional:
 
 - `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Prefer `composer-2.5` (standard tier; much cheaper than `composer-2.5-fast`). Omit to use Cursor’s default (often fast).
-- `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection.
+- `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection (leftover Minor at this cap is accepted).
+- `BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS` (default `2`) — max nits-only `[bigas-autofix] [nits-only]` rounds before leftover Minor is accepted.
 - `BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS` (default `120`) — skip launching another autofix while the PR head is still a fresh `[bigas-autofix]` commit (reduces overlapping agents). Cooldown is **skipped** when a newer Bigas review comment already exists after that head commit (typical after an autofix push cancels/restarts Actions). The Actions loop waits/retries in short slices until the window expires instead of stopping early. Bigas also posts/updates a visible PR comment (`<!-- bigas-autofix-cooldown-marker -->`) so cooldown is not mistaken for a hang.
-- `BIGAS_CTO_AUTO_MERGE` (default `false`) — when `true`, squash-merge the PR after a clean review (no Blockers/Important/Minor) **if the caller passed `auto_merge: true`** (Actions loop / prepare-deploy). Chat reviews only post the comment. Posts **PR auto-merged** to Discord and the Activity feed (not the CTO chat thread). The card includes the Jira issue label when known. Draft PRs are marked ready for review first (Cursor `autoCreatePR` sometimes opens drafts, which GitHub will not merge). If required checks block an immediate merge, Bigas enables GitHub native auto-merge and posts **PR auto-merge enabled** instead. Both paths pass the current PR title (with ticket key) as the squash commit headline so GitHub cannot substitute the first branch commit subject. Requires `GITHUB_TOKEN` with merge permission and repo setting **Allow auto-merge**. The linked ticket moves to **Final approval (manual)** only after the merge lands (same hook if someone else merges).
+- `BIGAS_CTO_AUTO_MERGE` (default `false`) — when `true`, squash-merge the PR after a clean review, or leftover Minor after two nits-only rounds / the five-round cap, **if the caller passed `auto_merge: true`** (Actions loop / prepare-deploy). Chat reviews only post the comment. Posts **PR auto-merged** to Discord and the Activity feed (not the CTO chat thread). The card includes the Jira issue label when known. Draft PRs are marked ready for review first (Cursor `autoCreatePR` sometimes opens drafts, which GitHub will not merge). If required checks block an immediate merge, Bigas enables GitHub native auto-merge and posts **PR auto-merge enabled** instead. Both paths pass the current PR title (with ticket key) as the squash commit headline so GitHub cannot substitute the first branch commit subject. Requires `GITHUB_TOKEN` with merge permission and repo setting **Allow auto-merge**. The linked ticket moves to **Final approval (manual)** only after the merge lands (same hook if someone else merges).
 
 ## Repo config
 
@@ -96,11 +101,11 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 
 ## Guards
 
-- Skip when review looks like LGTM / no actionable findings
-- Skip when only non-blocking nits (including structured `### Minor` with empty Blockers/Important)
-- Skip soft-only language (`consider`, `TODO`, `optional`) unless Blockers/Important are present
-- When autofix *does* run (Blockers/Important present), the agent also fixes Minor items from the same review
-- Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) commits containing `[bigas-autofix]`
+- Skip when review looks like LGTM / no leftover findings
+- Leftover Minor / nits (including structured `### Minor` with empty Blockers/Important) launch up to `BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS` (default 2) extra rounds using `[bigas-autofix] [nits-only]`
+- After those two nits-only rounds, or at the overall 5-round cap with only Minor left, accept leftover nits and treat the PR as ready to merge
+- When autofix runs for Blockers/Important, the agent also fixes Minor items from the same review
+- Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) commits containing `[bigas-autofix]` if Blockers/Important remain
 - Cooldown when head is a fresh `[bigas-autofix]` commit *and* no newer Bigas review exists yet: Actions waits/retries; Bigas posts a PR cooldown notice. If review is already newer than the autofix head, the next agent launches immediately.
 
 **Actions note:** `pr-review.yml` skips workflow runs whose head commit **subject** contains `[bigas-autofix]` (gate job). That prevents the autofix push from cancelling the in-flight job or starting a second full review/merge cycle. Bigas also skips review / final-approval Discord / auto-merge quietly when the PR is already merged.

@@ -1,7 +1,9 @@
 from bigas.resources.cto.autofix.heuristics import (
     auto_merge_enabled,
     autofix_pushed_new_commit,
+    leftover_nits_are_acceptable,
     latest_commit_is_autofix,
+    review_is_nits_only,
     review_is_ready_to_merge,
     review_needs_autofix,
 )
@@ -12,12 +14,12 @@ from bigas.resources.cto.autofix.service import (
 )
 
 
-def test_lgtm_skips():
+def test_lgtm_with_leftover_nits_runs_autofix():
     ok, reason = review_needs_autofix(
         "Looks good to me. Safe to merge as-is.\n\n**Minor suggestion (Non-blocking):** spacing"
     )
-    assert ok is False
-    assert "clean" in reason or "non-blocking" in reason
+    assert ok is True
+    assert "minor" in reason or "nit" in reason
 
 
 def test_blocking_runs():
@@ -54,16 +56,22 @@ def test_structured_important_runs():
     assert "actionable" in reason
 
 
-def test_structured_minor_only_skips():
-    ok, reason = review_needs_autofix(
+def test_structured_minor_only_runs_autofix_until_budget():
+    body = (
         "### Blockers\nNone.\n\n"
         "### Important\nNone.\n\n"
         "### Minor\n"
         "- Consider extracting a helper.\n\n"
         "Ready to merge.\n"
     )
-    assert ok is False
-    assert "nit" in reason or "non-blocking" in reason
+    ok, reason = review_needs_autofix(body)
+    assert ok is True
+    assert "minor" in reason
+    ok_after, reason_after = review_needs_autofix(body, minor_autofix_count=2)
+    assert ok_after is False
+    assert "nit" in reason_after or "non-blocking" in reason_after
+    ok_at_cap, _ = review_needs_autofix(body, autofix_count=5)
+    assert ok_at_cap is False
 
 
 _CLEAN_STRUCTURED = (
@@ -76,9 +84,13 @@ _MINOR_LEFTOVER = (
 )
 
 
-def test_ready_to_merge_requires_empty_minor():
+def test_ready_to_merge_requires_empty_minor_until_nits_budget():
     assert review_is_ready_to_merge(_CLEAN_STRUCTURED) is True
     assert review_is_ready_to_merge(_MINOR_LEFTOVER) is False
+    assert review_is_nits_only(_MINOR_LEFTOVER) is True
+    assert review_is_ready_to_merge(_MINOR_LEFTOVER, minor_autofix_count=2) is True
+    assert review_is_ready_to_merge(_MINOR_LEFTOVER, autofix_count=5) is True
+    assert review_is_ready_to_merge(_MINOR_LEFTOVER, minor_autofix_count=1) is False
 
 
 def test_ready_to_merge_ignores_ready_line_when_minor_has_findings():
@@ -86,19 +98,37 @@ def test_ready_to_merge_ignores_ready_line_when_minor_has_findings():
     assert review_is_ready_to_merge(_MINOR_LEFTOVER) is False
 
 
-def test_soft_consider_only_skips():
+def test_leftover_nits_are_acceptable_at_caps():
+    assert leftover_nits_are_acceptable() is False
+    assert leftover_nits_are_acceptable(minor_autofix_count=2) is True
+    assert leftover_nits_are_acceptable(autofix_count=5) is True
+    assert leftover_nits_are_acceptable(minor_autofix_count=1, autofix_count=4) is False
+
+
+def test_soft_consider_only_runs_autofix():
     ok, reason = review_needs_autofix(
         "A few optional polish items:\n"
         "- Consider adding an AbortController for polling.\n"
         "- Consider leaving a TODO for the duplicate query.\n"
         "The rest of the implementation looks solid and ready to merge!\n"
     )
-    assert ok is False
+    assert ok is True
+    assert "minor" in reason
 
 
 def test_autofix_commit_marker():
+    from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
+
     assert latest_commit_is_autofix("fix: auth [bigas-autofix]")
+    assert latest_commit_is_autofix("BIG-89: [bigas-autofix] [nits-only] polish")
     assert not latest_commit_is_autofix("fix: auth")
+    assert count_autofix_rounds(
+        [
+            "feat: start",
+            "BIG-1: [bigas-autofix] fix auth",
+            "BIG-1: [bigas-autofix] [nits-only] polish",
+        ]
+    ) == (2, 1)
 
 
 def test_autofix_max_iterations_env(monkeypatch):
@@ -110,6 +140,17 @@ def test_autofix_max_iterations_env(monkeypatch):
     assert autofix_max_iterations() == 7
     monkeypatch.setenv("BIGAS_CTO_AUTOFIX_MAX_ITERATIONS", "0")
     assert autofix_max_iterations() == 1
+
+
+def test_minor_autofix_max_iterations_env(monkeypatch):
+    from bigas.resources.cto.autofix.heuristics import minor_autofix_max_iterations
+
+    monkeypatch.delenv("BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS", raising=False)
+    assert minor_autofix_max_iterations() == 2
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS", "3")
+    assert minor_autofix_max_iterations() == 3
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS", "0")
+    assert minor_autofix_max_iterations() == 1
 
 
 def test_format_loop_protection_message_is_clear():
@@ -160,6 +201,20 @@ def test_autofix_prompt_forbids_confirmation():
     assert "remove that dead code" in prompt
     assert "Do not expand into a repo-wide cleanup" in prompt
     assert "[bigas-autofix]" in prompt
+    assert "[nits-only]" not in prompt
+
+
+def test_autofix_prompt_nits_only_uses_minor_marker():
+    prompt = _build_prompt(
+        repo="mckort/bigas",
+        pr_number=1,
+        pr_url="https://github.com/mckort/bigas/pull/1",
+        review_body=_MINOR_LEFTOVER,
+        issue_key="BIG-89",
+        nits_only=True,
+    )
+    assert "BIG-89: [bigas-autofix] [nits-only]" in prompt
+    assert "only Minor / non-blocking" in prompt
 
 
 def test_autofix_prompt_requires_ticket_key_in_commit():
@@ -319,3 +374,87 @@ def test_autofix_skips_already_merged_pr(monkeypatch):
     )
     assert result["skipped"] is True
     assert result["reason"] == "pr_already_merged"
+
+
+class _NitsFakeGH:
+    def __init__(self, messages, body=_MINOR_LEFTOVER):
+        self.messages = messages
+        self.body = body
+
+    def get_pull_request(self, *args, **kwargs):
+        return {"merged": False, "title": "BIG-89: Lock staging", "body": "", "head": {"ref": "feat/x"}}
+
+    def get_pr_head_commit_meta(self, *args, **kwargs):
+        return "abc123", "feat: start", "2026-09-17T17:00:00Z"
+
+    def list_pr_commit_messages(self, *args, **kwargs):
+        return list(self.messages)
+
+    def get_marked_comment(self, **kwargs):
+        return {"body": self.body, "updated_at": "2026-09-17T17:10:00Z"}
+
+
+def test_autofix_launches_for_leftover_nits(monkeypatch):
+    from bigas.resources.cto.autofix.service import AutofixService
+
+    launched = {}
+
+    class FakeCursor:
+        def __init__(self, api_key):
+            pass
+
+        def launch_pr_autofix(self, **kwargs):
+            launched.update(kwargs)
+            return {"agent_id": "bc-1", "agent_url": "https://cursor.com/agents/bc-1", "run_id": "run-1"}
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
+        lambda token: _NitsFakeGH([]),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.CursorCloudAgentClient",
+        FakeCursor,
+    )
+    result = AutofixService(cursor_api_key="c", github_token="t").run(
+        repo="owner/repo", pr_number=9
+    )
+    assert result.get("launched") is True
+    assert launched["prompt_text"].count("[bigas-autofix] [nits-only]") >= 1
+
+
+def test_autofix_accepts_leftover_nits_after_two_minor_rounds(monkeypatch):
+    from bigas.resources.cto.autofix.service import AutofixService
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
+        lambda token: _NitsFakeGH(
+            [
+                "BIG-89: [bigas-autofix] [nits-only] tweak button",
+                "BIG-89: [bigas-autofix] [nits-only] tweak again",
+            ]
+        ),
+    )
+    result = AutofixService(cursor_api_key="c", github_token="t").run(
+        repo="owner/repo", pr_number=9
+    )
+    assert result["skipped"] is True
+    assert result.get("nits_accepted") is True
+    assert result.get("review_clean") is True
+    assert result["minor_autofix_count"] == 2
+
+
+def test_autofix_accepts_leftover_nits_at_max_iterations(monkeypatch):
+    from bigas.resources.cto.autofix.service import AutofixService
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
+        lambda token: _NitsFakeGH(
+            [f"BIG-89: [bigas-autofix] fix {i}" for i in range(5)]
+        ),
+    )
+    result = AutofixService(cursor_api_key="c", github_token="t").run(
+        repo="owner/repo", pr_number=9
+    )
+    assert result["skipped"] is True
+    assert result.get("nits_accepted") is True
+    assert result.get("loop_protection") is not True

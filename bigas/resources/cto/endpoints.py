@@ -22,6 +22,7 @@ from bigas.resources.cto.autofix.heuristics import (
     autofix_max_iterations,
     autofix_pushed_new_commit,
     format_loop_protection_message,
+    minor_autofix_max_iterations,
     review_is_ready_to_merge,
 )
 from bigas.resources.cto.autofix.service import (
@@ -308,6 +309,38 @@ def _jira_issue_heading(issue_key: str = "", issue_summary: str = "") -> str:
     if not key:
         return ""
     return f" {issue_discord_label(key, issue_summary)}"
+
+
+def _pr_autofix_round_counts(
+    *,
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    github_token: str,
+) -> tuple[int, int]:
+    """Best-effort (autofix_count, minor_autofix_count); (0, 0) on fetch errors."""
+    token = (github_token or "").strip()
+    if not token:
+        return 0, 0
+    try:
+        counts = GitHubPRCommentClient(token=token).count_autofix_rounds(
+            owner, repo_name, pr_number
+        )
+    except Exception:
+        logger.warning(
+            "Could not count autofix commits for %s/%s#%s",
+            owner,
+            repo_name,
+            pr_number,
+            exc_info=True,
+        )
+        return 0, 0
+    if not isinstance(counts, (tuple, list)) or len(counts) != 2:
+        return 0, 0
+    try:
+        return int(counts[0] or 0), int(counts[1] or 0)
+    except (TypeError, ValueError):
+        return 0, 0
 
 
 def _pr_already_merged(
@@ -885,7 +918,17 @@ def review_and_comment_pr():
             return _json_summary({"error": err_msg}, summarize_review_result, 404)
         return _json_summary({"error": err_msg}, summarize_review_result, 502)
 
-    ready = review_is_ready_to_merge(review_body)
+    autofix_count, minor_autofix_count = _pr_autofix_round_counts(
+        owner=owner,
+        repo_name=repo_name,
+        pr_number=pr_number,
+        github_token=github_token,
+    )
+    ready = review_is_ready_to_merge(
+        review_body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_autofix_count,
+    )
     done_label = (
         "**CTO PR re-review after autofix done**"
         if phase == "post_autofix"
@@ -1483,7 +1526,23 @@ def autofix_followup():
             502,
         )
 
-    ready = review_is_ready_to_merge(review_body)
+    autofix_count = 0
+    minor_autofix_count = 0
+    max_iters = autofix_max_iterations()
+    try:
+        autofix_count, minor_autofix_count = service.count_autofix_rounds(
+            repo=repo, pr_number=pr_number
+        )
+    except AutofixError:
+        logger.warning("Could not count autofix commits after re-review", exc_info=True)
+
+    ready = review_is_ready_to_merge(
+        review_body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_autofix_count,
+        max_iterations=max_iters,
+        minor_max_iterations=minor_autofix_max_iterations(),
+    )
     cost_line = _discord_llm_cost_line(review_result)
     cost_suffix = f"\n{cost_line}" if cost_line else ""
     _post_to_discord_cto_chunks(
@@ -1496,13 +1555,6 @@ def autofix_followup():
             pr_title=pr_title,
         )
     )
-
-    autofix_count = 0
-    max_iters = autofix_max_iterations()
-    try:
-        autofix_count = service.count_autofix_commits(repo=repo, pr_number=pr_number)
-    except AutofixError:
-        logger.warning("Could not count autofix commits after re-review", exc_info=True)
 
     jira_final = {"skipped": True, "reason": "not_ready"}
     auto_merge: dict = {"skipped": True, "reason": "not_ready"}
@@ -1564,6 +1616,7 @@ def autofix_followup():
         "head_sha": head_sha,
         "baseline_head_sha": baseline_head_sha,
         "autofix_count": autofix_count,
+        "minor_autofix_count": minor_autofix_count,
         "autofix_round": autofix_round_n or autofix_count,
         "max_iterations": max_iters,
         "loop_protection": (not ready) and autofix_count >= max_iters,

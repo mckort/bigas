@@ -245,6 +245,7 @@ def test_autofix_followup_rereviews_when_no_new_commit(
     svc.get_pr_head_commit.return_value = ("abc123", "[bigas-autofix] keep logo")
     svc.fetch_pr_diff.return_value = "diff --git a/x b/x"
     svc.count_autofix_commits.return_value = 1
+    svc.count_autofix_rounds.return_value = (1, 0)
     mock_gh.return_value.get_marked_comment_body.return_value = (
         "### Important\n- unused logo"
     )
@@ -371,6 +372,7 @@ def test_chat_review_does_not_auto_merge(
     mock_gh.return_value.post_or_update_pr_comment.return_value = {
         "html_url": "https://github.com/acme/app/pull/1#issuecomment-1"
     }
+    mock_gh.return_value.count_autofix_rounds.return_value = (0, 0)
 
     client = _app().test_client()
     res = client.post(
@@ -429,6 +431,7 @@ def test_actions_review_may_auto_merge(
     mock_gh.return_value.post_or_update_pr_comment.return_value = {
         "html_url": "https://github.com/acme/app/pull/1#issuecomment-1"
     }
+    mock_gh.return_value.count_autofix_rounds.return_value = (0, 0)
 
     client = _app().test_client()
     res = client.post(

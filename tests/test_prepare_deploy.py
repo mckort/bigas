@@ -843,7 +843,7 @@ def test_list_shortcut_projects_only_deploy_targets(monkeypatch):
     assert "WAYW" not in keys
 
 
-def test_release_review_does_not_merge_when_not_ready(monkeypatch):
+def test_release_review_launches_autofix_for_leftover_nits(monkeypatch):
     chat = get_chat_store()
     thread = chat.create_thread("user-1", "devops")
     merged = {"called": False}
@@ -862,11 +862,8 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
         def post_or_update_pr_comment(self, **kwargs):
             return {"html_url": "https://github.com/mckort/vcfieldassistant/pull/210#issuecomment-1"}
 
-        def get_marked_comment_body(self, owner, repo, pr_number):
-            return (
-                "### Blockers\nNone.\n\n### Important\nNone.\n\n"
-                "### Minor\n- Leftover nit.\n\nReady to merge.\n"
-            )
+        def list_pr_commit_messages(self, owner, repo, pr_number):
+            return []
 
         def merge_pull_request(self, *args, **kwargs):
             merged["called"] = True
@@ -885,6 +882,15 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
                 usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
             )
 
+    class _FakeAutofix:
+        def run(self, **kwargs):
+            return {
+                "launched": True,
+                "agent_id": "bc-1",
+                "agent_url": "https://cursor.com/agents/bc-1",
+                "run_id": "run-1",
+            }
+
     monkeypatch.setattr(
         "bigas.resources.cto.pr_review.github_client.GitHubPRCommentClient",
         lambda *args, **kwargs: _FakeGH(),
@@ -893,7 +899,10 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
         "bigas.resources.cto.pr_review.service.PRReviewService",
         lambda *args, **kwargs: _FakeReview(),
     )
-    monkeypatch.setattr("bigas.resources.devops.prepare._ACTIONS_REVIEW_WAIT_SEC", 0)
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda *args, **kwargs: _FakeAutofix(),
+    )
 
     result = review_and_merge_release_pr(
         repo="mckort/vcfieldassistant",
@@ -903,14 +912,13 @@ def test_release_review_does_not_merge_when_not_ready(monkeypatch):
         version="0.3.0",
     )
     assert result["status"] == "polling"
-    poll_prepare_followup(thread["thread_id"])
     assert merged["called"] is False
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
-    assert "timed out waiting for github actions" in blob.lower()
-    assert "not ready to merge" in blob.lower()
+    assert "leftover minor findings" in blob.lower()
+    assert "autofix agent running" in blob.lower()
 
 
-def test_release_review_merges_after_actions_refreshes_nits_review(monkeypatch):
+def test_release_review_merges_leftover_nits_after_two_minor_autofix_rounds(monkeypatch):
     chat = get_chat_store()
     thread = chat.create_thread("user-1", "devops")
     merged = {"called": False}
@@ -918,11 +926,6 @@ def test_release_review_merges_after_actions_refreshes_nits_review(monkeypatch):
         "### Blockers\nNone.\n\n### Important\nNone.\n\n"
         "### Minor\n- Leftover nit.\n\nReady to merge.\n"
     )
-    clean_review = (
-        "### Blockers\nNone.\n\n### Important\nNone.\n\n"
-        "### Minor\nNone.\n\nReady to merge.\n"
-    )
-    poll = {"calls": 0}
 
     class _FakeGH:
         def get_pull_request(self, owner, repo, pr_number):
@@ -938,11 +941,11 @@ def test_release_review_merges_after_actions_refreshes_nits_review(monkeypatch):
         def post_or_update_pr_comment(self, **kwargs):
             return {"html_url": "https://github.com/mckort/vcfieldassistant/pull/212#issuecomment-1"}
 
-        def get_marked_comment_body(self, owner, repo, pr_number):
-            poll["calls"] += 1
-            if poll["calls"] == 1:
-                return nit_review
-            return clean_review
+        def list_pr_commit_messages(self, owner, repo, pr_number):
+            return [
+                "VFA-1: [bigas-autofix] [nits-only] polish one",
+                "VFA-1: [bigas-autofix] [nits-only] polish two",
+            ]
 
         def merge_pull_request(self, *args, **kwargs):
             merged["called"] = True
@@ -974,13 +977,9 @@ def test_release_review_merges_after_actions_refreshes_nits_review(monkeypatch):
         version="0.3.0",
         cut_keys=["VFA-1"],
     )
-    assert result["status"] == "polling"
-    poll_prepare_followup(thread["thread_id"])
-    poll_prepare_followup(thread["thread_id"])
+    assert result["status"] == "merged"
     assert merged["called"] is True
-    assert poll["calls"] >= 2
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
-    assert "waiting briefly" in blob.lower()
     assert "merged release pr" in blob.lower()
 
 
