@@ -320,12 +320,12 @@ def weekly_okr_pulse():
     Mechanical Monday OKR pulse from the ticket store → Chief of Staff chat
     (and DISCORD_WEBHOOK_URL_CHIEF, falling back to product).
 
-    Counts always include sample size. An optional LLM comment is appended
-    underneath and must not replace the numbers.
+    Counts always include sample size, then reasoned next steps from the
+    in-progress loop. Pass include_comment: true for an optional LLM note.
 
     Request JSON (all optional):
       { "days": 7, "post_to_discord": true, "post_to_chat": true,
-        "include_comment": true, "propose_work": true, "user_id": "..." }
+        "include_comment": false, "propose_work": true, "user_id": "..." }
     """
     from bigas.okr.pulse import build_weekly_okr_pulse, publish_weekly_okr_pulse
     from bigas.okr.scoreboard import DEFAULT_LOOKBACK_DAYS
@@ -344,7 +344,7 @@ def weekly_okr_pulse():
     )
     post_to_chat = True if data.get("post_to_chat") is None else bool(data.get("post_to_chat"))
     include_comment = (
-        True if data.get("include_comment") is None else bool(data.get("include_comment"))
+        False if data.get("include_comment") is None else bool(data.get("include_comment"))
     )
     propose_work = True if data.get("propose_work") is None else bool(data.get("propose_work"))
     user_id = str(data.get("user_id") or "").strip() or None

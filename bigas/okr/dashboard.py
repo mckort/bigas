@@ -13,6 +13,8 @@ from bigas.okr.model import (
     normalize_key_results,
     objective_progress,
 )
+from bigas.agents.proactive_engine import goal_phase_for_status
+from bigas.okr.plan import format_next_step_line
 from bigas.tickets.labels import resolve_ticket_labels
 from bigas.tickets.service import ticket_url
 
@@ -40,10 +42,17 @@ def _child_health_counts(objectives: List[Dict[str, Any]]) -> Dict[str, int]:
 
 def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[str, Any]:
     risks = []
-    next_tasks = []
+    this_week: List[str] = []
     unmeasured = []
     theater = []
     for obj in objectives:
+        obj_key = str(obj.get("key") or "")
+        if goal_phase_for_status(str(obj.get("status") or "")) == "in_progress":
+            for step in obj.get("okr_next_steps") or []:
+                if isinstance(step, dict) and step.get("action"):
+                    this_week.append(
+                        format_next_step_line(step, objective_key=obj_key).lstrip("- ")
+                    )
         for kr in obj.get("key_results") or []:
             label = f"{obj['key']}: {kr.get('title')}"
             if kr.get("health") in {"at_risk", "off_track"}:
@@ -52,8 +61,6 @@ def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[s
                 unmeasured.append(label)
             if kr.get("activity_without_outcome"):
                 theater.append(label)
-            if kr.get("linked_open", 0) == 0 and kr.get("health") != "on_track":
-                next_tasks.append(f"Create a task for {label}")
     headline_parts = []
     if stats["off_track"]:
         headline_parts.append(f"{stats['off_track']} KR(s) off track")
@@ -68,11 +75,7 @@ def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[s
         "risks": risks[:6],
         "unmeasured": unmeasured[:6],
         "activity_without_outcome": theater[:6],
-        "this_week": next_tasks[:5]
-        or [
-            "Confirm KR scores with live sources before adding more tasks.",
-            "Kill one task that cannot name the KR it is supposed to move.",
-        ],
+        "this_week": this_week[:12],
         "principle": (
             "An Objective is healthy only if its Key Results move. "
             "Closed tickets are evidence, not progress. A human signs off KR current."
@@ -149,6 +152,7 @@ def serialize_objective(
         "owner": ticket.get("okr_owner") or ticket.get("assignee") or "",
         "phase": ticket.get("okr_phase") or "",
         "briefing": ticket.get("okr_briefing") or "",
+        "okr_next_steps": list(ticket.get("okr_next_steps") or []),
         "created_at": ticket.get("created_at"),
         "updated_at": ticket.get("updated_at"),
         "expected_progress": round(expected, 3),

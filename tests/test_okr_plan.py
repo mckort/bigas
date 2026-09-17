@@ -6,9 +6,11 @@ import json
 
 from bigas.okr.plan import (
     OKR_PLAN_SYSTEM,
+    _normalize_next_steps,
     already_in_evidence,
     apply_current_updates,
     heuristic_ga4_currents,
+    heuristic_next_steps_for_risks,
     is_duplicate_work,
     is_mechanical_okr_task,
     run_okr_plan,
@@ -197,3 +199,40 @@ def test_run_okr_plan_evidence_failure_returns_fallback(monkeypatch):
     assert not result.used_llm
     assert "after sources work" in result.briefing
     assert "### Plan failed" in result.plan_markdown
+
+
+def test_normalize_next_steps_rejects_kr_title_clones():
+    krs = [
+        {
+            "id": "kr-a",
+            "title": "10 wholesale orders",
+            "health": "off_track",
+        }
+    ]
+    steps = _normalize_next_steps(
+        [{"kr_id": "kr-a", "action": "10 wholesale orders", "ai_doable": True}],
+        key_results=krs,
+        at_risk_kr_ids=["kr-a"],
+    )
+    assert steps == []
+    steps = _normalize_next_steps(
+        [{"kr_id": "kr-a", "action": "Launch partner outreach to 5 distributors", "ai_doable": False}],
+        key_results=krs,
+        at_risk_kr_ids=["kr-a"],
+    )
+    assert len(steps) == 1
+    assert steps[0]["action"].startswith("Launch partner")
+
+
+def test_heuristic_next_steps_points_at_manual_gate():
+    krs = [{"id": "kr-fresh001", "title": "3% add-to-cart", "health": "at_risk"}]
+    open_work = [
+        {
+            "key": "GPWW-36",
+            "title": "Approve landing copy",
+            "status": "Description approval (manual)",
+            "parent_kr_id": "kr-fresh001",
+        }
+    ]
+    steps = heuristic_next_steps_for_risks(krs, open_work=open_work)
+    assert steps[0]["existing_key"] == "GPWW-36"

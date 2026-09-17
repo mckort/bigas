@@ -193,6 +193,7 @@ def _apply_ticket_field_updates(
         "okr_cycle",
         "okr_owner",
         "okr_briefing",
+        "okr_next_steps",
         "okr_phase",
         "created_at",
         "done_processed",
@@ -248,6 +249,13 @@ def _apply_ticket_field_updates(
             updates["okr_owner"] = (value or "").strip() or None
         elif key == "okr_briefing":
             updates["okr_briefing"] = str(value or "")
+        elif key == "okr_next_steps":
+            if value is None:
+                updates["okr_next_steps"] = []
+            elif isinstance(value, list):
+                updates["okr_next_steps"] = [dict(item) for item in value if isinstance(item, dict)]
+            else:
+                updates["okr_next_steps"] = []
         elif key == "okr_phase":
             updates["okr_phase"] = (value or "").strip()
         elif key == "created_at":

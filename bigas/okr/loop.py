@@ -25,6 +25,7 @@ from bigas.okr.model import normalize_key_results
 from bigas.okr.plan import (
     MAX_TASKS_TOTAL,
     OKR_PLAN_SYSTEM,
+    _normalize_next_steps,
     _normalize_plan_tasks,
     is_duplicate_work,
     is_mechanical_okr_task,
@@ -57,6 +58,11 @@ Rules:
   tracking snippet, small UI change, draft outreach. Human-only work (partnerships,
   pricing calls, budget, legal) is ai_doable=false.
 - Off-track KRs get proposed To Do work. Never auto-start or auto-advance cards.
+- Weekly in_progress pulse: call propose_next_steps with 1–3 concrete actions per KR
+  that is at_risk, off_track, or unmeasured. Each action is a lever (AI or human),
+  never the KR title restated. Prefer ai_doable; human gates use existing_key on an
+  open manual ticket instead of cloning. Done tickets are history — if the KR is still
+  red, propose a different lever.
 - Do not recreate Done work or a near-duplicate title. Do not propose work
   already visible in site/repo evidence (live CTA, badge, page, or guide).
 - If a number is missing from evidence, mark the KR measurable=false.
@@ -146,6 +152,10 @@ TASK_ITEM_SCHEMA = {
         },
         "issue_type": {"type": "string"},
         "marketing": {"type": "boolean"},
+        "existing_key": {
+            "type": "string",
+            "description": "Do not use on tasks — reference manual gates via propose_next_steps instead.",
+        },
     },
     "required": ["description"],
 }
@@ -197,6 +207,34 @@ WRITE_TOOLS = [
         ["updates"],
     ),
     _fn(
+        "propose_next_steps",
+        "Reasoned next actions for at-risk KRs (in_progress pulse). Not KR titles. "
+        "1–3 per KR. Human gates reference existing_key instead of opening clones.",
+        {
+            "steps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kr_id": {"type": "string"},
+                        "action": {"type": "string"},
+                        "ai_doable": {"type": "boolean"},
+                        "existing_key": {
+                            "type": "string",
+                            "description": "Open manual gate ticket key (e.g. GPWW-36).",
+                        },
+                    },
+                    "required": ["kr_id", "action"],
+                },
+            },
+            "reason": {
+                "type": "string",
+                "description": "Required when steps is empty and any KR is still at risk.",
+            },
+        },
+        ["steps"],
+    ),
+    _fn(
         "set_notes",
         "Human-facing briefing plus research/plan/progress markdown.",
         {
@@ -213,6 +251,8 @@ def tools_for_phase(phase: str, *, kind: str) -> List[Dict[str, Any]]:
     names = {"get_goal", "get_evidence", "list_open_work", "set_notes", "done"}
     if phase in {PHASE_PLAN, PHASE_IN_PROGRESS}:
         names.update({"get_scoreboard", "propose_tasks", "update_kr_current"})
+    if phase == PHASE_IN_PROGRESS and kind == KIND_OBJECTIVE:
+        names.add("propose_next_steps")
     if kind == KIND_OBJECTIVE and phase == PHASE_RESEARCH:
         names.add("propose_key_results")
     if kind == KIND_EPIC:
@@ -243,6 +283,7 @@ class GoalSnapshot:
 class GoalLoopResult:
     key_results: List[Dict[str, Any]] = field(default_factory=list)
     tasks: List[Dict[str, Any]] = field(default_factory=list)
+    next_steps: List[Dict[str, Any]] = field(default_factory=list)
     current_updates: List[Dict[str, Any]] = field(default_factory=list)
     briefing: str = ""
     notes_markdown: str = ""
@@ -293,6 +334,7 @@ class _Session:
         self.committed = list(committed)
         self.proposed = list(proposed)
         self.tasks: List[Dict[str, Any]] = []
+        self.next_steps: List[Dict[str, Any]] = []
         self.current_updates: List[Dict[str, Any]] = []
         self.briefing = ""
         self.notes_markdown = ""
@@ -301,7 +343,21 @@ class _Session:
         self.done = False
         self.proposed_krs = False
         self.proposed_tasks = False
+        self.proposed_next_steps = False
         self.nudged = False
+
+    def _at_risk_kr_ids(self) -> set[str]:
+        board = self.snapshot.scoreboard or {}
+        ids = board.get("at_risk_kr_ids")
+        if isinstance(ids, list) and ids:
+            return {str(i).strip() for i in ids if str(i).strip()}
+        out: set[str] = set()
+        for kr in self.snapshot.key_results:
+            if str(kr.get("health") or "") in {"at_risk", "off_track", "unmeasured"}:
+                kid = str(kr.get("id") or "").strip()
+                if kid:
+                    out.add(kid)
+        return out
 
     def required_write(self) -> Optional[str]:
         snap = self.snapshot
@@ -309,6 +365,8 @@ class _Session:
             return "krs"
         if snap.phase == PHASE_PLAN:
             return "tasks"
+        if snap.kind == KIND_OBJECTIVE and snap.phase == PHASE_IN_PROGRESS:
+            return "next_steps"
         if snap.kind == KIND_EPIC and snap.phase == PHASE_RESEARCH:
             return "tasks"
         return None
@@ -319,6 +377,10 @@ class _Session:
             return self.proposed_krs
         if need == "tasks":
             return self.proposed_tasks or bool(self.tasks)
+        if need == "next_steps":
+            if self.proposed_next_steps:
+                return True
+            return not self._at_risk_kr_ids()
         return True
 
     def result(self, *, used_tools: bool, used_llm: bool, turns: int, trace: List[str]) -> GoalLoopResult:
@@ -335,6 +397,7 @@ class _Session:
         return GoalLoopResult(
             key_results=merged,
             tasks=list(self.tasks),
+            next_steps=list(self.next_steps),
             current_updates=list(self.current_updates),
             briefing=self.briefing,
             notes_markdown=self.notes_markdown,
@@ -543,6 +606,33 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
         if dropped:
             session.rejected.append(f"propose_tasks: dropped {dropped} clone/wiring/duplicate items")
         return {"ok": True, "accepted": len(accepted), "dropped": dropped}
+    if name == "propose_next_steps":
+        if snap.phase != PHASE_IN_PROGRESS or snap.kind != KIND_OBJECTIVE:
+            return {"ok": False, "error": "propose_next_steps is only valid during Objective in_progress."}
+        raw = arguments.get("steps") if isinstance(arguments.get("steps"), list) else []
+        reason = str(arguments.get("reason") or "").strip()
+        risk_ids = session._at_risk_kr_ids()
+        if isinstance(arguments.get("steps"), list) and not raw:
+            if reason or not risk_ids:
+                session.proposed_next_steps = True
+                session.next_steps = []
+                return {"ok": True, "accepted": 0}
+            return {"ok": False, "error": "Empty steps needs a reason while KRs are at risk."}
+        krs = _merge_key_results(committed=session.committed, proposed=session.proposed) or snap.key_results
+        accepted = _normalize_next_steps(
+            raw,
+            key_results=krs,
+            at_risk_kr_ids=risk_ids,
+        )
+        session.next_steps = accepted
+        session.proposed_next_steps = True
+        covered = {s["kr_id"] for s in accepted}
+        missing = sorted(risk_ids - covered)
+        if missing:
+            session.rejected.append(
+                f"propose_next_steps: missing steps for {', '.join(missing)}"
+            )
+        return {"ok": True, "accepted": len(accepted), "missing_kr_ids": missing}
     if name == "update_kr_current":
         numbers = evidence_numbers(snap.evidence)
         applied = 0
@@ -703,6 +793,8 @@ def _forced_write_tool(session: _Session) -> Optional[str]:
         return "propose_key_results"
     if need == "tasks":
         return "propose_tasks"
+    if need == "next_steps":
+        return "propose_next_steps"
     return None
 
 

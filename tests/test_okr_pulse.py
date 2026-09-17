@@ -17,7 +17,7 @@ os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 from app import create_app
 from bigas.agents.chief_of_staff import _agent_system_prompt
 from bigas.okr.priming import format_okr_priming_block, okr_priming_block_for_agent
-from bigas.okr.pulse import _format_work_opened, format_okr_pulse
+from bigas.okr.pulse import _format_pulse_actions, format_okr_pulse
 from bigas.okr.scoreboard import (
     build_okr_scoreboard,
     clear_okr_scoreboard_cache,
@@ -186,20 +186,39 @@ def test_priming_is_injected_for_chief_not_cto():
     assert not okr_priming_block_for_agent("devops", user_id=USER)
 
 
-def test_format_work_opened_lists_new_todos():
-    text = _format_work_opened(
+def test_format_pulse_actions_lists_steps_and_new_todos():
+    text = _format_pulse_actions(
         [
             {
                 "ok": True,
                 "issue_key": "GPWW-17",
                 "tasks_created": [{"key": "GPWW-40", "kr_id": "kr-sess"}],
+                "next_steps": [
+                    {
+                        "kr_id": "kr-sess",
+                        "kr_title": "Sessions",
+                        "health": "off_track",
+                        "action": "Publish wholesale landing variant",
+                        "ai_doable": True,
+                        "ticket_key": "GPWW-40",
+                    }
+                ],
             },
-            {"ok": True, "issue_key": "BIG-44", "tasks_created": []},
+            {"ok": True, "issue_key": "BIG-44", "tasks_created": [], "next_steps": []},
         ]
     )
     assert "GPWW-40" in text
-    assert "BIG-44: no new work" in text
+    assert "Publish wholesale landing variant" in text
+    assert "BIG-44: no new To Do" in text
     assert "cannot flatter" not in text
+
+
+def test_mechanical_pulse_omits_create_task_line():
+    store, objective, _waiting = _seed_objective()
+    snapshot = build_okr_scoreboard(store, user_id=USER, use_cache=False)
+    pulse = format_okr_pulse(snapshot)
+    assert "Create a task for" not in pulse
+    assert "Next action:" not in pulse
 
 
 def test_weekly_okr_pulse_appends_opened_work(client, monkeypatch):
@@ -212,6 +231,16 @@ def test_weekly_okr_pulse_appends_opened_work(client, monkeypatch):
                 "ok": True,
                 "issue_key": "GPWW-17",
                 "tasks_created": [{"key": "GPWW-40", "kr_id": "kr-sess"}],
+                "next_steps": [
+                    {
+                        "kr_id": "kr-sess",
+                        "kr_title": "Wholesale orders",
+                        "health": "off_track",
+                        "action": "Run B2B outreach batch",
+                        "ai_doable": True,
+                        "ticket_key": "GPWW-40",
+                    }
+                ],
             }
         ],
     )

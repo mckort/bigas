@@ -1,10 +1,11 @@
-"""Mechanical Monday OKR pulse — countable facts, optional LLM comment underneath."""
+"""Mechanical Monday OKR pulse — countable facts, reasoned next steps from the in-progress loop."""
 from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
 
 from bigas.chat.activity import post_to_agent_thread, resolve_chat_target_user_id
+from bigas.okr.plan import format_next_step_line
 from bigas.okr.scoreboard import (
     DEFAULT_LOOKBACK_DAYS,
     format_health_counts,
@@ -13,13 +14,6 @@ from bigas.okr.scoreboard import (
 )
 
 logger = logging.getLogger(__name__)
-
-_COMMENT_INSTRUCTIONS = (
-    "You are commenting under a mechanical OKR pulse. Do not restate, round, "
-    "or contradict the counts. Do not say the week is on track if any KR is "
-    "off track, at risk, unmeasured, or if Done sample size is 0. Name at most "
-    "one next action. Under 80 words. No preamble."
-)
 
 
 def format_okr_pulse(snapshot: Dict[str, Any]) -> str:
@@ -81,20 +75,11 @@ def format_okr_pulse(snapshot: Dict[str, Any]) -> str:
         lines.append(f"- … +{len(gates) - 8} more")
     theater = int(stats.get("activity_without_outcome") or 0)
     lines.append(f"Activity without outcome (shipping while KR stuck): {theater}.")
-    next_actions = (snapshot.get("briefing") or {}).get("this_week") or []
-    if next_actions:
-        lines.append("")
-        lines.append(f"Next action: {next_actions[0]}")
-    lines.append("")
-    lines.append(
-        "_Derived from the ticket store. Any comment below is optional and "
-        "must not replace these counts._"
-    )
     return "\n".join(lines)
 
 
 def comment_on_okr_pulse(numbers: str) -> Optional[str]:
-    """Best-effort LLM note under the counts. Never required for a valid pulse."""
+    """Optional LLM note under the counts (off by default for Monday pulse)."""
     try:
         from bigas.llm.factory import get_llm_client
 
@@ -102,7 +87,13 @@ def comment_on_okr_pulse(numbers: str) -> Optional[str]:
         text = (
             llm.complete(
                 [
-                    {"role": "system", "content": _COMMENT_INSTRUCTIONS},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are commenting under a mechanical OKR pulse. Do not restate "
+                            "counts. Under 80 words. No preamble."
+                        ),
+                    },
                     {"role": "user", "content": numbers},
                 ],
                 max_tokens=256,
@@ -116,28 +107,43 @@ def comment_on_okr_pulse(numbers: str) -> Optional[str]:
         return None
 
 
-def _format_work_opened(results: List[Dict[str, Any]]) -> str:
+def _format_pulse_actions(results: List[Dict[str, Any]]) -> str:
     if not results:
         return ""
-    lines = ["**Weekly KR check** (In Progress Objectives — To Do only, never auto-start)"]
-    opened = 0
+    lines = [
+        "**Reasoned next steps** (In Progress Objectives — To Do only, never auto-start)",
+    ]
+    opened_keys: List[str] = []
+    any_steps = False
     for item in results:
-        key = item.get("issue_key") or "?"
+        obj_key = item.get("issue_key") or "?"
         if not item.get("ok"):
-            lines.append(f"- {key}: loop failed.")
+            lines.append(f"- {obj_key}: loop failed.")
             continue
+        steps = item.get("next_steps") or []
         created = [
             (task.get("key") or "").strip()
             for task in (item.get("tasks_created") or [])
             if isinstance(task, dict) and (task.get("key") or "").strip()
         ]
-        opened += len(created)
-        if created:
-            lines.append(f"- {key}: opened {', '.join(created)}.")
+        opened_keys.extend(created)
+        if steps:
+            any_steps = True
+            for step in steps:
+                if isinstance(step, dict):
+                    lines.append(format_next_step_line(step, objective_key=obj_key))
+        elif created:
+            lines.append(f"- {obj_key}: opened {', '.join(created)}.")
         else:
-            lines.append(f"- {key}: no new work (already linked, Done, or live in evidence).")
-    if opened:
-        lines.append(f"Opened {opened} To Do card(s). Humans still drag work into In Progress.")
+            lines.append(
+                f"- {obj_key}: no new To Do (Done is history; no new lever proposed)."
+            )
+    if opened_keys:
+        lines.append(
+            f"New To Do keys: {', '.join(opened_keys)}. Humans drag work into In Progress."
+        )
+    elif not any_steps:
+        return ""
     return "\n".join(lines)
 
 
@@ -145,7 +151,7 @@ def build_weekly_okr_pulse(
     *,
     user_id: Optional[str] = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-    include_comment: bool = True,
+    include_comment: bool = False,
     propose_work: bool = True,
 ) -> Dict[str, Any]:
     uid = (user_id or "").strip() or (resolve_chat_target_user_id() or "")
@@ -162,7 +168,7 @@ def build_weekly_okr_pulse(
         from bigas.okr.engine import pulse_in_progress_objectives
 
         work_results = pulse_in_progress_objectives(user_id=uid)
-        work_opened = _format_work_opened(work_results)
+        work_opened = _format_pulse_actions(work_results)
     message = numbers
     if work_opened:
         message = f"{message}\n\n{work_opened}"
@@ -179,6 +185,7 @@ def build_weekly_okr_pulse(
                 "issue_key": item.get("issue_key"),
                 "ok": item.get("ok"),
                 "tasks_created": item.get("tasks_created") or [],
+                "next_steps": item.get("next_steps") or [],
             }
             for item in work_results
         ],

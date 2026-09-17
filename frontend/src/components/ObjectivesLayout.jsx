@@ -508,8 +508,12 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
               <StatusCard label="Unmeasured" value={stats.unmeasured || 0} tone="muted" />
               <StatusCard label="Busy but stuck" value={stats.activity_without_outcome || 0} tone="warn" />
             </div>
-            {(briefing.this_week || []).length > 0 && (
-              <div className="grid md:grid-cols-2 gap-4">
+            <div
+              className={`grid gap-4 ${
+                (briefing.this_week || []).length > 0 ? 'md:grid-cols-2' : 'md:grid-cols-1'
+              }`}
+            >
+              {(briefing.this_week || []).length > 0 && (
                 <div className="card p-4">
                   <p className="text-xs font-medium mb-2">This week</p>
                   <ul className="space-y-1.5 text-sm">
@@ -520,25 +524,25 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
                     ))}
                   </ul>
                 </div>
-                <div className="card p-4">
-                  <p className="text-xs font-medium mb-2">Watch</p>
-                  <ul className="space-y-1.5 text-sm text-muted">
-                    {(briefing.risks || []).slice(0, 4).map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                    {(briefing.unmeasured || []).slice(0, 2).map((item) => (
-                      <li key={`u-${item}`}>Unmeasured · {item}</li>
-                    ))}
-                    {(briefing.activity_without_outcome || []).map((item) => (
-                      <li key={`a-${item}`}>Activity without outcome · {item}</li>
-                    ))}
-                    {!briefing.risks?.length && !briefing.unmeasured?.length && (
-                      <li>No active risks in this snapshot.</li>
-                    )}
-                  </ul>
-                </div>
+              )}
+              <div className="card p-4">
+                <p className="text-xs font-medium mb-2">Watch</p>
+                <ul className="space-y-1.5 text-sm text-muted">
+                  {(briefing.risks || []).slice(0, 4).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                  {(briefing.unmeasured || []).slice(0, 2).map((item) => (
+                    <li key={`u-${item}`}>Unmeasured · {item}</li>
+                  ))}
+                  {(briefing.activity_without_outcome || []).map((item) => (
+                    <li key={`a-${item}`}>Activity without outcome · {item}</li>
+                  ))}
+                  {!briefing.risks?.length && !briefing.unmeasured?.length && (
+                    <li>No active risks in this snapshot.</li>
+                  )}
+                </ul>
               </div>
-            )}
+            </div>
           </section>
 
           {objectives.length === 0 && (

@@ -71,6 +71,49 @@ def test_tools_plan_can_update_currents_and_tasks():
     assert "propose_key_results" not in names
 
 
+def test_tools_in_progress_includes_next_steps():
+    names = {tool["function"]["name"] for tool in tools_for_phase("in_progress", kind="objective")}
+    assert "propose_next_steps" in names
+    assert "propose_tasks" in names
+
+
+def test_loop_in_progress_requires_next_steps_for_at_risk_krs():
+    krs = [
+        {
+            "id": "kr-sess",
+            "title": "Increase website sessions from 43 to 1000",
+            "status": "committed",
+            "health": "off_track",
+            "measurable": True,
+        }
+    ]
+    llm = _ScriptedLlm(
+        [
+            _call(
+                "propose_next_steps",
+                steps=[
+                    {
+                        "kr_id": "kr-sess",
+                        "action": "Publish /wholesale landing with SAMPLE30 hero",
+                        "ai_doable": True,
+                    }
+                ],
+            ),
+            _call("done"),
+        ]
+    )
+    result = run_goal_loop(
+        llm,
+        snapshot=_snapshot(
+            phase="in_progress",
+            key_results=krs,
+            scoreboard={"at_risk_kr_ids": ["kr-sess"]},
+        ),
+    )
+    assert len(result.next_steps) == 1
+    assert "wholesale" in result.next_steps[0]["action"].lower()
+
+
 def test_epic_research_has_tasks_not_krs():
     names = {tool["function"]["name"] for tool in tools_for_phase("research", kind="epic")}
     assert "propose_tasks" in names

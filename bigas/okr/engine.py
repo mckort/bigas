@@ -17,7 +17,9 @@ from bigas.okr.model import (
 from bigas.okr.plan import (
     _normalize_plan_tasks,
     apply_current_updates,
+    format_next_step_line,
     heuristic_ga4_currents,
+    heuristic_next_steps_for_risks,
     is_duplicate_work,
     is_mechanical_okr_task,
     is_open_task,
@@ -115,7 +117,25 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         logger.warning("OKR pulse could not refresh KR currents for %s", key, exc_info=True)
     created: List[Dict[str, str]] = []
+    next_steps: List[Dict[str, Any]] = []
     extra_briefing = ""
+    expected = expected_progress(
+        created_at=ticket.get("created_at"),
+        cycle_end=cycle_end_for(ticket.get("okr_cycle") or "", created_at=ticket.get("created_at")),
+    )
+    annotated_pre = [
+        annotate_key_result(
+            kr,
+            expected=expected,
+            child_tickets=[c for c in children if (c.get("parent_kr_id") or "") == kr.get("id")],
+        )
+        for kr in key_results
+    ]
+    risk_krs_pre = [
+        {**kr, "health": kr.get("health")}
+        for kr in annotated_pre
+        if kr.get("health") in {"at_risk", "off_track", "unmeasured"}
+    ]
     try:
         from bigas.llm.factory import get_llm_client
 
@@ -125,6 +145,16 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
                 [dict(kr) for kr in key_results],
                 heuristic_updates,
             )
+            annotated_snapshot = [
+                annotate_key_result(
+                    kr,
+                    expected=expected,
+                    child_tickets=[
+                        c for c in children if (c.get("parent_kr_id") or "") == kr.get("id")
+                    ],
+                )
+                for kr in snapshot_krs
+            ]
             looped = run_goal_loop(
                 client,
                 snapshot=snapshot_from_okr(
@@ -132,7 +162,15 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
                     phase="in_progress",
                     evidence=evidence,
                     open_work=linked,
-                    key_results=snapshot_krs,
+                    key_results=annotated_snapshot,
+                    scoreboard={
+                        "at_risk_kr_ids": [
+                            str(kr.get("id") or "")
+                            for kr in annotated_snapshot
+                            if kr.get("health") in {"at_risk", "off_track", "unmeasured"}
+                            and str(kr.get("id") or "").strip()
+                        ],
+                    },
                 ),
                 model=model_name,
             )
@@ -167,17 +205,29 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 created.append({"key": child.get("key") or "", "kr_id": spec.get("kr_id") or ""})
                 existing_titles.add(title)
+            next_steps = list(looped.next_steps or [])
             extra_briefing = looped.briefing or ""
         else:
             key_results = apply_current_updates(key_results, heuristic_updates)
+            next_steps = heuristic_next_steps_for_risks(
+                risk_krs_pre,
+                open_work=linked,
+            )
     except Exception:
         logger.warning("OKR in-progress goal loop failed for %s", key, exc_info=True)
         extra_briefing = ""
         key_results = apply_current_updates(key_results, heuristic_updates)
-    expected = expected_progress(
-        created_at=ticket.get("created_at"),
-        cycle_end=cycle_end_for(ticket.get("okr_cycle") or "", created_at=ticket.get("created_at")),
-    )
+        next_steps = heuristic_next_steps_for_risks(
+            risk_krs_pre,
+            open_work=linked,
+        )
+    created_by_kr = {item["kr_id"]: item["key"] for item in created if item.get("kr_id")}
+    for step in next_steps:
+        if step.get("ticket_key") or step.get("existing_key"):
+            continue
+        kid = str(step.get("kr_id") or "")
+        if kid and created_by_kr.get(kid):
+            step["ticket_key"] = created_by_kr[kid]
     annotated = [
         annotate_key_result(
             kr,
@@ -199,6 +249,14 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         )
     if extra_briefing:
         briefing_bits.append(extra_briefing)
+    if next_steps:
+        briefing_bits.append(
+            "Next steps: "
+            + "; ".join(
+                format_next_step_line(s, objective_key=key).lstrip("- ").split(" → ")[0]
+                for s in next_steps[:6]
+            )
+        )
     if risks:
         briefing_bits.append(
             "Watch: " + "; ".join(f"{kr['title']} ({kr['health']})" for kr in risks[:3])
@@ -216,6 +274,7 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
             key_results=key_results,
             okr_phase="in_progress",
             okr_briefing=briefing,
+            okr_next_steps=next_steps,
         )
         _comment(store, ticket_id, f"**OKR weekly pulse**\n\n{briefing}")
     return {
@@ -225,6 +284,7 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         "phase": "in_progress",
         "started": [],
         "tasks_created": created,
+        "next_steps": next_steps,
         "progress": objective_progress(key_results),
         "briefing": briefing,
     }
@@ -250,6 +310,7 @@ def pulse_in_progress_objectives(*, user_id: str) -> List[Dict[str, Any]]:
                     "ok": False,
                     "issue_key": ticket.get("key") or "",
                     "tasks_created": [],
+                    "next_steps": [],
                     "error": "loop failed",
                 }
             )

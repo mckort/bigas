@@ -346,6 +346,113 @@ def heuristic_ga4_currents(
     return updates
 
 
+def _normalize_next_steps(
+    raw_steps: Any,
+    *,
+    key_results: Sequence[Dict[str, Any]],
+    at_risk_kr_ids: Optional[Iterable[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Concrete actions per at-risk KR — never KR-title clones."""
+    kr_by_id = {str(kr.get("id") or ""): kr for kr in key_results}
+    kr_titles = {
+        str(kr.get("title") or "").strip().lower()
+        for kr in key_results
+        if str(kr.get("title") or "").strip()
+    }
+    risk_ids = {str(i).strip() for i in (at_risk_kr_ids or []) if str(i).strip()}
+    if not risk_ids:
+        risk_ids = {
+            str(kr.get("id") or "")
+            for kr in key_results
+            if str(kr.get("health") or "") in {"at_risk", "off_track", "unmeasured"}
+            and str(kr.get("id") or "").strip()
+        }
+    per_kr: Dict[str, int] = {}
+    out: List[Dict[str, Any]] = []
+    if not isinstance(raw_steps, list):
+        return out
+    for item in raw_steps:
+        if not isinstance(item, dict):
+            continue
+        kr_id = str(item.get("kr_id") or "").strip()
+        action = str(item.get("action") or item.get("text") or "").strip()
+        if not kr_id or kr_id not in kr_by_id or not action:
+            continue
+        if risk_ids and kr_id not in risk_ids:
+            continue
+        if action.lower() in kr_titles:
+            continue
+        kr = kr_by_id[kr_id]
+        if str(kr.get("title") or "").strip().lower() == action.lower():
+            continue
+        if per_kr.get(kr_id, 0) >= MAX_TASKS_PER_KR:
+            continue
+        existing_key = str(item.get("existing_key") or "").strip().upper()
+        if existing_key and not re.match(r"^[A-Z][A-Z0-9]+-\d+$", existing_key):
+            existing_key = ""
+        out.append(
+            {
+                "kr_id": kr_id,
+                "kr_title": str(kr.get("title") or kr_id),
+                "health": str(kr.get("health") or item.get("health") or "at_risk"),
+                "action": action[:240],
+                "ai_doable": bool(item.get("ai_doable")),
+                "existing_key": existing_key or None,
+                "ticket_key": str(item.get("ticket_key") or "").strip().upper() or None,
+            }
+        )
+        per_kr[kr_id] = per_kr.get(kr_id, 0) + 1
+    return out
+
+
+def format_next_step_line(step: Dict[str, Any], *, objective_key: str = "") -> str:
+    prefix = f"{objective_key}: " if objective_key else ""
+    kr = step.get("kr_title") or step.get("kr_id") or "KR"
+    health = step.get("health") or "at_risk"
+    action = step.get("action") or ""
+    actor = "AI" if step.get("ai_doable") else "human"
+    tail = ""
+    if step.get("ticket_key"):
+        tail = f" → opened {step['ticket_key']}"
+    elif step.get("existing_key"):
+        tail = f" → use {step['existing_key']}"
+    return f"- {prefix}{kr} [{health}] ({actor}): {action}{tail}"
+
+
+def heuristic_next_steps_for_risks(
+    risk_krs: Sequence[Dict[str, Any]],
+    *,
+    open_work: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """When the model is unavailable, surface manual gates instead of KR clones."""
+    steps: List[Dict[str, Any]] = []
+    for kr in risk_krs:
+        kr_id = str(kr.get("id") or "").strip()
+        if not kr_id:
+            continue
+        gate = None
+        for child in open_work:
+            if str(child.get("parent_kr_id") or "").strip() != kr_id:
+                continue
+            status = str(child.get("status") or "")
+            if "(manual)" in status.lower():
+                gate = child
+                break
+        if gate:
+            steps.append(
+                {
+                    "kr_id": kr_id,
+                    "kr_title": str(kr.get("title") or kr_id),
+                    "health": str(kr.get("health") or "at_risk"),
+                    "action": f"Clear gate: {gate.get('title') or 'manual approval'}",
+                    "ai_doable": False,
+                    "existing_key": str(gate.get("key") or "").strip().upper() or None,
+                    "ticket_key": None,
+                }
+            )
+    return steps
+
+
 def _normalize_plan_tasks(
     raw_tasks: Any,
     *,
@@ -366,6 +473,9 @@ def _normalize_plan_tasks(
         return out
     for item in raw_tasks:
         if not isinstance(item, dict):
+            continue
+        existing_key = str(item.get("existing_key") or "").strip().upper()
+        if existing_key:
             continue
         title = str(item.get("title") or item.get("summary") or "").strip()
         description = str(item.get("description") or "").strip()
