@@ -98,6 +98,47 @@ def test_ready_to_merge_ignores_ready_line_when_minor_has_findings():
     assert review_is_ready_to_merge(_MINOR_LEFTOVER) is False
 
 
+_CLEAN_WITH_IMPORTANT_CLOSER = (
+    "### Blockers\nNone.\n\n### Important\nNone.\n\n### Minor\nNone.\n\n"
+    "All previous findings are resolved, no new blocker or important issues "
+    "were found, and the PR is ready to merge.\n"
+)
+
+
+def test_none_plus_important_word_closer_is_still_clean():
+    """LGTM closer with 'important issues' must not count as leftover Minor."""
+    ok, reason = review_needs_autofix(_CLEAN_WITH_IMPORTANT_CLOSER)
+    assert ok is False
+    assert "clean" in reason
+    assert review_is_nits_only(_CLEAN_WITH_IMPORTANT_CLOSER) is False
+    assert review_is_ready_to_merge(_CLEAN_WITH_IMPORTANT_CLOSER) is True
+
+
+def test_none_plus_important_word_closer_ignores_review_marker():
+    body = (
+        _CLEAN_WITH_IMPORTANT_CLOSER.rstrip()
+        + "\n\n<!-- bigas-ai-review-marker -->\n"
+    )
+    ok, reason = review_needs_autofix(body)
+    assert ok is False
+    assert "clean" in reason
+    assert review_is_ready_to_merge(body) is True
+
+
+def test_minor_bullet_plus_important_word_closer_still_counts():
+    body = (
+        "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+        "### Minor\n- Deduplicate query tokens.\n\n"
+        "All previous findings are resolved, no new blocker or important issues "
+        "were found, and the PR is ready to merge.\n"
+    )
+    ok, reason = review_needs_autofix(body)
+    assert ok is True
+    assert "minor" in reason
+    assert review_is_nits_only(body) is True
+    assert review_is_ready_to_merge(body) is False
+
+
 def test_leftover_nits_are_acceptable_at_caps():
     assert leftover_nits_are_acceptable() is False
     assert leftover_nits_are_acceptable(minor_autofix_count=2) is True

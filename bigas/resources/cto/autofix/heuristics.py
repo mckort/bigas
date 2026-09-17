@@ -127,6 +127,17 @@ _SOFT_ONLY = re.compile(
     r"(?i)\b(consider|optional|todo\b|nice to have|future cleanup|non[- ]blocking|"
     r"nit\b|minor suggestion|style only)\b"
 )
+_HTML_COMMENT = re.compile(r"^\s*<!--.*?-->\s*$")
+_LIST_ITEM = re.compile(r"(?m)^\s*(?:[-*]|\d+\.)\s+\S")
+_EMPTY_SECTION_PREFIX = re.compile(
+    r"(?is)^(none\.?|n/?a\.?|no (issues|findings|blockers|important issues)\.?)\s*"
+)
+# "no new blocker or important issues" in an LGTM closer is not a finding.
+_NEGATED_ACTIONABLE = re.compile(
+    r"(?i)\bno(?:\s+\w+){0,6}\s+"
+    r"(blocking|critical|important|security|vulnerability|bug|broken|"
+    r"incorrect|regression)\b"
+)
 
 
 def _section_bodies(review_body: str) -> dict[str, str]:
@@ -143,6 +154,19 @@ def _section_bodies(review_body: str) -> dict[str, str]:
     return sections
 
 
+def _is_list_item(line: str) -> bool:
+    return bool(re.match(r"\s*(?:[-*]|\d+\.)\s+\S", line or ""))
+
+
+def _closer_line_is_safe_to_strip(line: str) -> bool:
+    """True for a trailing LGTM sentence, including 'no … important issues'."""
+    if not line or not _CLEAN.search(line) or _is_list_item(line):
+        return False
+    if not _ACTIONABLE.search(line):
+        return True
+    return bool(_NEGATED_ACTIONABLE.search(line))
+
+
 def _section_has_findings(body: str) -> bool:
     text = _strip_section_closer(body)
     if not text:
@@ -154,18 +178,31 @@ def _section_has_findings(body: str) -> bool:
         return False
     if re.fullmatch(r"(?is)no (issues|findings|blockers|important issues)\.?", text):
         return False
+    empty_prefix = _EMPTY_SECTION_PREFIX.match(text)
+    if empty_prefix:
+        rest = text[empty_prefix.end() :].strip()
+        if not rest:
+            return False
+        # "None." plus a verdict sentence is still empty — not leftover nits.
+        if not _LIST_ITEM.search(rest) and _CLEAN.search(rest):
+            return False
     return True
 
 
 def _strip_section_closer(body: str) -> str:
     """Drop a trailing LGTM / ready-to-merge closer so it is not a finding."""
     lines = (body or "").splitlines()
-    while lines and not lines[-1].strip():
-        lines.pop()
-    while lines and _CLEAN.search(lines[-1]) and not _ACTIONABLE.search(lines[-1]):
-        lines.pop()
-        while lines and not lines[-1].strip():
+
+    def _pop_blank_and_comments() -> None:
+        while lines and (
+            not lines[-1].strip() or _HTML_COMMENT.match(lines[-1])
+        ):
             lines.pop()
+
+    _pop_blank_and_comments()
+    while lines and _closer_line_is_safe_to_strip(lines[-1]):
+        lines.pop()
+        _pop_blank_and_comments()
     return "\n".join(lines).strip()
 
 
