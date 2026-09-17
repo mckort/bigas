@@ -6,10 +6,18 @@ from typing import Any, Dict, Iterable, Optional
 
 _MIN_NEAR_TITLE_CHARS = 24
 _NEAR_TITLE_RATIO = 0.85
+_TERMINAL_STATUSES = {"done", "closed", "resolved", "cancelled", "canceled", "completed"}
+_VERSION_SUFFIX_RE = re.compile(r"^v\d+(\.\d+)*$", re.I)
 
 
 def normalize_ticket_title(title: str) -> str:
-    return re.sub(r"\s+", " ", (title or "").strip().lower())
+    t = (title or "").strip().rstrip(".,:;!?").strip()
+    return re.sub(r"\s+", " ", t.lower())
+
+
+def _is_version_suffix(remainder: str) -> bool:
+    r = (remainder or "").strip()
+    return bool(r and _VERSION_SUFFIX_RE.match(r))
 
 
 def ticket_titles_collide(left: str, right: str) -> bool:
@@ -22,7 +30,18 @@ def ticket_titles_collide(left: str, right: str) -> bool:
         return True
     shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
     if shorter in longer and len(shorter) >= _MIN_NEAR_TITLE_CHARS:
-        return (len(shorter) / len(longer)) >= _NEAR_TITLE_RATIO
+        if (len(shorter) / len(longer)) < _NEAR_TITLE_RATIO:
+            return False
+        idx = longer.find(shorter)
+        if idx == 0:
+            suffix = longer[len(shorter) :].strip()
+            if _is_version_suffix(suffix):
+                return False
+        elif idx + len(shorter) == len(longer):
+            prefix = longer[:idx].strip()
+            if _is_version_suffix(prefix):
+                return False
+        return True
     return False
 
 
@@ -33,8 +52,8 @@ def find_open_duplicate_ticket(
     issue_type: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     wanted_type = (issue_type or "").strip().title()
-    for ticket in tickets:
-        if (ticket.get("status") or "") == "Done":
+    for ticket in tickets or ():
+        if (ticket.get("status") or "").strip().lower() in _TERMINAL_STATUSES:
             continue
         if wanted_type:
             existing_type = (ticket.get("issue_type") or "").strip().title()
