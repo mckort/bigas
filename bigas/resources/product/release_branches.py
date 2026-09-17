@@ -59,7 +59,7 @@ def _oldest_unreleased_version(project_key: str) -> Optional[str]:
         return None
     candidates: List[tuple] = []
     for item in list_releases(project_key) or []:
-        if item.get("released"):
+        if item.get("released") or item.get("pr_locked"):
             continue
         name = (item.get("name") or "").strip()
         try:
@@ -182,7 +182,7 @@ def lock_released_feature_branch(
     version: str,
     github_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Make ``staging-x.y.z`` read-only after that cut is released on GitHub."""
+    """Make ``staging-x.y.z`` read-only after that cut is on main or released."""
     cfg = JiraAutomationConfig.from_env()
     repo = (cfg.repo_for_project(project_key) or "").strip()
     if not repo:

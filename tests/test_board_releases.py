@@ -22,8 +22,10 @@ from bigas.tickets.releases import (
     delete_release,
     lookup_board_release_defaults,
     fix_version_for_new_ticket,
+    lock_release_for_new_prs,
     mark_release_released,
     maybe_close_board_release_from_workflow,
+    set_default_release,
     ship_release,
 )
 from bigas.tickets.semver import next_product_release, version_from_git_ref, versions_match
@@ -73,6 +75,51 @@ def test_lookup_board_release_defaults_prefers_board_default(monkeypatch):
     assert closed["pr_base"] == "staging-0.4.0"
     assert closed["forbidden_pr_bases"] == ["staging-0.3.0"]
     assert fix_version_for_new_ticket("VFA", git_ref="staging-0.3.0") == "0.4.0"
+
+
+def test_lookup_treats_pr_locked_like_released(monkeypatch):
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    create_release("VFA", name="0.7.0", is_default=True)
+    create_release("VFA", name="0.8.0")
+    locked = []
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.lock_released_feature_branch",
+        lambda **kwargs: locked.append(kwargs) or {"locked": True},
+    )
+    result = lock_release_for_new_prs("VFA", "0.7.0")
+    assert result["already_locked"] is False
+    assert result["next_version"] == "0.8.0"
+    assert result["release"]["pr_locked"] is True
+    assert result["release"]["released"] is False
+    assert result["release"]["is_default"] is False
+    assert locked and locked[0]["version"] == "0.7.0"
+
+    looked = lookup_board_release_defaults("VFA")
+    assert looked["default_version"] == "0.8.0"
+    assert looked["pr_base"] == "staging-0.8.0"
+    assert looked["forbidden_pr_bases"] == ["staging-0.7.0"]
+    assert fix_version_for_new_ticket("VFA", git_ref="staging-0.7.0") == "0.8.0"
+    eight = get_release_store().get_release_by_name("VFA", "0.8.0")
+    assert eight["is_default"] is True
+
+    again = lock_release_for_new_prs("VFA", "0.7.0")
+    assert again["already_locked"] is True
+    assert again["release"]["released"] is False
+
+
+def test_lock_for_new_prs_creates_next_default(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.lock_released_feature_branch",
+        lambda **kwargs: {"locked": True},
+    )
+    created = create_release("VFA", name="0.7.0", is_default=True)
+    result = lock_release_for_new_prs("VFA", "0.7.0")
+    assert result["next_version"] == "0.8.0"
+    nxt = get_release_store().get_release_by_name("VFA", "0.8.0")
+    assert nxt and nxt["is_default"] is True
+    assert get_release_store().get_release(created["release_id"])["pr_locked"] is True
+    with pytest.raises(ReleaseError, match="PR-locked"):
+        set_default_release("VFA", created["release_id"], True)
 
 
 def test_create_list_delete_release():

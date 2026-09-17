@@ -528,7 +528,7 @@ Deleting a release on the board (including a released one) only removes the boar
 
 ### Staging branch, fix versions, and hotfixes (BIG-42)
 
-Some products (e.g. VC Field Assistant) accumulate features on **versioned staging branches** while **`main`** stays production-ready. `PROJECT_BRANCH_MAPPING=VFA:staging` is a prefix: a ticket on board release `0.2.3` opens its PR against **`staging-0.2.3`**. The first ticket on a new version creates that branch from **`main`**. `prepare deploy VFA 0.2.3` merges only `staging-0.2.3` → `main`, so later work on `0.3.0` stays off the cut. After that deploy is green, Bigas rebases newer `staging-*` branches onto the new `main` (`rebase_release.yml`). Conflicts open a `bigas-rebase/*` PR and launch Cursor to resolve them.
+Some products (e.g. VC Field Assistant) accumulate features on **versioned staging branches** while **`main`** stays production-ready. `PROJECT_BRANCH_MAPPING=VFA:staging` is a prefix: a ticket on board release `0.2.3` opens its PR against **`staging-0.2.3`**. The first ticket on a new version creates that branch from **`main`**. `prepare deploy VFA 0.2.3` merges only `staging-0.2.3` → `main`, so later work on `0.3.0` stays off the cut. As soon as that merge lands (or the branch is already on `main`), Bigas **locks the cut for new PRs**: GitHub ruleset on `staging-0.2.3`, `pr_locked` on the board release, and `lookup_board_releases` treats it like a released cut for `pr_base` / `forbidden_pr_bases`. The board cut stays unreleased until deploy succeeds. After that deploy is green, Bigas rebases newer `staging-*` branches onto the new `main` (`rebase_release.yml`). Conflicts open a `bigas-rebase/*` PR and launch Cursor to resolve them.
 
 | Setting | Purpose |
 |---|---|

@@ -651,6 +651,70 @@ def test_ensure_board_ticket_keeps_explicit_ticket_version(monkeypatch):
     reset_release_store_for_tests()
 
 
+def test_ensure_board_ticket_retargets_pr_locked_ticket_version(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+    from bigas.tickets import store as ticket_store_module
+    from bigas.tickets.release_store import get_release_store, reset_release_store_for_tests
+    from bigas.tickets.releases import create_release
+    from bigas.tickets.service import TicketService
+
+    ticket_store_module._store = None
+    monkeypatch.setenv("CHAT_STORAGE_MODE", "memory")
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    reset_release_store_for_tests()
+    create_release("VFA", name="0.7.0", is_default=False)
+    create_release("VFA", name="0.8.0", is_default=True)
+    item = get_release_store().get_release_by_name("VFA", "0.7.0")
+    get_release_store().update_release(item["release_id"], pr_locked=True)
+
+    ticket = TicketService().create_ticket_for_project(
+        "VFA",
+        title="Opened on a locked cut",
+        description="Should move to 0.8.0.",
+        git_ref="staging-0.7.0",
+    )
+    key = ticket["key"]
+    assert ticket.get("fix_version") == "0.8.0"
+
+    patched: list[dict] = []
+    monkeypatch.setattr(fa.JiraAutomationConfig, "from_env", staticmethod(lambda: _vfa_retarget_cfg()))
+    monkeypatch.setattr(
+        fa,
+        "_update_pr_title_and_body",
+        lambda **kwargs: patched.append(kwargs) or True,
+    )
+    monkeypatch.setattr(fa, "_post_discord", lambda msg: None)
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.ensure_versioned_release_branch",
+        lambda **kwargs: {"branch": kwargs.get("branch"), "created": True, "source": "main"},
+    )
+
+    pr = {
+        "number": 215,
+        "title": f"{key}: Opened on a locked cut",
+        "body": key,
+        "user": {"login": "marcus"},
+        "head": {"ref": "feat/locked-cut"},
+        "base": {"ref": "staging-0.7.0"},
+    }
+    result = fa.ensure_board_ticket_for_pr(
+        repo="mckort/vcfieldassistant",
+        pr=pr,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/215",
+        github_token="tok",
+        pr_number=215,
+        status="To Do",
+        retitle=True,
+    )
+    assert result.get("ok") is True
+    assert result.get("retargeted_base") == "staging-0.8.0"
+    assert any(item.get("base") == "staging-0.8.0" for item in patched)
+    ticket_store_module._store = None
+    reset_release_store_for_tests()
+
+
 def test_ensure_board_ticket_retargets_released_ticket_version(monkeypatch):
     from bigas.resources.product.jira_automation import final_approval as fa
     from bigas.tickets import store as ticket_store_module

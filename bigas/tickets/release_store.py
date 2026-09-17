@@ -36,6 +36,7 @@ def _compose_release(
     git_sha: Optional[str] = None,
     git_tag: Optional[str] = None,
     is_default: bool = False,
+    pr_locked: bool = False,
     now: Optional[str] = None,
 ) -> Dict[str, Any]:
     stamp = now or _utcnow_iso()
@@ -48,6 +49,7 @@ def _compose_release(
         "git_sha": (git_sha or "").strip() or None,
         "git_tag": (git_tag or "").strip() or None,
         "is_default": bool(is_default),
+        "pr_locked": bool(pr_locked),
         "created_at": stamp,
         "updated_at": stamp,
     }
@@ -87,7 +89,11 @@ class MemoryReleaseStore:
 
     def get_default_release(self, project_key: str) -> Optional[Dict[str, Any]]:
         for item in self.list_releases(project_key):
-            if item.get("is_default") and not item.get("released"):
+            if (
+                item.get("is_default")
+                and not item.get("released")
+                and not item.get("pr_locked")
+            ):
                 return item
         return None
 
@@ -134,6 +140,7 @@ class MemoryReleaseStore:
                 "git_sha",
                 "git_tag",
                 "is_default",
+                "pr_locked",
             }
             if fields.get("is_default"):
                 self._clear_default_locked(item["project_key"])
@@ -187,7 +194,11 @@ class FirestoreReleaseStore:
 
     def get_default_release(self, project_key: str) -> Optional[Dict[str, Any]]:
         for item in self.list_releases(project_key):
-            if item.get("is_default") and not item.get("released"):
+            if (
+                item.get("is_default")
+                and not item.get("released")
+                and not item.get("pr_locked")
+            ):
                 return item
         return None
 
@@ -256,6 +267,7 @@ class FirestoreReleaseStore:
             "git_sha",
             "git_tag",
             "is_default",
+            "pr_locked",
         }
         updates = {key: value for key, value in fields.items() if key in allowed}
         if updates.get("is_default"):

@@ -169,14 +169,14 @@ def _align_pr_base_to_board_release(
     from bigas.resources.product.release_branches import resolve_implement_base_branch
     from bigas.tickets.jira_adapter import TicketJiraAdapter
 
-    from bigas.tickets.releases import default_fix_version, is_board_version_released
+    from bigas.tickets.releases import default_fix_version, is_board_version_closed_for_prs
 
     fix_version = ensure_active_fix_version(
         TicketJiraAdapter(),
         issue_key=issue_key,
         project_key=project_key,
     ) or _ticket_fix_version(issue_key)
-    if fix_version and is_board_version_released(project_key, fix_version):
+    if fix_version and is_board_version_closed_for_prs(project_key, fix_version):
         fix_version = default_fix_version(project_key)
     if not fix_version:
         fix_version = default_fix_version(project_key)

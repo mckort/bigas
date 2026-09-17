@@ -1173,12 +1173,13 @@ def get_manifest():
                 "description": (
                     "Required before opening a VFA pull request. Returns pr_base "
                     "(current unreleased staging-x.y.z), forbidden_pr_bases "
-                    "(already released cuts — never open or push there), and "
-                    "releases[].released. Use pr_base. Ignore ticket fix_version "
-                    "when that version is released, unless the PR is a labeled hotfix. "
-                    "Do not guess from git staging-* branches or the current checkout. "
-                    "If this tool is unavailable, fail closed with `gh release list` "
-                    "instead of targeting a released branch."
+                    "(released or PR-locked cuts — never open or push there), and "
+                    "releases[].released / releases[].pr_locked. Use pr_base. Ignore "
+                    "ticket fix_version when that version is released or pr_locked, "
+                    "unless the PR is a labeled hotfix. Do not guess from git "
+                    "staging-* branches or the current checkout. If this tool is "
+                    "unavailable, fail closed with `gh release list` instead of "
+                    "targeting a released or PR-locked branch."
                 ),
                 "path": "/mcp/tools/lookup_board_releases",
                 "method": "POST",

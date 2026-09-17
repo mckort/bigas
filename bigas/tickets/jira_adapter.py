@@ -277,7 +277,7 @@ class TicketJiraAdapter:
         """Assign the board default, env fallback, or lowest unreleased version."""
         from bigas.tickets.releases import (
             fix_version_for_new_ticket,
-            is_board_version_released,
+            is_board_version_closed_for_prs,
         )
 
         ticket = self._ticket(issue_key)
@@ -295,7 +295,7 @@ class TicketJiraAdapter:
             proj = issue_key.split("-", 1)[0].upper()
 
         existing = (ticket.get("fix_version") or "").strip()
-        if existing and not (proj and is_board_version_released(proj, existing)):
+        if existing and not (proj and is_board_version_closed_for_prs(proj, existing)):
             return existing
 
         active = fix_version_for_new_ticket(proj) or active_fix_version_from_env(proj)
