@@ -90,7 +90,7 @@ const HOW_IT_WORKS = [
 const FAQ = [
   {
     q: 'Is bigas.me a signup page?',
-    a: 'No. This host is one running instance of Bigas, not a SaaS signup. The product is open source on GitHub — fork it and run your own.',
+    a: 'No. This host is a private running instance, not a public account. Only the operator can sign in. The product is open source on GitHub — fork it and run your own.',
   },
   {
     q: 'What do I need to try it locally?',
@@ -171,7 +171,8 @@ export default function Landing({ onSignIn }) {
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <ThemeToggle />
             <a href="/login" className="btn-secondary text-sm px-3 sm:px-4 min-h-[40px]" onClick={handleSignIn}>
-              Sign in
+              <span className="sm:hidden">Sign in</span>
+              <span className="hidden sm:inline">Sign in to this instance</span>
             </a>
           </div>
         </div>
@@ -421,7 +422,7 @@ docker compose up --build        # or: pip install -r requirements.txt && python
               @bigasmyaiteam
             </a>
             <a href="/login" className="hover:text-text" onClick={handleSignIn}>
-              Sign in
+              Sign in to this instance
             </a>
           </div>
         </div>
