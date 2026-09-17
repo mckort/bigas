@@ -193,6 +193,7 @@ def test_manifest_includes_create_ticket():
     assert set(params["properties"]["issue_type"]["enum"]) == ALLOWED_ISSUE_TYPES
     assert "marketing" in tool["description"].lower()
     assert "every chat agent" in tool["description"].lower()
+    assert "reused" in tool["description"].lower()
     parent_desc = params["properties"]["parent_epic_key"]["description"].lower()
     assert "omit" in parent_desc
     assert "standalone" in parent_desc

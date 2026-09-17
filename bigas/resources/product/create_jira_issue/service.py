@@ -106,6 +106,8 @@ class CreateJiraIssueService:
                 out["labels"] = ticket.get("labels")
             if epic:
                 out["parent_epic_key"] = epic
+            if ticket.get("reused"):
+                out["reused"] = True
             return out
 
         labels: Optional[List[str]] = None
