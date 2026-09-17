@@ -12,8 +12,10 @@ PR opened/push
          → when the PR is actually merged (auto-merge or someone else merges): move ticket to Final approval
   → if repo var BIGAS_AUTO_FIX=true (Actions loop, up to 5 rounds):
       → autofix_pr
-          → skip if review is LGTM / nits-only
-          → skip with loop protection if PR already has ≥5 [bigas-autofix] commits
+          → skip if review is LGTM / unstructured nits-only
+          → launch nits-only rounds when structured ### Minor is the only open section ([bigas-autofix] [nits-only], up to 2 rounds)
+          → skip with loop protection if PR already has ≥5 [bigas-autofix] commits and Blockers/Important remain
+          → at the autofix cap (or after 2 nits-only rounds), leftover Minor alone is treated as ready to merge
           → if cooldown (fresh [bigas-autofix] head): Discord + PR notice, wait, retry
           → else launch Cursor cloud agent (workOnCurrentBranch)
       → poll autofix_followup until agent terminal
@@ -39,7 +41,8 @@ After each autofix round finalizes, Discord includes Cursor token usage + a list
 Optional:
 
 - `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Prefer `composer-2.5` (standard tier; much cheaper than `composer-2.5-fast`). Omit to use Cursor’s default (often fast).
-- `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection.
+- `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection when Blockers/Important remain.
+- `BIGAS_CTO_AUTOFIX_NITS_ONLY_MAX_ROUNDS` (default `2`) — max dedicated nits-only autofix rounds when only `### Minor` has findings. Leftover Minor after those rounds, or at the main iteration cap with only Minor open, counts as ready to merge (no loop protection).
 - `BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS` (default `120`) — skip launching another autofix while the PR head is still a fresh `[bigas-autofix]` commit (reduces overlapping agents). Cooldown is **skipped** when a newer Bigas review comment already exists after that head commit (typical after an autofix push cancels/restarts Actions). The Actions loop waits/retries in short slices until the window expires instead of stopping early. Bigas also posts/updates a visible PR comment (`<!-- bigas-autofix-cooldown-marker -->`) so cooldown is not mistaken for a hang.
 - `BIGAS_CTO_AUTO_MERGE` (default `false`) — when `true`, squash-merge the PR after a clean review (no Blockers/Important/Minor) **if the caller passed `auto_merge: true`** (Actions loop / prepare-deploy). Chat reviews only post the comment. Posts **PR auto-merged** to Discord and the Activity feed (not the CTO chat thread). The card includes the Jira issue label when known. Draft PRs are marked ready for review first (Cursor `autoCreatePR` sometimes opens drafts, which GitHub will not merge). If required checks block an immediate merge, Bigas enables GitHub native auto-merge and posts **PR auto-merge enabled** instead. Both paths pass the current PR title (with ticket key) as the squash commit headline so GitHub cannot substitute the first branch commit subject. Requires `GITHUB_TOKEN` with merge permission and repo setting **Allow auto-merge**. The linked ticket moves to **Final approval (manual)** only after the merge lands (same hook if someone else merges).
 
@@ -97,7 +100,9 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 ## Guards
 
 - Skip when review looks like LGTM / no actionable findings
-- Skip when only non-blocking nits (including structured `### Minor` with empty Blockers/Important)
+- Skip unstructured nit-only language (`consider`, `optional`, etc.) when Blockers/Important are absent
+- Run up to `BIGAS_CTO_AUTOFIX_NITS_ONLY_MAX_ROUNDS` nits-only autofix rounds when structured `### Minor` is the only open section (commits include `[bigas-autofix] [nits-only]`)
+- Treat leftover Minor as ready to merge after nits-only rounds are exhausted or at the main autofix cap; loop protection still applies when Blockers/Important remain at the cap
 - Skip soft-only language (`consider`, `TODO`, `optional`) unless Blockers/Important are present
 - When autofix *does* run (Blockers/Important present), the agent also fixes Minor items from the same review
 - Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) commits containing `[bigas-autofix]`

@@ -406,6 +406,12 @@ jobs:
                   continue
 
               if data.get("skipped") or not data.get("launched"):
+                  if data.get("ready_to_merge"):
+                      print(
+                          "Autofix not launched but PR is ready to merge "
+                          f"(reason={data.get('reason') or 'ready'}). Done."
+                      )
+                      break
                   print(
                       "Autofix not launched "
                       f"(reason={data.get('reason') or 'skipped'}). Stopping loop."

@@ -54,7 +54,7 @@ def test_structured_important_runs():
     assert "actionable" in reason
 
 
-def test_structured_minor_only_skips():
+def test_structured_minor_only_triggers_nits_autofix():
     ok, reason = review_needs_autofix(
         "### Blockers\nNone.\n\n"
         "### Important\nNone.\n\n"
@@ -62,8 +62,8 @@ def test_structured_minor_only_skips():
         "- Consider extracting a helper.\n\n"
         "Ready to merge.\n"
     )
-    assert ok is False
-    assert "nit" in reason or "non-blocking" in reason
+    assert ok is True
+    assert "nits-only" in reason.lower() or "minor-only" in reason.lower()
 
 
 _CLEAN_STRUCTURED = (
@@ -84,6 +84,26 @@ def test_ready_to_merge_requires_empty_minor():
 def test_ready_to_merge_ignores_ready_line_when_minor_has_findings():
     assert "ready to merge" in _MINOR_LEFTOVER.lower()
     assert review_is_ready_to_merge(_MINOR_LEFTOVER) is False
+
+
+def test_ready_to_merge_accepts_leftover_minor_at_autofix_cap():
+    assert review_is_ready_to_merge(_MINOR_LEFTOVER, autofix_count=5) is True
+    assert review_is_ready_to_merge(_MINOR_LEFTOVER, autofix_count=4) is False
+
+
+def test_ready_to_merge_accepts_leftover_minor_after_nits_rounds():
+    assert (
+        review_is_ready_to_merge(
+            _MINOR_LEFTOVER, autofix_count=2, nits_only_autofix_count=2
+        )
+        is True
+    )
+    assert (
+        review_is_ready_to_merge(
+            _MINOR_LEFTOVER, autofix_count=2, nits_only_autofix_count=1
+        )
+        is False
+    )
 
 
 def test_soft_consider_only_skips():
@@ -143,6 +163,19 @@ def test_age_seconds_since_parses_github_timestamps():
     assert 40 <= age <= 60
     assert _age_seconds_since(None) is None
     assert _age_seconds_since("not-a-date") is None
+
+
+def test_autofix_nits_only_prompt_uses_markers():
+    prompt = _build_prompt(
+        repo="mckort/bigas",
+        pr_number=1,
+        pr_url="https://github.com/mckort/bigas/pull/1",
+        review_body="### Minor\n- Rename variable.",
+        issue_key="BIG-91",
+        nits_only=True,
+    )
+    assert "[bigas-autofix] [nits-only]" in prompt
+    assert "Fix only the ### Minor items" in prompt
 
 
 def test_autofix_prompt_forbids_confirmation():

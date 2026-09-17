@@ -339,9 +339,14 @@ class GitHubPRCommentClient:
         pr_number: int,
         *,
         marker: str = "[bigas-autofix]",
+        also_contains: str | None = None,
     ) -> int:
         """Count PR commits whose message contains the autofix marker."""
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
+        if also_contains:
+            return sum(
+                1 for m in messages if marker in m and also_contains in m
+            )
         return sum(1 for m in messages if marker in m)
 
     def merge_pull_request(

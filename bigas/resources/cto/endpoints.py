@@ -22,6 +22,7 @@ from bigas.resources.cto.autofix.heuristics import (
     autofix_max_iterations,
     autofix_pushed_new_commit,
     format_loop_protection_message,
+    review_has_blocking_findings,
     review_is_ready_to_merge,
 )
 from bigas.resources.cto.autofix.service import (
@@ -1120,6 +1121,11 @@ def autofix_pr():
                 f"Review does not need autofix ({sanitize_error_message(reason)}).\n"
                 f"{pr_ref}"
             )
+        elif result.get("ready_to_merge"):
+            _post_cto_status(
+                f"**Ready to merge**\n"
+                f"{sanitize_error_message(reason)}\n{pr_ref}"
+            )
         elif result.get("cooldown"):
             reason = result.get("reason") or "cooldown"
             wait_left = None
@@ -1192,6 +1198,31 @@ def autofix_pr():
                         "Failed to delete autofix cooldown PR comment on skip",
                         exc_info=True,
                     )
+        if result.get("ready_to_merge") and gh_token:
+            pr = _fetch_pull_request(
+                owner=owner,
+                repo_name=repo_name,
+                pr_number=pr_number,
+                github_token=gh_token,
+            )
+            issue_key, issue_summary = _jira_issue_context_from_pr(pr)
+            auto_merge = _maybe_auto_merge_pr(
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=pr_url,
+                github_token=gh_token,
+                issue_key=issue_key,
+                issue_summary=issue_summary,
+            )
+            result = {**result, "auto_merge": auto_merge}
+            if auto_merge.get("merged"):
+                result["jira_final_approval"] = _final_approval_after_merge(
+                    repo=repo,
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    github_token=gh_token,
+                    merged=True,
+                )
         return _json_summary({"success": True, **result}, summarize_autofix_result)
 
     agent_url = result.get("agent_url") or ""
@@ -1216,8 +1247,9 @@ def autofix_pr():
                 exc_info=True,
             )
 
+    nits_bit = " [nits-only]" if result.get("nits_only") else ""
     _post_cto_status(
-        f"**CTO autofix launched** ({round_n}/{max_n})\n"
+        f"**CTO autofix launched** ({round_n}/{max_n}){nits_bit}\n"
         f"{pr_ref}\nAgent: {agent_url or agent_id}"
     )
     return _json_summary({"success": True, **result}, summarize_autofix_result)
@@ -1483,7 +1515,6 @@ def autofix_followup():
             502,
         )
 
-    ready = review_is_ready_to_merge(review_body)
     cost_line = _discord_llm_cost_line(review_result)
     cost_suffix = f"\n{cost_line}" if cost_line else ""
     _post_to_discord_cto_chunks(
@@ -1498,11 +1529,21 @@ def autofix_followup():
     )
 
     autofix_count = 0
+    nits_only_count = 0
     max_iters = autofix_max_iterations()
     try:
         autofix_count = service.count_autofix_commits(repo=repo, pr_number=pr_number)
+        nits_only_count = service.count_nits_only_autofix_commits(
+            repo=repo, pr_number=pr_number
+        )
     except AutofixError:
         logger.warning("Could not count autofix commits after re-review", exc_info=True)
+
+    ready = review_is_ready_to_merge(
+        review_body,
+        autofix_count=autofix_count,
+        nits_only_autofix_count=nits_only_count,
+    )
 
     jira_final = {"skipped": True, "reason": "not_ready"}
     auto_merge: dict = {"skipped": True, "reason": "not_ready"}
@@ -1533,7 +1574,7 @@ def autofix_followup():
             "Stopping the autofix loop for this run.\n"
             f"{pr_ref}"
         )
-    elif autofix_count >= max_iters:
+    elif autofix_count >= max_iters and review_has_blocking_findings(review_body):
         _notify_autofix_loop_protection(
             repo=repo,
             pr_number=pr_number,
@@ -1542,7 +1583,7 @@ def autofix_followup():
             max_iterations=max_iters,
             github_token=gh_token,
         )
-    else:
+    elif not ready:
         # autofix_count = number of `[bigas-autofix]` commits on the PR after this push.
         # That is the completed round index (1-based), not "attempts that did nothing".
         completed_round = autofix_count
@@ -1566,7 +1607,10 @@ def autofix_followup():
         "autofix_count": autofix_count,
         "autofix_round": autofix_round_n or autofix_count,
         "max_iterations": max_iters,
-        "loop_protection": (not ready) and autofix_count >= max_iters,
+        "loop_protection": (not ready)
+        and autofix_count >= max_iters
+        and review_has_blocking_findings(review_body),
+        "nits_only_autofix_count": nits_only_count,
         "used_model": review_result.model,
         "usage": review_result.usage_dict(),
         "jira_final_approval": jira_final,

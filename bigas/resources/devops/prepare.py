@@ -1122,6 +1122,7 @@ def _launch_autofix_and_poll(
 
     if launched.get("skipped") and (
         launched.get("review_clean")
+        or launched.get("ready_to_merge")
         or launched.get("reason") == "pr_already_merged"
     ):
         return review_and_merge_release_pr(
