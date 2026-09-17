@@ -142,7 +142,7 @@ def _format_pulse_actions(results: List[Dict[str, Any]]) -> str:
         lines.append(
             f"New To Do keys: {', '.join(opened_keys)}. Humans drag work into In Progress."
         )
-    elif not any_steps:
+    elif not any_steps and not any(not item.get("ok") for item in results):
         return ""
     return "\n".join(lines)
 

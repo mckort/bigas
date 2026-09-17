@@ -152,7 +152,11 @@ def serialize_objective(
         "owner": ticket.get("okr_owner") or ticket.get("assignee") or "",
         "phase": ticket.get("okr_phase") or "",
         "briefing": ticket.get("okr_briefing") or "",
-        "okr_next_steps": list(ticket.get("okr_next_steps") or []),
+        "okr_next_steps": [
+            item
+            for item in (ticket.get("okr_next_steps") or [])
+            if isinstance(item, dict)
+        ],
         "created_at": ticket.get("created_at"),
         "updated_at": ticket.get("updated_at"),
         "expected_progress": round(expected, 3),

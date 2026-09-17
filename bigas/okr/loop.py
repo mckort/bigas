@@ -612,7 +612,7 @@ def _dispatch(session: _Session, name: str, arguments: Dict[str, Any]) -> Dict[s
         raw = arguments.get("steps") if isinstance(arguments.get("steps"), list) else []
         reason = str(arguments.get("reason") or "").strip()
         risk_ids = session._at_risk_kr_ids()
-        if isinstance(arguments.get("steps"), list) and not raw:
+        if not raw:
             if reason or not risk_ids:
                 session.proposed_next_steps = True
                 session.next_steps = []

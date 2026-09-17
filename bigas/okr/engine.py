@@ -123,13 +123,17 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         created_at=ticket.get("created_at"),
         cycle_end=cycle_end_for(ticket.get("okr_cycle") or "", created_at=ticket.get("created_at")),
     )
+    key_results_pre = apply_current_updates(
+        [dict(kr) for kr in key_results],
+        heuristic_updates,
+    )
     annotated_pre = [
         annotate_key_result(
             kr,
             expected=expected,
             child_tickets=[c for c in children if (c.get("parent_kr_id") or "") == kr.get("id")],
         )
-        for kr in key_results
+        for kr in key_results_pre
     ]
     risk_krs_pre = [
         {**kr, "health": kr.get("health")}
@@ -221,13 +225,21 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
             risk_krs_pre,
             open_work=linked,
         )
-    created_by_kr = {item["kr_id"]: item["key"] for item in created if item.get("kr_id")}
+    created_keys_by_kr: Dict[str, List[str]] = {}
+    for item in created:
+        kid = item.get("kr_id")
+        ticket_key = (item.get("key") or "").strip()
+        if kid and ticket_key:
+            created_keys_by_kr.setdefault(str(kid), []).append(ticket_key)
     for step in next_steps:
         if step.get("ticket_key") or step.get("existing_key"):
             continue
+        if not step.get("ai_doable"):
+            continue
         kid = str(step.get("kr_id") or "")
-        if kid and created_by_kr.get(kid):
-            step["ticket_key"] = created_by_kr[kid]
+        pool = created_keys_by_kr.get(kid)
+        if pool:
+            step["ticket_key"] = pool.pop(0)
     annotated = [
         annotate_key_result(
             kr,
@@ -250,6 +262,7 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
     if extra_briefing:
         briefing_bits.append(extra_briefing)
     if next_steps:
+        # Briefing summary omits ticket keys (stored on okr_next_steps and pulse detail).
         briefing_bits.append(
             "Next steps: "
             + "; ".join(
