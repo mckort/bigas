@@ -5,7 +5,11 @@ import re
 from typing import Tuple
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
+# Must contain AUTOFIX_COMMIT_MARKER so loop protection and the Actions
+# skip-on-autofix-head gate still treat nits-only commits as autofix.
+AUTOFIX_MINOR_COMMIT_MARKER = "[bigas-autofix] [nits-only]"
 DEFAULT_AUTOFIX_MAX_ITERATIONS = 5
+DEFAULT_MINOR_AUTOFIX_ITERATIONS = 2
 # Short window is enough to avoid overlapping launches; Actions also skips cooldown
 # when a newer Bigas review already exists after the autofix head commit.
 DEFAULT_AUTOFIX_COOLDOWN_SECONDS = 120
@@ -22,6 +26,49 @@ def autofix_max_iterations() -> int:
         return max(1, int(raw))
     except ValueError:
         return DEFAULT_AUTOFIX_MAX_ITERATIONS
+
+
+def minor_autofix_max_iterations() -> int:
+    """Max nits-only autofix rounds (env BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS)."""
+    import os
+
+    raw = (os.environ.get("BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS") or "").strip()
+    if not raw:
+        return DEFAULT_MINOR_AUTOFIX_ITERATIONS
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_MINOR_AUTOFIX_ITERATIONS
+
+
+def leftover_nits_are_acceptable(
+    *,
+    autofix_count: int = 0,
+    minor_autofix_count: int = 0,
+    max_iterations: int | None = None,
+    minor_max_iterations: int | None = None,
+) -> bool:
+    """True when leftover Minor findings may auto-merge."""
+    max_iters = autofix_max_iterations() if max_iterations is None else max_iterations
+    minor_max = (
+        minor_autofix_max_iterations()
+        if minor_max_iterations is None
+        else minor_max_iterations
+    )
+    return autofix_count >= max_iters or minor_autofix_count >= minor_max
+
+
+def count_autofix_rounds(messages: list[str]) -> tuple[int, int]:
+    """Return (all autofix commits, nits-only autofix commits)."""
+    autofix = 0
+    minor = 0
+    for raw in messages:
+        msg = raw or ""
+        if AUTOFIX_COMMIT_MARKER in msg:
+            autofix += 1
+        if AUTOFIX_MINOR_COMMIT_MARKER in msg:
+            minor += 1
+    return autofix, minor
 
 
 def autofix_cooldown_seconds() -> int:
@@ -122,13 +169,40 @@ def _strip_section_closer(body: str) -> str:
     return "\n".join(lines).strip()
 
 
-def review_needs_autofix(review_body: str) -> Tuple[bool, str]:
+def review_is_nits_only(review_body: str) -> bool:
+    """True when leftover findings are Minor / nits only (no Blockers or Important)."""
+    body = (review_body or "").strip()
+    if not body or "<!-- bigas-autofix-skip -->" in body:
+        return False
+    sections = _section_bodies(body)
+    if sections:
+        if _section_has_findings(sections.get("blockers", "")):
+            return False
+        if _section_has_findings(sections.get("important", "")):
+            return False
+        return _section_has_findings(sections.get("minor", ""))
+
+    has_actionable = bool(_ACTIONABLE.search(body))
+    if has_actionable:
+        return False
+    nit_only = bool(_NIT_ONLY.search(body))
+    soft_only = bool(_SOFT_ONLY.search(body))
+    return nit_only or soft_only
+
+
+def review_needs_autofix(
+    review_body: str,
+    *,
+    autofix_count: int = 0,
+    minor_autofix_count: int = 0,
+    max_iterations: int | None = None,
+    minor_max_iterations: int | None = None,
+) -> Tuple[bool, str]:
     """
     Return (should_run, reason).
 
-    Autofix runs when the review has clear actionable/blocking language.
-    Clean LGTM reviews and nit-only reviews are skipped.
-    Soft "consider/TODO/minor" language alone does not trigger autofix.
+    Autofix runs for Blockers/Important, and for leftover Minor / nits until
+    two nits-only rounds or the overall autofix cap.
     """
     body = (review_body or "").strip()
     if not body:
@@ -136,14 +210,24 @@ def review_needs_autofix(review_body: str) -> Tuple[bool, str]:
     if "<!-- bigas-autofix-skip -->" in body:
         return False, "review contains autofix-skip marker"
 
+    nits_budget_done = leftover_nits_are_acceptable(
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_autofix_count,
+        max_iterations=max_iterations,
+        minor_max_iterations=minor_max_iterations,
+    )
+
     sections = _section_bodies(body)
     if sections:
         if _section_has_findings(sections.get("blockers", "")):
             return True, "actionable findings in review"
         if _section_has_findings(sections.get("important", "")):
             return True, "actionable findings in review"
-        # Structured review with empty Blockers/Important → never autofix on Minor alone.
-        return False, "only non-blocking / nit suggestions"
+        if _section_has_findings(sections.get("minor", "")):
+            if nits_budget_done:
+                return False, "only non-blocking / nit suggestions"
+            return True, "leftover minor findings"
+        return False, "review looks clean (LGTM)"
 
     has_actionable = bool(_ACTIONABLE.search(body))
     looks_clean = bool(_CLEAN.search(body))
@@ -152,10 +236,12 @@ def review_needs_autofix(review_body: str) -> Tuple[bool, str]:
 
     if has_actionable:
         return True, "actionable findings in review"
+    if nit_only or soft_only:
+        if nits_budget_done:
+            return False, "only non-blocking / nit suggestions"
+        return True, "leftover minor findings"
     if looks_clean:
         return False, "review looks clean (LGTM)"
-    if nit_only or soft_only:
-        return False, "only non-blocking / nit suggestions"
 
     # Ambiguous middle ground: skip by default to avoid noisy agent runs.
     return False, "no clear actionable findings"
@@ -188,17 +274,38 @@ def autofix_pushed_new_commit(
     return bool(current)
 
 
-def review_is_ready_to_merge(review_body: str) -> bool:
-    """True when the review has no leftover findings (including Minor)."""
-    should_fix, _reason = review_needs_autofix(review_body)
+def review_is_ready_to_merge(
+    review_body: str,
+    *,
+    autofix_count: int = 0,
+    minor_autofix_count: int = 0,
+    max_iterations: int | None = None,
+    minor_max_iterations: int | None = None,
+) -> bool:
+    """
+    True when the review is fully clean, or leftover Minor may be accepted.
+
+    Leftover nits are accepted after two nits-only autofix rounds, or when the
+    overall autofix cap is reached and only Minor remains.
+    """
+    kwargs = {
+        "autofix_count": autofix_count,
+        "minor_autofix_count": minor_autofix_count,
+        "max_iterations": max_iterations,
+        "minor_max_iterations": minor_max_iterations,
+    }
+    should_fix, _reason = review_needs_autofix(review_body, **kwargs)
     if should_fix:
         return False
     body = (review_body or "").strip()
     if not body:
         return False
+    if review_is_nits_only(body) and leftover_nits_are_acceptable(**kwargs):
+        return True
     sections = _section_bodies(body)
     if sections:
-        # A trailing "ready to merge" line must not override leftover nits.
+        # A trailing "ready to merge" line must not override leftover nits
+        # unless the nits autofix budget above already accepted them.
         return not (
             _section_has_findings(sections.get("blockers", ""))
             or _section_has_findings(sections.get("important", ""))

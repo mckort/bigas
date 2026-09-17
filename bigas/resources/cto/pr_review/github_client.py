@@ -344,6 +344,12 @@ class GitHubPRCommentClient:
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
         return sum(1 for m in messages if marker in m)
 
+    def count_autofix_rounds(self, owner: str, repo: str, pr_number: int) -> tuple[int, int]:
+        """Return (all autofix commits, nits-only autofix commits)."""
+        from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
+
+        return count_autofix_rounds(self.list_pr_commit_messages(owner, repo, pr_number))
+
     def merge_pull_request(
         self,
         owner: str,

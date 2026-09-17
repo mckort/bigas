@@ -795,6 +795,30 @@ def _strip_bigas_review_marker(body: str, *, marker: str) -> str:
     return text
 
 
+def _pr_autofix_round_counts(
+    gh: Any, *, owner: str, repo_name: str, pr_number: int
+) -> Tuple[int, int]:
+    """Best-effort (autofix_count, minor_autofix_count); (0, 0) if GitHub is unavailable."""
+    try:
+        if hasattr(gh, "count_autofix_rounds"):
+            return gh.count_autofix_rounds(owner, repo_name, pr_number)
+        if hasattr(gh, "list_pr_commit_messages"):
+            from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
+
+            return count_autofix_rounds(
+                gh.list_pr_commit_messages(owner, repo_name, pr_number)
+            )
+    except Exception:
+        logger.warning(
+            "Could not count autofix commits for %s/%s#%s",
+            owner,
+            repo_name,
+            pr_number,
+            exc_info=True,
+        )
+    return 0, 0
+
+
 class _ActionsReviewPollState(NamedTuple):
     body: Optional[str]
     ready: bool
@@ -824,7 +848,14 @@ def _poll_actions_review_comment(
         return _ActionsReviewPollState(body=None, ready=False, actions_refreshed=False)
     body = _strip_bigas_review_marker(raw, marker=marker)
     stripped = body.strip()
-    if review_is_ready_to_merge(body):
+    autofix_count, minor_autofix_count = _pr_autofix_round_counts(
+        gh, owner=owner, repo_name=repo_name, pr_number=pr_number
+    )
+    if review_is_ready_to_merge(
+        body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_autofix_count,
+    ):
         return _ActionsReviewPollState(
             body=body,
             ready=True,
@@ -853,7 +884,14 @@ def _continue_release_review_from_body(
     version: str,
     cut_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    if review_is_ready_to_merge(review_body):
+    autofix_count, minor_autofix_count = _pr_autofix_round_counts(
+        gh, owner=owner, repo_name=repo_name, pr_number=pr_number
+    )
+    if review_is_ready_to_merge(
+        review_body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_autofix_count,
+    ):
         return _merge_or_wait(
             gh,
             owner=owner,
@@ -866,7 +904,11 @@ def _continue_release_review_from_body(
             version=version,
             cut_keys=cut_keys,
         )
-    needs, reason = review_needs_autofix(review_body)
+    needs, reason = review_needs_autofix(
+        review_body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_autofix_count,
+    )
     if needs:
         return _launch_autofix_and_poll(
             repo=repo,
@@ -954,7 +996,14 @@ def review_and_merge_release_pr(
         _post(thread_id, f"Release PR review failed: {exc}")
         return {"status": "failed", "summary": str(exc), "pr_url": pr_url}
 
-    if review_is_ready_to_merge(review_body):
+    autofix_count, minor_autofix_count = _pr_autofix_round_counts(
+        gh, owner=owner, repo_name=repo_name, pr_number=pr_number
+    )
+    if review_is_ready_to_merge(
+        review_body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_autofix_count,
+    ):
         return _merge_or_wait(
             gh,
             owner=owner,
@@ -968,7 +1017,11 @@ def review_and_merge_release_pr(
             cut_keys=cut_keys,
         )
 
-    needs, reason = review_needs_autofix(review_body)
+    needs, reason = review_needs_autofix(
+        review_body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_autofix_count,
+    )
     if not needs:
         if reason == "only non-blocking / nit suggestions":
             _post(

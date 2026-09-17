@@ -12,9 +12,12 @@ from bigas.resources.cto.autofix.cursor_client import (
 )
 from bigas.resources.cto.autofix.heuristics import (
     AUTOFIX_COMMIT_MARKER,
+    AUTOFIX_MINOR_COMMIT_MARKER,
     autofix_cooldown_seconds,
     autofix_max_iterations,
-    format_loop_protection_message,
+    count_autofix_rounds,
+    leftover_nits_are_acceptable,
+    review_is_nits_only,
     review_needs_autofix,
 )
 from bigas.resources.cto.pr_review.github_client import (
@@ -30,9 +33,9 @@ class AutofixError(RuntimeError):
     pass
 
 
-def _commit_message_rule(issue_key: str = "") -> str:
+def _commit_message_rule(issue_key: str = "", *, nits_only: bool = False) -> str:
     key = (issue_key or "").strip().upper()
-    marker = AUTOFIX_COMMIT_MARKER
+    marker = AUTOFIX_MINOR_COMMIT_MARKER if nits_only else AUTOFIX_COMMIT_MARKER
     if key:
         return (
             f"5. Every commit message you create MUST start with `{key}: {marker}` "
@@ -96,7 +99,21 @@ def _build_prompt(
     pr_url: str,
     review_body: str,
     issue_key: str = "",
+    nits_only: bool = False,
 ) -> str:
+    if nits_only:
+        focus = (
+            "1. This review has only Minor / non-blocking items. Fix those leftover nits "
+            "so the review can become fully clean.\n"
+            "2. Do not invent extra polish beyond what the review lists. Do not expand "
+            "scope or refactor unrelated code."
+        )
+    else:
+        focus = (
+            "1. Fix all Blockers and Important items called out in the review.\n"
+            "2. Also fix Minor items listed in the same review — they ride along in "
+            "this round when Blockers/Important already triggered autofix."
+        )
     return f"""You are fixing findings from an automated Bigas CTO PR review.
 
 Repository: {repo}
@@ -106,11 +123,10 @@ Pull request: {pr_url}
 {review_body}
 
 ## Instructions
-1. Fix all Blockers and Important items called out in the review.
-2. Also fix Minor items listed in the same review — they ride along in this round when Blockers/Important already triggered autofix.
+{focus}
 3. Do not invent extra polish beyond what the review lists. Do not expand scope or refactor unrelated code.
 4. Push commits directly to this PR's head branch (already checked out for you).
-{_commit_message_rule(issue_key)}
+{_commit_message_rule(issue_key, nits_only=nits_only)}
 6. Do not merge the PR, do not force-push, do not rewrite history, and do not open a new PR.
 7. If after inspecting the code there is nothing safe to fix, make no commits and explain why.
 8. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — apply the fixes and push commits immediately. Do not stop after a proposal.
@@ -202,24 +218,10 @@ class AutofixService:
             head_sha, head_message, committed_at = gh.get_pr_head_commit_meta(
                 owner, repo_name, pr_number
             )
-            autofix_count = gh.count_autofix_commits(
-                owner, repo_name, pr_number, marker=AUTOFIX_COMMIT_MARKER
-            )
+            messages = gh.list_pr_commit_messages(owner, repo_name, pr_number)
+            autofix_count, minor_autofix_count = count_autofix_rounds(messages)
         except GitHubPRCommentError as e:
             raise AutofixError(str(e)) from e
-
-        if autofix_count >= max_iters and not force:
-            return {
-                "skipped": True,
-                "loop_protection": True,
-                "reason": format_loop_protection_message(
-                    autofix_count=autofix_count, max_iterations=max_iters
-                ),
-                "pr_url": pr_url,
-                "autofix_count": autofix_count,
-                "max_iterations": max_iters,
-                "head_sha": head_sha,
-            }
 
         # Load the review comment early so we can decide whether cooldown applies.
         # Always fetch marked-comment metadata for review_updated_at (cooldown skip).
@@ -261,7 +263,38 @@ class AutofixService:
                 "reason": "no Bigas review comment found on PR",
                 "pr_url": pr_url,
                 "autofix_count": autofix_count,
+                "minor_autofix_count": minor_autofix_count,
                 "max_iterations": max_iters,
+            }
+
+        if autofix_count >= max_iters and not force:
+            if review_is_nits_only(body) and leftover_nits_are_acceptable(
+                autofix_count=autofix_count,
+                minor_autofix_count=minor_autofix_count,
+                max_iterations=max_iters,
+            ):
+                return {
+                    "skipped": True,
+                    "reason": "only non-blocking / nit suggestions",
+                    "pr_url": pr_url,
+                    "autofix_count": autofix_count,
+                    "minor_autofix_count": minor_autofix_count,
+                    "max_iterations": max_iters,
+                    "review_clean": True,
+                    "nits_accepted": True,
+                    "head_sha": head_sha,
+                }
+            return {
+                "skipped": True,
+                "loop_protection": True,
+                "reason": format_loop_protection_message(
+                    autofix_count=autofix_count, max_iterations=max_iters
+                ),
+                "pr_url": pr_url,
+                "autofix_count": autofix_count,
+                "minor_autofix_count": minor_autofix_count,
+                "max_iterations": max_iters,
+                "head_sha": head_sha,
             }
 
         # Prevent overlapping launches while a previous autofix agent may still be
@@ -301,6 +334,7 @@ class AutofixService:
                     ),
                     "pr_url": pr_url,
                     "autofix_count": autofix_count,
+                    "minor_autofix_count": minor_autofix_count,
                     "max_iterations": max_iters,
                     "head_sha": head_sha,
                 }
@@ -328,22 +362,36 @@ class AutofixService:
                         ),
                         "pr_url": pr_url,
                         "autofix_count": autofix_count,
+                        "minor_autofix_count": minor_autofix_count,
                         "max_iterations": max_iters,
                         "cooldown_seconds": cooldown,
                         "head_age_seconds": int(age),
                         "head_sha": head_sha,
                     }
 
+        nits_only = review_is_nits_only(body)
         if not force:
-            should, reason = review_needs_autofix(body)
+            should, reason = review_needs_autofix(
+                body,
+                autofix_count=autofix_count,
+                minor_autofix_count=minor_autofix_count,
+                max_iterations=max_iters,
+            )
             if not should:
                 return {
                     "skipped": True,
                     "reason": reason,
                     "pr_url": pr_url,
                     "autofix_count": autofix_count,
+                    "minor_autofix_count": minor_autofix_count,
                     "max_iterations": max_iters,
                     "review_clean": True,
+                    "nits_accepted": nits_only
+                    and leftover_nits_are_acceptable(
+                        autofix_count=autofix_count,
+                        minor_autofix_count=minor_autofix_count,
+                        max_iterations=max_iters,
+                    ),
                 }
 
         next_round = autofix_count + 1
@@ -369,6 +417,7 @@ class AutofixService:
             pr_url=pr_url,
             review_body=body,
             issue_key=issue_key,
+            nits_only=nits_only,
         )
         client = CursorCloudAgentClient(api_key=self._cursor_key)
         try:
@@ -391,6 +440,7 @@ class AutofixService:
             "run_id": launched.get("run_id") or "",
             "forced": bool(force),
             "autofix_count": autofix_count,
+            "minor_autofix_count": minor_autofix_count,
             "autofix_round": next_round,
             "max_iterations": max_iters,
             "head_sha": head_sha,
@@ -422,14 +472,19 @@ class AutofixService:
             raise AutofixError(str(e)) from e
 
     def count_autofix_commits(self, *, repo: str, pr_number: int) -> int:
+        autofix_count, _minor = self.count_autofix_rounds(
+            repo=repo, pr_number=pr_number
+        )
+        return autofix_count
+
+    def count_autofix_rounds(self, *, repo: str, pr_number: int) -> tuple[int, int]:
         owner, repo_name = repo.split("/", 1)
         gh = GitHubPRCommentClient(token=self._github_token)
         try:
-            return gh.count_autofix_commits(
-                owner, repo_name, pr_number, marker=AUTOFIX_COMMIT_MARKER
-            )
+            messages = gh.list_pr_commit_messages(owner, repo_name, pr_number)
         except GitHubPRCommentError as e:
             raise AutofixError(str(e)) from e
+        return count_autofix_rounds(messages)
 
     def fetch_pr_diff(self, *, repo: str, pr_number: int) -> str:
         owner, repo_name = repo.split("/", 1)
