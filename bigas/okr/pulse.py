@@ -81,14 +81,10 @@ def format_okr_pulse(snapshot: Dict[str, Any]) -> str:
         lines.append(f"- … +{len(gates) - 8} more")
     theater = int(stats.get("activity_without_outcome") or 0)
     lines.append(f"Activity without outcome (shipping while KR stuck): {theater}.")
-    next_actions = (snapshot.get("briefing") or {}).get("this_week") or []
-    if next_actions:
-        lines.append("")
-        lines.append(f"Next action: {next_actions[0]}")
     lines.append("")
     lines.append(
-        "_Derived from the ticket store. Any comment below is optional and "
-        "must not replace these counts._"
+        "_Derived from the ticket store. Reasoned next steps from the In Progress "
+        "loop follow below when present._"
     )
     return "\n".join(lines)
 
@@ -119,25 +115,43 @@ def comment_on_okr_pulse(numbers: str) -> Optional[str]:
 def _format_work_opened(results: List[Dict[str, Any]]) -> str:
     if not results:
         return ""
-    lines = ["**Weekly KR check** (In Progress Objectives — To Do only, never auto-start)"]
+    lines = ["**Next steps** (In Progress Objectives — To Do only, never auto-start)"]
     opened = 0
     for item in results:
         key = item.get("issue_key") or "?"
         if not item.get("ok"):
             lines.append(f"- {key}: loop failed.")
             continue
+        steps = item.get("next_steps") or []
+        if steps:
+            lines.append(f"**{key}**")
+            for step in steps:
+                action = (step.get("action") or step.get("title") or "").strip()
+                if not action:
+                    continue
+                suffix = ""
+                existing = (step.get("existing_key") or "").strip().upper()
+                ticket_key = (step.get("ticket_key") or step.get("key") or "").strip().upper()
+                if existing:
+                    suffix = f" (human → {existing})"
+                elif ticket_key:
+                    suffix = f" (→ {ticket_key})"
+                lines.append(f"- {action}{suffix}")
         created = [
             (task.get("key") or "").strip()
             for task in (item.get("tasks_created") or [])
             if isinstance(task, dict) and (task.get("key") or "").strip()
         ]
         opened += len(created)
-        if created:
-            lines.append(f"- {key}: opened {', '.join(created)}.")
-        else:
-            lines.append(f"- {key}: no new work (already linked, Done, or live in evidence).")
+        if not steps:
+            if created:
+                lines.append(f"- {key}: opened {', '.join(created)}.")
+            else:
+                lines.append(
+                    f"- {key}: no new To Do (steps may reference existing gates or live work)."
+                )
     if opened:
-        lines.append(f"Opened {opened} To Do card(s). Humans still drag work into In Progress.")
+        lines.append(f"Opened {opened} new To Do card(s). Humans still drag work into In Progress.")
     return "\n".join(lines)
 
 
@@ -145,7 +159,7 @@ def build_weekly_okr_pulse(
     *,
     user_id: Optional[str] = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-    include_comment: bool = True,
+    include_comment: bool = False,
     propose_work: bool = True,
 ) -> Dict[str, Any]:
     uid = (user_id or "").strip() or (resolve_chat_target_user_id() or "")
@@ -179,6 +193,7 @@ def build_weekly_okr_pulse(
                 "issue_key": item.get("issue_key"),
                 "ok": item.get("ok"),
                 "tasks_created": item.get("tasks_created") or [],
+                "next_steps": item.get("next_steps") or [],
             }
             for item in work_results
         ],

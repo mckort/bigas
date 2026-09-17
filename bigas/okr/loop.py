@@ -24,6 +24,7 @@ from bigas.okr.context import format_evidence_pack
 from bigas.okr.model import normalize_key_results
 from bigas.okr.plan import (
     MAX_TASKS_TOTAL,
+    OKR_IN_PROGRESS_SYSTEM,
     OKR_PLAN_SYSTEM,
     _normalize_plan_tasks,
     is_duplicate_work,
@@ -146,6 +147,13 @@ TASK_ITEM_SCHEMA = {
         },
         "issue_type": {"type": "string"},
         "marketing": {"type": "boolean"},
+        "existing_key": {
+            "type": "string",
+            "description": (
+                "When the next step is a human gate already on the board, set this to that "
+                "ticket key (e.g. GPWW-36) instead of opening a clone."
+            ),
+        },
     },
     "required": ["description"],
 }
@@ -305,6 +313,10 @@ class _Session:
 
     def required_write(self) -> Optional[str]:
         snap = self.snapshot
+        if snap.kind == KIND_OBJECTIVE and snap.phase == PHASE_IN_PROGRESS:
+            at_risk = (snap.scoreboard or {}).get("at_risk_krs") or []
+            if at_risk:
+                return "tasks"
         if snap.kind == KIND_OBJECTIVE and snap.phase == PHASE_RESEARCH:
             return "krs"
         if snap.phase == PHASE_PLAN:
@@ -687,7 +699,12 @@ def _phase_rules_for_loop(text: str) -> str:
 
 def system_prompt_for(snapshot: GoalSnapshot) -> str:
     if snapshot.kind == KIND_OBJECTIVE:
-        phase_rules = OKR_RESEARCH_SYSTEM if snapshot.phase == PHASE_RESEARCH else OKR_PLAN_SYSTEM
+        if snapshot.phase == PHASE_RESEARCH:
+            phase_rules = OKR_RESEARCH_SYSTEM
+        elif snapshot.phase == PHASE_IN_PROGRESS:
+            phase_rules = OKR_IN_PROGRESS_SYSTEM
+        else:
+            phase_rules = OKR_PLAN_SYSTEM
     elif snapshot.phase == PHASE_RESEARCH:
         phase_rules = RESEARCH_EPIC_SYSTEM_PROMPT
     elif snapshot.phase == PHASE_PLAN:
@@ -738,6 +755,12 @@ def run_goal_loop(
         "Inspect with tools, then propose, then call done. "
         "Stopping after get_* without propose_* is a failure."
     )
+    at_risk = (snapshot.scoreboard or {}).get("at_risk_krs") or []
+    if snapshot.phase == PHASE_IN_PROGRESS and at_risk:
+        user += (
+            " At-risk KRs needing 1–3 concrete steps each (not KR restatements): "
+            f"{json.dumps(_json_ready(at_risk), ensure_ascii=False)}."
+        )
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": system_prompt_for(snapshot)},
         {"role": "user", "content": user},

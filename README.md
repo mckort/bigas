@@ -460,7 +460,7 @@ This is the flow that makes Bigas a **goal-oriented engine**: you name what winn
 2. Drag it to **Research and describe (AI)**. Bigas loads that board's brand. A short tool loop looks up evidence (GA4, website, repo, open work) and proposes 2–4 Key Results as measurable from→to improvements. No canned metric kit. Numbers that are not in the evidence are marked unmeasured. The card moves to **Description approval (manual)**.
 3. After you approve, drag to **Design and plan (AI)**. The same loop reads live status, updates KR `current` values, and opens concrete work items toward each KR — not a ticket named after the KR, and not a “wire weekly snapshot” card. The Objective moves to **Design approval (manual)**.
 4. **Open on board** filters the board to that Objective; **Show on board** filters to one KR. You still drag cards. AI columns still research, plan, and implement — they do not auto-start because a KR is off track.
-5. Monday's `weekly_okr_pulse` restates the mechanical scoreboard, then runs the tool loop on every Objective still in **In Progress (AI)**. It refreshes GA4 currents and may open **To Do** cards for off-track gaps. It skips work that is already Done (including near-duplicate titles) or already live in site/repo evidence. It never auto-starts cards and never moves an Objective to Final approval or Done until every Key Result has reached its target. You can still edit `current` by hand. The dashboard shows on track / at risk / off track against expected pace. Every Chief, Product, and Marketing chat session is primed with that scoreboard (stale currents, unlinked Done, pending manual gates).
+5. Monday's `weekly_okr_pulse` restates the mechanical scoreboard, then runs the tool loop on every Objective still in **In Progress (AI)**. It refreshes GA4 currents, reasons **1–3 next steps per at-risk KR** (via the OKR plan model), and may open **To Do** cards for AI-doable gaps. Human gates are referenced by ticket key instead of cloning. It skips work that is already Done (including near-duplicate titles) or already live in site/repo evidence. It never auto-starts cards and never moves an Objective to Final approval or Done until every Key Result has reached its target. You can still edit `current` by hand. The dashboard shows on track / at risk / off track against expected pace. Every Chief, Product, and Marketing chat session is primed with that scoreboard (stale currents, unlinked Done, pending manual gates).
 
 Humans decide. Agents execute the work you put in front of them. The Objective is the shared scoreboard.
 
@@ -847,7 +847,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST cherry_pick_hotfix` | Cherry-pick a merged staging PR to `main` and open a hotfix PR (`@bigas hotfix ISSUE-KEY`) |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord and Product Manager chat |
 | `POST generate_weekly_x_post` | Last N days of internal-board Done + git (+ Jira if configured) → one X draft per mapped account → Discord and Product Manager chat Approve/Skip per account |
-| `POST weekly_okr_pulse` | Monday OKR pulse from `/objectives`: mechanical KR health, then the In Progress loop may open To Do (skips Done / already-shipped work). Optional LLM comment cannot replace the counts |
+| `POST weekly_okr_pulse` | Monday OKR pulse from `/objectives`: mechanical KR health, then reasoned next steps per at-risk KR and optional new To Do (skips Done / already-shipped work). Opt-in LLM comment cannot replace the counts |
 | `POST review_and_comment_pr` | PR diff → AI code review comment posted to GitHub. Details: [docs/cto-pr-review.md](docs/cto-pr-review.md) |
 | `POST autofix_pr` | Launch a Cursor cloud agent to push fixes for the findings in the last Bigas review comment |
 | `POST autofix_followup` | Poll the autofix agent; on completion, re-reviews the PR and posts the result to Discord. Details: [docs/cto-autofix.md](docs/cto-autofix.md) |
@@ -971,7 +971,7 @@ Cloud Scheduler must send `X-Bigas-Access-Key` or `Authorization: Bearer` with a
 
 ### Monday OKR pulse (Cloud Scheduler)
 
-`weekly_okr_pulse` is the scoreboard that cannot flatter: KR health, expected vs actual pace, stale currents, Done tickets in the last N days (linked vs unlinked, with sample size), and cards waiting in `(manual)` columns. An optional LLM comment is appended *under* the counts and is forbidden from replacing them. A week with zero Done is reported as sample size 0, not as a clean week.
+`weekly_okr_pulse` is the scoreboard that cannot flatter: KR health, expected vs actual pace, stale currents, Done tickets in the last N days (linked vs unlinked, with sample size), and cards waiting in `(manual)` columns. The In Progress loop appends reasoned next steps (and any new To Do keys) under the counts. An optional LLM comment (`include_comment: true`) can be appended *under* the counts and is forbidden from replacing them. A week with zero Done is reported as sample size 0, not as a clean week.
 
 Posts to the **Chief of Staff** chat thread (and `DISCORD_WEBHOOK_URL_CHIEF`, falling back to product). Same access key as other `/mcp/tools/*` scheduler jobs.
 

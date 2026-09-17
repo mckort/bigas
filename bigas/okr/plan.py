@@ -75,6 +75,27 @@ _DISTINCTIVE_PAIRS = frozenset(
     }
 )
 
+_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+
+OKR_IN_PROGRESS_SYSTEM = """You are a Chief of Staff during the weekly OKR pulse for an Objective
+already In Progress.
+
+Only Key Results that are at_risk, off_track, or unmeasured need new steps. On-track KRs need
+nothing from you this week.
+
+For each at-risk KR, propose 1–3 concrete next steps via propose_tasks (and set_notes with a short
+summary). Each step is an action — never restate the KR title. Done tickets are history: if the KR
+is still red, propose a different lever, not a duplicate of closed work.
+
+- ai_doable=true when an AI agent can do the first pass. Open a new To Do (title, description, kr_id).
+- Human gates (approvals, manual columns): set ai_doable=false and existing_key to the open ticket
+  key (e.g. GPWW-36). Do not clone that gate into a new card.
+- Skip open duplicates, KR clones, analytics-wiring tickets, and work already live in evidence.
+
+Update KR currents from evidence when numbers are present. Never auto-start cards. Call done when
+finished.
+"""
+
 OKR_PLAN_SYSTEM = """You are a Chief of Staff planning work toward committed Key Results.
 
 The Objective and its Key Results already exist. KRs are the scoreboard — never
@@ -115,10 +136,13 @@ JSON shape:
       "title": "Short action title",
       "description": "What to do, done when, and which KR it should move.",
       "kr_id": "kr-abc",
-      "ai_doable": false
+      "ai_doable": false,
+      "existing_key": "GPWW-36"
     }
   ]
 }
+
+existing_key is only for human gates — reference an open ticket instead of cloning it.
 """
 
 
@@ -346,6 +370,46 @@ def heuristic_ga4_currents(
     return updates
 
 
+def format_next_step_line(*, objective_key: str, step: Dict[str, Any]) -> str:
+    """Human-readable line for pulse, priming, and /objectives."""
+    action = (step.get("action") or step.get("title") or "").strip()
+    if not action:
+        return ""
+    prefix = f"{objective_key}: {action}"
+    existing = (step.get("existing_key") or "").strip().upper()
+    if existing:
+        return f"{prefix} (human → {existing})"
+    ticket_key = (step.get("ticket_key") or step.get("key") or "").strip().upper()
+    if ticket_key:
+        return f"{prefix} (→ {ticket_key})"
+    return prefix
+
+
+def normalize_okr_next_steps(raw: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or item.get("title") or "").strip()
+        if not action:
+            continue
+        step: Dict[str, Any] = {
+            "kr_id": str(item.get("kr_id") or "").strip(),
+            "action": action,
+            "ai_doable": bool(item.get("ai_doable")),
+        }
+        existing = str(item.get("existing_key") or "").strip().upper()
+        if existing and _ISSUE_KEY_RE.match(existing):
+            step["existing_key"] = existing
+        ticket_key = str(item.get("ticket_key") or item.get("key") or "").strip().upper()
+        if ticket_key and _ISSUE_KEY_RE.match(ticket_key):
+            step["ticket_key"] = ticket_key
+        out.append(step)
+    return out
+
+
 def _normalize_plan_tasks(
     raw_tasks: Any,
     *,
@@ -375,6 +439,23 @@ def _normalize_plan_tasks(
         if _WIRE_TITLE_RE.match(title) or _INSTRUMENT_TITLE_RE.match(title):
             continue
         if title.lower() in kr_titles:
+            continue
+        existing_key = str(item.get("existing_key") or "").strip().upper()
+        if existing_key and _ISSUE_KEY_RE.match(existing_key):
+            if per_kr.get(kr_id, 0) >= MAX_TASKS_PER_KR:
+                continue
+            kr = kr_by_id[kr_id]
+            body = description or f"Human gate for KR: {kr.get('title') or kr_id}."
+            out.append(
+                {
+                    "title": title[:120] if title else f"Approve {existing_key}",
+                    "description": body,
+                    "kr_id": kr_id,
+                    "ai_doable": False,
+                    "existing_key": existing_key,
+                }
+            )
+            per_kr[kr_id] = per_kr.get(kr_id, 0) + 1
             continue
         if is_duplicate_work(title, seen, evidence=evidence):
             continue

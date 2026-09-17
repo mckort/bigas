@@ -121,9 +121,6 @@ def format_okr_priming_block(snapshot: Dict[str, Any]) -> str:
             f"Unlinked Done (all-time): {int(snapshot.get('unlinked_done') or 0)}. "
             "Do not celebrate those as KR progress."
         )
-    next_actions = (snapshot.get("briefing") or {}).get("this_week") or []
-    if next_actions:
-        lines.append(f"Suggested next: {next_actions[0]}")
     return "\n".join(lines)
 
 
