@@ -149,8 +149,6 @@ def review_has_blocking_findings(review_body: str) -> bool:
     has_actionable = bool(_ACTIONABLE.search(body))
     if not has_actionable:
         return False
-    if review_has_minor_only_findings(body):
-        return False
     return True
 
 

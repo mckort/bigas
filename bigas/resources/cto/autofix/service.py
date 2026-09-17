@@ -107,8 +107,9 @@ def _build_prompt(
 ) -> str:
     if nits_only:
         fix_steps = """1. Fix only the ### Minor items in the review. Blockers and Important are already clear.
-2. Do not invent extra polish beyond what the review lists. Do not expand scope or refactor unrelated code.
-3. Push commits directly to this PR's head branch (already checked out for you)."""
+2. Do not invent extra polish beyond what the review lists.
+3. Do not expand scope or refactor unrelated code.
+4. Push commits directly to this PR's head branch (already checked out for you)."""
     else:
         fix_steps = """1. Fix all Blockers and Important items called out in the review.
 2. Also fix Minor items listed in the same review — they ride along in this round when Blockers/Important already triggered autofix.
@@ -282,35 +283,47 @@ class AutofixService:
         minor_only = review_has_minor_only_findings(body)
 
         if autofix_count >= max_iters and not force:
-            if review_has_blocking_findings(body):
-                return {
-                    "skipped": True,
-                    "loop_protection": True,
-                    "reason": format_loop_protection_message(
-                        autofix_count=autofix_count, max_iterations=max_iters
-                    ),
-                    "pr_url": pr_url,
-                    "autofix_count": autofix_count,
-                    "nits_only_autofix_count": nits_only_count,
-                    "max_iterations": max_iters,
-                    "head_sha": head_sha,
-                    "ready_to_merge": False,
-                }
             if ready_to_merge:
+                if minor_only:
+                    return {
+                        "skipped": True,
+                        "reason": (
+                            "leftover Minor findings after autofix cap; "
+                            "treating PR as ready to merge"
+                        ),
+                        "pr_url": pr_url,
+                        "autofix_count": autofix_count,
+                        "nits_only_autofix_count": nits_only_count,
+                        "max_iterations": max_iters,
+                        "head_sha": head_sha,
+                        "ready_to_merge": True,
+                        "minor_only_leftover": True,
+                    }
+                _, clean_reason = review_needs_autofix(body)
                 return {
                     "skipped": True,
-                    "reason": (
-                        "leftover Minor findings after autofix cap; "
-                        "treating PR as ready to merge"
-                    ),
+                    "reason": clean_reason or "review looks clean (LGTM)",
                     "pr_url": pr_url,
                     "autofix_count": autofix_count,
                     "nits_only_autofix_count": nits_only_count,
                     "max_iterations": max_iters,
                     "head_sha": head_sha,
                     "ready_to_merge": True,
-                    "minor_only_leftover": True,
+                    "review_clean": True,
                 }
+            return {
+                "skipped": True,
+                "loop_protection": True,
+                "reason": format_loop_protection_message(
+                    autofix_count=autofix_count, max_iterations=max_iters
+                ),
+                "pr_url": pr_url,
+                "autofix_count": autofix_count,
+                "nits_only_autofix_count": nits_only_count,
+                "max_iterations": max_iters,
+                "head_sha": head_sha,
+                "ready_to_merge": False,
+            }
 
         if minor_only and nits_only_count >= nits_max and not force:
             return {

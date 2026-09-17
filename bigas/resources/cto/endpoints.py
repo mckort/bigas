@@ -22,7 +22,6 @@ from bigas.resources.cto.autofix.heuristics import (
     autofix_max_iterations,
     autofix_pushed_new_commit,
     format_loop_protection_message,
-    review_has_blocking_findings,
     review_is_ready_to_merge,
 )
 from bigas.resources.cto.autofix.service import (
@@ -1574,7 +1573,7 @@ def autofix_followup():
             "Stopping the autofix loop for this run.\n"
             f"{pr_ref}"
         )
-    elif autofix_count >= max_iters and review_has_blocking_findings(review_body):
+    elif autofix_count >= max_iters:
         _notify_autofix_loop_protection(
             repo=repo,
             pr_number=pr_number,
@@ -1607,9 +1606,7 @@ def autofix_followup():
         "autofix_count": autofix_count,
         "autofix_round": autofix_round_n or autofix_count,
         "max_iterations": max_iters,
-        "loop_protection": (not ready)
-        and autofix_count >= max_iters
-        and review_has_blocking_findings(review_body),
+        "loop_protection": (not ready) and autofix_count >= max_iters,
         "nits_only_autofix_count": nits_only_count,
         "used_model": review_result.model,
         "usage": review_result.usage_dict(),
