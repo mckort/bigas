@@ -130,13 +130,13 @@ _SOFT_ONLY = re.compile(
 _HTML_COMMENT = re.compile(r"^\s*<!--.*?-->\s*$")
 _LIST_ITEM = re.compile(r"(?m)^\s*(?:[-*]|\d+\.)\s+\S")
 _EMPTY_SECTION_PREFIX = re.compile(
-    r"(?is)^(none\.?|n/?a\.?|no (issues|findings|blockers|important issues)\.?)\s*"
+    r"(?is)^(?:none\b\.?|n/?a\.?|no (issues|findings|blockers|important issues)\.?)\s*"
 )
 # "no new blocker or important issues" in an LGTM closer is not a finding.
 _NEGATED_ACTIONABLE = re.compile(
     r"(?i)\bno(?:\s+\w+){0,6}\s+"
-    r"(blocking|critical|important|security|vulnerability|bug|broken|"
-    r"incorrect|regression)\b"
+    r"(?:(?:blocker|blocking)s?|critical|important|security|"
+    r"vulnerabilit(?:y|ies)|bugs?|broken|incorrect|regressions?)\b"
 )
 
 
@@ -155,7 +155,7 @@ def _section_bodies(review_body: str) -> dict[str, str]:
 
 
 def _is_list_item(line: str) -> bool:
-    return bool(re.match(r"\s*(?:[-*]|\d+\.)\s+\S", line or ""))
+    return bool(_LIST_ITEM.match(line or ""))
 
 
 def _closer_line_is_safe_to_strip(line: str) -> bool:
@@ -183,9 +183,16 @@ def _section_has_findings(body: str) -> bool:
         rest = text[empty_prefix.end() :].strip()
         if not rest:
             return False
-        # "None." plus a verdict sentence is still empty — not leftover nits.
-        if not _LIST_ITEM.search(rest) and _CLEAN.search(rest):
-            return False
+        if not _LIST_ITEM.search(rest):
+            if _ACTIONABLE.search(rest) and not _NEGATED_ACTIONABLE.search(rest):
+                return True
+            lines = [ln for ln in rest.splitlines() if ln.strip()]
+            if lines and all(_closer_line_is_safe_to_strip(ln) for ln in lines):
+                return False
+            if (
+                not _ACTIONABLE.search(rest) or _NEGATED_ACTIONABLE.search(rest)
+            ) and _CLEAN.search(rest):
+                return False
     return True
 
 

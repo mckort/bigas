@@ -1,4 +1,6 @@
 from bigas.resources.cto.autofix.heuristics import (
+    _closer_line_is_safe_to_strip,
+    _section_has_findings,
     auto_merge_enabled,
     autofix_pushed_new_commit,
     leftover_nits_are_acceptable,
@@ -103,6 +105,44 @@ _CLEAN_WITH_IMPORTANT_CLOSER = (
     "All previous findings are resolved, no new blocker or important issues "
     "were found, and the PR is ready to merge.\n"
 )
+
+
+def test_none_prefix_with_actionable_prose_still_has_findings():
+    body = (
+        "### Blockers\n"
+        "None. However, there is a critical vulnerability in auth.py that must be "
+        "addressed before this is ready to merge.\n\n"
+        "### Important\nNone.\n\n### Minor\nNone.\n"
+    )
+    ok, reason = review_needs_autofix(body)
+    assert ok is True
+    assert "actionable" in reason
+
+
+def test_nonetheless_does_not_match_empty_section_prefix():
+    assert _section_has_findings(
+        "Nonetheless, the auth path should validate tokens before merge."
+    )
+
+
+def test_no_blockers_found_closer_is_safe_to_strip():
+    assert _closer_line_is_safe_to_strip("No blockers found, LGTM, ready to merge.")
+
+
+def test_no_new_bugs_closer_is_safe_to_strip():
+    assert _closer_line_is_safe_to_strip("No new bugs found, ready to merge.")
+
+
+def test_multiline_lgtm_closer_strips_from_section():
+    body = (
+        "### Blockers\nNone.\n\n### Important\nNone.\n\n### Minor\nNone.\n\n"
+        "No blockers found, ready to merge.\n"
+        "LGTM — approved as-is.\n"
+    )
+    ok, reason = review_needs_autofix(body)
+    assert ok is False
+    assert "clean" in reason
+    assert review_is_ready_to_merge(body) is True
 
 
 def test_none_plus_important_word_closer_is_still_clean():
