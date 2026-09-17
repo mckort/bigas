@@ -193,13 +193,31 @@ def test_format_work_opened_lists_new_todos():
                 "ok": True,
                 "issue_key": "GPWW-17",
                 "tasks_created": [{"key": "GPWW-40", "kr_id": "kr-sess"}],
+                "next_steps": [
+                    {
+                        "action": "Publish wholesale CTA",
+                        "ticket_key": "GPWW-40",
+                    }
+                ],
             },
-            {"ok": True, "issue_key": "BIG-44", "tasks_created": []},
+            {"ok": True, "issue_key": "BIG-44", "tasks_created": [], "next_steps": []},
         ]
     )
     assert "GPWW-40" in text
-    assert "BIG-44: no new work" in text
+    assert "Publish wholesale CTA" in text
+    assert "BIG-44" in text
     assert "cannot flatter" not in text
+
+
+def test_pulse_and_priming_skip_mechanical_create_task():
+    store, objective, _waiting = _seed_objective()
+    snapshot = build_okr_scoreboard(store, user_id=USER, use_cache=False)
+    pulse = format_okr_pulse(snapshot)
+    priming = format_okr_priming_block(snapshot)
+    assert "Create a task for" not in pulse
+    assert "Create a task for" not in priming
+    assert "Next action:" not in pulse
+    assert "Suggested next:" not in priming
 
 
 def test_weekly_okr_pulse_appends_opened_work(client, monkeypatch):
@@ -212,6 +230,14 @@ def test_weekly_okr_pulse_appends_opened_work(client, monkeypatch):
                 "ok": True,
                 "issue_key": "GPWW-17",
                 "tasks_created": [{"key": "GPWW-40", "kr_id": "kr-sess"}],
+                "next_steps": [
+                    {
+                        "kr_id": "kr-sess",
+                        "action": "Publish wholesale CTA on homepage",
+                        "ai_doable": True,
+                        "ticket_key": "GPWW-40",
+                    }
+                ],
             }
         ],
     )

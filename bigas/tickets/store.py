@@ -194,6 +194,7 @@ def _apply_ticket_field_updates(
         "okr_owner",
         "okr_briefing",
         "okr_phase",
+        "okr_next_steps",
         "created_at",
         "done_processed",
         "agent_url",
@@ -250,6 +251,10 @@ def _apply_ticket_field_updates(
             updates["okr_briefing"] = str(value or "")
         elif key == "okr_phase":
             updates["okr_phase"] = (value or "").strip()
+        elif key == "okr_next_steps":
+            from bigas.okr.plan import normalize_okr_next_steps
+
+            updates["okr_next_steps"] = normalize_okr_next_steps(value)
         elif key == "created_at":
             stamp = str(value or "").strip()
             if stamp:

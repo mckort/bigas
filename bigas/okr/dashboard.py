@@ -13,6 +13,7 @@ from bigas.okr.model import (
     normalize_key_results,
     objective_progress,
 )
+from bigas.okr.plan import format_next_step_line, normalize_okr_next_steps
 from bigas.tickets.labels import resolve_ticket_labels
 from bigas.tickets.service import ticket_url
 
@@ -39,10 +40,12 @@ def _child_health_counts(objectives: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[str, Any]:
+    from bigas.agents.proactive_engine import goal_phase_for_status
+
     risks = []
-    next_tasks = []
     unmeasured = []
     theater = []
+    this_week: List[str] = []
     for obj in objectives:
         for kr in obj.get("key_results") or []:
             label = f"{obj['key']}: {kr.get('title')}"
@@ -52,8 +55,13 @@ def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[s
                 unmeasured.append(label)
             if kr.get("activity_without_outcome"):
                 theater.append(label)
-            if kr.get("linked_open", 0) == 0 and kr.get("health") != "on_track":
-                next_tasks.append(f"Create a task for {label}")
+        if goal_phase_for_status(obj.get("status") or "") != "in_progress":
+            continue
+        obj_key = str(obj.get("key") or "?")
+        for step in normalize_okr_next_steps(obj.get("okr_next_steps")):
+            line = format_next_step_line(objective_key=obj_key, step=step)
+            if line:
+                this_week.append(line)
     headline_parts = []
     if stats["off_track"]:
         headline_parts.append(f"{stats['off_track']} KR(s) off track")
@@ -68,7 +76,7 @@ def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[s
         "risks": risks[:6],
         "unmeasured": unmeasured[:6],
         "activity_without_outcome": theater[:6],
-        "this_week": next_tasks[:5]
+        "this_week": this_week[:8]
         or [
             "Confirm KR scores with live sources before adding more tasks.",
             "Kill one task that cannot name the KR it is supposed to move.",
@@ -149,6 +157,7 @@ def serialize_objective(
         "owner": ticket.get("okr_owner") or ticket.get("assignee") or "",
         "phase": ticket.get("okr_phase") or "",
         "briefing": ticket.get("okr_briefing") or "",
+        "okr_next_steps": normalize_okr_next_steps(ticket.get("okr_next_steps")),
         "created_at": ticket.get("created_at"),
         "updated_at": ticket.get("updated_at"),
         "expected_progress": round(expected, 3),

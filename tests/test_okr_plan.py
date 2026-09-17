@@ -6,6 +6,7 @@ import json
 
 from bigas.okr.plan import (
     OKR_PLAN_SYSTEM,
+    _normalize_plan_tasks,
     already_in_evidence,
     apply_current_updates,
     heuristic_ga4_currents,
@@ -25,6 +26,39 @@ class _FakeLlm:
         self.captured["messages"] = messages
         self.captured["kwargs"] = kwargs
         return self._payload
+
+
+def test_normalize_plan_tasks_accepts_existing_key_gate():
+    krs = [{"id": "kr-abc", "title": "Increase add-to-cart from 1 to 3"}]
+    tasks = _normalize_plan_tasks(
+        [
+            {
+                "title": "Approve landing copy",
+                "description": "Human gate blocking add-to-cart improvements.",
+                "kr_id": "kr-abc",
+                "ai_doable": False,
+                "existing_key": "gpww-36",
+            }
+        ],
+        key_results=krs,
+        existing_titles=set(),
+    )
+    assert len(tasks) == 1
+    assert tasks[0]["existing_key"] == "GPWW-36"
+    assert tasks[0]["ai_doable"] is False
+
+
+def test_normalize_plan_tasks_deduplicates_existing_key_gates():
+    krs = [{"id": "kr-abc", "title": "Increase add-to-cart from 1 to 3"}]
+    gate = {
+        "title": "Approve landing copy",
+        "description": "Human gate blocking add-to-cart improvements.",
+        "kr_id": "kr-abc",
+        "ai_doable": False,
+        "existing_key": "GPWW-36",
+    }
+    tasks = _normalize_plan_tasks([gate, dict(gate)], key_results=krs, existing_titles=set())
+    assert len(tasks) == 1
 
 
 def test_plan_prompt_forbids_kr_clones_and_wiring():
