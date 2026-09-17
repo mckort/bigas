@@ -138,6 +138,11 @@ _NEGATED_ACTIONABLE = re.compile(
     r"(?:(?:blocker|blocking)s?|critical|important|security|"
     r"vulnerabilit(?:y|ies)|bugs?|broken|incorrect|regressions?)\b"
 )
+# "All previous … findings have been addressed" in a ready-to-merge closer.
+_PRIOR_FINDINGS_RESOLVED = re.compile(
+    r"(?i)\b(?:all )?previous\b[^.\n]{0,160}\bfindings?\b[^.\n]{0,120}"
+    r"\b(?:have been )?(?:addressed|resolved|fixed|verified)\b"
+)
 
 
 def _section_bodies(review_body: str) -> dict[str, str]:
@@ -160,7 +165,11 @@ def _is_list_item(line: str) -> bool:
 
 def _closer_line_is_safe_to_strip(line: str) -> bool:
     """True for a trailing LGTM sentence, including 'no … important issues'."""
-    if not line or not _CLEAN.search(line) or _is_list_item(line):
+    if not line or _is_list_item(line):
+        return False
+    if _PRIOR_FINDINGS_RESOLVED.search(line) and _CLEAN.search(line):
+        return True
+    if not _CLEAN.search(line):
         return False
     if not _ACTIONABLE.search(line):
         return True

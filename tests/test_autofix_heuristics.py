@@ -165,6 +165,19 @@ def test_none_plus_important_word_closer_ignores_review_marker():
     assert review_is_ready_to_merge(body) is True
 
 
+def test_addressed_prior_findings_closer_is_still_clean():
+    body = (
+        "### Blockers\nNone.\n\n### Important\nNone.\n\n### Minor\nNone.\n\n"
+        "All previous blocker and important findings have been addressed and "
+        "verified with tests; the PR is ready to merge.\n\n"
+        "<!-- bigas-ai-review-marker -->\n"
+    )
+    ok, reason = review_needs_autofix(body)
+    assert ok is False
+    assert "clean" in reason
+    assert review_is_ready_to_merge(body) is True
+
+
 def test_minor_bullet_plus_important_word_closer_still_counts():
     body = (
         "### Blockers\nNone.\n\n### Important\nNone.\n\n"
