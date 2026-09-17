@@ -51,6 +51,11 @@ def verify_auth():
 @chat_bp.route("/api/auth/config", methods=["GET"])
 def auth_config():
     """Public config for the frontend Firebase SDK."""
+    measurement_id = (
+        os.environ.get("GA4_MEASUREMENT_ID")
+        or os.environ.get("VITE_GA4_MEASUREMENT_ID")
+        or ""
+    ).strip()
     return jsonify(
         {
             "auth_mode": os.environ.get("CHAT_AUTH_MODE") or "dev",
@@ -59,6 +64,7 @@ def auth_config():
                 "authDomain": os.environ.get("VITE_FIREBASE_AUTH_DOMAIN"),
                 "projectId": os.environ.get("VITE_FIREBASE_PROJECT_ID") or os.environ.get("FIREBASE_PROJECT_ID"),
             },
+            "analytics": {"measurementId": measurement_id} if measurement_id else {},
         }
     )
 

@@ -133,6 +133,26 @@ def test_heuristic_ga4_currents_from_traffic_and_pages():
     assert "kr-manual" not in updates
 
 
+def test_heuristic_ga4_weekly_active_founder_event():
+    krs = [
+        {
+            "id": "kr-demo01aa",
+            "metric": "Weekly active founders",
+            "title": "40 weekly active founders",
+            "source": "ga4",
+        },
+        {"id": "kr-sess", "metric": "website sessions", "title": "Sessions", "source": "ga4"},
+    ]
+    ga4 = (
+        "Traffic: sessions 999 (prev 1), users 1 (prev 0), pageviews 1 (prev 0).\n"
+        "Key events:\n"
+        "  - eventName=weekly_active_founder, keyEvents=24\n"
+    )
+    updates = {item["id"]: item["current"] for item in heuristic_ga4_currents(krs, ga4)}
+    assert updates["kr-demo01aa"] == 24
+    assert updates["kr-sess"] == 999
+
+
 def test_apply_current_updates_overwrites_measurable_only():
     krs = [
         {"id": "kr-a", "measurable": True, "current": 1},

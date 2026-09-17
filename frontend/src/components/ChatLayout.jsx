@@ -21,6 +21,7 @@ import {
   transitionJiraIssue,
 } from '../lib/api'
 import { logout } from '../lib/auth'
+import { trackWeeklyActiveFounder } from '../lib/productAnalytics'
 
 function humanizeChatContent(content) {
   const text = (content || '').trim()
@@ -1420,6 +1421,7 @@ export default function ChatLayout({
     try {
       result = await sendMessage(threadId, text, clientId, files)
       sendSucceeded = true
+      trackWeeklyActiveFounder('chat')
       const res = await fetchMessages(threadId)
       const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res)
       if (next.length) {

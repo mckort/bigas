@@ -7,6 +7,7 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth'
 import { setToken } from './api'
+import { configureProductAnalytics } from './productAnalytics'
 
 let auth = null
 let authMode = 'dev'
@@ -20,6 +21,9 @@ export async function initAuth() {
     const app = initializeApp(config.firebase)
     auth = getAuth(app)
   }
+  const measurementId =
+    config.analytics?.measurementId || config.analytics?.measurement_id || ''
+  configureProductAnalytics({ measurementId })
   return { authMode, auth }
 }
 

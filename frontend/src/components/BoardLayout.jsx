@@ -21,6 +21,7 @@ import {
   updateTicket,
   uploadTicketAttachment,
 } from '../lib/api'
+import { trackWeeklyActiveFounder } from '../lib/productAnalytics'
 import {
   emptyKeyResult,
   isEpic,
@@ -1782,6 +1783,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     setBoardError('')
     try {
       await updateTicket(ticket.ticket_id, { status })
+      trackWeeklyActiveFounder('board')
       await loadTickets()
     } catch (err) {
       setBoardError(err.message || 'Could not move ticket')
@@ -1901,6 +1903,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     setModalTicket(null)
     setShowCreate(false)
     setCreateStatus(null)
+    trackWeeklyActiveFounder('board')
     await loadTickets()
   }
 

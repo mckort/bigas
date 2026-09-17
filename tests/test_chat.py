@@ -37,6 +37,13 @@ def test_auth_config_public(client):
     assert data["auth_mode"] == "dev"
 
 
+def test_auth_config_exposes_ga4_measurement_id(client, monkeypatch):
+    monkeypatch.setenv("GA4_MEASUREMENT_ID", "G-TEST12345")
+    resp = client.get("/api/auth/config")
+    assert resp.status_code == 200
+    assert resp.get_json()["analytics"]["measurementId"] == "G-TEST12345"
+
+
 def test_verify_auth(client):
     resp = client.post("/api/auth/verify", headers=_auth_headers())
     assert resp.status_code == 200
