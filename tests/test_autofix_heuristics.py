@@ -485,3 +485,25 @@ def test_autofix_accepts_leftover_nits_at_max_iterations(monkeypatch):
     assert result["skipped"] is True
     assert result.get("nits_accepted") is True
     assert result.get("loop_protection") is not True
+
+
+def test_autofix_loop_protection_at_max_iterations_with_blocking_review(monkeypatch):
+    from bigas.resources.cto.autofix.heuristics import format_loop_protection_message
+    from bigas.resources.cto.autofix.service import AutofixService
+
+    blocking_review = "## Blocking\nMust fix the broken auth check before merge."
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
+        lambda token: _NitsFakeGH(
+            [f"BIG-93: [bigas-autofix] fix {i}" for i in range(5)],
+            body=blocking_review,
+        ),
+    )
+    result = AutofixService(cursor_api_key="c", github_token="t").run(
+        repo="owner/repo", pr_number=9
+    )
+    assert result["skipped"] is True
+    assert result.get("loop_protection") is True
+    assert result["reason"] == format_loop_protection_message(
+        autofix_count=5, max_iterations=5
+    )

@@ -16,6 +16,7 @@ from bigas.resources.cto.autofix.heuristics import (
     autofix_cooldown_seconds,
     autofix_max_iterations,
     count_autofix_rounds,
+    format_loop_protection_message,
     leftover_nits_are_acceptable,
     review_is_nits_only,
     review_needs_autofix,
