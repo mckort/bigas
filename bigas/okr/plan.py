@@ -323,6 +323,11 @@ def heuristic_ga4_currents(
             continue
         blob = f"{kr.get('metric') or ''} {kr.get('title') or ''}".lower()
         current: Optional[float] = None
+        if "weekly active" in blob and "founder" in blob:
+            for name, count in event_rows:
+                if name.lower() in ("weekly_active_founder", "weekly_active_founders"):
+                    current = float(count)
+                    break
         for path, views in page_rows:
             path_l = path.lower().strip()
             if path_l and path_l not in {"/", "(not set)"} and path_l in blob:

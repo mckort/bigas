@@ -60,7 +60,7 @@ def _specs() -> List[Dict[str, Any]]:
                     "source": "ga4",
                     "measurable": True,
                     "status": "committed",
-                    "ai_note": "On a linear Q3 path we should be near 24. Live GA4 event is still a proxy (sessions with chat).",
+                    "ai_note": "On a linear Q3 path we should be near 24. KR reads GA4 key event weekly_active_founder (chat or board), not sessions.",
                 },
                 {
                     "id": "kr-demo01ab",

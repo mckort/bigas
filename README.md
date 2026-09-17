@@ -414,6 +414,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `LINKEDIN_AD_ACCOUNT_URN` | Default LinkedIn ad account URN |
 | `REDDIT_AD_ACCOUNT_ID` | Default Reddit ad account ID |
 | `CHAT_ENABLED` | Enable web chat UI and API (default: `true`) |
+| `GA4_MEASUREMENT_ID` | Optional GA4 **measurement ID** (`G-…`) for the Bigas web app. When set, chat and board send the `weekly_active_founder` event (once per ISO week per browser) so OKRs can track product engagement instead of raw sessions. Exposed to the SPA via `GET /api/auth/config`. |
 | `CHAT_AUTH_MODE` | `dev` (local token) or `firebase` (Firebase Auth JWT) |
 | `CHAT_STORAGE_MODE` | `memory` (local) or `firestore` (production) |
 | `CHAT_ALLOWED_EMAILS` | Comma-separated emails allowed to use chat in Firebase mode. Set to `*` to allow any Firebase user while keeping `CHAT_ADMIN_EMAILS` for admin-only actions. Falls back to `CHAT_ADMIN_EMAILS` if unset. Empty both = any Firebase user. |
