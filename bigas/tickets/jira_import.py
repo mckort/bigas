@@ -115,6 +115,8 @@ def _map_issue_type(name: str) -> str:
     lowered = (name or "").strip().lower()
     if lowered == "bug":
         return "Bug"
+    if lowered == "feature":
+        return "Feature"
     if lowered == "epic":
         return "Epic"
     if lowered == "objective":

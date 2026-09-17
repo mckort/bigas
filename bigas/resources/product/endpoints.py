@@ -470,7 +470,7 @@ def create_ticket():
 
     Returns { "ok": true, "key": "BIG-42", "url": "https://..." } on success.
     Set marketing=true for marketing-related tickets (adds the Jira label "marketing").
-    Optional parent_epic_key links the new Task/Bug to a goal Epic (never creates Epics).
+    Optional parent_epic_key links the new Task/Bug/Feature to a goal Epic (never creates Epics).
     Optional status sets the board column (aliases like "Final Review" work).
     """
     data = request.json or {}
@@ -872,14 +872,14 @@ def get_manifest():
             },
             {
                 "name": "create_release_notes",
-                "description": "Query Jira by Fix Version and generate multi-channel release notes. Optionally create a semver GitHub Release (vX.Y.Z) and mark the Fix Version released in Jira.",
+                "description": "Query the internal board (or Jira) by Fix Version and generate multi-channel release notes. Includes Done and Final approval. Optionally create a semver GitHub Release (vX.Y.Z) and mark the Fix Version released.",
                 "path": "/mcp/tools/create_release_notes",
                 "method": "POST",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "fix_version": {"type": "string", "description": "Jira Fix Version, e.g. 1.1.0"},
-                        "jql_extra": {"type": "string", "description": "Optional JQL fragment to narrow results (e.g. AND statusCategory = Done)"},
+                        "jql_extra": {"type": "string", "description": "Optional extra JQL. Do not use statusCategory = Done — Final approval is part of the shipped cut."},
                         "project_key": {"type": "string", "description": "Optional single Jira project key override (e.g. VFA)"},
                         "project_keys": {
                             "type": "array",
@@ -1074,9 +1074,9 @@ def get_manifest():
                         },
                         "issue_type": {
                             "type": "string",
-                            "description": "Issue type name (Task or Bug). Default Task.",
+                            "description": "Issue type name (Task, Bug, or Feature). Default Task. Use Feature for new user-facing product work.",
                             "default": "Task",
-                            "enum": ["Task", "Bug"],
+                            "enum": ["Task", "Bug", "Feature"],
                         },
                         "marketing": {
                             "type": "boolean",
@@ -1090,8 +1090,8 @@ def get_manifest():
                             "type": "string",
                             "description": (
                                 "Optional existing Epic key only (e.g. GPWW-2). "
-                                "Omit this field to create a standalone Task/Bug — that is the default. "
-                                "Do not pass a Task/Bug key or guess a parent."
+                                "Omit this field to create a standalone Task/Bug/Feature — that is the default. "
+                                "Do not pass a Task, Bug, or Feature key or guess a parent."
                             ),
                         },
                         "status": {
@@ -1142,7 +1142,7 @@ def get_manifest():
                     "Also use before create_ticket when you need Epic context. "
                     "A parent on a referenced ticket is not automatically the parent "
                     "for a new ticket — only link parent_epic_key if the new work belongs under "
-                    "that Epic; otherwise create a standalone Task/Bug."
+                    "that Epic; otherwise create a standalone Task, Bug, or Feature."
                 ),
                 "path": "/mcp/tools/lookup_ticket",
                 "method": "POST",

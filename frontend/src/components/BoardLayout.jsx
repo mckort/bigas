@@ -394,6 +394,11 @@ function TicketCard({ ticket, parentEpic, parentKr, columns, onEdit, onStatusCha
               Epic
             </span>
           )}
+          {String(ticket.issue_type || '').trim().toLowerCase() === 'feature' && (
+            <span className="text-[10px] leading-tight px-1.5 py-0.5 rounded-md bg-surface border border-border text-muted flex-shrink-0">
+              Feature
+            </span>
+          )}
         </div>
         <StatusSelect
           value={ticket.status}
@@ -979,6 +984,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
             >
               <option value="Task">Task</option>
               <option value="Bug">Bug</option>
+              <option value="Feature">Feature</option>
               <option value="Epic">Epic</option>
               <option value="Objective">Objective</option>
             </select>
