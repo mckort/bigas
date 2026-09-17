@@ -17,8 +17,10 @@ from bigas.resources.product.create_release_notes.jira_client import JiraClient
 from bigas.resources.product.create_release_notes.service import (
     CreateReleaseNotesService,
     _default_issue_client,
+    _resolved_project_keys,
     filter_release_cut_issues,
 )
+from bigas.tickets.jira_import import _map_issue_type
 from bigas.tickets import store as ticket_store_module
 from bigas.tickets.jira_adapter import TicketJiraAdapter
 from bigas.tickets.release_store import reset_release_store_for_tests
@@ -46,6 +48,37 @@ def test_default_issue_client_uses_jira_when_board_off(monkeypatch):
     monkeypatch.setenv("JIRA_API_TOKEN", "tok")
     monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA")
     assert isinstance(_default_issue_client(), JiraClient)
+
+
+def test_map_issue_type_new_feature_variants():
+    assert _map_issue_type("New Feature") == "Feature"
+    assert _map_issue_type("new-feature") == "Feature"
+    assert _map_issue_type("Feature") == "Feature"
+
+
+def test_filter_release_cut_accepts_status_key():
+    kept = {
+        issue["key"]
+        for issue in filter_release_cut_issues(
+            [
+                {"key": "VFA-1", "status": "Done"},
+                {"key": "VFA-2", "_status": "Final approval (manual)"},
+            ]
+        )
+    }
+    assert kept == {"VFA-1", "VFA-2"}
+
+
+def test_resolved_project_keys_merges_internal_store(monkeypatch):
+    monkeypatch.setattr("bigas.tickets.config.use_internal_board", lambda: True)
+    monkeypatch.setattr("bigas.portfolio.jira_project_keys", lambda: ["VFA"])
+
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="Custom Board", project_key="CUSTOM")
+    store.create_ticket(board["board_id"], title="Ship it", user_id="dev-user", key="CUSTOM-1")
+
+    keys = _resolved_project_keys(TicketJiraAdapter(), None)
+    assert keys == ["CUSTOM", "VFA"]
 
 
 def test_filter_release_cut_keeps_done_and_final_approval():

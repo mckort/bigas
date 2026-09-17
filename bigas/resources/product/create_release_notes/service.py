@@ -158,8 +158,17 @@ def _resolved_project_keys(client: Any, project_keys: Optional[Any]) -> List[str
     if cfg_keys:
         return [str(k).strip().upper() for k in cfg_keys if str(k).strip()]
     from bigas.portfolio import jira_project_keys
+    from bigas.tickets.config import use_internal_board
+    from bigas.tickets.jira_adapter import TicketJiraAdapter
+    from bigas.tickets.store import get_ticket_store
 
-    return jira_project_keys()
+    portfolio_keys = [str(k).strip().upper() for k in jira_project_keys() if str(k).strip()]
+    if use_internal_board() and isinstance(client, TicketJiraAdapter):
+        store_keys = get_ticket_store().list_project_keys()
+        merged = sorted({*portfolio_keys, *store_keys})
+        if merged:
+            return merged
+    return portfolio_keys
 
 
 def filter_release_cut_issues(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -168,7 +177,7 @@ def filter_release_cut_issues(issues: List[Dict[str, Any]]) -> List[Dict[str, An
         issue
         for issue in issues
         if is_in_release_cut(
-            issue.get("_status") or "",
+            issue.get("_status") or issue.get("status") or "",
             project_key=_project_key_from_issue_key(issue.get("key") or ""),
         )
     ]
