@@ -24,6 +24,7 @@ from bigas.okr.context import format_evidence_pack
 from bigas.okr.model import normalize_key_results
 from bigas.okr.plan import (
     MAX_TASKS_TOTAL,
+    OKR_IN_PROGRESS_SYSTEM,
     OKR_PLAN_SYSTEM,
     _normalize_plan_tasks,
     is_duplicate_work,
@@ -303,6 +304,14 @@ class _Session:
         self.proposed_tasks = False
         self.nudged = False
 
+    def _red_kr_count(self) -> int:
+        count = 0
+        for kr in self.snapshot.key_results:
+            health = kr.get("health")
+            if health in {"at_risk", "off_track", "unmeasured"}:
+                count += 1
+        return count
+
     def required_write(self) -> Optional[str]:
         snap = self.snapshot
         if snap.kind == KIND_OBJECTIVE and snap.phase == PHASE_RESEARCH:
@@ -311,6 +320,9 @@ class _Session:
             return "tasks"
         if snap.kind == KIND_EPIC and snap.phase == PHASE_RESEARCH:
             return "tasks"
+        if snap.kind == KIND_OBJECTIVE and snap.phase == PHASE_IN_PROGRESS:
+            if self._red_kr_count() > 0:
+                return "notes"
         return None
 
     def write_ok(self) -> bool:
@@ -319,6 +331,8 @@ class _Session:
             return self.proposed_krs
         if need == "tasks":
             return self.proposed_tasks or bool(self.tasks)
+        if need == "notes":
+            return bool(self.briefing.strip())
         return True
 
     def result(self, *, used_tools: bool, used_llm: bool, turns: int, trace: List[str]) -> GoalLoopResult:
@@ -687,7 +701,12 @@ def _phase_rules_for_loop(text: str) -> str:
 
 def system_prompt_for(snapshot: GoalSnapshot) -> str:
     if snapshot.kind == KIND_OBJECTIVE:
-        phase_rules = OKR_RESEARCH_SYSTEM if snapshot.phase == PHASE_RESEARCH else OKR_PLAN_SYSTEM
+        if snapshot.phase == PHASE_RESEARCH:
+            phase_rules = OKR_RESEARCH_SYSTEM
+        elif snapshot.phase == PHASE_IN_PROGRESS:
+            phase_rules = OKR_IN_PROGRESS_SYSTEM
+        else:
+            phase_rules = OKR_PLAN_SYSTEM
     elif snapshot.phase == PHASE_RESEARCH:
         phase_rules = RESEARCH_EPIC_SYSTEM_PROMPT
     elif snapshot.phase == PHASE_PLAN:
@@ -703,6 +722,8 @@ def _forced_write_tool(session: _Session) -> Optional[str]:
         return "propose_key_results"
     if need == "tasks":
         return "propose_tasks"
+    if need == "notes":
+        return "set_notes"
     return None
 
 

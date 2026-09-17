@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from bigas.okr.model import (
@@ -24,6 +25,7 @@ from bigas.okr.plan import (
     linked_work_titles,
     run_okr_plan,
 )
+from bigas.okr.next_steps import collect_red_kr_next_steps, flatten_red_kr_next_steps
 from bigas.okr.research import run_okr_research
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 from bigas.resources.product.jira_automation.description import (
@@ -107,6 +109,32 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
     key_results = normalize_key_results(ticket.get("key_results"))
     children = store.list_tickets_for_parent(key)
     linked = [t for t in children if not is_mechanical_okr_task(t, key_results)]
+    expected = expected_progress(
+        created_at=ticket.get("created_at"),
+        cycle_end=cycle_end_for(ticket.get("okr_cycle") or "", created_at=ticket.get("created_at")),
+    )
+    by_kr: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for child in linked:
+        kr_id = (child.get("parent_kr_id") or "").strip()
+        if kr_id:
+            by_kr[kr_id].append(
+                {
+                    "key": child.get("key"),
+                    "title": child.get("title"),
+                    "status": child.get("status"),
+                }
+            )
+    annotated_krs = [
+        {
+            **annotate_key_result(
+                dict(kr),
+                expected=expected,
+                child_tickets=[c for c in children if (c.get("parent_kr_id") or "") == kr.get("id")],
+            ),
+            "tickets": by_kr.get(str(kr.get("id") or ""), []),
+        }
+        for kr in key_results
+    ]
     evidence: Dict[str, str] = {}
     heuristic_updates: List[Dict[str, Any]] = []
     try:
@@ -122,7 +150,7 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         client, model_name = get_llm_client(feature="okr_plan")
         if llm_supports_tools(client):
             snapshot_krs = apply_current_updates(
-                [dict(kr) for kr in key_results],
+                [dict(kr) for kr in annotated_krs],
                 heuristic_updates,
             )
             looped = run_goal_loop(
@@ -174,10 +202,6 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         logger.warning("OKR in-progress goal loop failed for %s", key, exc_info=True)
         extra_briefing = ""
         key_results = apply_current_updates(key_results, heuristic_updates)
-    expected = expected_progress(
-        created_at=ticket.get("created_at"),
-        cycle_end=cycle_end_for(ticket.get("okr_cycle") or "", created_at=ticket.get("created_at")),
-    )
     annotated = [
         annotate_key_result(
             kr,
@@ -186,6 +210,10 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         )
         for kr in key_results
     ]
+    red_entries = collect_red_kr_next_steps(
+        [{"key": key, "key_results": [{**kr, "tickets": by_kr.get(str(kr.get("id") or ""), [])} for kr in annotated]}]
+    )
+    reasoned_steps = flatten_red_kr_next_steps(red_entries)
     risks = [kr for kr in annotated if kr.get("health") in {"at_risk", "off_track", "unmeasured"}]
     activity = [kr for kr in annotated if kr.get("activity_without_outcome")]
     briefing_bits = [
@@ -199,6 +227,8 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         )
     if extra_briefing:
         briefing_bits.append(extra_briefing)
+    elif reasoned_steps:
+        briefing_bits.append("Reasoned next steps: " + " · ".join(reasoned_steps[:6]) + ".")
     if risks:
         briefing_bits.append(
             "Watch: " + "; ".join(f"{kr['title']} ({kr['health']})" for kr in risks[:3])
@@ -225,6 +255,8 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         "phase": "in_progress",
         "started": [],
         "tasks_created": created,
+        "next_steps": reasoned_steps,
+        "red_kr_steps": red_entries,
         "progress": objective_progress(key_results),
         "briefing": briefing,
     }

@@ -71,6 +71,41 @@ def test_tools_plan_can_update_currents_and_tasks():
     assert "propose_key_results" not in names
 
 
+def test_tools_in_progress_includes_scoreboard_and_notes():
+    names = {tool["function"]["name"] for tool in tools_for_phase("in_progress", kind="objective")}
+    assert "get_scoreboard" in names
+    assert "set_notes" in names
+    assert "propose_tasks" in names
+
+
+def test_in_progress_requires_set_notes_when_kr_is_red():
+    llm = _ScriptedLlm(
+        [
+            _call("get_scoreboard"),
+            _call("list_open_work"),
+            _call("set_notes", briefing="GPWW-17 off track: clear gate GPWW-22; verify GA4 current."),
+            _call("done"),
+        ]
+    )
+    snapshot = _snapshot(
+        phase="in_progress",
+        key_results=[
+            {
+                "id": "kr-1",
+                "title": "Increase orders from 1 to 10",
+                "health": "off_track",
+                "measurable": True,
+                "baseline": 1,
+                "target": 10,
+                "current": 2,
+            }
+        ],
+    )
+    result = run_goal_loop(llm, snapshot=snapshot)
+    assert result.briefing
+    assert "GPWW-22" in result.briefing or "gate" in result.briefing.lower()
+
+
 def test_epic_research_has_tasks_not_krs():
     names = {tool["function"]["name"] for tool in tools_for_phase("research", kind="epic")}
     assert "propose_tasks" in names

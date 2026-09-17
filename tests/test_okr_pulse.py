@@ -152,6 +152,9 @@ def test_stale_current_and_unlinked_done_are_visible():
     assert any("10 wholesale orders" in item for item in snapshot["stale_krs"])
     assert any(g.get("key") == waiting["key"] for g in snapshot["pending_gates"])
     pulse = format_okr_pulse(snapshot)
+    assert "Next steps (red KRs" in pulse
+    assert waiting["key"] in pulse
+    assert "Create a task" not in pulse
     assert "sample size 2" in pulse
     assert "unlinked 1" in pulse
     assert "Pending human gates: 1" in pulse
@@ -198,7 +201,7 @@ def test_format_work_opened_lists_new_todos():
         ]
     )
     assert "GPWW-40" in text
-    assert "BIG-44: no new work" in text
+    assert "BIG-44: no new To Do" in text
     assert "cannot flatter" not in text
 
 

@@ -13,6 +13,7 @@ from bigas.okr.model import (
     normalize_key_results,
     objective_progress,
 )
+from bigas.okr.next_steps import collect_red_kr_next_steps, flatten_red_kr_next_steps
 from bigas.tickets.labels import resolve_ticket_labels
 from bigas.tickets.service import ticket_url
 
@@ -40,7 +41,6 @@ def _child_health_counts(objectives: List[Dict[str, Any]]) -> Dict[str, int]:
 
 def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[str, Any]:
     risks = []
-    next_tasks = []
     unmeasured = []
     theater = []
     for obj in objectives:
@@ -52,8 +52,8 @@ def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[s
                 unmeasured.append(label)
             if kr.get("activity_without_outcome"):
                 theater.append(label)
-            if kr.get("linked_open", 0) == 0 and kr.get("health") != "on_track":
-                next_tasks.append(f"Create a task for {label}")
+    red_kr_steps = collect_red_kr_next_steps(objectives)
+    next_tasks = flatten_red_kr_next_steps(red_kr_steps)
     headline_parts = []
     if stats["off_track"]:
         headline_parts.append(f"{stats['off_track']} KR(s) off track")
@@ -68,7 +68,8 @@ def _briefing(objectives: List[Dict[str, Any]], stats: Dict[str, int]) -> Dict[s
         "risks": risks[:6],
         "unmeasured": unmeasured[:6],
         "activity_without_outcome": theater[:6],
-        "this_week": next_tasks[:5]
+        "red_kr_steps": red_kr_steps,
+        "this_week": next_tasks[:12]
         or [
             "Confirm KR scores with live sources before adding more tasks.",
             "Kill one task that cannot name the KR it is supposed to move.",

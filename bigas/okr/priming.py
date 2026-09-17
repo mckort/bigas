@@ -121,9 +121,14 @@ def format_okr_priming_block(snapshot: Dict[str, Any]) -> str:
             f"Unlinked Done (all-time): {int(snapshot.get('unlinked_done') or 0)}. "
             "Do not celebrate those as KR progress."
         )
-    next_actions = (snapshot.get("briefing") or {}).get("this_week") or []
-    if next_actions:
-        lines.append(f"Suggested next: {next_actions[0]}")
+    red_steps = (snapshot.get("briefing") or {}).get("red_kr_steps") or []
+    if red_steps:
+        lines.append("Red KR next steps (mechanical heuristics — up to 3 each):")
+        for block in red_steps[:6]:
+            obj_key = str(block.get("objective_key") or "").strip()
+            title = str(block.get("kr_title") or "").strip()
+            for step in (block.get("steps") or [])[:3]:
+                lines.append(f"- {obj_key} · {title}: {step}")
     return "\n".join(lines)
 
 

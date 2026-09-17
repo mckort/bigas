@@ -81,10 +81,18 @@ def format_okr_pulse(snapshot: Dict[str, Any]) -> str:
         lines.append(f"- … +{len(gates) - 8} more")
     theater = int(stats.get("activity_without_outcome") or 0)
     lines.append(f"Activity without outcome (shipping while KR stuck): {theater}.")
-    next_actions = (snapshot.get("briefing") or {}).get("this_week") or []
-    if next_actions:
+    red_steps = (snapshot.get("briefing") or {}).get("red_kr_steps") or []
+    if red_steps:
         lines.append("")
-        lines.append(f"Next action: {next_actions[0]}")
+        lines.append("Next steps (red KRs — up to 3 reasoned steps each):")
+        for block in red_steps:
+            obj_key = str(block.get("objective_key") or "").strip()
+            title = str(block.get("kr_title") or "").strip()
+            health = str(block.get("health") or "red").replace("_", " ")
+            head = f"- **{obj_key} · {title}** ({health})" if title else f"- **{obj_key}** ({health})"
+            lines.append(head)
+            for step in (block.get("steps") or [])[:3]:
+                lines.append(f"  - {step}")
     lines.append("")
     lines.append(
         "_Derived from the ticket store. Any comment below is optional and "
@@ -135,7 +143,9 @@ def _format_work_opened(results: List[Dict[str, Any]]) -> str:
         if created:
             lines.append(f"- {key}: opened {', '.join(created)}.")
         else:
-            lines.append(f"- {key}: no new work (already linked, Done, or live in evidence).")
+            lines.append(f"- {key}: no new To Do (use gates/open work or reasoned steps below).")
+        for step in (item.get("next_steps") or [])[:9]:
+            lines.append(f"  · {step}")
     if opened:
         lines.append(f"Opened {opened} To Do card(s). Humans still drag work into In Progress.")
     return "\n".join(lines)
@@ -179,6 +189,7 @@ def build_weekly_okr_pulse(
                 "issue_key": item.get("issue_key"),
                 "ok": item.get("ok"),
                 "tasks_created": item.get("tasks_created") or [],
+                "next_steps": item.get("next_steps") or [],
             }
             for item in work_results
         ],
