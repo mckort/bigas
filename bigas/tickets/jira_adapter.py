@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from bigas.jira_exceptions import JiraError
 from bigas.resources.product.release_workflow import active_fix_version_from_env
-from bigas.tickets.constants import next_column
+from bigas.tickets.constants import is_in_release_cut, next_column
 from bigas.tickets.semver import versions_match
 from bigas.tickets.store import get_ticket_store
 
@@ -237,10 +237,19 @@ class TicketJiraAdapter:
         for key in keys:
             tickets.extend(self._store.list_tickets_by_project(key))
         out = []
+        board_cache: Dict[str, Optional[Dict[str, Any]]] = {}
         for ticket in tickets:
             if not versions_match(ticket.get("fix_version"), wanted):
                 continue
-            out.append(self._format_issue(ticket))
+            status = (ticket.get("status") or "").strip()
+            board_id = ticket.get("board_id") or ""
+            if board_id not in board_cache:
+                board_cache[board_id] = self._store.get_board(board_id) if board_id else None
+            board = board_cache[board_id]
+            proj = ((board or {}).get("project_key") or ticket.get("project_key") or "").upper()
+            if not is_in_release_cut(status, project_key=proj or None):
+                continue
+            out.append(self._format_issue(ticket, board=board))
         return out
 
     def mark_fix_version_released(

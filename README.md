@@ -838,13 +838,13 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 
 | Endpoint | Description |
 |---|---|
-| `POST create_ticket` | Create a Task or Bug on the internal board (or Jira); returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket. Optional `status` sets the column. Alias: `create_jira_issue` |
+| `POST create_ticket` | Create a Task, Feature, or Bug on the internal board (or Jira); returns issue key + URL. Shared by every chat agent and MCP client. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket. Optional `status` sets the column. Alias: `create_jira_issue` |
 | `POST lookup_ticket` | Look up one or more tickets (including parent Epic) and/or list open Epics. Accepts a range such as `BIG-15 to BIG-18`. Shared by every chat agent. Does not decide whether a new ticket should use that parent. Alias: `lookup_jira` |
 | `POST search_tickets` | Search the board (or Jira) with JQL. Alias: `search_jira` |
 | `POST update_ticket` | Move an existing ticket to a board column (`issue_key` + `status`) |
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
-| `POST create_release_notes` | Board/Jira Fix Version → release notes + blog draft + social copy; optional semver GitHub Release and mark released (board carry-forward) |
+| `POST create_release_notes` | Board/Jira Fix Version → release notes + blog draft + social copy (internal board: tickets in **Done** or **Final approval (manual)** on that release; Feature type → New features). Optional semver GitHub Release and mark released (board carry-forward) |
 | `POST cherry_pick_hotfix` | Cherry-pick a merged staging PR to `main` and open a hotfix PR (`@bigas hotfix ISSUE-KEY`) |
 | `POST progress_updates` | Issues moved to Done in last N days → team progress update → Discord and Product Manager chat |
 | `POST generate_weekly_x_post` | Last N days of internal-board Done + git (+ Jira if configured) → one X draft per mapped account → Discord and Product Manager chat Approve/Skip per account |

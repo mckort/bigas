@@ -1074,9 +1074,9 @@ def get_manifest():
                         },
                         "issue_type": {
                             "type": "string",
-                            "description": "Issue type name (Task or Bug). Default Task.",
+                            "description": "Issue type name (Task, Feature, or Bug). Default Task.",
                             "default": "Task",
-                            "enum": ["Task", "Bug"],
+                            "enum": ["Task", "Feature", "Bug"],
                         },
                         "marketing": {
                             "type": "boolean",

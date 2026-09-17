@@ -40,6 +40,26 @@ class ReleaseNotesError(RuntimeError):
     pass
 
 
+def _default_issue_client() -> Any:
+    from bigas.tickets.config import use_internal_board
+
+    if use_internal_board():
+        from bigas.tickets.jira_adapter import TicketJiraAdapter
+
+        return TicketJiraAdapter()
+    return JiraClient(JiraConfig.from_env())
+
+
+def _configured_project_keys(client: Any) -> List[str]:
+    from bigas.portfolio import jira_project_keys
+
+    config = getattr(client, "_config", None)
+    keys = getattr(config, "project_keys", None) if config is not None else None
+    if keys:
+        return list(keys)
+    return jira_project_keys()
+
+
 def _extract_json(text: str) -> Dict[str, Any]:
     """
     Best-effort extraction of JSON object from an LLM response.
@@ -165,12 +185,12 @@ class CreateReleaseNotesService:
     def __init__(
         self,
         *,
-        jira_client: Optional[JiraClient] = None,
+        jira_client: Optional[Any] = None,
         openai_api_key: Optional[str] = None,
         openai_model: Optional[str] = None,
     ):
         if jira_client is None:
-            jira_client = JiraClient(JiraConfig.from_env())
+            jira_client = _default_issue_client()
         self._jira = jira_client
 
         # Use shared LLM abstraction; ignore openai_api_key in favor of env-based config.
@@ -198,10 +218,13 @@ class CreateReleaseNotesService:
         _validate_fix_version(fix_version)
 
         try:
+            resolved_keys = normalize_project_keys(project_keys)
+            if not resolved_keys:
+                resolved_keys = normalize_project_keys(_configured_project_keys(self._jira))
             raw_issues = self._jira.search_issues_by_fix_version(
                 fix_version=fix_version,
                 jql_extra=(jql_extra or "").strip(),
-                project_keys=project_keys,
+                project_keys=resolved_keys or None,
             )
         except JiraError as e:
             raise ReleaseNotesError(str(e))
@@ -397,8 +420,10 @@ class CreateReleaseNotesService:
         if not create_github_release_flag and not mark_released:
             return None
 
-        keys = normalize_project_keys(project_keys) if project_keys is not None else list(
-            self._jira._config.project_keys
+        keys = (
+            normalize_project_keys(project_keys)
+            if project_keys is not None
+            else normalize_project_keys(_configured_project_keys(self._jira))
         )
         project_key = keys[0] if keys else ""
         repo = (github_repo or "").strip()

@@ -978,6 +978,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
               className="mt-1 input-field"
             >
               <option value="Task">Task</option>
+              <option value="Feature">Feature</option>
               <option value="Bug">Bug</option>
               <option value="Epic">Epic</option>
               <option value="Objective">Objective</option>

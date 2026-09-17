@@ -17,7 +17,7 @@ def _is_epic_ticket(ticket: Optional[Dict[str, Any]]) -> bool:
     return str((ticket or {}).get("issue_type") or "").strip().title() == "Epic"
 
 
-_GOAL_ISSUE_TYPES = ("Task", "Bug", "Epic", "Objective")
+_GOAL_ISSUE_TYPES = ("Task", "Bug", "Feature", "Epic", "Objective")
 
 _ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 

@@ -341,12 +341,39 @@ def test_search_issues_by_fix_version_matches_v_prefix():
         user_id="dev-user",
         key="VFA-38",
         fix_version="v0.1.0",
+        status="Done",
+    )
+    store.create_ticket(
+        board["board_id"],
+        title="Still open",
+        user_id="dev-user",
+        key="VFA-39",
+        fix_version="v0.1.0",
+        status="In Progress (AI)",
     )
     found = TicketJiraAdapter().search_issues_by_fix_version(
         fix_version="0.1.0",
         project_keys=["VFA"],
     )
     assert [issue["key"] for issue in found] == ["VFA-38"]
+
+
+def test_search_issues_by_fix_version_includes_final_approval():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Awaiting sign-off",
+        user_id="dev-user",
+        key="VFA-40",
+        fix_version="0.2.0",
+        status="Final approval (manual)",
+    )
+    found = TicketJiraAdapter().search_issues_by_fix_version(
+        fix_version="0.2.0",
+        project_keys=["VFA"],
+    )
+    assert [issue["key"] for issue in found] == ["VFA-40"]
 
 
 def test_board_ticket_list_payload_includes_fix_version():
