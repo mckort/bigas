@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from typing import Tuple
 
+from bigas.resources.cto.pr_review.github_client import BIGAS_REVIEW_MARKER
+
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
 # Must contain AUTOFIX_COMMIT_MARKER so loop protection and the Actions
 # skip-on-autofix-head gate still treat nits-only commits as autofix.
@@ -127,6 +129,15 @@ _SOFT_ONLY = re.compile(
     r"(?i)\b(consider|optional|todo\b|nice to have|future cleanup|non[- ]blocking|"
     r"nit\b|minor suggestion|style only)\b"
 )
+# Overall verdict lines that mention severity words only in negation (post-autofix closers).
+_SEV = r"(?:blockers?|important(?:\s+\w+){0,6}?\s+issues?)"
+_SEV_PAIR = rf"{_SEV}(?:\s+(?:or|and)\s+{_SEV})?"
+_NEGATED_SEVERITY_VERDICT = re.compile(
+    rf"(?i)\bno new {_SEV_PAIR}\b"
+    rf"|\bno {_SEV_PAIR}\b"
+    rf"|\b{_SEV_PAIR} (?:were|are|was) not found\b"
+    rf"|\bwithout (?:any )?{_SEV_PAIR}\b"
+)
 
 
 def _section_bodies(review_body: str) -> dict[str, str]:
@@ -157,12 +168,26 @@ def _section_has_findings(body: str) -> bool:
     return True
 
 
+def _line_is_verdict_closer(line: str) -> bool:
+    """True for LGTM / ready-to-merge lines, including negated blocker/important wording."""
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    if not (_CLEAN.search(stripped) or _NEGATED_SEVERITY_VERDICT.search(stripped)):
+        return False
+    if _CLEAN.search(stripped) and not _ACTIONABLE.search(stripped):
+        return True
+    remainder = _NEGATED_SEVERITY_VERDICT.sub("", stripped)
+    return not _ACTIONABLE.search(remainder)
+
+
 def _strip_section_closer(body: str) -> str:
     """Drop a trailing LGTM / ready-to-merge closer so it is not a finding."""
-    lines = (body or "").splitlines()
+    text = (body or "").replace(BIGAS_REVIEW_MARKER, "").strip()
+    lines = text.splitlines()
     while lines and not lines[-1].strip():
         lines.pop()
-    while lines and _CLEAN.search(lines[-1]) and not _ACTIONABLE.search(lines[-1]):
+    while lines and _line_is_verdict_closer(lines[-1]):
         lines.pop()
         while lines and not lines[-1].strip():
             lines.pop()

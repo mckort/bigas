@@ -93,6 +93,33 @@ def test_ready_to_merge_requires_empty_minor_until_nits_budget():
     assert review_is_ready_to_merge(_MINOR_LEFTOVER, minor_autofix_count=1) is False
 
 
+def test_ready_to_merge_clean_re_review_verdict_in_minor():
+    """Post-autofix verdict mentions important/blocker in negation — not leftover Minor."""
+    review = (
+        "### Blockers\nNone.\n\n"
+        "### Important\nNone.\n\n"
+        "### Minor\nNone.\n\n"
+        "No new blocker or important issues were found, and the PR is ready to merge.\n"
+        "<!-- bigas-ai-review-marker -->\n"
+    )
+    assert review_is_ready_to_merge(review) is True
+    ok, _reason = review_needs_autofix(review)
+    assert ok is False
+
+
+def test_mixed_negated_severity_and_actionable_not_stripped_as_closer():
+    """A trailing line with negated severity plus a real finding must not be dropped."""
+    review = (
+        "### Blockers\n"
+        "- No blockers found in auth, but fix the critical null pointer on line 42.\n\n"
+        "### Important\nNone.\n\n"
+        "### Minor\nNone.\n"
+    )
+    ok, _reason = review_needs_autofix(review)
+    assert ok is True
+    assert review_is_ready_to_merge(review) is False
+
+
 def test_ready_to_merge_ignores_ready_line_when_minor_has_findings():
     assert "ready to merge" in _MINOR_LEFTOVER.lower()
     assert review_is_ready_to_merge(_MINOR_LEFTOVER) is False
