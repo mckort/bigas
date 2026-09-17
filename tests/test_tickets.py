@@ -773,6 +773,52 @@ def test_create_in_progress_dispatches_automation(monkeypatch):
     assert called.get("key") == ticket["key"]
 
 
+def test_create_reuses_open_ticket_with_same_title(monkeypatch):
+    called = {}
+
+    def fake_dispatch(ticket, **kwargs):
+        called["count"] = called.get("count", 0) + 1
+
+    monkeypatch.setattr(
+        "bigas.tickets.service.dispatch_ticket_status_automation", fake_dispatch
+    )
+    first = TicketService().create_ticket_for_project(
+        "VFA",
+        title="Meeting recording stops around 60 minutes after Firebase token refresh",
+        description="First attempt",
+        issue_type="Bug",
+        status="In Progress (AI)",
+    )
+    second = TicketService().create_ticket_for_project(
+        "VFA",
+        title="  Meeting recording stops around 60 minutes after Firebase token refresh.  ",
+        description="Timed-out retry",
+        issue_type="Bug",
+        status="In Progress (AI)",
+    )
+    assert first["key"] == second["key"]
+    assert second.get("reused") is True
+    assert called.get("count") == 1
+
+
+def test_create_after_done_allows_new_ticket_with_same_title():
+    first = TicketService().create_ticket_for_project(
+        "VFA",
+        title="Recurring ingest bug",
+        description="First time",
+        issue_type="Bug",
+    )
+    TicketService().set_status(first["key"], "Done")
+    second = TicketService().create_ticket_for_project(
+        "VFA",
+        title="Recurring ingest bug",
+        description="It came back",
+        issue_type="Bug",
+    )
+    assert second["key"] != first["key"]
+    assert not second.get("reused")
+
+
 def test_create_todo_does_not_dispatch_automation(monkeypatch):
     called = {}
 

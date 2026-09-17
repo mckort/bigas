@@ -15,6 +15,7 @@ from bigas.tickets.constants import (
     resolve_column_status,
     unknown_column_error,
 )
+from bigas.tickets.dedup import find_open_duplicate_ticket
 from bigas.tickets.labels import resolve_ticket_labels
 from bigas.tickets.store import get_ticket_store
 
@@ -571,6 +572,23 @@ class TicketService:
             if not mapped:
                 raise ValueError(unknown_column_error(resolved, project_key=project_key))
             resolved = mapped
+        if not (key or "").strip():
+            existing = find_open_duplicate_ticket(
+                self._store.list_tickets_by_project(
+                    project_key,
+                    issue_type=issue_type,
+                ),
+                title=title,
+                issue_type=issue_type,
+            )
+            if existing:
+                logger.info(
+                    "Reusing open ticket %s instead of creating a duplicate title",
+                    existing.get("key"),
+                )
+                reused = ticket_to_api(existing)
+                reused["reused"] = True
+                return reused
         ticket = self._store.create_ticket(
             board["board_id"],
             title=title,

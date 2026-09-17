@@ -1045,6 +1045,8 @@ def get_manifest():
                 "description": (
                     "Create a ticket on the internal board (or Jira if that is the ticket source). "
                     "Available to every chat agent and MCP client. "
+                    "If an open ticket in the same project already has the same or near-identical title, "
+                    "that ticket is returned with reused=true instead of creating a second card. "
                     "Returns the issue key (e.g. BIG-42) and browse URL. "
                     "For marketing-related tickets (website, SEO, content, ads), set marketing=true "
                     "to add the label \"marketing\" (no other labels are needed). "
