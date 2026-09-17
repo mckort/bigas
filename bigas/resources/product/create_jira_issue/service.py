@@ -113,8 +113,8 @@ class CreateJiraIssueService:
                         "project_key": proj,
                         "deduplicated": True,
                     }
-            except JiraError:
-                pass
+            except Exception as exc:
+                logger.debug("Jira dedup check skipped: %s", exc)
 
         if use_internal_board():
             from bigas.tickets.service import TicketService

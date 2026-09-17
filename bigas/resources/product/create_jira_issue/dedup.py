@@ -17,10 +17,16 @@ def find_open_duplicate_internal(
     proj = (project_key or "").strip().upper()
     if not proj:
         return None
+    if not (title or "").strip():
+        return None
     itype = str(issue_type or "Task").strip().title() or "Task"
     store = get_ticket_store()
     for ticket in store.list_tickets_by_project(proj, issue_type=itype):
-        if (ticket.get("status") or "").strip() == "Done":
+        status = (ticket.get("status") or "").strip().lower()
+        if (
+            status in {"done", "closed", "cancelled", "canceled", "rejected"}
+            or ticket.get("statusCategory") == "Done"
+        ):
             continue
         existing_title = str(ticket.get("title") or "")
         if titles_are_same_work(title, existing_title):
@@ -43,8 +49,10 @@ def find_open_duplicate_jira(
     proj = (project_key or "").strip().upper()
     if not proj:
         return None
+    if not (title or "").strip():
+        return None
     itype = str(issue_type or "Task").strip().title() or "Task"
-    safe_type = itype.replace('"', '\\"')
+    safe_type = itype.replace("\\", "\\\\").replace('"', '\\"')
     jql = (
         f"project = {proj} "
         f'AND issuetype = "{safe_type}" '
@@ -63,9 +71,12 @@ def find_open_duplicate_jira(
         )
     except JiraError:
         return None
-    for issue in raw:
+    for issue in raw or []:
         fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
         summary = str(fields.get("summary") or "")
         if titles_are_same_work(title, summary):
-            return compact_jira_issue(issue, base_url=client._config.base_url)
+            base_url = getattr(getattr(client, "_config", None), "base_url", None) or getattr(
+                client, "base_url", ""
+            )
+            return compact_jira_issue(issue, base_url=base_url)
     return None
