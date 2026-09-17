@@ -176,6 +176,8 @@ def test_autofix_nits_only_prompt_uses_markers():
     )
     assert "[bigas-autofix] [nits-only]" in prompt
     assert "Fix only the ### Minor items" in prompt
+    assert "4. Push commits directly" in prompt
+    assert "\n5. Every commit message" in prompt
 
 
 def test_autofix_prompt_forbids_confirmation():
