@@ -305,12 +305,9 @@ class _Session:
         self.nudged = False
 
     def _red_kr_count(self) -> int:
-        count = 0
-        for kr in self.snapshot.key_results:
-            health = kr.get("health")
-            if health in {"at_risk", "off_track", "unmeasured"}:
-                count += 1
-        return count
+        from bigas.okr.next_steps import is_red_kr
+
+        return sum(1 for kr in self.snapshot.key_results if is_red_kr(kr))
 
     def required_write(self) -> Optional[str]:
         snap = self.snapshot
@@ -332,7 +329,7 @@ class _Session:
         if need == "tasks":
             return self.proposed_tasks or bool(self.tasks)
         if need == "notes":
-            return bool(self.briefing.strip())
+            return bool((getattr(self, "briefing", "") or "").strip())
         return True
 
     def result(self, *, used_tools: bool, used_llm: bool, turns: int, trace: List[str]) -> GoalLoopResult:

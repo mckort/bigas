@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from bigas.chat.activity import post_to_agent_thread, resolve_chat_target_user_id
+from bigas.okr.next_steps import MAX_RENDERED_STEPS
 from bigas.okr.scoreboard import (
     DEFAULT_LOOKBACK_DAYS,
     format_health_counts,
@@ -144,7 +145,7 @@ def _format_work_opened(results: List[Dict[str, Any]]) -> str:
             lines.append(f"- {key}: opened {', '.join(created)}.")
         else:
             lines.append(f"- {key}: no new To Do (use gates/open work or reasoned steps below).")
-        for step in (item.get("next_steps") or [])[:9]:
+        for step in (item.get("next_steps") or [])[:MAX_RENDERED_STEPS]:
             lines.append(f"  · {step}")
     if opened:
         lines.append(f"Opened {opened} To Do card(s). Humans still drag work into In Progress.")

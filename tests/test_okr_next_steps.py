@@ -43,7 +43,7 @@ def test_reason_points_at_gate_not_create_task():
             }
         ],
     }
-    steps = reason_kr_next_steps(kr, objective_key="GPWW-17")
+    steps = reason_kr_next_steps(kr)
     assert steps
     assert any("gate" in s.lower() and "GPWW-22" in s for s in steps)
     assert not any("create a task" in s.lower() for s in steps)
@@ -63,7 +63,7 @@ def test_done_work_does_not_stop_red_kr_steps():
             {"key": "GPWW-30", "title": "Instrument orders", "status": "Done"},
         ],
     }
-    steps = reason_kr_next_steps(kr, objective_key="GPWW-17", stale_days=7)
+    steps = reason_kr_next_steps(kr, stale_days=7)
     assert any("done" in s.lower() for s in steps)
     assert any("stale" in s.lower() or "verify" in s.lower() for s in steps)
 

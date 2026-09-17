@@ -25,7 +25,11 @@ from bigas.okr.plan import (
     linked_work_titles,
     run_okr_plan,
 )
-from bigas.okr.next_steps import collect_red_kr_next_steps, flatten_red_kr_next_steps
+from bigas.okr.next_steps import (
+    MAX_RENDERED_STEPS,
+    collect_red_kr_next_steps,
+    flatten_red_kr_next_steps,
+)
 from bigas.okr.research import run_okr_research
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 from bigas.resources.product.jira_automation.description import (
@@ -203,16 +207,17 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
         extra_briefing = ""
         key_results = apply_current_updates(key_results, heuristic_updates)
     annotated = [
-        annotate_key_result(
-            kr,
-            expected=expected,
-            child_tickets=[c for c in children if (c.get("parent_kr_id") or "") == kr.get("id")],
-        )
+        {
+            **annotate_key_result(
+                kr,
+                expected=expected,
+                child_tickets=[c for c in children if (c.get("parent_kr_id") or "") == kr.get("id")],
+            ),
+            "tickets": by_kr.get(str(kr.get("id") or ""), []),
+        }
         for kr in key_results
     ]
-    red_entries = collect_red_kr_next_steps(
-        [{"key": key, "key_results": [{**kr, "tickets": by_kr.get(str(kr.get("id") or ""), [])} for kr in annotated]}]
-    )
+    red_entries = collect_red_kr_next_steps([{"key": key, "key_results": annotated}])
     reasoned_steps = flatten_red_kr_next_steps(red_entries)
     risks = [kr for kr in annotated if kr.get("health") in {"at_risk", "off_track", "unmeasured"}]
     activity = [kr for kr in annotated if kr.get("activity_without_outcome")]
@@ -228,7 +233,9 @@ def run_okr_in_progress(ticket: Dict[str, Any]) -> Dict[str, Any]:
     if extra_briefing:
         briefing_bits.append(extra_briefing)
     elif reasoned_steps:
-        briefing_bits.append("Reasoned next steps: " + " · ".join(reasoned_steps[:6]) + ".")
+        briefing_bits.append(
+            "Reasoned next steps: " + " · ".join(reasoned_steps[:MAX_RENDERED_STEPS]) + "."
+        )
     if risks:
         briefing_bits.append(
             "Watch: " + "; ".join(f"{kr['title']} ({kr['health']})" for kr in risks[:3])

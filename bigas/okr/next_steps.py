@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Sequence
 
 RED_KR_HEALTH = frozenset({"at_risk", "off_track", "unmeasured"})
+MAX_RENDERED_STEPS = 6
 
 
 def is_red_kr(kr: Dict[str, Any]) -> bool:
@@ -22,7 +23,6 @@ def _is_done(status: str) -> bool:
 def reason_kr_next_steps(
     kr: Dict[str, Any],
     *,
-    objective_key: str,
     stale_days: int | None = None,
 ) -> List[str]:
     """Up to three concrete next steps for one red KR."""
@@ -35,8 +35,12 @@ def reason_kr_next_steps(
     tickets = list(kr.get("tickets") or [])
     open_items = [t for t in tickets if not _is_done(str(t.get("status") or ""))]
     done_items = [t for t in tickets if _is_done(str(t.get("status") or ""))]
+    linked_open = int(kr.get("linked_open") or 0)
+    linked_done = int(kr.get("linked_done") or 0)
+    done_count = len(done_items) if done_items or tickets else linked_done
     gates = [t for t in open_items if _is_manual_gate(str(t.get("status") or ""))]
     open_work = [t for t in open_items if not _is_manual_gate(str(t.get("status") or ""))]
+    has_open_levers = bool(open_items) or bool(gates) or linked_open > 0
 
     for gate in gates[:2]:
         key = str(gate.get("key") or "").strip()
@@ -50,9 +54,9 @@ def reason_kr_next_steps(
         label = f"{key} ({title})" if title else key or "open work"
         steps.append(f"Advance linked work {label} or drop it if it will not move the KR number.")
 
-    if kr.get("activity_without_outcome"):
+    if kr.get("activity_without_outcome") and done_count > 0:
         steps.append(
-            f"{len(done_items)} Done item(s) did not move this KR — change the lever, not the task count."
+            f"{done_count} Done item(s) did not move this KR — change the lever, not the task count."
         )
 
     if is_stale_current(kr, stale_days=days) and kr.get("measurable"):
@@ -67,7 +71,7 @@ def reason_kr_next_steps(
         elif not steps:
             steps.append("Define how to measure this KR before opening execution tasks.")
 
-    if done_items and health in {"off_track", "at_risk"} and len(steps) < 3:
+    if done_count > 0 and health in {"off_track", "at_risk"} and len(steps) < 3:
         keys = ", ".join(str(t.get("key") or "") for t in done_items[:3] if t.get("key"))
         suffix = f" (Done: {keys})" if keys else ""
         steps.append(
@@ -75,7 +79,7 @@ def reason_kr_next_steps(
             f"{suffix}."
         )
 
-    if not open_items and not gates and health in {"off_track", "at_risk"}:
+    if not has_open_levers and health in {"off_track", "at_risk"}:
         current = kr.get("current")
         target = kr.get("target")
         if current is not None and target is not None:
@@ -115,11 +119,7 @@ def collect_red_kr_next_steps(
         for kr in obj.get("key_results") or []:
             if not is_red_kr(kr):
                 continue
-            steps = reason_kr_next_steps(
-                kr,
-                objective_key=obj_key,
-                stale_days=stale_days,
-            )
+            steps = reason_kr_next_steps(kr, stale_days=stale_days)
             if not steps:
                 continue
             out.append(
