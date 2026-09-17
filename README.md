@@ -513,7 +513,9 @@ Production versions live on **`/board` → Releases** (per project: VFA, BIG, �
 
 Each card shows its release. The ticket field is a dropdown of project versions.
 
-**Closing a version** happens when you **Ship** it on the board (GitHub release + deploy; the board closes after that deploy is green), when you **Mark released** (close the board cut without deploying — use this if prod already has the cut), when a **successful prod deploy** runs on that semver tag (`v0.9.0` / `release_version=0.9.0`), or when a **prepare deploy** of that version finishes green on `main`. A normal deploy of `main` without a version still does **not** close a cut (VFA deploys often; that would kill the active release).
+**PR-locking a version** happens when **prepare deploy** merges that cut onto `main` (or finds it already on `main`): Bigas sets `pr_locked` on the board release, GitHub-locks `staging-x.y.z`, and moves the board default to the next unreleased version (creates it if missing). The cut stays open on the board until deploy succeeds — no GitHub release, ticket carry-forward, or rebase of newer staging branches yet.
+
+**Closing a version** happens when you **Ship** it on the board (GitHub release + deploy; the board closes after that deploy is green), when you **Mark released** (close the board cut without deploying — use this if prod already has the cut), when a **successful prod deploy** runs on that semver tag (`v0.9.0` / `release_version=0.9.0`), or when a **prepare deploy** of that version finishes a green prod deploy on `main`. A normal deploy of `main` without a version still does **not** close a cut (VFA deploys often; that would kill the active release).
 
 On close Bigas:
 
@@ -528,7 +530,7 @@ Deleting a release on the board (including a released one) only removes the boar
 
 ### Staging branch, fix versions, and hotfixes (BIG-42)
 
-Some products (e.g. VC Field Assistant) accumulate features on **versioned staging branches** while **`main`** stays production-ready. `PROJECT_BRANCH_MAPPING=VFA:staging` is a prefix: a ticket on board release `0.2.3` opens its PR against **`staging-0.2.3`**. The first ticket on a new version creates that branch from **`main`**. `prepare deploy VFA 0.2.3` merges only `staging-0.2.3` → `main`, so later work on `0.3.0` stays off the cut. After that deploy is green, Bigas rebases newer `staging-*` branches onto the new `main` (`rebase_release.yml`). Conflicts open a `bigas-rebase/*` PR and launch Cursor to resolve them.
+Some products (e.g. VC Field Assistant) accumulate features on **versioned staging branches** while **`main`** stays production-ready. `PROJECT_BRANCH_MAPPING=VFA:staging` is a prefix: a ticket on board release `0.2.3` opens its PR against **`staging-0.2.3`**. The first ticket on a new version creates that branch from **`main`**. `prepare deploy VFA 0.2.3` merges only `staging-0.2.3` → `main`, locks that staging branch for new PRs, and bumps the board default to the next unreleased cut so later work on `0.3.0` stays off the merge. After the prod deploy is green, Bigas closes the board release, rebases newer `staging-*` branches onto the new `main` (`rebase_release.yml`), and conflicts open a `bigas-rebase/*` PR and launch Cursor to resolve them.
 
 | Setting | Purpose |
 |---|---|

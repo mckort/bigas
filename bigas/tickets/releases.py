@@ -64,6 +64,8 @@ def set_default_release(project_key: str, release_id: str, is_default: bool = Tr
         raise ReleaseError("Release not found")
     if item.get("released") and is_default:
         raise ReleaseError("A released version cannot be the default")
+    if item.get("pr_locked") and is_default:
+        raise ReleaseError("A PR-locked version cannot be the default")
     updated = store.update_release(release_id, is_default=bool(is_default))
     if not updated:
         raise ReleaseError("Release not found")
@@ -88,6 +90,15 @@ def is_board_version_released(project_key: str, version: str) -> bool:
     return bool(item and item.get("released"))
 
 
+def is_board_version_pr_forbidden(project_key: str, version: str) -> bool:
+    """True when new PRs must not target this version's staging branch."""
+    name = (version or "").strip()
+    if not name:
+        return False
+    item = get_release_store().get_release_by_name(project_key, name)
+    return bool(item and (item.get("released") or item.get("pr_locked")))
+
+
 def lookup_board_release_defaults(project_key: str) -> Dict[str, Any]:
     """Board releases plus the default version and suggested PR base."""
     from bigas.resources.product.release_workflow import (
@@ -102,6 +113,7 @@ def lookup_board_release_defaults(project_key: str) -> Dict[str, Any]:
             "name": (item.get("name") or "").strip(),
             "is_default": bool(item.get("is_default")),
             "released": bool(item.get("released")),
+            "pr_locked": bool(item.get("pr_locked")),
         }
         for item in list_releases(proj)
         if (item.get("name") or "").strip()
@@ -155,7 +167,7 @@ def lookup_board_release_defaults(project_key: str) -> Dict[str, Any]:
     forbidden_pr_bases = [
         versioned_feature_branch(prefix, item["name"])
         for item in releases
-        if item.get("released") and item.get("name")
+        if (item.get("released") or item.get("pr_locked")) and item.get("name")
     ]
     return {
         "project_key": proj,
@@ -180,11 +192,63 @@ def _lock_released_cut(project_key: str, version: str) -> None:
         )
 
 
+def _next_default_after_lock(project_key: str, locked_name: str) -> str:
+    """Next board default after prepare locks a cut (create minor if missing)."""
+    for version in unreleased_versions_after(project_key, locked_name):
+        item = get_release_store().get_release_by_name(project_key, version)
+        if item and not item.get("pr_locked"):
+            return version
+    return _ensure_next_minor(project_key, locked_name)
+
+
+def lock_release_for_new_prs(project_key: str, version: str) -> Dict[str, Any]:
+    """After prepare merge to main: forbid new PRs on this cut without closing it."""
+    proj = (project_key or "").strip().upper()
+    try:
+        name = normalize_version_name(version)
+    except SemverError as exc:
+        raise ReleaseError(str(exc)) from exc
+
+    store = get_release_store()
+    item = store.get_release_by_name(proj, name)
+    if not item:
+        raise ReleaseError(f"Release {name} not found for {proj}")
+    if item.get("released"):
+        return {
+            "release": item,
+            "already_locked": True,
+            "new_default_version": None,
+        }
+    if item.get("pr_locked"):
+        return {
+            "release": item,
+            "already_locked": True,
+            "new_default_version": default_fix_version(proj),
+        }
+
+    next_default = _next_default_after_lock(proj, name)
+    next_item = store.get_release_by_name(proj, next_default)
+    if next_item:
+        store.update_release(next_item["release_id"], is_default=True)
+    updated = store.update_release(
+        item["release_id"],
+        pr_locked=True,
+        pr_locked_at=_utcnow_iso(),
+        is_default=False,
+    )
+    _lock_released_cut(proj, name)
+    return {
+        "release": updated or item,
+        "already_locked": False,
+        "new_default_version": next_default,
+    }
+
+
 def lowest_unreleased_version(project_key: str) -> Optional[str]:
     """Lowest unreleased board version, or None when the project has none."""
     candidates: List[tuple] = []
     for item in get_release_store().list_releases(project_key):
-        if item.get("released"):
+        if item.get("released") or item.get("pr_locked"):
             continue
         name = (item.get("name") or "").strip()
         try:
@@ -209,7 +273,7 @@ def fix_version_for_new_ticket(
     from bigas.resources.product.release_workflow import version_from_feature_branch
 
     from_branch = version_from_feature_branch(git_ref or "")
-    if from_branch and not is_board_version_released(project_key, from_branch):
+    if from_branch and not is_board_version_pr_forbidden(project_key, from_branch):
         return from_branch
     return default_fix_version(project_key) or lowest_unreleased_version(project_key)
 

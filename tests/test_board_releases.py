@@ -22,6 +22,7 @@ from bigas.tickets.releases import (
     delete_release,
     lookup_board_release_defaults,
     fix_version_for_new_ticket,
+    lock_release_for_new_prs,
     mark_release_released,
     maybe_close_board_release_from_workflow,
     ship_release,
@@ -198,6 +199,42 @@ def test_close_without_creating_next_moves_to_existing(monkeypatch):
     result = close_release("VFA", "0.1.0", create_github=False, create_next_if_missing=False)
     assert result["next_version"] == "0.2.0"
     assert store.get_ticket(open_ticket["ticket_id"])["fix_version"] == "0.2.0"
+
+
+def test_lock_release_for_new_prs_moves_default_and_forbids_pr_base(monkeypatch):
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.lock_released_feature_branch",
+        lambda **kwargs: {"locked": True},
+    )
+    create_release("VFA", name="0.3.0", is_default=True)
+    create_release("VFA", name="0.4.0", is_default=False)
+
+    result = lock_release_for_new_prs("VFA", "0.3.0")
+    assert result["already_locked"] is False
+    store = get_release_store()
+    locked = store.get_release_by_name("VFA", "0.3.0")
+    assert locked["pr_locked"] is True
+    assert locked["released"] is False
+    assert locked["is_default"] is False
+    assert store.get_release_by_name("VFA", "0.4.0")["is_default"] is True
+
+    lookup = lookup_board_release_defaults("VFA")
+    assert lookup["pr_base"] == "staging-0.4.0"
+    assert "staging-0.3.0" in lookup["forbidden_pr_bases"]
+    assert fix_version_for_new_ticket("VFA", git_ref="staging-0.3.0") == "0.4.0"
+
+
+def test_lock_release_creates_next_minor_when_missing(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.lock_released_feature_branch",
+        lambda **kwargs: None,
+    )
+    create_release("VFA", name="0.5.0", is_default=True)
+    lock_release_for_new_prs("VFA", "0.5.0")
+    store = get_release_store()
+    assert store.get_release_by_name("VFA", "0.6.0") is not None
+    assert store.get_release_by_name("VFA", "0.6.0")["is_default"] is True
 
 
 def test_close_release_locks_versioned_staging_branch(monkeypatch):

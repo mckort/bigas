@@ -59,7 +59,7 @@ def _oldest_unreleased_version(project_key: str) -> Optional[str]:
         return None
     candidates: List[tuple] = []
     for item in list_releases(project_key) or []:
-        if item.get("released"):
+        if item.get("released") or item.get("pr_locked"):
             continue
         name = (item.get("name") or "").strip()
         try:
