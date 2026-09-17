@@ -101,3 +101,28 @@ def test_ticket_adapter_replaces_released_fix_version(monkeypatch):
     assert adapter.ensure_issue_fix_version("VFA-103", project_key="VFA") == "0.4.0"
     updated = store.get_ticket_by_key("VFA-103")
     assert updated["fix_version"] == "0.4.0"
+
+
+def test_ticket_adapter_replaces_pr_locked_fix_version(monkeypatch):
+    reset_release_store_for_tests()
+    monkeypatch.delenv("BIGAS_PROJECT_ACTIVE_FIX_VERSION", raising=False)
+    from bigas.tickets.releases import create_release
+
+    create_release("VFA", name="0.7.0")
+    create_release("VFA", name="0.8.0", is_default=True)
+    item = get_release_store().get_release_by_name("VFA", "0.7.0")
+    get_release_store().update_release(item["release_id"], pr_locked=True)
+
+    store = TicketJiraAdapter()._store
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Stale locked cut",
+        user_id="dev-user",
+        key="VFA-104",
+        fix_version="0.7.0",
+    )
+    adapter = TicketJiraAdapter()
+    assert adapter.ensure_issue_fix_version("VFA-104", project_key="VFA") == "0.8.0"
+    updated = store.get_ticket_by_key("VFA-104")
+    assert updated["fix_version"] == "0.8.0"

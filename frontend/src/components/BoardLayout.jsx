@@ -908,7 +908,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
     assignee: ticket?.assignee || '',
     fix_version: ticket
       ? ticketFixVersion(ticket)
-      : ((releases || []).find((item) => item.is_default && !item.released)?.name || ''),
+      : ((releases || []).find((item) => item.is_default && !item.released && !item.pr_locked)?.name || ''),
     issue_type: ticket?.issue_type || 'Task',
     labels: ticketLabels(ticket),
     parent_key: ticket ? ticketParentKey(ticket) : (initialParentKey || ''),
@@ -1178,6 +1178,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                   <option key={release.release_id || release.name} value={release.name}>
                     {release.name}
                     {release.released ? ' (released)' : ''}
+                    {release.pr_locked && !release.released ? ' (PR locked)' : ''}
                     {release.is_default ? ' · default' : ''}
                   </option>
                 ))}
@@ -1463,12 +1464,13 @@ function ReleasesPanel({ projectKey, releases, onClose, onChanged }) {
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-sm">
                       {release.name}
+                      {release.pr_locked ? ' · PR locked' : ''}
                       {release.is_default ? ' · default' : ''}
                     </span>
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || Boolean(release.pr_locked)}
                         className="text-xs px-2 py-1 rounded-lg border border-border min-h-[32px]"
                         onClick={() =>
                           run(() =>

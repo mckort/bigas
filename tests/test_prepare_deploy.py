@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from unittest.mock import patch
 
 os.environ.setdefault("GA4_PROPERTY_ID", "test-property")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
@@ -38,18 +39,37 @@ from bigas.resources.devops.prepare import (
     review_and_merge_release_pr,
     run_prepare_deploy,
 )
-from bigas.tickets.release_store import reset_release_store_for_tests
+from bigas.tickets.release_store import get_release_store, reset_release_store_for_tests
 from bigas.tickets.releases import create_release
 from bigas.tickets.store import get_ticket_store
 from bigas.tickets import store as ticket_store_module
 
+_github_locks: list = []
+_lock_patcher = None
+
+
+def _record_github_lock(**kwargs):
+    _github_locks.append(kwargs)
+    return {"locked": True}
+
 
 def setup_function():
+    global _lock_patcher
     ticket_store_module._store = None
     reset_release_store_for_tests()
+    _github_locks.clear()
+    _lock_patcher = patch(
+        "bigas.resources.product.release_branches.lock_released_feature_branch",
+        _record_github_lock,
+    )
+    _lock_patcher.start()
 
 
 def teardown_function():
+    global _lock_patcher
+    if _lock_patcher is not None:
+        _lock_patcher.stop()
+        _lock_patcher = None
     ticket_store_module._store = None
     reset_release_store_for_tests()
 
@@ -1268,6 +1288,71 @@ def test_prepare_stops_when_merge_skipped_and_cut_missing(monkeypatch):
     assert "will not ask to deploy" in blob
     assert "On `main` now" in blob
     assert "Reply **yes**" not in blob
+
+
+def test_prepare_after_merge_locks_cut_for_new_prs(monkeypatch):
+    create_release("VFA", name="0.7.0", is_default=True)
+    create_release("VFA", name="0.8.0")
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "merged", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [],
+            "compared": ["deploy-web-old → main"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.7.0",
+    )
+    assert result["status"] == "complete"
+    item = get_release_store().get_release_by_name("VFA", "0.7.0")
+    assert item["pr_locked"] is True
+    assert item["released"] is False
+    eight = get_release_store().get_release_by_name("VFA", "0.8.0")
+    assert eight["is_default"] is True
+    assert _github_locks and _github_locks[0]["version"] == "0.7.0"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "Locked this cut for new PRs" in blob
+    assert "0.8.0" in blob
+
+
+def test_prepare_already_on_main_locks_cut_for_new_prs(monkeypatch):
+    create_release("VFA", name="0.7.0", is_default=True)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [],
+            "compared": ["deploy-web-old → main"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.7.0",
+    )
+    item = get_release_store().get_release_by_name("VFA", "0.7.0")
+    assert item["pr_locked"] is True
+    assert _github_locks and _github_locks[0]["version"] == "0.7.0"
+    nxt = get_release_store().get_release_by_name("VFA", "0.8.0")
+    assert nxt and nxt["is_default"] is True
 
 
 def test_prepare_after_merge_shows_main_commits(monkeypatch):

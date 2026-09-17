@@ -1348,6 +1348,29 @@ def continue_after_main_ready(
         _post(thread_id, str(exc))
         return {"status": "complete", "summary": str(exc)}
 
+    try:
+        from bigas.tickets.releases import ReleaseError, lock_release_for_new_prs
+
+        locked = lock_release_for_new_prs(key, ver)
+        if not locked.get("already_locked") and not locked.get("already_released"):
+            nxt = locked.get("next_version")
+            extra = f" New PRs should target **{nxt}**." if nxt else ""
+            _post(
+                thread_id,
+                f"🔒 **{key} {ver}** is on `main`. Locked this cut for new PRs.{extra}",
+            )
+    except ReleaseError as exc:
+        _post(
+            thread_id,
+            f"Cut is on `main`, but I could not lock {key} {ver} for new PRs: {exc}",
+        )
+    except Exception:
+        logger.exception("Could not lock %s %s for new PRs after merge", key, ver)
+        _post(
+            thread_id,
+            f"Cut is on `main`, but I could not lock {key} {ver} for new PRs.",
+        )
+
     report, in_cut, open_tickets = format_version_ticket_report(key, ver)
     _post(thread_id, report)
     git = reconcile_release_with_git(
