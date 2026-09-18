@@ -1,4 +1,14 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  ACTIVITY_PANE_DEFAULT_WIDTH,
+  ACTIVITY_PANE_MAX_WIDTH,
+  ACTIVITY_PANE_MIN_WIDTH,
+  clampActivityPaneWidth,
+  persistActivityPaneWidth,
+  readStoredActivityPaneWidth,
+} from '../lib/activityPaneWidth.js'
+
+const DESKTOP_MEDIA = '(min-width: 1024px)'
 
 const PREVIEW_LINES = 5
 const URL_RE = /(https?:\/\/[^\s<>"'`\]},]+(?:\([^\s<>"'`\]},)]*\)[^\s<>"'`\]},]*)*)/g
@@ -127,16 +137,95 @@ function CollapsibleContent({ content, onOpenBoard }) {
 }
 
 export default function ActivityFeed({ events, open, onClose, onOpenBoard }) {
+  const [desktopWidth, setDesktopWidth] = useState(() => readStoredActivityPaneWidth())
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(DESKTOP_MEDIA).matches
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(DESKTOP_MEDIA)
+    const onChange = () => setIsDesktop(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  useEffect(() => {
+    if (!isDesktop) return undefined
+    const onResize = () => {
+      setDesktopWidth((w) => clampActivityPaneWidth(w))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [isDesktop])
+
+  const resetDesktopWidth = useCallback(() => {
+    const next = clampActivityPaneWidth(ACTIVITY_PANE_DEFAULT_WIDTH)
+    setDesktopWidth(next)
+    persistActivityPaneWidth(next)
+  }, [])
+
+  const startResize = useCallback((clientX) => {
+    const startX = clientX
+    const startWidth = desktopWidth
+
+    const onMove = (e) => {
+      const next = clampActivityPaneWidth(startWidth + (startX - e.clientX))
+      setDesktopWidth(next)
+    }
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.removeProperty('user-select')
+      document.body.style.removeProperty('cursor')
+      setDesktopWidth((w) => {
+        persistActivityPaneWidth(w)
+        return w
+      })
+    }
+
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [desktopWidth])
+
+  const onResizePointerDown = (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    startResize(e.clientX)
+  }
+
+  const onResizeKeyDown = (e) => {
+    if (e.key === 'Home') {
+      e.preventDefault()
+      resetDesktopWidth()
+    }
+  }
+
   return (
     <>
       {open && (
         <div className="fixed inset-0 bg-overlay z-40 lg:hidden" onClick={onClose} aria-hidden="true" />
       )}
       <aside
-        className={`fixed lg:static inset-y-0 right-0 z-50 w-full sm:w-80 bg-surface border-l border-border flex flex-col transform transition-transform duration-200 lg:translate-x-0 ${
+        style={isDesktop ? { width: desktopWidth } : undefined}
+        className={`fixed lg:static inset-y-0 right-0 z-50 w-full sm:w-80 lg:w-auto lg:flex-shrink-0 bg-surface border-l border-border flex flex-col transform transition-transform duration-200 lg:translate-x-0 ${
           open ? 'translate-x-0 shadow-card' : 'translate-x-full lg:translate-x-0'
         } ${!open ? 'hidden lg:flex' : 'flex'}`}
       >
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize activity pane"
+          aria-valuemin={ACTIVITY_PANE_MIN_WIDTH}
+          aria-valuemax={ACTIVITY_PANE_MAX_WIDTH}
+          aria-valuenow={isDesktop ? desktopWidth : undefined}
+          tabIndex={0}
+          onMouseDown={onResizePointerDown}
+          onDoubleClick={resetDesktopWidth}
+          onKeyDown={onResizeKeyDown}
+          className="hidden lg:block absolute left-0 top-0 bottom-0 w-1.5 -translate-x-1/2 cursor-col-resize z-10 touch-none hover:bg-accent/25 focus:outline-none focus-visible:bg-accent/35"
+        />
         <div className="p-4 border-b border-border flex items-center justify-between">
           <div>
             <h2 className="font-semibold text-sm">Activity</h2>
