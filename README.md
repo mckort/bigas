@@ -10,7 +10,7 @@
   </a>
 </div>
 
-Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
+Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)** · Live site: **[bigas.me](https://bigas.me)**
 
 ---
 
@@ -42,6 +42,8 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)**
 ---
 
 ## What is Bigas?
+
+**[bigas.me](https://bigas.me)** is a short public overview of the product. This README is the full reference — setup, architecture, API, and walkthroughs.
 
 **Bigas** (Latin for *team*) is an open-source virtual HQ for a solo founder or small team. You set quarterly **Objectives**, ship work on a built-in **board** with Jira-like workflows, and talk to a virtual staff in **chat** — marketing, product, engineering, and finance, without hiring anyone.
 
