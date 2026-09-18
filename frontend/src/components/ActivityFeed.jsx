@@ -132,10 +132,14 @@ const MIN_ACTIVITY_WIDTH = 240
 const MAX_ACTIVITY_WIDTH = 560
 const MIN_CHAT_WIDTH = 400
 const AGENT_SIDEBAR_WIDTH = 288
+const DESKTOP_LAYOUT_MIN_WIDTH = 1024
 
 function clampActivityWidth(width, viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth) {
-  const maxByChat = viewportWidth - AGENT_SIDEBAR_WIDTH - MIN_CHAT_WIDTH
-  const maxWidth = Math.max(MIN_ACTIVITY_WIDTH, Math.min(MAX_ACTIVITY_WIDTH, maxByChat))
+  let maxWidth = MAX_ACTIVITY_WIDTH
+  if (viewportWidth >= DESKTOP_LAYOUT_MIN_WIDTH) {
+    const maxByChat = viewportWidth - AGENT_SIDEBAR_WIDTH - MIN_CHAT_WIDTH
+    maxWidth = Math.max(MIN_ACTIVITY_WIDTH, Math.min(MAX_ACTIVITY_WIDTH, maxByChat))
+  }
   return Math.round(Math.min(maxWidth, Math.max(MIN_ACTIVITY_WIDTH, width)))
 }
 
@@ -162,6 +166,7 @@ export default function ActivityFeed({ events, open, onClose, onOpenBoard }) {
   const [width, setWidth] = useState(DEFAULT_ACTIVITY_WIDTH)
   const [dragging, setDragging] = useState(false)
   const widthRef = useRef(width)
+  const dragCleanupRef = useRef(null)
   widthRef.current = width
 
   useEffect(() => {
@@ -170,19 +175,24 @@ export default function ActivityFeed({ events, open, onClose, onOpenBoard }) {
 
   useEffect(() => {
     function onResize() {
-      setWidth((current) => {
-        const next = clampActivityWidth(current)
-        if (next !== current) writeActivityWidth(next)
-        return next
-      })
+      setWidth((current) => clampActivityWidth(current))
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.()
+      dragCleanupRef.current = null
+    }
+  }, [])
+
   function beginResize(event) {
     if (event.button != null && event.button !== 0) return
     event.preventDefault()
+    const handle = event.currentTarget
+    handle.setPointerCapture(event.pointerId)
     const startX = event.clientX
     const startWidth = width
     setDragging(true)
@@ -198,15 +208,32 @@ export default function ActivityFeed({ events, open, onClose, onOpenBoard }) {
       setWidth(next)
     }
 
-    function onUp() {
-      writeActivityWidth(widthRef.current)
+    function endDrag({ persist }) {
+      if (dragCleanupRef.current !== endDragBound) return
+      dragCleanupRef.current = null
+      if (persist) writeActivityWidth(widthRef.current)
       setDragging(false)
       document.body.style.userSelect = previousUserSelect
       document.body.style.cursor = previousCursor
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
+      try {
+        handle.releasePointerCapture(event.pointerId)
+      } catch {
+        /* capture may already be released */
+      }
     }
+
+    function onUp() {
+      endDrag({ persist: true })
+    }
+
+    function endDragBound() {
+      endDrag({ persist: false })
+    }
+
+    dragCleanupRef.current = endDragBound
 
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -240,6 +267,8 @@ export default function ActivityFeed({ events, open, onClose, onOpenBoard }) {
       >
         <button
           type="button"
+          role="separator"
+          aria-orientation="vertical"
           aria-label="Resize activity panel"
           aria-valuemin={MIN_ACTIVITY_WIDTH}
           aria-valuemax={MAX_ACTIVITY_WIDTH}
@@ -259,7 +288,7 @@ export default function ActivityFeed({ events, open, onClose, onOpenBoard }) {
               resetWidth()
             }
           }}
-          className={`hidden lg:block absolute inset-y-0 left-0 z-20 w-3 -translate-x-1/2 cursor-col-resize touch-none border-0 p-0 ${
+          className={`hidden lg:block absolute inset-y-0 left-0 z-20 w-3 -translate-x-1/2 cursor-col-resize touch-none border-0 p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
             dragging ? 'bg-accent/20' : 'bg-transparent hover:bg-accent/15'
           }`}
         />
