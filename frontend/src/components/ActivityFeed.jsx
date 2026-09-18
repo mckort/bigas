@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const PREVIEW_LINES = 5
 const URL_RE = /(https?:\/\/[^\s<>"'`\]},]+(?:\([^\s<>"'`\]},)]*\)[^\s<>"'`\]},]*)*)/g
@@ -126,17 +126,143 @@ function CollapsibleContent({ content, onOpenBoard }) {
   )
 }
 
+const ACTIVITY_WIDTH_KEY = 'bigas_activity_width'
+const DEFAULT_ACTIVITY_WIDTH = 320
+const MIN_ACTIVITY_WIDTH = 240
+const MAX_ACTIVITY_WIDTH = 560
+const MIN_CHAT_WIDTH = 400
+const AGENT_SIDEBAR_WIDTH = 288
+
+function clampActivityWidth(width, viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth) {
+  const maxByChat = viewportWidth - AGENT_SIDEBAR_WIDTH - MIN_CHAT_WIDTH
+  const maxWidth = Math.max(MIN_ACTIVITY_WIDTH, Math.min(MAX_ACTIVITY_WIDTH, maxByChat))
+  return Math.round(Math.min(maxWidth, Math.max(MIN_ACTIVITY_WIDTH, width)))
+}
+
+function readActivityWidth() {
+  try {
+    const raw = localStorage.getItem(ACTIVITY_WIDTH_KEY)
+    const parsed = Number.parseInt(raw, 10)
+    if (Number.isFinite(parsed)) return clampActivityWidth(parsed)
+  } catch {
+    /* ignore quota / private mode */
+  }
+  return DEFAULT_ACTIVITY_WIDTH
+}
+
+function writeActivityWidth(width) {
+  try {
+    localStorage.setItem(ACTIVITY_WIDTH_KEY, String(width))
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 export default function ActivityFeed({ events, open, onClose, onOpenBoard }) {
+  const [width, setWidth] = useState(DEFAULT_ACTIVITY_WIDTH)
+  const [dragging, setDragging] = useState(false)
+  const widthRef = useRef(width)
+  widthRef.current = width
+
+  useEffect(() => {
+    setWidth(readActivityWidth())
+  }, [])
+
+  useEffect(() => {
+    function onResize() {
+      setWidth((current) => {
+        const next = clampActivityWidth(current)
+        if (next !== current) writeActivityWidth(next)
+        return next
+      })
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  function beginResize(event) {
+    if (event.button != null && event.button !== 0) return
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = width
+    setDragging(true)
+
+    const previousUserSelect = document.body.style.userSelect
+    const previousCursor = document.body.style.cursor
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+
+    function onMove(moveEvent) {
+      const next = clampActivityWidth(startWidth + (startX - moveEvent.clientX))
+      widthRef.current = next
+      setWidth(next)
+    }
+
+    function onUp() {
+      writeActivityWidth(widthRef.current)
+      setDragging(false)
+      document.body.style.userSelect = previousUserSelect
+      document.body.style.cursor = previousCursor
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
+  function resetWidth() {
+    const next = clampActivityWidth(DEFAULT_ACTIVITY_WIDTH)
+    setWidth(next)
+    writeActivityWidth(next)
+  }
+
+  function nudgeWidth(delta) {
+    setWidth((current) => {
+      const next = clampActivityWidth(current + delta)
+      writeActivityWidth(next)
+      return next
+    })
+  }
+
   return (
     <>
       {open && (
         <div className="fixed inset-0 bg-overlay z-40 lg:hidden" onClick={onClose} aria-hidden="true" />
       )}
       <aside
-        className={`fixed lg:static inset-y-0 right-0 z-50 w-full sm:w-80 bg-surface border-l border-border flex flex-col transform transition-transform duration-200 lg:translate-x-0 ${
+        style={{ '--activity-width': `${width}px` }}
+        className={`fixed lg:relative lg:inset-auto inset-y-0 right-0 z-50 w-full sm:w-80 lg:w-[var(--activity-width)] lg:flex-shrink-0 lg:h-full bg-surface border-l border-border flex flex-col transform transition-transform duration-200 lg:translate-x-0 ${
           open ? 'translate-x-0 shadow-card' : 'translate-x-full lg:translate-x-0'
         } ${!open ? 'hidden lg:flex' : 'flex'}`}
       >
+        <button
+          type="button"
+          aria-label="Resize activity panel"
+          aria-valuemin={MIN_ACTIVITY_WIDTH}
+          aria-valuemax={MAX_ACTIVITY_WIDTH}
+          aria-valuenow={width}
+          title="Drag to resize. Double-click to reset."
+          onPointerDown={beginResize}
+          onDoubleClick={resetWidth}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') {
+              event.preventDefault()
+              nudgeWidth(16)
+            } else if (event.key === 'ArrowRight') {
+              event.preventDefault()
+              nudgeWidth(-16)
+            } else if (event.key === 'Home') {
+              event.preventDefault()
+              resetWidth()
+            }
+          }}
+          className={`hidden lg:block absolute inset-y-0 left-0 z-20 w-3 -translate-x-1/2 cursor-col-resize touch-none border-0 p-0 ${
+            dragging ? 'bg-accent/20' : 'bg-transparent hover:bg-accent/15'
+          }`}
+        />
         <div className="p-4 border-b border-border flex items-center justify-between">
           <div>
             <h2 className="font-semibold text-sm">Activity</h2>
