@@ -101,7 +101,7 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 
 ## Guards
 
-- Skip when review looks like LGTM / no leftover findings
+- Skip when review looks like LGTM / no leftover findings, **except** when GitHub reports merge conflicts (`mergeable_state` dirty / conflicting) — then launch the same Cursor autofix agent to rebase or merge the base branch and resolve conflicts
 - Leftover Minor / nits (including structured `### Minor` with empty Blockers/Important) launch up to `BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS` (default 2) extra rounds using `[bigas-autofix] [nits-only]`
 - After those two nits-only rounds, or at the overall 5-round cap with only Minor left, accept leftover nits and treat the PR as ready to merge
 - When autofix runs for Blockers/Important, the agent also fixes Minor items from the same review

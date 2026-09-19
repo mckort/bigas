@@ -18,6 +18,7 @@ from bigas.resources.cto.autofix.heuristics import (
     count_autofix_rounds,
     format_loop_protection_message,
     leftover_nits_are_acceptable,
+    pr_has_merge_conflicts,
     review_is_nits_only,
     review_needs_autofix,
 )
@@ -101,11 +102,29 @@ def _build_prompt(
     review_body: str,
     issue_key: str = "",
     nits_only: bool = False,
+    merge_conflict: bool = False,
+    base_branch: str = "",
 ) -> str:
+    conflict_block = ""
+    if merge_conflict:
+        base = (base_branch or "the base branch").strip()
+        conflict_block = (
+            "## Merge conflicts\n"
+            f"This pull request is merge-conflicted with `{base}`. "
+            f"Fetch origin, merge or rebase `origin/{base}` into this PR's head branch, "
+            "resolve every conflict, and remove all conflict markers. "
+            "Keep both the incoming base-branch changes and this PR's intended work.\n\n"
+        )
     if nits_only:
         focus = (
             "1. This review has only Minor / non-blocking items. Fix those leftover nits "
             "so the review can become fully clean."
+        )
+    elif merge_conflict:
+        focus = (
+            "1. Resolve the merge conflicts described above first so the PR becomes mergeable.\n"
+            "2. Fix all Blockers and Important items called out in the review.\n"
+            "3. Also fix Minor items listed in the same review when present."
         )
     else:
         focus = (
@@ -118,7 +137,7 @@ def _build_prompt(
 Repository: {repo}
 Pull request: {pr_url}
 
-## Bigas review comment
+{conflict_block}## Bigas review comment
 {review_body}
 
 ## Instructions
@@ -266,11 +285,20 @@ class AutofixService:
                 "max_iterations": max_iters,
             }
 
+        merge_conflicted = pr_has_merge_conflicts(pr if isinstance(pr, dict) else {})
+        base_branch = ""
+        if isinstance(pr, dict):
+            base_branch = ((pr.get("base") or {}).get("ref") or "").strip()
+
         if autofix_count >= max_iters and not force:
-            if review_is_nits_only(body) and leftover_nits_are_acceptable(
-                autofix_count=autofix_count,
-                minor_autofix_count=minor_autofix_count,
-                max_iterations=max_iters,
+            if (
+                not merge_conflicted
+                and review_is_nits_only(body)
+                and leftover_nits_are_acceptable(
+                    autofix_count=autofix_count,
+                    minor_autofix_count=minor_autofix_count,
+                    max_iterations=max_iters,
+                )
             ):
                 return {
                     "skipped": True,
@@ -376,7 +404,7 @@ class AutofixService:
                 minor_autofix_count=minor_autofix_count,
                 max_iterations=max_iters,
             )
-            if not should:
+            if not should and not merge_conflicted:
                 return {
                     "skipped": True,
                     "reason": reason,
@@ -416,7 +444,9 @@ class AutofixService:
             pr_url=pr_url,
             review_body=body,
             issue_key=issue_key,
-            nits_only=nits_only,
+            nits_only=nits_only and not merge_conflicted,
+            merge_conflict=merge_conflicted,
+            base_branch=base_branch,
         )
         client = CursorCloudAgentClient(api_key=self._cursor_key)
         try:
@@ -444,6 +474,7 @@ class AutofixService:
             "max_iterations": max_iters,
             "head_sha": head_sha,
             "head_was_autofix": AUTOFIX_COMMIT_MARKER in (head_message or ""),
+            "merge_conflict": merge_conflicted,
         }
 
     def poll_status(
