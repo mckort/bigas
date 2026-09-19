@@ -107,11 +107,17 @@ def _build_prompt(
 ) -> str:
     conflict_block = ""
     if merge_conflict:
-        base = (base_branch or "the base branch").strip()
+        if base_branch and base_branch.strip():
+            ref = base_branch.strip()
+            ref_desc = f"`{ref}`"
+            fetch_target = f"`origin/{ref}`"
+        else:
+            ref_desc = "the base branch"
+            fetch_target = "the base branch"
         conflict_block = (
             "## Merge conflicts\n"
-            f"This pull request is merge-conflicted with `{base}`. "
-            f"Fetch origin, merge or rebase `origin/{base}` into this PR's head branch, "
+            f"This pull request is merge-conflicted with {ref_desc}. "
+            f"Fetch origin, merge or rebase {fetch_target} into this PR's head branch, "
             "resolve every conflict, and remove all conflict markers. "
             "Keep both the incoming base-branch changes and this PR's intended work.\n\n"
         )
@@ -288,7 +294,9 @@ class AutofixService:
         merge_conflicted = pr_has_merge_conflicts(pr if isinstance(pr, dict) else {})
         base_branch = ""
         if isinstance(pr, dict):
-            base_branch = ((pr.get("base") or {}).get("ref") or "").strip()
+            base = pr.get("base")
+            if isinstance(base, dict):
+                base_branch = (base.get("ref") or "").strip()
 
         if autofix_count >= max_iters and not force:
             if (

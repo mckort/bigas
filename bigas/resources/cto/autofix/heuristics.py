@@ -285,10 +285,17 @@ def pr_has_merge_conflicts(pr: dict) -> bool:
     """
     if not isinstance(pr, dict):
         return False
-    state = (pr.get("mergeable_state") or "").strip().lower()
+    state = (
+        pr.get("mergeable_state") or pr.get("mergeStateStatus") or ""
+    ).strip().lower()
+    mergeable = pr.get("mergeable")
     if state in {"dirty", "conflicting"}:
         return True
-    mergeable = pr.get("mergeable")
+    if isinstance(mergeable, str) and mergeable.strip().lower() in {
+        "dirty",
+        "conflicting",
+    }:
+        return True
     if mergeable is False and state not in {
         "blocked",
         "behind",
