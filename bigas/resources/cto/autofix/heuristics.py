@@ -276,6 +276,38 @@ def latest_commit_is_autofix(message: str) -> bool:
     return AUTOFIX_COMMIT_MARKER in (message or "")
 
 
+def pr_has_merge_conflicts(pr: dict) -> bool:
+    """
+    True when GitHub reports the PR cannot merge due to conflicts.
+
+    REST ``mergeable_state`` is ``dirty``; GraphQL and some payloads use
+    ``CONFLICTING`` (case-insensitive).
+    """
+    if not isinstance(pr, dict):
+        return False
+    state = (
+        pr.get("mergeable_state") or pr.get("mergeStateStatus") or ""
+    ).strip().lower()
+    mergeable = pr.get("mergeable")
+    if state in {"dirty", "conflicting"}:
+        return True
+    if isinstance(mergeable, str) and mergeable.strip().lower() in {
+        "dirty",
+        "conflicting",
+    }:
+        return True
+    if mergeable is False and state not in {
+        "blocked",
+        "behind",
+        "unknown",
+        "unstable",
+        "has_hooks",
+        "clean",
+    }:
+        return True
+    return False
+
+
 def autofix_pushed_new_commit(
     *,
     head_sha: str,

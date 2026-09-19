@@ -3,6 +3,7 @@ from bigas.resources.cto.autofix.heuristics import (
     autofix_pushed_new_commit,
     leftover_nits_are_acceptable,
     latest_commit_is_autofix,
+    pr_has_merge_conflicts,
     review_is_nits_only,
     review_is_ready_to_merge,
     review_needs_autofix,
@@ -380,6 +381,64 @@ def test_auto_merge_enabled_false_values(monkeypatch):
     for value in ("false", "0", "no", "off", ""):
         monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", value)
         assert auto_merge_enabled() is False, value
+
+
+def test_pr_has_merge_conflicts_dirty_and_conflicting():
+    assert pr_has_merge_conflicts({"mergeable_state": "dirty"}) is True
+    assert pr_has_merge_conflicts({"mergeable_state": "CONFLICTING"}) is True
+    assert pr_has_merge_conflicts({"mergeable_state": "clean", "mergeable": True}) is False
+    assert pr_has_merge_conflicts({"mergeable_state": "blocked", "mergeable": False}) is False
+
+
+def test_autofix_launches_for_merge_conflicts_when_review_clean(monkeypatch):
+    from bigas.resources.cto.autofix.service import AutofixService
+
+    launched = {}
+
+    class FakeGH:
+        def get_pull_request(self, *args, **kwargs):
+            return {
+                "merged": False,
+                "mergeable_state": "dirty",
+                "mergeable": False,
+                "title": "BIG-102: Resolve conflicts",
+                "body": "",
+                "head": {"ref": "feat/x"},
+                "base": {"ref": "staging-0.3.0"},
+            }
+
+        def get_pr_head_commit_meta(self, *args, **kwargs):
+            return "abc123", "feat: work", "2026-09-17T17:00:00Z"
+
+        def list_pr_commit_messages(self, *args, **kwargs):
+            return []
+
+        def get_marked_comment(self, **kwargs):
+            return {"body": _CLEAN_STRUCTURED, "updated_at": "2026-09-17T17:10:00Z"}
+
+    class FakeCursor:
+        def __init__(self, api_key):
+            pass
+
+        def launch_pr_autofix(self, **kwargs):
+            launched.update(kwargs)
+            return {"agent_id": "bc-1", "agent_url": "https://cursor.com/agents/bc-1", "run_id": "run-1"}
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
+        lambda token: FakeGH(),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.CursorCloudAgentClient",
+        FakeCursor,
+    )
+    result = AutofixService(cursor_api_key="c", github_token="t").run(
+        repo="owner/repo", pr_number=9
+    )
+    assert result.get("launched") is True
+    assert result.get("merge_conflict") is True
+    assert "Merge conflicts" in launched["prompt_text"]
+    assert "staging-0.3.0" in launched["prompt_text"]
 
 
 def test_autofix_skips_already_merged_pr(monkeypatch):
