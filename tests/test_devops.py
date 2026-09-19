@@ -173,6 +173,19 @@ def test_resolve_deploy_target_bigas(monkeypatch):
     assert from_text.project_key == "BIG"
 
 
+def test_resolve_deploy_target_fri_default_workflow(monkeypatch):
+    monkeypatch.delenv("BIGAS_DEPLOY_WORKFLOW_MAP", raising=False)
+    monkeypatch.delenv("BIGAS_JIRA_PROJECT_REPO_MAP", raising=False)
+    target = resolve_deploy_target(project_key="FRI")
+    assert target is not None
+    assert target.repo == "mckort/friman-investments"
+    assert target.workflows == ["deploy.yml"]
+
+    from_text = resolve_deploy_target(site_or_text="deploy friman investments")
+    assert from_text is not None
+    assert from_text.project_key == "FRI"
+
+
 def test_resolve_deploy_target_bigas_keeps_default_when_map_omits_it(monkeypatch):
     monkeypatch.setenv(
         "BIGAS_JIRA_PROJECT_REPO_MAP",

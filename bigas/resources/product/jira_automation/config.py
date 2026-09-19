@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional
 
+from bigas.portfolio import DEFAULT_PROJECT_REPOS, DEFAULT_REPO_BASE_BRANCHES
 from bigas.resources.product.release_workflow import (
     project_branch_mapping_from_env,
     resolve_automerge_branch,
@@ -18,27 +19,6 @@ HANDLER_DESIGN = "design_plan"
 HANDLER_IMPLEMENT = "implement"
 
 BIGAS_COMMENT_MARKER = "[bigas-jira-ai]"
-
-DEFAULT_PROJECT_REPOS: Dict[str, str] = {
-    "VFA": "mckort/vcfieldassistant",
-    "WAYW": "mckort/roadpal",
-    "BIG": "mckort/bigas",
-    "REM": "mckort/remotebrief",
-    "GPWW": "Green-Promo-Wear-Global/greenpromowear-website",
-    "FYDA": "mckort/fulfillyourdreamadventure",
-    "MYL": "mckort/mylifesdeed",
-}
-
-# owner/repo → default branch for Cursor implement startingRef
-DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
-    "mckort/vcfieldassistant": "main",
-    "mckort/roadpal": "main",
-    "mckort/bigas": "main",
-    "mckort/remotebrief": "main",
-    "Green-Promo-Wear-Global/greenpromowear-website": "main",
-    "mckort/fulfillyourdreamadventure": "master",
-    "mckort/mylifesdeed": "main",
-}
 
 DEFAULT_STATUS_HANDLERS: Dict[str, str] = {
     "research and describe (ai)": HANDLER_RESEARCH,
@@ -136,7 +116,7 @@ class JiraAutomationConfig:
         secret = (os.environ.get("JIRA_AUTOMATION_WEBHOOK_SECRET") or "").strip()
         allowed = _parse_csv_upper(
             os.environ.get("BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS")
-            or "VFA,WAYW,BIG,REM,GPWW,FYDA,MYL"
+            or "VFA,WAYW,BIG,REM,GPWW,FYDA,MYL,FRI"
         )
         daily_raw = (os.environ.get("BIGAS_JIRA_AI_DAILY_QUOTA") or "20").strip()
         try:

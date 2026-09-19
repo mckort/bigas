@@ -404,21 +404,42 @@ class MemoryTicketStore:
             return dict(board)
 
     def ensure_default_boards(self, user_id: str) -> List[Dict[str, Any]]:
-        from bigas.portfolio import jira_project_keys
+        from bigas.portfolio import board_name_for_project, jira_project_keys
 
         existing = self.list_boards(user_id)
-        if existing:
-            return existing
+        by_project = {
+            (b.get("project_key") or "").strip().upper(): b
+            for b in existing
+            if (b.get("project_key") or "").strip()
+        }
+        has_personal = any(not (b.get("project_key") or "").strip() for b in existing)
 
-        created: List[Dict[str, Any]] = []
-        created.append(
+        if not existing:
             self.create_board(user_id, name="Personal tasks", project_key=None)
-        )
-        for key in jira_project_keys() or ["VFA", "BIG"]:
-            created.append(
-                self.create_board(user_id, name=f"{key} Board", project_key=key)
-            )
-        return created
+            for key in jira_project_keys() or ["VFA", "BIG"]:
+                norm_key = (key or "").strip().upper()
+                if norm_key:
+                    self.create_board(
+                        user_id,
+                        name=board_name_for_project(norm_key),
+                        project_key=norm_key,
+                    )
+            return self.list_boards(user_id)
+
+        if not has_personal:
+            self.create_board(user_id, name="Personal tasks", project_key=None)
+
+        for key in jira_project_keys():
+            norm_key = (key or "").strip().upper()
+            if norm_key and norm_key not in by_project:
+                board = self.create_board(
+                    user_id,
+                    name=board_name_for_project(norm_key),
+                    project_key=norm_key,
+                )
+                by_project[norm_key] = board
+
+        return self.list_boards(user_id)
 
     def list_tickets(
         self,
@@ -978,20 +999,42 @@ class FirestoreTicketStore:
         return board
 
     def ensure_default_boards(self, user_id: str) -> List[Dict[str, Any]]:
-        from bigas.portfolio import jira_project_keys
+        from bigas.portfolio import board_name_for_project, jira_project_keys
 
         existing = self.list_boards(user_id)
-        if existing:
-            return existing
-        created: List[Dict[str, Any]] = []
-        created.append(
+        by_project = {
+            (b.get("project_key") or "").strip().upper(): b
+            for b in existing
+            if (b.get("project_key") or "").strip()
+        }
+        has_personal = any(not (b.get("project_key") or "").strip() for b in existing)
+
+        if not existing:
             self.create_board(user_id, name="Personal tasks", project_key=None)
-        )
-        for key in jira_project_keys() or ["VFA", "BIG"]:
-            created.append(
-                self.create_board(user_id, name=f"{key} Board", project_key=key)
-            )
-        return created
+            for key in jira_project_keys() or ["VFA", "BIG"]:
+                norm_key = (key or "").strip().upper()
+                if norm_key:
+                    self.create_board(
+                        user_id,
+                        name=board_name_for_project(norm_key),
+                        project_key=norm_key,
+                    )
+            return self.list_boards(user_id)
+
+        if not has_personal:
+            self.create_board(user_id, name="Personal tasks", project_key=None)
+
+        for key in jira_project_keys():
+            norm_key = (key or "").strip().upper()
+            if norm_key and norm_key not in by_project:
+                board = self.create_board(
+                    user_id,
+                    name=board_name_for_project(norm_key),
+                    project_key=norm_key,
+                )
+                by_project[norm_key] = board
+
+        return self.list_boards(user_id)
 
     def list_tickets(
         self,
