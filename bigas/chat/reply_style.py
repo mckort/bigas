@@ -40,6 +40,30 @@ _DUMP_KEY_HINT_RE = re.compile(
 )
 
 
+_JIRA_TRANSITION_RE = re.compile(r"bigas://action/jira_transition", re.I)
+_LINK_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
+
+
+def looks_like_jira_ticket_dump(text: Optional[str]) -> bool:
+    """True when the reply is mostly humanized Jira lookup UI, not an answer."""
+    blob = text.strip() if isinstance(text, str) else str(text or "").strip()
+    if not blob:
+        return False
+    if _JIRA_TRANSITION_RE.search(blob):
+        stripped = _LINK_RE.sub("", blob)
+        stripped = re.sub(r"Status:\s*[^\n]+", "", stripped, flags=re.I)
+        stripped = re.sub(r"Open Epics:", "", stripped, flags=re.I)
+        stripped = re.sub(r"Parent \([^)]+\):", "", stripped, flags=re.I)
+        stripped = re.sub(r"Missing:\s*[^\n]+", "", stripped, flags=re.I)
+        stripped = re.sub(r"\s+", " ", stripped).strip(" -–—•")
+        return len(stripped) < 80
+    if "Open Epics:" in blob and _LINK_RE.search(blob):
+        lines = [ln.strip() for ln in blob.splitlines() if ln.strip()]
+        if len(lines) <= 6 and all(ln.startswith("- [") or ln.startswith("Open Epics:") for ln in lines):
+            return True
+    return False
+
+
 def looks_like_raw_tool_dump(text: Optional[str]) -> bool:
     """True when a chat reply is (or is dominated by) raw tool JSON."""
     blob = text.strip() if isinstance(text, str) else str(text or "").strip()

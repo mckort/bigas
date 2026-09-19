@@ -23,6 +23,7 @@ from bigas.chat.jira_formatting import (
     JIRA_FORMATTING_RULES,
     format_jira_issue_markdown,
     humanize_jira_tool_result,
+    jira_lookup_tool_facts,
     jira_transition_action_markdown,
 )
 from bigas.resources.product.create_release_notes.jira_client import JiraClient, JiraConfig
@@ -53,6 +54,26 @@ def test_format_jira_issue_markdown_includes_button():
     )
     assert "[Update system prompt](https://example.atlassian.net/browse/BIG-13)" in text
     assert "bigas://action/jira_transition?issue=BIG-13" in text
+
+
+def test_jira_lookup_tool_facts_includes_agent_and_pr():
+    result = jira_lookup_tool_facts(
+        {
+            "ok": True,
+            "issue": {
+                "key": "GPWW-40",
+                "summary": "Fix checkout",
+                "status": "In Progress (AI)",
+                "url": "https://example.atlassian.net/browse/GPWW-40",
+                "agent_url": "https://cursor.com/agents/bc-40",
+                "pr_url": "",
+            },
+        }
+    )
+    assert result is not None
+    assert "agent_url: https://cursor.com/agents/bc-40" in result
+    assert "status: In Progress (AI)" in result
+    assert "bigas://" not in result
 
 
 def test_humanize_jira_tool_result():

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from bigas.chat.reply_style import looks_like_raw_tool_dump
+from bigas.chat.reply_style import looks_like_jira_ticket_dump, looks_like_raw_tool_dump
 from bigas.llm.completion import LLMCompletion, ToolCall
 
 
@@ -30,6 +30,22 @@ def test_looks_like_raw_tool_dump_detects_github_activity():
     assert looks_like_raw_tool_dump(f"```json\n{GITHUB_ACTIVITY_DUMP}\n```")
     truncated = '{"repo":"mckort/vcfieldassistant","commits":[{"sha":"abc"'
     assert looks_like_raw_tool_dump(truncated)
+
+
+def test_looks_like_jira_ticket_dump_detects_move_button_only():
+    dump = (
+        "[Fix checkout](https://example.atlassian.net/browse/GPWW-40)\n\n"
+        "Status: In Progress (AI)\n\n"
+        "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)"
+    )
+    assert looks_like_jira_ticket_dump(dump)
+    answer = (
+        "GPWW-40 is still **In Progress (AI)**. The Cursor agent is running and "
+        "there is no PR yet.\n\n"
+        "[Fix checkout](/board?ticket=GPWW-40)\n\n"
+        "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)"
+    )
+    assert not looks_like_jira_ticket_dump(answer)
 
 
 def test_looks_like_raw_tool_dump_ignores_human_replies():

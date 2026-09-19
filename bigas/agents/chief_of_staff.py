@@ -14,10 +14,13 @@ from bigas.chat.jira_formatting import (
     JIRA_AWARE_AGENT_IDS,
     JIRA_FORMATTING_RULES,
     humanize_jira_tool_result,
+    is_jira_lookup_tool_payload,
+    jira_lookup_tool_facts,
 )
 from bigas.chat.reply_style import (
     REPLY_STYLE,
     latest_user_text,
+    looks_like_jira_ticket_dump,
     looks_like_raw_tool_dump,
     tool_facts_from_messages,
 )
@@ -614,7 +617,9 @@ def _finalize_chat_reply(
 ) -> str:
     """Guarantee the user never receives a raw tool dump as the reply."""
     candidate = text.strip() if isinstance(text, str) else str(text or "").strip()
-    if not looks_like_raw_tool_dump(candidate):
+    if not looks_like_raw_tool_dump(candidate) and not looks_like_jira_ticket_dump(
+        candidate
+    ):
         return candidate
     rewritten = _synthesize_human_reply(
         user_message,
@@ -677,7 +682,17 @@ def _run_tool_call(client: MCPClient, tool_name: str, arguments: Dict[str, Any])
     try:
         result = client.call_tool(tool_name, arguments)
         raw_text = result.get("text") or ""
-        human = humanize_tool_result(raw_text) or humanize_tool_result(result.get("structured"))
+        structured = result.get("structured")
+        lookup_facts = (
+            jira_lookup_tool_facts(structured)
+            if isinstance(structured, dict) and is_jira_lookup_tool_payload(structured)
+            else None
+        )
+        if lookup_facts:
+            if result.get("is_error"):
+                return lookup_facts
+            return lookup_facts
+        human = humanize_tool_result(raw_text) or humanize_tool_result(structured)
         text = human or raw_text.strip()
         rewritten = _friendly_analytics_tool_failure(text)
         if rewritten:
