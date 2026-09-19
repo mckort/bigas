@@ -19,7 +19,6 @@ from bigas.chat.reply_style import (
     REPLY_STYLE,
     latest_user_text,
     looks_like_incomplete_chat_reply,
-    looks_like_raw_tool_dump,
     looks_like_ticket_dump,
     tool_facts_from_messages,
 )
@@ -633,7 +632,7 @@ def _finalize_chat_reply(
     )
     if rewritten and not looks_like_ticket_dump(rewritten):
         return rewritten
-    return rewritten or _RAW_DUMP_FALLBACK
+    return _RAW_DUMP_FALLBACK
 
 
 _ANALYTICS_EMPTY_RE = re.compile(

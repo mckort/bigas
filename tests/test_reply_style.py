@@ -36,6 +36,23 @@ def test_looks_like_raw_tool_dump_detects_github_activity():
     assert looks_like_raw_tool_dump(truncated)
 
 
+def test_looks_like_ticket_dump_detects_inline_status_lookup_line():
+    dump = "[Add catalog modules](/board?ticket=GPWW-40) — In Progress (AI)"
+    assert looks_like_ticket_dump(dump)
+    assert looks_like_incomplete_chat_reply(dump)
+
+
+def test_looks_like_ticket_dump_detects_lookup_metadata_blocks():
+    dump = (
+        "[Add catalog modules](/board?ticket=GPWW-40) — In Progress (AI)\n\n"
+        "Parent (Epic): [Platform work](/board?ticket=GPWW-1)\n\n"
+        "Open Epics:\n"
+        "- [Another epic](/board?ticket=GPWW-2)\n\n"
+        "Missing: GPWW-99"
+    )
+    assert looks_like_ticket_dump(dump)
+
+
 def test_looks_like_ticket_dump_detects_title_and_move_button():
     dump = (
         "[Add catalog modules](/board?ticket=GPWW-40)\n\n"

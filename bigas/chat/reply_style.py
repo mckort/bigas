@@ -42,6 +42,31 @@ _DUMP_KEY_HINT_RE = re.compile(
 
 
 _LINK_ONLY_RE = re.compile(r"^\[.+\]\([^)]+\)$")
+_LINK_WITH_STATUS_RE = re.compile(r"^\[.+\]\([^)]+\)\s+—\s+.+")
+_BULLET_LINK_LINE_RE = re.compile(r"^-\s+\[.+\]\([^)]+\)(?:\s+—\s+.+)?$")
+_PARENT_LINE_RE = re.compile(r"^Parent \([^)]+\):\s+")
+
+
+def _is_ticket_dump_line(stripped: str) -> bool:
+    """True when a line is only ticket metadata from lookup humanization."""
+    if not stripped:
+        return True
+    if stripped.startswith("[Move to next"):
+        return True
+    lower = stripped.lower()
+    if lower.startswith(("status:", "agent:", "pr:", "missing:")):
+        return True
+    if stripped == "Open Epics:" or lower.startswith("open epics:"):
+        return True
+    if _PARENT_LINE_RE.match(stripped):
+        return True
+    if _LINK_ONLY_RE.match(stripped):
+        return True
+    if _LINK_WITH_STATUS_RE.match(stripped):
+        return True
+    if _BULLET_LINK_LINE_RE.match(stripped):
+        return True
+    return False
 
 
 def looks_like_ticket_dump(text: Optional[str]) -> bool:
@@ -58,15 +83,7 @@ def looks_like_ticket_dump(text: Optional[str]) -> bool:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("[Move to next"):
-            continue
-        if stripped.lower().startswith("status:"):
-            continue
-        if stripped.lower().startswith("agent:"):
-            continue
-        if stripped.lower().startswith("pr:"):
-            continue
-        if _LINK_ONLY_RE.match(stripped):
+        if _is_ticket_dump_line(stripped):
             continue
         prose.append(stripped)
     return not prose
