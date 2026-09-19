@@ -166,3 +166,123 @@ def _humanize_lookup_result(
             lines.append("Open Epics:\n" + "\n".join(epic_lines))
     text = "\n\n".join(lines).strip()
     return text or None
+
+
+def is_jira_lookup_tool_payload(payload: Dict[str, Any]) -> bool:
+    """True for lookup_ticket / search_tickets structured results (not create_ticket)."""
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        return False
+    if payload.get("jql") is not None:
+        return True
+    if isinstance(payload.get("issues"), list):
+        return True
+    if isinstance(payload.get("issue"), dict):
+        return True
+    if isinstance(payload.get("epics"), list):
+        return True
+    return False
+
+
+def _lookup_issue_fact_lines(issue: Dict[str, Any]) -> List[str]:
+    from bigas.tickets.review import infer_agent_url
+
+    key = str(issue.get("key") or "").strip()
+    if not key:
+        return []
+    review = issue.get("review") if isinstance(issue.get("review"), dict) else {}
+    lines = [
+        f"key: {key}",
+        f"summary: {str(issue.get('summary') or issue.get('title') or key).strip()}",
+    ]
+    status = str(issue.get("status") or "").strip()
+    if status:
+        lines.append(f"status: {status}")
+    for field in ("issue_type", "fix_version", "url"):
+        val = str(issue.get(field) or "").strip()
+        if val:
+            lines.append(f"{field}: {val}")
+    agent_url = infer_agent_url(issue) or str(issue.get("agent_url") or "").strip()
+    if agent_url:
+        lines.append(f"agent_url: {agent_url}")
+    pr_url = str(issue.get("pr_url") or review.get("pr_url") or "").strip()
+    if pr_url:
+        lines.append(f"pr_url: {pr_url}")
+    pr_title = str(issue.get("pr_title") or review.get("pr_title") or "").strip()
+    if pr_title:
+        lines.append(f"pr_title: {pr_title}")
+    parent = issue.get("parent")
+    if isinstance(parent, dict) and (parent.get("key") or "").strip():
+        pkey = str(parent.get("key") or "").strip()
+        psum = str(parent.get("summary") or pkey).strip()
+        ptype = str(parent.get("issue_type") or "parent").strip()
+        lines.append(f"parent ({ptype}): {pkey} — {psum}")
+    return lines
+
+
+def jira_lookup_tool_facts(payload: Dict[str, Any]) -> Optional[str]:
+    """
+    Plain-text ticket facts for the chat agent loop.
+
+    Unlike humanize_jira_tool_result, this keeps agent_url, pr_url, and status
+    for reasoning and does not include Move-button markdown.
+    """
+    if not is_jira_lookup_tool_payload(payload):
+        return None
+    chunks: List[str] = []
+    guidance = str(payload.get("parent_guidance") or "").strip()
+    if guidance:
+        chunks.append(f"Note: {guidance}")
+
+    issue_rows = [
+        row
+        for row in (payload.get("issues") or [])
+        if isinstance(row, dict) and (row.get("key") or "").strip()
+    ]
+    single = payload.get("issue") if isinstance(payload.get("issue"), dict) else None
+    if not issue_rows and single and (single.get("key") or "").strip():
+        issue_rows = [single]
+
+    if issue_rows:
+        if len(issue_rows) == 1:
+            chunks.append("\n".join(_lookup_issue_fact_lines(issue_rows[0])))
+        else:
+            blocks = []
+            for row in issue_rows:
+                block = "\n".join(_lookup_issue_fact_lines(row))
+                if block:
+                    blocks.append(block)
+            if blocks:
+                chunks.append("\n\n".join(blocks))
+
+    missing = payload.get("missing")
+    if isinstance(missing, list) and missing:
+        chunks.append("Missing keys: " + ", ".join(str(k) for k in missing if k))
+
+    jql = str(payload.get("jql") or "").strip()
+    if jql:
+        count = payload.get("count")
+        header = f"JQL: {jql}"
+        if count is not None:
+            header += f" ({count} issues)"
+        chunks.append(header)
+        if not issue_rows:
+            chunks.append("No matching issues.")
+
+    epics = payload.get("epics")
+    if isinstance(epics, list) and epics:
+        epic_lines = []
+        for epic in epics:
+            if not isinstance(epic, dict):
+                continue
+            ekey = str(epic.get("key") or "").strip()
+            if not ekey:
+                continue
+            epic_lines.append(
+                f"- {ekey}: {str(epic.get('summary') or ekey).strip()} "
+                f"({str(epic.get('status') or '').strip()})".strip()
+            )
+        if epic_lines:
+            chunks.append("Open Epics:\n" + "\n".join(epic_lines))
+
+    text = "\n\n".join(part.strip() for part in chunks if part and str(part).strip()).strip()
+    return text or None

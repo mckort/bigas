@@ -69,6 +69,22 @@ def test_looks_like_ticket_dump_detects_title_and_move_button():
     )
 
 
+def test_looks_like_ticket_dump_detects_atlassian_move_button_only():
+    dump = (
+        "[Fix checkout](https://example.atlassian.net/browse/GPWW-40)\n\n"
+        "Status: In Progress (AI)\n\n"
+        "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)"
+    )
+    assert looks_like_ticket_dump(dump)
+    answer = (
+        "GPWW-40 is still **In Progress (AI)**. The Cursor agent is running and "
+        "there is no PR yet.\n\n"
+        "[Fix checkout](/board?ticket=GPWW-40)\n\n"
+        "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)"
+    )
+    assert not looks_like_ticket_dump(answer)
+
+
 def test_looks_like_raw_tool_dump_ignores_human_replies():
     assert not looks_like_raw_tool_dump(
         "Här är de viktigaste nyheterna i **VC Field Assistant** sedan 17 augusti."

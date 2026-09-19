@@ -1260,6 +1260,15 @@ def test_implement_handler_launches_simple_ticket_without_plan(monkeypatch):
                 "run_id": "run-1",
             }
 
+        def get_run_status(self, **kwargs):
+            return {
+                "status": "RUNNING",
+                "done": False,
+                "agent_url": "https://cursor.com/agents/bc-simple",
+                "pr_url": "",
+                "branch_name": "",
+            }
+
     class FakeJira:
         def get_issue(self, key, fields=None):
             return {
@@ -1283,6 +1292,7 @@ def test_implement_handler_launches_simple_ticket_without_plan(monkeypatch):
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     monkeypatch.setattr(impl, "CursorCloudAgentClient", FakeCursor)
     monkeypatch.setattr(impl, "_poll_budget_seconds", lambda: 0)
+    monkeypatch.setattr(impl, "_post_discord_cto", lambda *_a, **_k: None)
     monkeypatch.setattr(
         impl,
         "attachments_text_for_issue",
@@ -1332,6 +1342,15 @@ def test_implement_handler_persists_agent_url_on_internal_ticket(monkeypatch):
                 "run_id": "run-1",
             }
 
+        def get_run_status(self, **kwargs):
+            return {
+                "status": "RUNNING",
+                "done": False,
+                "agent_url": "https://cursor.com/agents/bc-simple",
+                "pr_url": "",
+                "branch_name": "",
+            }
+
     class FakeJira:
         def get_issue(self, key, fields=None):
             return {
@@ -1356,6 +1375,7 @@ def test_implement_handler_persists_agent_url_on_internal_ticket(monkeypatch):
     monkeypatch.setattr(impl, "CursorCloudAgentClient", FakeCursor)
     monkeypatch.setattr(impl, "_poll_budget_seconds", lambda: 0)
     monkeypatch.setattr(impl, "attachments_text_for_issue", lambda *_a, **_k: "")
+    monkeypatch.setattr(impl, "_post_discord_cto", lambda *_a, **_k: None)
 
     result = ImplementHandler(jira=FakeJira(), cursor_api_key="test-key").run(
         issue_key=ticket["key"],
@@ -1725,7 +1745,13 @@ def test_implement_timeout_comments_inline(monkeypatch):
             }
 
         def get_run_status(self, **kwargs):
-            raise AssertionError("poll budget 0 must not call Cursor")
+            return {
+                "status": "RUNNING",
+                "done": False,
+                "agent_url": "https://cursor.com/agents/bc-slow",
+                "pr_url": "",
+                "branch_name": "",
+            }
 
     class FakeJira:
         def get_issue(self, key, fields=None):
@@ -1868,6 +1894,83 @@ def test_implement_timeout_opens_pr_from_pushed_branch(monkeypatch):
     assert result["outcome"]["pr_url"].endswith("/pull/40")
     assert any("PR: https://github.com/org/repo/pull/40" in body for body in comments)
     assert not any("monitor timed out" in body for body in comments)
+
+
+def test_implement_timeout_recovery_opens_pr_from_running_branch(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+    from bigas.resources.product.jira_automation.implement import ImplementHandler
+
+    comments = []
+
+    class FakeCursor:
+        def __init__(self, api_key):
+            pass
+
+        def launch_implementation(self, **kwargs):
+            return {
+                "agent_url": "https://cursor.com/agents/bc-gpww",
+                "agent_id": "bc-gpww",
+                "run_id": "run-gpww",
+            }
+
+        def get_run_status(self, **kwargs):
+            return {
+                "status": "RUNNING",
+                "done": False,
+                "agent_url": "https://cursor.com/agents/bc-gpww",
+                "pr_url": "",
+                "branch_name": "cursor/gpww-implement-40",
+                "result_text": "",
+            }
+
+    class FakeJira:
+        def get_issue(self, key, fields=None):
+            return {
+                "fields": {
+                    "summary": "Checkout fix",
+                    "description": "## Brief\nFix checkout",
+                    "status": {"name": "In Progress (AI)"},
+                    "labels": [],
+                    "issuelinks": [],
+                    "parent": None,
+                    "project": {"key": "GPWW"},
+                }
+            }
+
+        def list_comments(self, key, max_results=50):
+            return []
+
+        def add_comment(self, key, body):
+            comments.append(body)
+
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
+    monkeypatch.setattr(impl, "CursorCloudAgentClient", FakeCursor)
+    monkeypatch.setattr(impl, "_poll_budget_seconds", lambda: 0)
+    monkeypatch.setattr(impl, "attachments_text_for_issue", lambda *_a, **_k: "")
+    monkeypatch.setattr(impl, "_post_discord_cto", lambda *_a, **_k: None)
+    monkeypatch.setattr(impl, "lookup_pr_for_branch", lambda **_k: ("", ""))
+
+    class FakeResp:
+        status_code = 201
+        text = '{"html_url":"https://github.com/org/repo/pull/99","title":"GPWW-40: Checkout fix"}'
+
+        def json(self):
+            return {
+                "html_url": "https://github.com/org/repo/pull/99",
+                "title": "GPWW-40: Checkout fix",
+            }
+
+    monkeypatch.setattr(impl.requests, "post", lambda *a, **k: FakeResp())
+
+    result = ImplementHandler(jira=FakeJira(), cursor_api_key="test-key").run(
+        issue_key="GPWW-40",
+        repo="org/repo",
+    )
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "pr_opened"
+    assert result["outcome"]["pr_url"].endswith("/pull/99")
+    assert any("Implementation agent opened a PR" in body or "Bigas opened" in body for body in comments)
 
 
 def test_config_maps_implement_status(monkeypatch):

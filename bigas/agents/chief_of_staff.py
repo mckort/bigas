@@ -14,6 +14,8 @@ from bigas.chat.jira_formatting import (
     JIRA_AWARE_AGENT_IDS,
     JIRA_FORMATTING_RULES,
     humanize_jira_tool_result,
+    is_jira_lookup_tool_payload,
+    jira_lookup_tool_facts,
 )
 from bigas.chat.reply_style import (
     REPLY_STYLE,
@@ -687,7 +689,15 @@ def _run_tool_call(client: MCPClient, tool_name: str, arguments: Dict[str, Any])
     try:
         result = client.call_tool(tool_name, arguments)
         raw_text = result.get("text") or ""
-        human = humanize_tool_result(raw_text) or humanize_tool_result(result.get("structured"))
+        structured = result.get("structured")
+        lookup_facts = (
+            jira_lookup_tool_facts(structured)
+            if isinstance(structured, dict) and is_jira_lookup_tool_payload(structured)
+            else None
+        )
+        if lookup_facts:
+            return lookup_facts
+        human = humanize_tool_result(raw_text) or humanize_tool_result(structured)
         text = human or raw_text.strip()
         rewritten = _friendly_analytics_tool_failure(text)
         if rewritten:

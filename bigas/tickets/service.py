@@ -718,13 +718,13 @@ class TicketService:
         return ticket_to_api(ticket) if ticket else None
 
     def lookup_tickets(self, keys: List[str]) -> List[Dict[str, Any]]:
-        from bigas.tickets.review import infer_agent_url
+        from bigas.tickets.review import infer_agent_url, normalize_review
 
         out = []
         for key in keys:
             ticket = self.lookup_ticket(key)
             if ticket:
-                review = ticket.get("review") if isinstance(ticket.get("review"), dict) else {}
+                review = normalize_review(ticket.get("review"))
                 out.append(
                     {
                         "key": ticket["key"],
@@ -734,7 +734,8 @@ class TicketService:
                         "issue_type": ticket.get("issue_type"),
                         "fix_version": ticket.get("fix_version"),
                         "agent_url": infer_agent_url(ticket) or "",
-                        "pr_url": str(review.get("pr_url") or "").strip(),
+                        "pr_url": review.get("pr_url") or "",
+                        "pr_title": review.get("pr_title") or "",
                     }
                 )
         return out
