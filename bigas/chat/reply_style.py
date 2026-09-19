@@ -9,6 +9,7 @@ from typing import Any, Optional
 REPLY_STYLE = """
 Reply style (default, always):
 - The user never sees tool output. Your reply is a human-friendly summary in their language, not JSON, not a commit list, not a ticket dump.
+- Read the user's question and answer it. Tools give facts; you interpret them.
 - Open with one short sentence that answers the question.
 - Group the rest into scannable sections. Use an emoji + bold category header, then bold sub-heads and 1–2 sentence bullets that explain user value (what changed and why it matters). Skip autofix, infra, and internal noise unless asked.
 - Prefer markdown: short paragraphs, bullets, bold key terms, clickable links. Never wrap the whole reply in a code fence.
@@ -40,34 +41,66 @@ _DUMP_KEY_HINT_RE = re.compile(
 )
 
 
-_JIRA_TRANSITION_RE = re.compile(r"bigas://action/jira_transition", re.I)
-_LINK_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
+_LINK_ONLY_RE = re.compile(r"^\[[^\]]+\]\([^)]+\)$")
+# Jira lookup metadata: short status (+ optional date), not prose answers after em dash.
+_TICKET_STATUS_TAIL = r"[\w\s()/-]{1,80}(?:\s\(\d{4}-\d{2}-\d{2}\))?"
+_LINK_WITH_STATUS_RE = re.compile(
+    rf"^\[[^\]]+\]\([^)]+\)\s+—\s+{_TICKET_STATUS_TAIL}$"
+)
+_BULLET_LINK_ONLY_RE = re.compile(r"^-\s+\[[^\]]+\]\([^)]+\)$")
+_BULLET_LINK_WITH_STATUS_RE = re.compile(
+    rf"^-\s+\[[^\]]+\]\([^)]+\)\s+—\s+{_TICKET_STATUS_TAIL}$"
+)
+_PARENT_LINE_RE = re.compile(r"^Parent \([^)]+\):\s+")
 
 
-def looks_like_jira_ticket_dump(text: Optional[str]) -> bool:
-    """True when the reply is mostly humanized Jira lookup UI, not an answer."""
+def _is_ticket_dump_line(stripped: str) -> bool:
+    """True when a line is only ticket metadata from lookup humanization."""
+    if not stripped:
+        return True
+    if stripped.startswith("[Move to next"):
+        return True
+    lower = stripped.lower()
+    if lower.startswith(("status:", "agent:", "pr:", "missing:")):
+        return True
+    if stripped == "Open Epics:" or lower.startswith("open epics:"):
+        return True
+    if _PARENT_LINE_RE.match(stripped):
+        return True
+    if _LINK_ONLY_RE.match(stripped):
+        return True
+    if _LINK_WITH_STATUS_RE.match(stripped):
+        return True
+    if _BULLET_LINK_ONLY_RE.match(stripped):
+        return True
+    if _BULLET_LINK_WITH_STATUS_RE.match(stripped):
+        return True
+    return False
+
+
+def looks_like_ticket_dump(text: Optional[str]) -> bool:
+    """True when a reply is only a ticket title, status, and/or Move button."""
     blob = text.strip() if isinstance(text, str) else str(text or "").strip()
     if not blob:
         return False
-    if _JIRA_TRANSITION_RE.search(blob):
-        stripped = _LINK_RE.sub("", blob)
-        stripped = re.sub(r"Status:\s*[^\n]+", "", stripped, flags=re.I)
-        stripped = re.sub(r"Open Epics:", "", stripped, flags=re.I)
-        stripped = re.sub(r"Parent \([^)]+\):", "", stripped, flags=re.I)
-        stripped = re.sub(r"Missing:\s*[^\n]+", "", stripped, flags=re.I)
-        stripped = re.sub(r"\s+", " ", stripped).strip(" -–—•")
-        if len(stripped) >= 80:
-            return False
-        if re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", stripped) and re.search(
-            r"[.!?]\s*$", stripped
-        ):
-            return False
-        return True
-    if "Open Epics:" in blob and _LINK_RE.search(blob):
-        lines = [ln.strip() for ln in blob.splitlines() if ln.strip()]
-        if len(lines) <= 6 and all(ln.startswith("- [") or ln.startswith("Open Epics:") for ln in lines):
-            return True
-    return False
+    has_button = "bigas://action/jira_transition" in blob or "Move to next column" in blob
+    has_ticket_link = "/board?ticket=" in blob or "atlassian.net/browse/" in blob
+    if not has_button and not has_ticket_link:
+        return False
+    prose: list[str] = []
+    for line in blob.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _is_ticket_dump_line(stripped):
+            continue
+        prose.append(stripped)
+    return not prose
+
+
+def looks_like_incomplete_chat_reply(text: Optional[str]) -> bool:
+    """True when the user would see a tool dump instead of an answer."""
+    return looks_like_raw_tool_dump(text) or looks_like_ticket_dump(text)
 
 
 def looks_like_raw_tool_dump(text: Optional[str]) -> bool:

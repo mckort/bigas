@@ -20,8 +20,7 @@ from bigas.chat.jira_formatting import (
 from bigas.chat.reply_style import (
     REPLY_STYLE,
     latest_user_text,
-    looks_like_jira_ticket_dump,
-    looks_like_raw_tool_dump,
+    looks_like_incomplete_chat_reply,
     tool_facts_from_messages,
 )
 from bigas.github_refs import is_owner_repo, parse_cursor_agent_id, resolve_repo_and_pr
@@ -583,15 +582,18 @@ def _synthesize_human_reply(
             "role": "system",
             "content": (
                 f"{REPLY_STYLE}\n\n"
-                "You are rewriting internal tool data into the user-facing chat reply. "
-                "Reply in the user's language. Never output JSON."
+                "Answer the user's question the way a thoughtful colleague would. "
+                "Tool data is evidence only — interpret it and reply in their language. "
+                "Never output JSON. Never reply with only a ticket title, status, or "
+                "Move button. If an agent or PR URL is in the facts, include it. "
+                "A Move button may be a footer after the answer, not the answer."
             ),
         },
         {
             "role": "user",
             "content": (
                 f"{user_message}\n\n"
-                "Internal tool data (do not paste this):\n\n"
+                "Internal tool data (do not paste this; use it to answer):\n\n"
                 f"{facts}"
             ),
         },
@@ -602,7 +604,7 @@ def _synthesize_human_reply(
         logger.exception("Failed to humanize tool dump")
         return ""
     text = (raw or "").strip() if isinstance(raw, str) else str(raw or "").strip()
-    if not text or looks_like_raw_tool_dump(text):
+    if not text or looks_like_incomplete_chat_reply(text):
         return ""
     return text
 
@@ -615,19 +617,23 @@ def _finalize_chat_reply(
     llm=None,
     generation_kwargs: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Guarantee the user never receives a raw tool dump as the reply."""
+    """Guarantee the user gets an answer to their question, not a tool dump."""
     candidate = text.strip() if isinstance(text, str) else str(text or "").strip()
-    if not looks_like_raw_tool_dump(candidate) and not looks_like_jira_ticket_dump(
-        candidate
-    ):
+    facts_text = facts.strip()
+    needs_answer = looks_like_incomplete_chat_reply(candidate) or (
+        not candidate and bool(facts_text)
+    )
+    if not needs_answer:
         return candidate
     rewritten = _synthesize_human_reply(
         user_message,
-        facts.strip() or candidate,
+        facts_text or candidate,
         llm=llm,
         generation_kwargs=generation_kwargs,
     )
-    return rewritten or _RAW_DUMP_FALLBACK
+    if rewritten:
+        return rewritten
+    return _RAW_DUMP_FALLBACK
 
 
 _ANALYTICS_EMPTY_RE = re.compile(

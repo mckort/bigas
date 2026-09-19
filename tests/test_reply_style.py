@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
-from bigas.chat.reply_style import looks_like_jira_ticket_dump, looks_like_raw_tool_dump
+from bigas.chat.reply_style import (
+    looks_like_incomplete_chat_reply,
+    looks_like_raw_tool_dump,
+    looks_like_ticket_dump,
+)
 from bigas.llm.completion import LLMCompletion, ToolCall
 
 
@@ -32,20 +36,72 @@ def test_looks_like_raw_tool_dump_detects_github_activity():
     assert looks_like_raw_tool_dump(truncated)
 
 
-def test_looks_like_jira_ticket_dump_detects_move_button_only():
+def test_looks_like_ticket_dump_detects_inline_status_lookup_line():
+    dump = "[Add catalog modules](/board?ticket=GPWW-40) — In Progress (AI)"
+    assert looks_like_ticket_dump(dump)
+    assert looks_like_incomplete_chat_reply(dump)
+
+
+def test_looks_like_ticket_dump_detects_lookup_metadata_blocks():
+    dump = (
+        "[Add catalog modules](/board?ticket=GPWW-40) — In Progress (AI)\n\n"
+        "Parent (Epic): [Platform work](/board?ticket=GPWW-1)\n\n"
+        "Open Epics:\n"
+        "- [Another epic](/board?ticket=GPWW-2)\n\n"
+        "Missing: GPWW-99"
+    )
+    assert looks_like_ticket_dump(dump)
+
+
+def test_looks_like_ticket_dump_detects_title_and_move_button():
+    dump = (
+        "[Add catalog modules](/board?ticket=GPWW-40)\n\n"
+        "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)\n"
+        "Status: In Progress (AI)"
+    )
+    assert looks_like_ticket_dump(dump)
+    assert looks_like_incomplete_chat_reply(dump)
+    assert not looks_like_ticket_dump(
+        "GPWW-40 is still in progress. The implement agent is here: "
+        "https://cursor.com/agents/bc-1\n\n"
+        "[Add catalog modules](/board?ticket=GPWW-40)\n\n"
+        "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)"
+    )
+
+
+def test_looks_like_ticket_dump_ignores_prose_with_links_and_bullets():
+    prose_link = (
+        "[PROJ-123: Feature Title](https://example.atlassian.net/browse/PROJ-123) — "
+        "The fix has been deployed to production and verified."
+    )
+    assert not looks_like_ticket_dump(prose_link)
+    two_links = (
+        "[Docs](https://example.com/docs) for auth can be found "
+        "[here](https://example.com/auth)"
+    )
+    assert not looks_like_ticket_dump(two_links)
+    changelog = (
+        "Finished this sprint:\n\n"
+        "- [GPWW-1: Login](/board?ticket=GPWW-1) — shipped SSO to all tenants.\n"
+        "- [GPWW-2: Billing](/board?ticket=GPWW-2) — fixed proration edge case."
+    )
+    assert not looks_like_ticket_dump(changelog)
+
+
+def test_looks_like_ticket_dump_detects_atlassian_move_button_only():
     dump = (
         "[Fix checkout](https://example.atlassian.net/browse/GPWW-40)\n\n"
         "Status: In Progress (AI)\n\n"
         "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)"
     )
-    assert looks_like_jira_ticket_dump(dump)
+    assert looks_like_ticket_dump(dump)
     answer = (
         "GPWW-40 is still **In Progress (AI)**. The Cursor agent is running and "
         "there is no PR yet.\n\n"
         "[Fix checkout](/board?ticket=GPWW-40)\n\n"
         "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)"
     )
-    assert not looks_like_jira_ticket_dump(answer)
+    assert not looks_like_ticket_dump(answer)
 
 
 def test_looks_like_raw_tool_dump_ignores_human_replies():
@@ -139,6 +195,53 @@ def test_native_tool_loop_humanizes_last_tool_text_fallback():
         run_tool=lambda name, args: GITHUB_ACTIVITY_DUMP,
     )
     assert result == "Samarbete och delning är den största nyheten."
+
+
+def test_native_tool_loop_rewrites_ticket_dump_as_answer():
+    from bigas.agents.chief_of_staff import _run_native_tool_loop
+
+    ticket_dump = (
+        "[Add catalog modules](/board?ticket=GPWW-40)\n\n"
+        "[Move to next column](bigas://action/jira_transition?issue=GPWW-40)\n"
+        "Status: In Progress (AI)\n"
+        "Agent: https://cursor.com/agents/bc-1"
+    )
+
+    class FakeLLM:
+        def __init__(self):
+            self.turns = 0
+
+        def complete_detailed(self, messages, **kwargs):
+            self.turns += 1
+            if self.turns == 1:
+                return LLMCompletion(
+                    text="",
+                    tool_calls=(
+                        ToolCall(id="c1", name="lookup_ticket", arguments={"issue_key": "GPWW-40"}),
+                    ),
+                )
+            return LLMCompletion(text=ticket_dump)
+
+        def complete(self, messages, **kwargs):
+            return (
+                "GPWW-40 is still in progress. Follow the agent: "
+                "https://cursor.com/agents/bc-1"
+            )
+
+    result = _run_native_tool_loop(
+        FakeLLM(),
+        [
+            {
+                "role": "user",
+                "content": "What is the status of GPWW-40? Where is the agent link?",
+            }
+        ],
+        [{"type": "function", "function": {"name": "lookup_ticket", "parameters": {}}}],
+        run_tool=lambda name, args: ticket_dump,
+    )
+    assert "Follow the agent" in result
+    assert "https://cursor.com/agents/bc-1" in result
+    assert "Move to next column" not in result
 
 
 def test_json_agent_loop_humanizes_json_answer(monkeypatch):

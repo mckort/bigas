@@ -138,6 +138,110 @@ def lookup_pr_url_for_branch(*, repo: str, branch_name: str) -> str:
     return url
 
 
+def lookup_implement_branch(*, repo: str, issue_key: str) -> str:
+    """Find a Cursor implement branch already pushed for this ticket."""
+    token = (os.environ.get("GITHUB_TOKEN") or "").strip()
+    key = (issue_key or "").strip().lower()
+    if not token or not key or "/" not in repo:
+        return ""
+    owner, name = repo.split("/", 1)
+    prefixes = (
+        f"cursor/bigas-implement-{key}",
+        f"cursor/{key}",
+        key,
+    )
+    for prefix in prefixes:
+        try:
+            resp = requests.get(
+                f"https://api.github.com/repos/{owner}/{name}/git/matching-refs/heads/{prefix}",
+                headers=_github_headers(token),
+                timeout=30,
+            )
+            try:
+                items = resp.json() if resp.text else []
+            except (ValueError, requests.exceptions.JSONDecodeError):
+                logger.warning(
+                    "GitHub implement-branch lookup returned non-JSON for %s %s",
+                    repo,
+                    issue_key,
+                    exc_info=True,
+                )
+                continue
+        except Exception:
+            logger.warning(
+                "GitHub implement-branch lookup failed for %s %s",
+                repo,
+                issue_key,
+                exc_info=True,
+            )
+            continue
+        if resp.status_code >= 400:
+            continue
+        if not isinstance(items, list):
+            continue
+        prefix_matches: list[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            ref = str(item.get("ref") or "")
+            if not ref.startswith("refs/heads/"):
+                continue
+            branch = ref[len("refs/heads/") :]
+            if (
+                re.search(
+                    rf"(?:^|[^a-z0-9]){re.escape(key)}(?:[^a-z0-9]|$)",
+                    branch.lower(),
+                )
+                and branch not in prefix_matches
+            ):
+                prefix_matches.append(branch)
+        if prefix_matches:
+            return prefix_matches[-1]
+    return ""
+
+
+def ensure_implement_pr_from_branch_hint(
+    *,
+    repo: str,
+    base_branch: str,
+    issue_key: str,
+    summary: str,
+    agent_url: str = "",
+    status: Optional[Dict[str, Any]] = None,
+    branch_name: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Open a fallback PR when Cursor left a branch but no pull request."""
+    branch = (branch_name or "").strip()
+    if not branch and status:
+        branch = branch_from_implement_status(status)
+    if not branch:
+        branch = lookup_implement_branch(repo=repo, issue_key=issue_key)
+    if not branch:
+        return None
+    st = str((status or {}).get("status") or "").strip().upper()
+    if st in _SKIP_PR_FALLBACK_STATUSES:
+        return None
+    outcome = {
+        "kind": "finished_no_pr",
+        "pr_url": "",
+        "status": st or "RUNNING",
+        "branch_name": branch,
+        "agent_url": agent_url,
+        "detail": "Opened a PR from the branch Cursor already pushed.",
+    }
+    result = ensure_implement_pr(
+        outcome,
+        repo=repo,
+        base_branch=base_branch,
+        issue_key=issue_key,
+        summary=summary,
+        agent_url=agent_url,
+    )
+    if isinstance(result, dict) and (result.get("pr_url") or "").strip():
+        return result
+    return None
+
+
 def branch_from_implement_status(status: Dict[str, Any]) -> str:
     """Branch Cursor pushed, including pull/new URLs when autoCreatePR fails."""
     branch = (status.get("branch_name") or "").strip().rstrip("/")
@@ -553,6 +657,20 @@ class ImplementHandler:
                 agent_url=agent_url,
                 timeout_seconds=_poll_budget_seconds(),
             )
+            if outcome and not outcome.get("pr_url"):
+                status = outcome.get("status") or ""
+                if str(status).upper() not in _SKIP_PR_FALLBACK_STATUSES:
+                    fallback = ensure_implement_pr_from_branch_hint(
+                        repo=repo,
+                        base_branch=base_branch,
+                        issue_key=issue_key,
+                        summary=summary,
+                        agent_url=agent_url or agent_id,
+                        status={"status": status} if status else None,
+                        branch_name=str(outcome.get("branch_name") or ""),
+                    )
+                    if fallback:
+                        outcome = fallback
             if outcome:
                 self._report_implementation_outcome(
                     issue_key=issue_key,
@@ -636,6 +754,7 @@ class ImplementHandler:
             return None
         deadline = time.time() + timeout_seconds
         interval = _monitor_interval_seconds()
+        last_status: Optional[Dict[str, Any]] = None
         # First poll after a short delay so launch can register.
         time.sleep(min(15, interval))
         while time.time() < deadline:
@@ -649,6 +768,7 @@ class ImplementHandler:
                 )
                 time.sleep(interval)
                 continue
+            last_status = status
             if status.get("done"):
                 outcome = evaluate_implementation_outcome(status, repo=repo)
                 return ensure_implement_pr(
@@ -660,7 +780,14 @@ class ImplementHandler:
                     agent_url=agent_url or (status.get("agent_url") or ""),
                 )
             time.sleep(interval)
-        return None
+        return ensure_implement_pr_from_branch_hint(
+            repo=repo,
+            base_branch=base_branch,
+            issue_key=issue_key,
+            summary=summary,
+            agent_url=agent_url or ((last_status or {}).get("agent_url") or ""),
+            status=last_status,
+        )
 
     def _recover_after_monitor_timeout(
         self,
@@ -816,6 +943,20 @@ class ImplementHandler:
                 logger.warning(
                     "Failed to write PR-opened comment on %s", issue_key, exc_info=True
                 )
+            if pr_url:
+                try:
+                    from bigas.tickets.review import attach_review_from_pr
+
+                    attach_review_from_pr(
+                        issue_key,
+                        pr_url=pr_url,
+                        pr_title=str(outcome.get("pr_title") or ""),
+                        comment=False,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to persist implement PR on %s", issue_key, exc_info=True
+                    )
             _post_discord_cto(
                 f"{discord_title} {label}\n"
                 f"{format_pr_discord_line(pr_url, outcome.get('pr_title') or '')}\n"
