@@ -56,6 +56,11 @@ def test_map_issue_type_new_feature_variants():
     assert _map_issue_type("Feature") == "Feature"
 
 
+def test_map_issue_type_improvement():
+    assert _map_issue_type("Improvement") == "Improvement"
+    assert _map_issue_type("improvement") == "Improvement"
+
+
 def test_filter_release_cut_accepts_status_key():
     kept = {
         issue["key"]
@@ -100,6 +105,7 @@ def test_filter_release_cut_keeps_done_and_final_approval():
 def test_feature_type_is_new_feature():
     assert categorize_issue({"issue_type": "Feature"}) == "new_features"
     assert categorize_issue({"issue_type": "Task"}) == "improvements"
+    assert categorize_issue({"issue_type": "Improvement"}) == "improvements"
     assert categorize_issue({"issue_type": "Bug"}) == "bug_fixes"
 
 

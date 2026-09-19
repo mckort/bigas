@@ -833,6 +833,20 @@ def test_store_keeps_feature_issue_type():
     assert fetched["issue_type"] == "Feature"
 
 
+def test_store_keeps_improvement_issue_type():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    created = store.create_ticket(
+        board["board_id"],
+        title="Clarify board column labels",
+        user_id="dev-user",
+        issue_type="improvement",
+    )
+    assert created["issue_type"] == "Improvement"
+    fetched = store.get_ticket(created["ticket_id"])
+    assert fetched["issue_type"] == "Improvement"
+
+
 def test_create_todo_does_not_dispatch_automation(monkeypatch):
     called = {}
 

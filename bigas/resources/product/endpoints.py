@@ -470,7 +470,7 @@ def create_ticket():
 
     Returns { "ok": true, "key": "BIG-42", "url": "https://..." } on success.
     Set marketing=true for marketing-related tickets (adds the Jira label "marketing").
-    Optional parent_epic_key links the new Task/Bug/Feature to a goal Epic (never creates Epics).
+    Optional parent_epic_key links the new Task/Bug/Feature/Improvement to a goal Epic (never creates Epics).
     Optional status sets the board column (aliases like "Final Review" work).
     """
     data = request.json or {}
@@ -1074,9 +1074,13 @@ def get_manifest():
                         },
                         "issue_type": {
                             "type": "string",
-                            "description": "Issue type name (Task, Bug, or Feature). Default Task. Use Feature for new user-facing product work.",
+                            "description": (
+                                "Issue type name (Task, Bug, Feature, or Improvement). Default Task. "
+                                "Use Feature for new user-facing product work. Use Improvement for polish, "
+                                "UX, copy, and other upgrades to existing behavior."
+                            ),
                             "default": "Task",
-                            "enum": ["Task", "Bug", "Feature"],
+                            "enum": ["Task", "Bug", "Feature", "Improvement"],
                         },
                         "marketing": {
                             "type": "boolean",
@@ -1090,8 +1094,8 @@ def get_manifest():
                             "type": "string",
                             "description": (
                                 "Optional existing Epic key only (e.g. GPWW-2). "
-                                "Omit this field to create a standalone Task/Bug/Feature — that is the default. "
-                                "Do not pass a Task, Bug, or Feature key or guess a parent."
+                                "Omit this field to create a standalone Task/Bug/Feature/Improvement — that is the default. "
+                                "Do not pass a Task, Bug, Feature, or Improvement key or guess a parent."
                             ),
                         },
                         "status": {
@@ -1142,7 +1146,7 @@ def get_manifest():
                     "Also use before create_ticket when you need Epic context. "
                     "A parent on a referenced ticket is not automatically the parent "
                     "for a new ticket — only link parent_epic_key if the new work belongs under "
-                    "that Epic; otherwise create a standalone Task, Bug, or Feature."
+                    "that Epic; otherwise create a standalone Task, Bug, Feature, or Improvement."
                 ),
                 "path": "/mcp/tools/lookup_ticket",
                 "method": "POST",
