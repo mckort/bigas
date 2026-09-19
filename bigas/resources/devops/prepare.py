@@ -1470,7 +1470,11 @@ def continue_after_main_ready(
     missing = git.get("missing_from_git") or []
     extra = git.get("extra_commits") or []
     skipped_merge = (merge_status or "") == "already_on_main"
-    if skipped_merge and missing:
+    shipping_commits = list(git.get("commits") or [])
+    # Only refuse an empty ship: feature branch already on main AND nothing
+    # new vs prod. If main is already ahead (e.g. a ticket PR merged directly),
+    # a leftover cut ticket from a prior version must not block the ask.
+    if skipped_merge and missing and not shipping_commits:
         _post(
             thread_id,
             "I did not merge a feature branch onto `main`, and "
