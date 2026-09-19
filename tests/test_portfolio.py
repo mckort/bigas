@@ -124,7 +124,7 @@ def test_board_name_and_local_path_for_fri(monkeypatch):
         "BIGAS_PROJECT_LOCAL_PATH_MAP",
         "FRI:/Users/marcusfriman/Documents/Code/frimaninvestments",
     )
-    assert board_name_for_project("FRI") == "Friman investments"
+    assert board_name_for_project("FRI") == "FRI Board"
     assert board_name_for_project("VFA") == "VFA Board"
     assert local_path_for_project("FRI").endswith("frimaninvestments")
     assert repo_map()["FRI"] == "mckort/frimaninvestments"

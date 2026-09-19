@@ -1,6 +1,6 @@
 # Friman investments board (FRI)
 
-Bigas treats **Friman investments** as portfolio project **`FRI`**, with the internal board named **Friman investments** at `/board` (project switcher).
+Bigas treats **Friman investments** as portfolio project **`FRI`**, with the internal board named **FRI Board** at `/board` (project switcher), matching other portfolio boards (VFA Board, BIG Board, …).
 
 ## What you get
 
@@ -25,7 +25,7 @@ JIRA_PROJECT_KEY=VFA,WAYW,BIG,REM,GPWW,FYDA,MYL,FRI
 # BIGAS_PROJECT_LOCAL_PATH_MAP=FRI:/Users/marcusfriman/Documents/Code/frimaninvestments
 ```
 
-Restart Bigas after changing env. Existing users get the **Friman investments** board automatically on the next `/api/boards` load when `FRI` is in `JIRA_PROJECT_KEY`.
+Restart Bigas after changing env. New users get **FRI Board** when `FRI` is in `JIRA_PROJECT_KEY`. Boards still titled **Friman investments** are renamed to **FRI Board** on the next `/api/boards` load.
 
 ## GitHub (`mckort/frimaninvestments`)
 

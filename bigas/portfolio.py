@@ -33,7 +33,8 @@ DEFAULT_BRAND_NAMES: Dict[str, str] = {
     "FRI": "Friman investments",
 }
 
-DEFAULT_BOARD_NAMES: Dict[str, str] = {
+# Retired internal board titles → migrate to ``board_name_for_project`` on /api/boards load.
+LEGACY_BOARD_DISPLAY_NAMES: Dict[str, str] = {
     "FRI": "Friman investments",
 }
 
@@ -143,7 +144,18 @@ def board_name_for_project(project_key: str) -> str:
     key = (project_key or "").strip().upper()
     if not key:
         return ""
-    return DEFAULT_BOARD_NAMES.get(key) or f"{key} Board"
+    return f"{key} Board"
+
+
+def board_name_migration_target(
+    project_key: str, current_name: Optional[str]
+) -> Optional[str]:
+    """Return canonical board name when ``current_name`` is a retired default."""
+    key = (project_key or "").strip().upper()
+    legacy = LEGACY_BOARD_DISPLAY_NAMES.get(key)
+    if not legacy or (current_name or "").strip() != legacy:
+        return None
+    return board_name_for_project(key)
 
 
 def ga4_property_map() -> Dict[str, str]:
