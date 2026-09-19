@@ -1289,6 +1289,65 @@ def test_prepare_stops_when_merge_skipped_and_cut_missing(monkeypatch):
     assert "Reply **yes**" not in blob
 
 
+def test_prepare_asks_when_main_ahead_and_prior_cut_ticket_missing_from_git(monkeypatch):
+    """Leftover cut ticket from a prior release must not block deploy when main ships commits."""
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    store.create_ticket(
+        board["board_id"],
+        title="Already shipped in prior release",
+        user_id="dev-user",
+        key="VFA-102",
+        fix_version="0.15.0",
+        status="Final approval (manual)",
+    )
+    store.create_ticket(
+        board["board_id"],
+        title="New work for this release",
+        user_id="dev-user",
+        key="VFA-104",
+        fix_version="0.15.0",
+        status="Final approval (manual)",
+    )
+    create_release("VFA", name="0.15.0")
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [
+                {
+                    "sha": "abc1234deadbeef",
+                    "message": "VFA-104: New feature (#265)",
+                    "subject": "VFA-104: New feature (#265)",
+                }
+            ],
+            "compared": ["deploy-backend-old → main"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.15.0",
+    )
+    assert result["status"] == "complete"
+    pending = chat.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert pending and pending.get("kind") == "prepare"
+    assert "VFA-102" in (pending.get("missing_from_git") or [])
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "will not ask to deploy" not in blob
+    assert "cut ticket(s)** were not found in git" in blob
+    assert "Reply **yes**" in blob
+
+
 def test_prepare_after_merge_locks_cut_for_new_prs(monkeypatch):
     create_release("VFA", name="0.7.0", is_default=True)
     create_release("VFA", name="0.8.0")

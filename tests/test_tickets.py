@@ -838,7 +838,7 @@ def test_store_keeps_improvement_issue_type():
     board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
     created = store.create_ticket(
         board["board_id"],
-        title="Clearer post-order copy",
+        title="Clarify board column labels",
         user_id="dev-user",
         issue_type="improvements",
     )

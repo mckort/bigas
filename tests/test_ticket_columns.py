@@ -142,5 +142,6 @@ def test_normalize_issue_type_accepts_improvement():
     assert "Improvement" in CREATABLE_ISSUE_TYPES
     assert normalize_issue_type("Improvement") == "Improvement"
     assert normalize_issue_type("improvements") == "Improvement"
+    assert normalize_issue_type("enhancement") == "Improvement"
     assert normalize_issue_type("feature") == "Feature"
     assert normalize_issue_type("") == "Task"

@@ -113,8 +113,8 @@ def test_create_jira_issue_accepts_improvement(monkeypatch):
         captured.update(kwargs)
         return {
             "ok": True,
-            "key": "VFA-80",
-            "url": "https://example.atlassian.net/browse/VFA-80",
+            "key": "VFA-73",
+            "url": "https://example.atlassian.net/browse/VFA-73",
         }
 
     class FakeClient:
@@ -134,8 +134,8 @@ def test_create_jira_issue_accepts_improvement(monkeypatch):
 
     result = CreateJiraIssueService().create(
         project_key="VFA",
-        summary="Clearer empty-state copy",
-        description="Tighten the portfolio empty state",
+        summary="Tighten mobile board spacing",
+        description="Reduce padding on narrow viewports",
         issue_type="improvements",
     )
     assert result["issue_type"] == "Improvement"

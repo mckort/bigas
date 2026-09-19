@@ -15,6 +15,7 @@ CREATABLE_ISSUE_TYPES = frozenset({"Task", "Bug", "Feature", "Improvement"})
 
 _ISSUE_TYPE_ALIASES = {
     "improvements": "Improvement",
+    "enhancement": "Improvement",
     "new feature": "Feature",
     "new-feature": "Feature",
 }

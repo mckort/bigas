@@ -1075,7 +1075,11 @@ def get_manifest():
                         },
                         "issue_type": {
                             "type": "string",
-                            "description": "Issue type name (Task, Bug, Feature, or Improvement). Default Task. Use Feature for new user-facing product work. Use Improvement for enhancements to existing behavior.",
+                            "description": (
+                                "Issue type name (Task, Bug, Feature, or Improvement). Default Task. "
+                                "Use Feature for new user-facing product work. Use Improvement for polish, "
+                                "UX, copy, and other upgrades to existing behavior."
+                            ),
                             "default": "Task",
                             "enum": ["Task", "Bug", "Feature", "Improvement"],
                         },

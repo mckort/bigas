@@ -8,7 +8,7 @@ from urllib.parse import quote
 JIRA_FORMATTING_RULES = """
 Jira ticket formatting (mandatory):
 - Reply in the user's language.
-- When you should file work on the internal Bigas board (or Jira), call create_ticket yourself (Task, Feature, Improvement, or Bug only — never Epics). Use Feature for new user-facing product work. Use Improvement for enhancements to existing behavior. Never tell the user to create the issue themselves.
+- When you should file work on the internal Bigas board (or Jira), call create_ticket yourself (Task, Feature, Bug, or Improvement only — never Epics). Use Feature for new user-facing product work. Use Improvement for polish, UX, copy, and other upgrades to what already exists. Never tell the user to create the issue themselves.
 - Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true.
 - To put a new ticket in a column, pass status on create_ticket (e.g. "Final Review"). To move an existing ticket, call update_ticket with issue_key and status. Do not tell the user to drag the card.
 - Use lookup_ticket when you need issue details or a project's open Epics. issue_key accepts several keys or a range (BIG-15 to BIG-18). Do not ask the user for an Epic key if you can look it up.
