@@ -711,7 +711,19 @@ def test_ensure_default_boards_adds_missing_project_board(monkeypatch):
     monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA,BIG,FRI")
     boards2 = store.ensure_default_boards(uid)
     fri = next(b for b in boards2 if b.get("project_key") == "FRI")
-    assert fri["name"] == "Friman investments"
+    assert fri["name"] == "FRI Board"
+
+
+def test_ensure_default_boards_renames_legacy_fri_board(monkeypatch):
+    store = get_ticket_store()
+    uid = "boards-fri-rename-user"
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "FRI")
+    board = store.create_board(uid, name="Friman investments", project_key="FRI")
+    assert board["name"] == "Friman investments"
+    boards = store.ensure_default_boards(uid)
+    fri = next(b for b in boards if b.get("project_key") == "FRI")
+    assert fri["name"] == "FRI Board"
+    assert fri["board_id"] == board["board_id"]
 
 
 def test_update_ticket_persists_review_and_agent_url():

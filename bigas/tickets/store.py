@@ -32,6 +32,25 @@ def _board_prefix(project_key: Optional[str]) -> str:
     return "PERS"
 
 
+def _apply_legacy_board_name_migrations(
+    *,
+    user_id: str,
+    by_project: Dict[str, Dict[str, Any]],
+    update_board,
+) -> None:
+    from bigas.portfolio import board_name_migration_target, jira_project_keys
+
+    for key in jira_project_keys():
+        norm_key = (key or "").strip().upper()
+        board = by_project.get(norm_key)
+        if not board:
+            continue
+        new_name = board_name_migration_target(norm_key, board.get("name"))
+        if not new_name:
+            continue
+        update_board(board["board_id"], user_id=user_id, name=new_name)
+
+
 def _make_comment(
     body: str,
     *,
@@ -438,6 +457,12 @@ class MemoryTicketStore:
                     project_key=norm_key,
                 )
                 by_project[norm_key] = board
+
+        _apply_legacy_board_name_migrations(
+            user_id=user_id,
+            by_project=by_project,
+            update_board=self.update_board,
+        )
 
         return self.list_boards(user_id)
 
@@ -1033,6 +1058,12 @@ class FirestoreTicketStore:
                     project_key=norm_key,
                 )
                 by_project[norm_key] = board
+
+        _apply_legacy_board_name_migrations(
+            user_id=user_id,
+            by_project=by_project,
+            update_board=self.update_board,
+        )
 
         return self.list_boards(user_id)
 
