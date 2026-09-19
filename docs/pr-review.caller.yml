@@ -1,4 +1,4 @@
-# Thin caller for product repos (VFA, WAYW, GPWW, FYDA, MYL, REM, FRI / friman-investments, …).
+# Thin caller for product repos (VFA, WAYW, GPWW, FYDA, MYL, REM, FRI / frimaninvestments, …).
 # Copy this file to `.github/workflows/pr-review.yml` in the product repo.
 # The implementation lives in mckort/bigas so every project follows the same
 # review → autofix → merge → Final approval flow.

@@ -17,6 +17,8 @@ DEFAULT_PROJECT_ALIASES: Dict[str, List[str]] = {
         "friman investments",
         "friman investment",
         "friman-investments",
+        "frimaninvestments",
+        "frimaninvestments.com",
         "friman investments board",
     ],
 }
@@ -45,7 +47,7 @@ DEFAULT_PROJECT_REPOS: Dict[str, str] = {
     "GPWW": "Green-Promo-Wear-Global/greenpromowear-website",
     "FYDA": "mckort/fulfillyourdreamadventure",
     "MYL": "mckort/mylifesdeed",
-    "FRI": "mckort/friman-investments",
+    "FRI": "mckort/frimaninvestments",
 }
 
 # owner/repo → default branch for Cursor implement / deploy refs
@@ -57,7 +59,7 @@ DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
     "Green-Promo-Wear-Global/greenpromowear-website": "main",
     "mckort/fulfillyourdreamadventure": "master",
     "mckort/mylifesdeed": "main",
-    "mckort/friman-investments": "main",
+    "mckort/frimaninvestments": "main",
 }
 
 DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
@@ -73,6 +75,8 @@ DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
     "www.mylifesdeed.com": "MYL",
     "bigas.me": "BIG",
     "www.bigas.me": "BIG",
+    "frimaninvestments.com": "FRI",
+    "www.frimaninvestments.com": "FRI",
 }
 
 

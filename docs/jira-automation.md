@@ -37,7 +37,7 @@ Weekly Cloud Scheduler (`/api/agents/evaluate-goals`) repeats the same evaluatio
 |---|---|
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret header |
 | `BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS` | Default `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL,FRI` |
-| `BIGAS_JIRA_PROJECT_REPO_MAP` | `VFA:mckort/vcfieldassistant,WAYW:mckort/roadpal,BIG:mckort/bigas,REM:mckort/remotebrief,GPWW:Green-Promo-Wear-Global/greenpromowear-website,FYDA:mckort/fulfillyourdreamadventure,MYL:mckort/mylifesdeed,FRI:mckort/friman-investments` |
+| `BIGAS_JIRA_PROJECT_REPO_MAP` | `VFA:mckort/vcfieldassistant,WAYW:mckort/roadpal,BIG:mckort/bigas,REM:mckort/remotebrief,GPWW:Green-Promo-Wear-Global/greenpromowear-website,FYDA:mckort/fulfillyourdreamadventure,MYL:mckort/mylifesdeed,FRI:mckort/frimaninvestments` |
 | `BIGAS_PROJECT_LOCAL_PATH_MAP` | Optional `FRI:/path/to/friman-investments` for your laptop checkout (GitHub remains the source of truth for cloud agents) |
 | `BIGAS_JIRA_REPO_BASE_BRANCH_MAP` | Per-repo Cursor starting ref, e.g. `mckort/fulfillyourdreamadventure:master,mckort/vcfieldassistant:main`. Defaults include FYDA→`master`; others→`main`. |
 | `BIGAS_JIRA_DEFAULT_BASE_BRANCH` | Fallback when repo is not in the map (default `main`) |

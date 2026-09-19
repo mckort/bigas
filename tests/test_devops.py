@@ -176,10 +176,14 @@ def test_resolve_deploy_target_bigas(monkeypatch):
 def test_resolve_deploy_target_fri_default_workflow(monkeypatch):
     monkeypatch.delenv("BIGAS_DEPLOY_WORKFLOW_MAP", raising=False)
     monkeypatch.delenv("BIGAS_JIRA_PROJECT_REPO_MAP", raising=False)
+    monkeypatch.delenv("BIGAS_DEPLOY_REPO_MAP", raising=False)
     target = resolve_deploy_target(project_key="FRI")
     assert target is not None
-    assert target.repo == "mckort/friman-investments"
+    assert target.repo == "mckort/frimaninvestments"
+    assert target.dispatch_repo == "mckort/gcp-single-vm-webstack"
     assert target.workflows == ["deploy.yml"]
+    assert target.workflow_inputs == {"site": "frimaninvestments"}
+    assert any("frimaninvestments.com" in u for u in target.site_urls)
 
     from_text = resolve_deploy_target(site_or_text="deploy friman investments")
     assert from_text is not None
