@@ -431,13 +431,26 @@ class MemoryTicketStore:
 
         for key in jira_project_keys():
             norm_key = (key or "").strip().upper()
-            if norm_key and norm_key not in by_project:
-                board = self.create_board(
-                    user_id,
-                    name=board_name_for_project(norm_key),
-                    project_key=norm_key,
-                )
-                by_project[norm_key] = board
+            if not norm_key:
+                continue
+            wanted = board_name_for_project(norm_key)
+            existing_board = by_project.get(norm_key)
+            if existing_board:
+                if existing_board.get("name") != wanted:
+                    updated = self.update_board(
+                        existing_board["board_id"],
+                        user_id=user_id,
+                        name=wanted,
+                    )
+                    if updated:
+                        by_project[norm_key] = updated
+                continue
+            board = self.create_board(
+                user_id,
+                name=wanted,
+                project_key=norm_key,
+            )
+            by_project[norm_key] = board
 
         return self.list_boards(user_id)
 
@@ -1026,13 +1039,26 @@ class FirestoreTicketStore:
 
         for key in jira_project_keys():
             norm_key = (key or "").strip().upper()
-            if norm_key and norm_key not in by_project:
-                board = self.create_board(
-                    user_id,
-                    name=board_name_for_project(norm_key),
-                    project_key=norm_key,
-                )
-                by_project[norm_key] = board
+            if not norm_key:
+                continue
+            wanted = board_name_for_project(norm_key)
+            existing_board = by_project.get(norm_key)
+            if existing_board:
+                if existing_board.get("name") != wanted:
+                    updated = self.update_board(
+                        existing_board["board_id"],
+                        user_id=user_id,
+                        name=wanted,
+                    )
+                    if updated:
+                        by_project[norm_key] = updated
+                continue
+            board = self.create_board(
+                user_id,
+                name=wanted,
+                project_key=norm_key,
+            )
+            by_project[norm_key] = board
 
         return self.list_boards(user_id)
 

@@ -33,10 +33,6 @@ DEFAULT_BRAND_NAMES: Dict[str, str] = {
     "FRI": "Friman investments",
 }
 
-DEFAULT_BOARD_NAMES: Dict[str, str] = {
-    "FRI": "Friman investments",
-}
-
 # Jira project key → GitHub owner/repo (override via BIGAS_JIRA_PROJECT_REPO_MAP).
 DEFAULT_PROJECT_REPOS: Dict[str, str] = {
     "VFA": "mckort/vcfieldassistant",
@@ -143,7 +139,7 @@ def board_name_for_project(project_key: str) -> str:
     key = (project_key or "").strip().upper()
     if not key:
         return ""
-    return DEFAULT_BOARD_NAMES.get(key) or f"{key} Board"
+    return f"{key} Board"
 
 
 def ga4_property_map() -> Dict[str, str]:
