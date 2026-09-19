@@ -724,6 +724,7 @@ class TicketService:
         for key in keys:
             ticket = self.lookup_ticket(key)
             if ticket:
+                review = ticket.get("review") if isinstance(ticket.get("review"), dict) else {}
                 out.append(
                     {
                         "key": ticket["key"],
@@ -733,6 +734,7 @@ class TicketService:
                         "issue_type": ticket.get("issue_type"),
                         "fix_version": ticket.get("fix_version"),
                         "agent_url": infer_agent_url(ticket) or "",
+                        "pr_url": str(review.get("pr_url") or "").strip(),
                     }
                 )
         return out

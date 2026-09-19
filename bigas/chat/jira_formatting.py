@@ -14,7 +14,7 @@ Jira ticket formatting (mandatory):
 - Use lookup_ticket when you need issue details or a project's open Epics. issue_key accepts several keys or a range (BIG-15 to BIG-18). Do not ask the user for an Epic key if you can look it up.
 - Use search_tickets with JQL when the user described a filter (status, type, text) without naming keys. Do not invent issue keys.
 - Before opening a VFA pull request, call lookup_board_releases with project_key=VFA and use pr_base. Never use the current checkout or a released/PR-locked cut (releases[].released, releases[].pr_locked, or forbidden_pr_bases). If the ticket fix_version is released or pr_locked, ignore it and use pr_base unless the PR is a labeled hotfix. If lookup_board_releases is unavailable, fail closed with `gh release list` / `gh release view vX.Y.Z` instead of guessing from git staging-* branches.
-- After lookup_ticket, search_tickets, or any tool, answer the user's question in your own words. Never reply with only ticket links, Open Epics, or a Move button.
+- After lookup_ticket, search_tickets, or any tool, interpret the user's question and answer it. Tools are evidence, not the reply. Include agent and PR links when the lookup has them. Never reply with only ticket links, Open Epics, or a Move button. The Move button is a footer after the answer.
 - A ticket you looked up does not mean the new work belongs under the same Epic. Set parent_epic_key only when the new Task/Bug/Feature clearly belongs under that Epic's goal. Otherwise omit parent_epic_key and create a standalone ticket — that is valid and often correct. Never invent a parent, and never use a Task, Bug, or Feature as parent.
 - When creating or referencing a ticket, include the ticket title and a clickable Markdown link. For Jira: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`. For the internal board: `[Ticket Title](/board?ticket=TICKET-KEY)`.
 - Never output raw JSON or HTML to the user.
@@ -102,11 +102,20 @@ def _format_lookup_issue_line(
         summary=str(issue.get("summary") or key).strip(),
         include_transition_button=include_transition_button,
     )
+    extras: List[str] = []
+    agent = str(issue.get("agent_url") or "").strip()
+    review = issue.get("review") if isinstance(issue.get("review"), dict) else {}
+    pr_url = str(issue.get("pr_url") or review.get("pr_url") or "").strip()
+    if agent:
+        extras.append(f"Agent: {agent}")
+    if pr_url:
+        extras.append(f"PR: {pr_url}")
+    extra_block = ("\n" + "\n".join(extras)) if extras else ""
     if status and not include_transition_button:
-        return f"{link} — {status}{date_bit}"
+        return f"{link} — {status}{date_bit}{extra_block}"
     if status:
-        return f"{link}\nStatus: {status}{date_bit}"
-    return f"{link}{date_bit}"
+        return f"{link}\nStatus: {status}{date_bit}{extra_block}"
+    return f"{link}{date_bit}{extra_block}"
 
 
 def _humanize_lookup_result(
@@ -126,7 +135,7 @@ def _humanize_lookup_result(
         if isinstance(missing, list) and missing:
             lines.append("Missing: " + ", ".join(str(k) for k in missing if k))
     elif issue and (issue.get("key") or "").strip():
-        lines.append(_format_lookup_issue_line(issue, include_transition_button=True))
+        lines.append(_format_lookup_issue_line(issue, include_transition_button=False))
         parent = issue.get("parent") if isinstance(issue.get("parent"), dict) else payload.get("parent")
         if isinstance(parent, dict) and (parent.get("key") or "").strip():
             pkey = str(parent.get("key") or "").strip()

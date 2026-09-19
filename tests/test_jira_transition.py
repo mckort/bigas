@@ -95,9 +95,31 @@ def test_humanize_lookup_jira_includes_parent_and_epics():
     )
     assert result is not None
     assert "[Implement tracking](https://example.atlassian.net/browse/GPWW-3)" in result
+    assert "bigas://" not in result
     assert "Parent (Epic): [10 paying customers](https://example.atlassian.net/browse/GPWW-2)" in result
     assert "Open Epics:" in result
     assert "[10 paying customers](https://example.atlassian.net/browse/GPWW-2)" in result
+
+
+def test_humanize_lookup_includes_agent_and_pr():
+    result = humanize_jira_tool_result(
+        {
+            "ok": True,
+            "issue": {
+                "key": "GPWW-40",
+                "summary": "Add catalog modules",
+                "status": "In Progress (AI)",
+                "url": "/board?ticket=GPWW-40",
+                "agent_url": "https://cursor.com/agents/bc-1",
+                "pr_url": "https://github.com/org/repo/pull/40",
+            },
+        }
+    )
+    assert result is not None
+    assert "Agent: https://cursor.com/agents/bc-1" in result
+    assert "PR: https://github.com/org/repo/pull/40" in result
+    assert "In Progress (AI)" in result
+    assert "bigas://" not in result
 
 
 def test_humanize_search_jira_empty_results():

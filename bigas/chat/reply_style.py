@@ -9,6 +9,7 @@ from typing import Any, Optional
 REPLY_STYLE = """
 Reply style (default, always):
 - The user never sees tool output. Your reply is a human-friendly summary in their language, not JSON, not a commit list, not a ticket dump.
+- Read the user's question and answer it. Tools give facts; you interpret them.
 - Open with one short sentence that answers the question.
 - Group the rest into scannable sections. Use an emoji + bold category header, then bold sub-heads and 1–2 sentence bullets that explain user value (what changed and why it matters). Skip autofix, infra, and internal noise unless asked.
 - Prefer markdown: short paragraphs, bullets, bold key terms, clickable links. Never wrap the whole reply in a code fence.
@@ -38,6 +39,42 @@ _FENCE_RE = re.compile(r"^```(?:json|javascript|js)?\s*", re.I)
 _DUMP_KEY_HINT_RE = re.compile(
     r'"(commits|pull_requests|issues|ok|sha|html_url|repo)"\s*:',
 )
+
+
+_LINK_ONLY_RE = re.compile(r"^\[.+\]\([^)]+\)$")
+
+
+def looks_like_ticket_dump(text: Optional[str]) -> bool:
+    """True when a reply is only a ticket title, status, and/or Move button."""
+    blob = text.strip() if isinstance(text, str) else str(text or "").strip()
+    if not blob:
+        return False
+    has_button = "bigas://action/jira_transition" in blob or "Move to next column" in blob
+    has_ticket_link = "/board?ticket=" in blob or "atlassian.net/browse/" in blob
+    if not has_button and not has_ticket_link:
+        return False
+    prose: list[str] = []
+    for line in blob.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("[Move to next"):
+            continue
+        if stripped.lower().startswith("status:"):
+            continue
+        if stripped.lower().startswith("agent:"):
+            continue
+        if stripped.lower().startswith("pr:"):
+            continue
+        if _LINK_ONLY_RE.match(stripped):
+            continue
+        prose.append(stripped)
+    return not prose
+
+
+def looks_like_incomplete_chat_reply(text: Optional[str]) -> bool:
+    """True when the user would see a tool dump instead of an answer."""
+    return looks_like_raw_tool_dump(text) or looks_like_ticket_dump(text)
 
 
 def looks_like_raw_tool_dump(text: Optional[str]) -> bool:
