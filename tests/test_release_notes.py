@@ -54,8 +54,6 @@ def test_map_issue_type_new_feature_variants():
     assert _map_issue_type("New Feature") == "Feature"
     assert _map_issue_type("new-feature") == "Feature"
     assert _map_issue_type("Feature") == "Feature"
-    assert _map_issue_type("Improvement") == "Improvement"
-    assert _map_issue_type("improvements") == "Improvement"
 
 
 def test_map_issue_type_improvement():
