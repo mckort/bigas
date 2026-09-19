@@ -559,6 +559,7 @@ class TicketService:
         start_automation: bool = True,
     ) -> Dict[str, Any]:
         uid = user_id or _sync_user_id()
+        project_key = (project_key or "").strip().upper()
         board = self._store.find_board_for_project(project_key, uid)
         if not board:
             from bigas.portfolio import board_name_for_project

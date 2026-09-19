@@ -408,7 +408,7 @@ class MemoryTicketStore:
 
         existing = self.list_boards(user_id)
         by_project = {
-            (b.get("project_key") or "").upper(): b
+            (b.get("project_key") or "").strip().upper(): b
             for b in existing
             if (b.get("project_key") or "").strip()
         }
@@ -417,23 +417,27 @@ class MemoryTicketStore:
         if not existing:
             self.create_board(user_id, name="Personal tasks", project_key=None)
             for key in jira_project_keys() or ["VFA", "BIG"]:
-                self.create_board(
-                    user_id,
-                    name=board_name_for_project(key),
-                    project_key=key,
-                )
+                norm_key = (key or "").strip().upper()
+                if norm_key:
+                    self.create_board(
+                        user_id,
+                        name=board_name_for_project(norm_key),
+                        project_key=norm_key,
+                    )
             return self.list_boards(user_id)
 
         if not has_personal:
             self.create_board(user_id, name="Personal tasks", project_key=None)
 
         for key in jira_project_keys():
-            if key not in by_project:
-                self.create_board(
+            norm_key = (key or "").strip().upper()
+            if norm_key and norm_key not in by_project:
+                board = self.create_board(
                     user_id,
-                    name=board_name_for_project(key),
-                    project_key=key,
+                    name=board_name_for_project(norm_key),
+                    project_key=norm_key,
                 )
+                by_project[norm_key] = board
 
         return self.list_boards(user_id)
 
@@ -999,7 +1003,7 @@ class FirestoreTicketStore:
 
         existing = self.list_boards(user_id)
         by_project = {
-            (b.get("project_key") or "").upper(): b
+            (b.get("project_key") or "").strip().upper(): b
             for b in existing
             if (b.get("project_key") or "").strip()
         }
@@ -1008,23 +1012,27 @@ class FirestoreTicketStore:
         if not existing:
             self.create_board(user_id, name="Personal tasks", project_key=None)
             for key in jira_project_keys() or ["VFA", "BIG"]:
-                self.create_board(
-                    user_id,
-                    name=board_name_for_project(key),
-                    project_key=key,
-                )
+                norm_key = (key or "").strip().upper()
+                if norm_key:
+                    self.create_board(
+                        user_id,
+                        name=board_name_for_project(norm_key),
+                        project_key=norm_key,
+                    )
             return self.list_boards(user_id)
 
         if not has_personal:
             self.create_board(user_id, name="Personal tasks", project_key=None)
 
         for key in jira_project_keys():
-            if key not in by_project:
-                self.create_board(
+            norm_key = (key or "").strip().upper()
+            if norm_key and norm_key not in by_project:
+                board = self.create_board(
                     user_id,
-                    name=board_name_for_project(key),
-                    project_key=key,
+                    name=board_name_for_project(norm_key),
+                    project_key=norm_key,
                 )
+                by_project[norm_key] = board
 
         return self.list_boards(user_id)
 

@@ -118,7 +118,7 @@ def repo_map() -> Dict[str, str]:
     """Jira key → owner/repo."""
     out = dict(DEFAULT_PROJECT_REPOS)
     parsed = parse_csv_map(os.environ.get("BIGAS_JIRA_PROJECT_REPO_MAP") or "")
-    out.update({k.upper(): v for k, v in parsed.items()})
+    out.update({k.strip().upper(): v.strip() for k, v in parsed.items()})
     return out
 
 
