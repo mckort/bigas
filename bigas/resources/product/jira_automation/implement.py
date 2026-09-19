@@ -150,7 +150,6 @@ def lookup_implement_branch(*, repo: str, issue_key: str) -> str:
         f"cursor/{key}",
         key,
     )
-    found: list[str] = []
     for prefix in prefixes:
         try:
             resp = requests.get(
@@ -158,6 +157,16 @@ def lookup_implement_branch(*, repo: str, issue_key: str) -> str:
                 headers=_github_headers(token),
                 timeout=30,
             )
+            try:
+                items = resp.json() if resp.text else []
+            except (ValueError, requests.exceptions.JSONDecodeError):
+                logger.warning(
+                    "GitHub implement-branch lookup returned non-JSON for %s %s",
+                    repo,
+                    issue_key,
+                    exc_info=True,
+                )
+                continue
         except Exception:
             logger.warning(
                 "GitHub implement-branch lookup failed for %s %s",
@@ -168,9 +177,9 @@ def lookup_implement_branch(*, repo: str, issue_key: str) -> str:
             continue
         if resp.status_code >= 400:
             continue
-        items = resp.json() if resp.text else []
         if not isinstance(items, list):
             continue
+        prefix_matches: list[str] = []
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -178,9 +187,11 @@ def lookup_implement_branch(*, repo: str, issue_key: str) -> str:
             if not ref.startswith("refs/heads/"):
                 continue
             branch = ref[len("refs/heads/") :]
-            if key in branch.lower() and branch not in found:
-                found.append(branch)
-    return found[-1] if found else ""
+            if key in branch.lower() and branch not in prefix_matches:
+                prefix_matches.append(branch)
+        if prefix_matches:
+            return prefix_matches[-1]
+    return ""
 
 
 def ensure_implement_pr_from_branch_hint(
@@ -640,8 +651,8 @@ class ImplementHandler:
                 agent_url=agent_url,
                 timeout_seconds=_poll_budget_seconds(),
             )
-            if not (outcome or {}).get("pr_url"):
-                status = (outcome or {}).get("status") or ""
+            if outcome and not outcome.get("pr_url"):
+                status = outcome.get("status") or ""
                 if str(status).upper() not in _SKIP_PR_FALLBACK_STATUSES:
                     fallback = ensure_implement_pr_from_branch_hint(
                         repo=repo,
@@ -649,7 +660,8 @@ class ImplementHandler:
                         issue_key=issue_key,
                         summary=summary,
                         agent_url=agent_url or agent_id,
-                        branch_name=str((outcome or {}).get("branch_name") or ""),
+                        status={"status": status} if status else None,
+                        branch_name=str(outcome.get("branch_name") or ""),
                     )
                     if fallback:
                         outcome = fallback
@@ -807,19 +819,20 @@ class ImplementHandler:
                 logger.warning(
                     "Failed to write PR-opened comment on %s", issue_key, exc_info=True
                 )
-            try:
-                from bigas.tickets.review import attach_review_from_pr
+            if pr_url:
+                try:
+                    from bigas.tickets.review import attach_review_from_pr
 
-                attach_review_from_pr(
-                    issue_key,
-                    pr_url=pr_url,
-                    pr_title=str(outcome.get("pr_title") or ""),
-                    comment=False,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to persist implement PR on %s", issue_key, exc_info=True
-                )
+                    attach_review_from_pr(
+                        issue_key,
+                        pr_url=pr_url,
+                        pr_title=str(outcome.get("pr_title") or ""),
+                        comment=False,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to persist implement PR on %s", issue_key, exc_info=True
+                    )
             _post_discord_cto(
                 f"{discord_title} {label}\n"
                 f"{format_pr_discord_line(pr_url, outcome.get('pr_title') or '')}\n"

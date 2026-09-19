@@ -1832,9 +1832,20 @@ def test_implement_timeout_opens_pr_from_pushed_branch(monkeypatch):
 
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     monkeypatch.setattr(impl, "CursorCloudAgentClient", FakeCursor)
-    monkeypatch.setattr(impl, "_poll_budget_seconds", lambda: 0)
+    monkeypatch.setattr(impl, "_poll_budget_seconds", lambda: 60)
     monkeypatch.setattr(impl, "attachments_text_for_issue", lambda *_a, **_k: "")
     monkeypatch.setattr(impl, "_post_discord_cto", lambda *_a, **_k: None)
+
+    def fake_poll_until_terminal(self, **_kwargs):
+        return {
+            "kind": "finished_no_pr",
+            "pr_url": "",
+            "status": "FINISHED",
+            "branch_name": "cursor/bigas-implement-gpww-40-ea11",
+            "agent_url": "https://cursor.com/agents/bc-slow",
+        }
+
+    monkeypatch.setattr(ImplementHandler, "_poll_until_terminal", fake_poll_until_terminal)
     monkeypatch.setattr(
         impl,
         "ensure_implement_pr_from_branch_hint",
@@ -1844,7 +1855,7 @@ def test_implement_timeout_opens_pr_from_pushed_branch(monkeypatch):
             "pr_title": "GPWW-40: Add catalog modules",
             "pr_opened_by": "bigas",
             "branch_name": "cursor/bigas-implement-gpww-40-ea11",
-            "status": "RUNNING",
+            "status": "FINISHED",
             "agent_url": "https://cursor.com/agents/bc-slow",
         },
     )
