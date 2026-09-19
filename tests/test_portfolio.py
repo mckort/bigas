@@ -31,7 +31,7 @@ def portfolio_env(monkeypatch):
         "VFA:mckort/vcfieldassistant,WAYW:mckort/roadpal,BIG:mckort/bigas,"
         "REM:mckort/remotebrief,GPWW:Green-Promo-Wear-Global/greenpromowear-website,"
         "FYDA:mckort/fulfillyourdreamadventure,MYL:mckort/mylifesdeed,"
-        "FRI:mckort/friman-investments",
+        "FRI:mckort/frimaninvestments",
     )
     monkeypatch.setenv("GA4_PROPERTY_ID", "473559548")
     monkeypatch.setenv("BIGAS_GA4_PROPERTY_MAP", "GPWW:473559548")
@@ -49,6 +49,7 @@ def test_resolve_project_from_brand_and_repo(portfolio_env):
     assert resolve_project("how is fyda.today doing") == "FYDA"
     assert resolve_project("deploya bigas") == "BIG"
     assert resolve_project("friman investments board") == "FRI"
+    assert resolve_project("how is frimaninvestments.com doing") == "FRI"
     assert resolve_project("hello") is None
 
 
@@ -113,7 +114,7 @@ def test_prompt_block_lists_all_projects(portfolio_env):
     for key in ("VFA", "WAYW", "BIG", "REM", "GPWW", "FYDA", "MYL", "FRI"):
         assert key in block
     assert "mckort/roadpal" in block
-    assert "mckort/friman-investments" in block
+    assert "mckort/frimaninvestments" in block
     assert "not configured" in block
     assert "pr_url" in block
 
@@ -121,12 +122,12 @@ def test_prompt_block_lists_all_projects(portfolio_env):
 def test_board_name_and_local_path_for_fri(monkeypatch):
     monkeypatch.setenv(
         "BIGAS_PROJECT_LOCAL_PATH_MAP",
-        "FRI:/Users/marcusfriman/Documents/Code/friman-investments",
+        "FRI:/Users/marcusfriman/Documents/Code/frimaninvestments",
     )
     assert board_name_for_project("FRI") == "Friman investments"
     assert board_name_for_project("VFA") == "VFA Board"
-    assert local_path_for_project("FRI").endswith("friman-investments")
-    assert repo_map()["FRI"] == "mckort/friman-investments"
+    assert local_path_for_project("FRI").endswith("frimaninvestments")
+    assert repo_map()["FRI"] == "mckort/frimaninvestments"
 
 
 def test_format_pr_discord_line_uses_title_as_markdown_link():
