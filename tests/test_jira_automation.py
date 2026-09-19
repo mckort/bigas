@@ -2068,7 +2068,7 @@ def test_config_defaults(monkeypatch):
     assert cfg.allowed_projects == ("VFA", "WAYW", "BIG", "REM", "GPWW", "FYDA", "MYL", "FRI")
     assert cfg.repo_for_project("VFA") == "mckort/vcfieldassistant"
     assert cfg.repo_for_project("MYL") == "mckort/mylifesdeed"
-    assert cfg.repo_for_project("FRI") == "mckort/friman-investments"
+    assert cfg.repo_for_project("FRI") == "mckort/frimaninvestments"
     assert cfg.repo_for_project("GPWW") == "Green-Promo-Wear-Global/greenpromowear-website"
     assert cfg.handler_for_status("Research and describe (AI)") == HANDLER_RESEARCH
     assert cfg.daily_quota == 20

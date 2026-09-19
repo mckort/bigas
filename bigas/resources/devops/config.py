@@ -33,6 +33,11 @@ DEFAULT_WORKFLOW_MAP: Dict[str, List[str]] = {
     "FRI": ["deploy.yml"],
 }
 
+# VM portfolio sites dispatch deploy.yml on the shared infra repo (override via BIGAS_DEPLOY_REPO_MAP).
+DEFAULT_DEPLOY_REPO_MAP: Dict[str, str] = {
+    "FRI": "mckort/gcp-single-vm-webstack",
+}
+
 
 @dataclass(frozen=True)
 class DeployTarget:
@@ -66,8 +71,10 @@ def _workflow_map() -> Dict[str, List[str]]:
 
 
 def _deploy_repo_map() -> Dict[str, str]:
+    out = dict(DEFAULT_DEPLOY_REPO_MAP)
     parsed = parse_csv_map(os.environ.get("BIGAS_DEPLOY_REPO_MAP") or "")
-    return {k.upper(): v.strip() for k, v in parsed.items() if (v or "").strip()}
+    out.update({k.upper(): v.strip() for k, v in parsed.items() if (v or "").strip()})
+    return out
 
 
 def _site_urls_for_project(project_key: str) -> List[str]:
