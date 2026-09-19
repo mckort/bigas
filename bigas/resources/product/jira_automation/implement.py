@@ -562,11 +562,43 @@ class ImplementHandler:
                     agent_id=agent_id,
                 )
             else:
-                self._report_implementation_timeout(
+                recovered = self._recover_after_monitor_timeout(
+                    agent_id=agent_id,
+                    run_id=run_id,
+                    repo=repo,
+                    base_branch=base_branch,
                     issue_key=issue_key,
                     summary=summary,
-                    agent_url=agent_url or agent_id,
+                    agent_url=agent_url,
                 )
+                if recovered:
+                    recovered_status = (recovered.get("status") or "").strip().upper()
+                    still_running = recovered_status == "RUNNING"
+                    if recovered.get("kind") == "pr_opened" or not still_running:
+                        self._report_implementation_outcome(
+                            issue_key=issue_key,
+                            label=issue_discord_label(issue_key, summary),
+                            outcome=recovered,
+                            agent_url=(
+                                recovered.get("agent_url") or agent_url or agent_id
+                            ),
+                            agent_id=agent_id,
+                        )
+                        outcome = recovered
+                    else:
+                        self._report_implementation_timeout(
+                            issue_key=issue_key,
+                            summary=summary,
+                            agent_url=(
+                                recovered.get("agent_url") or agent_url or agent_id
+                            ),
+                        )
+                else:
+                    self._report_implementation_timeout(
+                        issue_key=issue_key,
+                        summary=summary,
+                        agent_url=agent_url or agent_id,
+                    )
 
         return {
             "ok": True,
@@ -629,6 +661,92 @@ class ImplementHandler:
                 )
             time.sleep(interval)
         return None
+
+    def _recover_after_monitor_timeout(
+        self,
+        *,
+        agent_id: str,
+        run_id: str,
+        repo: str,
+        base_branch: str,
+        issue_key: str,
+        summary: str,
+        agent_url: str,
+    ) -> Optional[Dict[str, Any]]:
+        """One final Cursor poll after inline monitor timeout; open fallback PR if needed."""
+        if not (agent_id or "").strip():
+            return None
+        try:
+            status = self._cursor.get_run_status(
+                agent_id=agent_id, run_id=run_id or None
+            )
+        except CursorCloudAgentError as exc:
+            logger.warning(
+                "Implement timeout recovery failed for %s: %s", agent_id, exc
+            )
+            return None
+
+        resolved_agent_url = (agent_url or status.get("agent_url") or "").strip()
+        try:
+            from bigas.tickets.review import attach_implement_agent
+
+            attach_implement_agent(
+                issue_key,
+                agent_url=resolved_agent_url,
+                agent_id=agent_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to refresh implement agent URL on %s after timeout",
+                issue_key,
+                exc_info=True,
+            )
+
+        if status.get("done"):
+            outcome = evaluate_implementation_outcome(status, repo=repo)
+            return ensure_implement_pr(
+                outcome,
+                repo=repo,
+                base_branch=base_branch,
+                issue_key=issue_key,
+                summary=summary,
+                agent_url=resolved_agent_url,
+            )
+
+        branch = branch_from_implement_status(status)
+        pr_url = (status.get("pr_url") or "").strip()
+        if pr_url:
+            return {
+                "kind": "pr_opened",
+                "pr_url": pr_url,
+                "pr_title": _github_pr_title(pr_url),
+                "status": status.get("status") or "UNKNOWN",
+                "agent_url": resolved_agent_url,
+                "branch_name": branch,
+                "detail": "",
+            }
+        if not branch:
+            return None
+
+        interim: Dict[str, Any] = {
+            "kind": "finished_no_pr",
+            "pr_url": "",
+            "status": (status.get("status") or "RUNNING").strip().upper(),
+            "agent_url": resolved_agent_url,
+            "branch_name": branch,
+            "detail": (
+                "Monitor timed out while the Cursor agent was still running; "
+                "opening a PR from the pushed branch."
+            ),
+        }
+        return ensure_implement_pr(
+            interim,
+            repo=repo,
+            base_branch=base_branch,
+            issue_key=issue_key,
+            summary=summary,
+            agent_url=resolved_agent_url,
+        )
 
     def _report_implementation_timeout(
         self,
