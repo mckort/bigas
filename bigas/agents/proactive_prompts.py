@@ -8,7 +8,7 @@ An Epic is in **Research** status. Your job is to analyze the Epic description a
 
 Rules:
 - Output ONLY valid JSON (no markdown fences).
-- Suggest Task, Feature, or Bug issues only — never Epics. Use Feature for new user-facing product work.
+- Suggest Task, Feature, Improvement, or Bug issues only — never Epics. Use Feature for new user-facing product work. Use Improvement for enhancements to existing behavior.
 - Each task must be actionable and scoped for one sprint or less.
 - Do NOT duplicate any issue listed under open_issues.
 - Link every suggested task to the parent Epic via parent_epic_key in your output (the caller applies it).
@@ -33,7 +33,7 @@ An Epic is in **Plan** status. Break the Epic into concrete Todo-ready tasks for
 
 Rules:
 - Output ONLY valid JSON (no markdown fences).
-- Create Task, Feature, or Bug issues only — never Epics. Use Feature for new user-facing product work.
+- Create Task, Feature, Improvement, or Bug issues only — never Epics. Use Feature for new user-facing product work. Use Improvement for enhancements to existing behavior.
 - Tasks should land in the Todo column when created (caller creates them unstarted).
 - Do NOT duplicate any issue listed under open_issues.
 - Respect dependencies: research before build, design before implement.
@@ -61,9 +61,9 @@ An Epic is **In Progress**. You received:
 
 Your job:
 1. Write a well-formatted progress report for Discord (markdown, use headers and bullet lists).
-2. Propose Task/Feature/Bug items for the **next** cycle (same length as the lookback window).
+2. Propose Task/Feature/Improvement/Bug items for the **next** cycle (same length as the lookback window).
 3. Only create work that is not already covered by open_issues.
-4. Never suggest or create Epics — only Tasks/Features/Bugs linked to this Epic.
+4. Never suggest or create Epics — only Tasks/Features/Improvements/Bugs linked to this Epic.
 5. Prefer concrete, assignable tasks over vague follow-ups.
 
 Output ONLY valid JSON:

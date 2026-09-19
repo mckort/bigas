@@ -28,6 +28,7 @@ from bigas.resources.product.search_jira.service import (
     SearchJiraService,
 )
 from bigas.resources.product.create_release_notes.jira_client import normalize_project_keys
+from bigas.tickets.constants import normalize_issue_type
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
 from bigas.resources.product.jira_automation.service import (
     JiraAutomationError,
@@ -470,7 +471,7 @@ def create_ticket():
 
     Returns { "ok": true, "key": "BIG-42", "url": "https://..." } on success.
     Set marketing=true for marketing-related tickets (adds the Jira label "marketing").
-    Optional parent_epic_key links the new Task/Bug/Feature to a goal Epic (never creates Epics).
+    Optional parent_epic_key links the new Task/Bug/Feature/Improvement to a goal Epic (never creates Epics).
     Optional status sets the board column (aliases like "Final Review" work).
     """
     data = request.json or {}
@@ -481,7 +482,7 @@ def create_ticket():
     if not is_valid:
         return jsonify({"error": error_msg}), 400
 
-    issue_type = str(data.get("issue_type") or "Task").strip().title() or "Task"
+    issue_type = normalize_issue_type(data.get("issue_type"))
     marketing = request_flag(data, "marketing", False)
     parent_epic_key = str(data.get("parent_epic_key") or "").strip() or None
     user_id = str(data.get("user_id") or "").strip() or None
@@ -1074,9 +1075,9 @@ def get_manifest():
                         },
                         "issue_type": {
                             "type": "string",
-                            "description": "Issue type name (Task, Bug, or Feature). Default Task. Use Feature for new user-facing product work.",
+                            "description": "Issue type name (Task, Bug, Feature, or Improvement). Default Task. Use Feature for new user-facing product work. Use Improvement for enhancements to existing behavior.",
                             "default": "Task",
-                            "enum": ["Task", "Bug", "Feature"],
+                            "enum": ["Task", "Bug", "Feature", "Improvement"],
                         },
                         "marketing": {
                             "type": "boolean",
@@ -1090,8 +1091,8 @@ def get_manifest():
                             "type": "string",
                             "description": (
                                 "Optional existing Epic key only (e.g. GPWW-2). "
-                                "Omit this field to create a standalone Task/Bug/Feature — that is the default. "
-                                "Do not pass a Task, Bug, or Feature key or guess a parent."
+                                "Omit this field to create a standalone Task/Bug/Feature/Improvement — that is the default. "
+                                "Do not pass a Task, Bug, Feature, or Improvement key or guess a parent."
                             ),
                         },
                         "status": {
@@ -1142,7 +1143,7 @@ def get_manifest():
                     "Also use before create_ticket when you need Epic context. "
                     "A parent on a referenced ticket is not automatically the parent "
                     "for a new ticket — only link parent_epic_key if the new work belongs under "
-                    "that Epic; otherwise create a standalone Task, Bug, or Feature."
+                    "that Epic; otherwise create a standalone Task, Bug, Feature, or Improvement."
                 ),
                 "path": "/mcp/tools/lookup_ticket",
                 "method": "POST",

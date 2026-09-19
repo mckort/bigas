@@ -8,14 +8,14 @@ from urllib.parse import quote
 JIRA_FORMATTING_RULES = """
 Jira ticket formatting (mandatory):
 - Reply in the user's language.
-- When you should file work on the internal Bigas board (or Jira), call create_ticket yourself (Task, Feature, or Bug only — never Epics). Use Feature for new user-facing product work. Never tell the user to create the issue themselves.
+- When you should file work on the internal Bigas board (or Jira), call create_ticket yourself (Task, Feature, Improvement, or Bug only — never Epics). Use Feature for new user-facing product work. Use Improvement for enhancements to existing behavior. Never tell the user to create the issue themselves.
 - Pass project_key (e.g. GPWW, VFA, BIG). For marketing/website/SEO/content/ads work, set marketing=true.
 - To put a new ticket in a column, pass status on create_ticket (e.g. "Final Review"). To move an existing ticket, call update_ticket with issue_key and status. Do not tell the user to drag the card.
 - Use lookup_ticket when you need issue details or a project's open Epics. issue_key accepts several keys or a range (BIG-15 to BIG-18). Do not ask the user for an Epic key if you can look it up.
 - Use search_tickets with JQL when the user described a filter (status, type, text) without naming keys. Do not invent issue keys.
 - Before opening a VFA pull request, call lookup_board_releases with project_key=VFA and use pr_base. Never use the current checkout or a released/PR-locked cut (releases[].released, releases[].pr_locked, or forbidden_pr_bases). If the ticket fix_version is released or pr_locked, ignore it and use pr_base unless the PR is a labeled hotfix. If lookup_board_releases is unavailable, fail closed with `gh release list` / `gh release view vX.Y.Z` instead of guessing from git staging-* branches.
 - After lookup_ticket, search_tickets, or any tool, interpret the user's question and answer it. Tools are evidence, not the reply. Include agent and PR links when the lookup has them. Never reply with only ticket links, Open Epics, or a Move button. The Move button is a footer after the answer.
-- A ticket you looked up does not mean the new work belongs under the same Epic. Set parent_epic_key only when the new Task/Bug/Feature clearly belongs under that Epic's goal. Otherwise omit parent_epic_key and create a standalone ticket — that is valid and often correct. Never invent a parent, and never use a Task, Bug, or Feature as parent.
+- A ticket you looked up does not mean the new work belongs under the same Epic. Set parent_epic_key only when the new Task/Bug/Feature/Improvement clearly belongs under that Epic's goal. Otherwise omit parent_epic_key and create a standalone ticket — that is valid and often correct. Never invent a parent, and never use a Task, Bug, Feature, or Improvement as parent.
 - When creating or referencing a ticket, include the ticket title and a clickable Markdown link. For Jira: `[Ticket Title](https://<domain>.atlassian.net/browse/TICKET-KEY)`. For the internal board: `[Ticket Title](/board?ticket=TICKET-KEY)`.
 - Never output raw JSON or HTML to the user.
 - When discussing a ticket, always provide a button to move it to the next workflow column by outputting this exact markdown on its own line:

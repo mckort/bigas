@@ -12,8 +12,9 @@ from bigas.resources.product.create_release_notes.jira_client import (
     normalize_parent_epic_key,
     normalize_project_keys,
 )
+from bigas.tickets.constants import CREATABLE_ISSUE_TYPES, normalize_issue_type
 
-ALLOWED_ISSUE_TYPES = frozenset({"Task", "Bug", "Feature"})
+ALLOWED_ISSUE_TYPES = CREATABLE_ISSUE_TYPES
 _MARKETING_LABEL = "marketing"
 
 
@@ -65,7 +66,7 @@ class CreateJiraIssueService:
         if not body:
             raise CreateJiraIssueError("description is required")
 
-        itype = str(issue_type or "Task").strip().title() or "Task"
+        itype = normalize_issue_type(issue_type)
         if itype not in ALLOWED_ISSUE_TYPES:
             allowed = ", ".join(sorted(ALLOWED_ISSUE_TYPES))
             raise CreateJiraIssueError(

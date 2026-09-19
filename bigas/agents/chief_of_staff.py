@@ -331,7 +331,7 @@ def _chief_native_extra() -> str:
         "- lookup_ticket: for specific issue keys or ranges\n"
         "- search_tickets: for JQL queries (works on the internal board and Jira Cloud)\n"
         "- fetch_github_activity: commits and merged PRs since a date — use for what shipped\n"
-        "- create_ticket: to file Tasks/Bugs — take action rather than asking the user to do it. Pass status to set the column (e.g. Final Review).\n"
+        "- create_ticket: to file Tasks/Bugs/Features/Improvements — take action rather than asking the user to do it. Pass status to set the column (e.g. Final Review).\n"
         "- update_ticket: move an existing ticket to a column (issue_key + status)\n"
         "- Include project_key when the user mentions a product or site\n"
         "- For GitHub PRs, include repo and pr_number or pr_url\n\n"
