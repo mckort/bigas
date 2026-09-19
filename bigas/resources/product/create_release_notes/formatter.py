@@ -19,7 +19,7 @@ def categorize_issue(issue: Dict[str, Any]) -> SectionKey:
     if issue_type in {"story", "epic", "feature"}:
         return "new_features"
 
-    # Tasks, improvements, chores, spikes usually go here.
+    # Tasks, Improvement tickets, chores, spikes usually go here.
     return "improvements"
 
 

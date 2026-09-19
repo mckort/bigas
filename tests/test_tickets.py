@@ -840,11 +840,13 @@ def test_store_keeps_improvement_issue_type():
         board["board_id"],
         title="Clarify board column labels",
         user_id="dev-user",
-        issue_type="improvement",
+        issue_type="improvements",
     )
     assert created["issue_type"] == "Improvement"
     fetched = store.get_ticket(created["ticket_id"])
     assert fetched["issue_type"] == "Improvement"
+    updated = store.update_ticket(created["ticket_id"], issue_type="Improvement")
+    assert updated["issue_type"] == "Improvement"
 
 
 def test_create_todo_does_not_dispatch_automation(monkeypatch):

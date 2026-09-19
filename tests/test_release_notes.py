@@ -59,6 +59,8 @@ def test_map_issue_type_new_feature_variants():
 def test_map_issue_type_improvement():
     assert _map_issue_type("Improvement") == "Improvement"
     assert _map_issue_type("improvement") == "Improvement"
+    assert _map_issue_type("improvements") == "Improvement"
+    assert _map_issue_type("enhancement") == "Improvement"
 
 
 def test_filter_release_cut_accepts_status_key():

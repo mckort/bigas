@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from bigas.okr.model import normalize_key_results, promote_objective_type
-from bigas.tickets.constants import columns_for_board, is_valid_status
+from bigas.tickets.constants import ISSUE_TYPES, columns_for_board, is_valid_status, normalize_issue_type
 from bigas.tickets.labels import has_marketing, normalize_labels, resolve_ticket_labels
 
 
@@ -17,7 +17,7 @@ def _is_epic_ticket(ticket: Optional[Dict[str, Any]]) -> bool:
     return str((ticket or {}).get("issue_type") or "").strip().title() == "Epic"
 
 
-_GOAL_ISSUE_TYPES = ("Task", "Bug", "Feature", "Improvement", "Epic", "Objective")
+_GOAL_ISSUE_TYPES = ISSUE_TYPES
 
 _ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
@@ -141,7 +141,7 @@ def _prepare_ticket_values(
     summary = (title or "").strip()
     if not summary:
         raise ValueError("title is required")
-    itype = (issue_type or "Task").strip().title() or "Task"
+    itype = normalize_issue_type(issue_type)
     if itype not in _GOAL_ISSUE_TYPES:
         itype = "Task"
     labels_norm = normalize_labels(labels, marketing=bool(marketing))
@@ -270,7 +270,7 @@ def _apply_ticket_field_updates(
 
             updates["review"] = normalize_review(value)
         elif key == "issue_type":
-            itype = (value or "Task").strip().title() or "Task"
+            itype = normalize_issue_type(value)
             if itype in _GOAL_ISSUE_TYPES:
                 updates["issue_type"] = itype
     if "labels" in fields or "marketing" in fields:

@@ -136,7 +136,7 @@ def test_create_jira_issue_accepts_improvement(monkeypatch):
         project_key="VFA",
         summary="Tighten mobile board spacing",
         description="Reduce padding on narrow viewports",
-        issue_type="improvement",
+        issue_type="improvements",
     )
     assert result["issue_type"] == "Improvement"
     assert captured["issue_type"] == "Improvement"

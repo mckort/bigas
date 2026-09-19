@@ -28,6 +28,7 @@ from bigas.resources.product.search_jira.service import (
     SearchJiraService,
 )
 from bigas.resources.product.create_release_notes.jira_client import normalize_project_keys
+from bigas.tickets.constants import normalize_issue_type
 from bigas.resources.product.create_release_notes.service import CreateReleaseNotesService, ReleaseNotesError
 from bigas.resources.product.jira_automation.service import (
     JiraAutomationError,
@@ -481,7 +482,7 @@ def create_ticket():
     if not is_valid:
         return jsonify({"error": error_msg}), 400
 
-    issue_type = str(data.get("issue_type") or "Task").strip().title() or "Task"
+    issue_type = normalize_issue_type(data.get("issue_type"))
     marketing = request_flag(data, "marketing", False)
     parent_epic_key = str(data.get("parent_epic_key") or "").strip() or None
     user_id = str(data.get("user_id") or "").strip() or None

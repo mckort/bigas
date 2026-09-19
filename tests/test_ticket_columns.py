@@ -9,7 +9,10 @@ from bigas.resources.product.update_ticket import (
 )
 from bigas.tickets import store as ticket_store_module
 from bigas.tickets.constants import (
+    CREATABLE_ISSUE_TYPES,
+    ISSUE_TYPES,
     is_in_release_cut,
+    normalize_issue_type,
     resolve_column_status,
     unknown_column_error,
 )
@@ -132,3 +135,13 @@ def test_update_passes_user_id_to_set_status(monkeypatch):
         "status": "In Progress",
         "user_id": "agent-user-1",
     }
+
+
+def test_normalize_issue_type_accepts_improvement():
+    assert "Improvement" in ISSUE_TYPES
+    assert "Improvement" in CREATABLE_ISSUE_TYPES
+    assert normalize_issue_type("Improvement") == "Improvement"
+    assert normalize_issue_type("improvements") == "Improvement"
+    assert normalize_issue_type("enhancement") == "Improvement"
+    assert normalize_issue_type("feature") == "Feature"
+    assert normalize_issue_type("") == "Task"

@@ -3,6 +3,32 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
+ISSUE_TYPES: Tuple[str, ...] = (
+    "Task",
+    "Bug",
+    "Feature",
+    "Improvement",
+    "Epic",
+    "Objective",
+)
+CREATABLE_ISSUE_TYPES = frozenset({"Task", "Bug", "Feature", "Improvement"})
+
+_ISSUE_TYPE_ALIASES = {
+    "improvements": "Improvement",
+    "enhancement": "Improvement",
+    "new feature": "Feature",
+    "new-feature": "Feature",
+}
+
+
+def normalize_issue_type(value: Optional[str], *, default: str = "Task") -> str:
+    """Map a free-text issue type (and common aliases) to a canonical name."""
+    raw = str(value or "").strip() or default
+    aliased = _ISSUE_TYPE_ALIASES.get(raw.lower())
+    if aliased:
+        return aliased
+    return raw.title() or default
+
 # Personal task boards — no AI workflow automation.
 PERSONAL_COLUMNS: Tuple[str, ...] = (
     "To Do",
