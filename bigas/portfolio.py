@@ -142,6 +142,22 @@ def board_name_for_project(project_key: str) -> str:
     return f"{key} Board"
 
 
+# Internal board titles from before the "{KEY} Board" convention (see docs/friman-investments-board.md).
+LEGACY_DEFAULT_BOARD_NAMES: Dict[str, str] = {
+    "FRI": "Friman investments",
+}
+
+
+def board_name_should_migrate_from_legacy(
+    project_key: str, current_name: Optional[str]
+) -> bool:
+    key = (project_key or "").strip().upper()
+    legacy = LEGACY_DEFAULT_BOARD_NAMES.get(key)
+    if not legacy:
+        return False
+    return (current_name or "").strip() == legacy
+
+
 def ga4_property_map() -> Dict[str, str]:
     """Jira key or hostname → GA4 property ID."""
     parsed = parse_csv_map(os.environ.get("BIGAS_GA4_PROPERTY_MAP") or "")

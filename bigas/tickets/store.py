@@ -301,6 +301,65 @@ def _key_number(key: str, prefix: str) -> Optional[int]:
         return None
 
 
+def _ensure_default_boards_for_store(store: Any, user_id: str) -> List[Dict[str, Any]]:
+    from bigas.portfolio import (
+        board_name_for_project,
+        board_name_should_migrate_from_legacy,
+        jira_project_keys,
+    )
+
+    existing = store.list_boards(user_id)
+    by_project = {
+        (b.get("project_key") or "").strip().upper(): b
+        for b in existing
+        if (b.get("project_key") or "").strip()
+    }
+    has_personal = any(not (b.get("project_key") or "").strip() for b in existing)
+
+    if not existing:
+        store.create_board(user_id, name="Personal tasks", project_key=None)
+        for key in jira_project_keys() or ["VFA", "BIG"]:
+            norm_key = (key or "").strip().upper()
+            if norm_key:
+                store.create_board(
+                    user_id,
+                    name=board_name_for_project(norm_key),
+                    project_key=norm_key,
+                )
+        return store.list_boards(user_id)
+
+    if not has_personal:
+        store.create_board(user_id, name="Personal tasks", project_key=None)
+
+    for key in jira_project_keys():
+        norm_key = (key or "").strip().upper()
+        if not norm_key:
+            continue
+        wanted = board_name_for_project(norm_key)
+        existing_board = by_project.get(norm_key)
+        if existing_board:
+            board_id = existing_board.get("board_id")
+            if board_id and board_name_should_migrate_from_legacy(
+                norm_key, existing_board.get("name")
+            ):
+                updated = store.update_board(
+                    board_id,
+                    user_id=user_id,
+                    name=wanted,
+                )
+                if updated:
+                    by_project[norm_key] = updated
+            continue
+        board = store.create_board(
+            user_id,
+            name=wanted,
+            project_key=norm_key,
+        )
+        by_project[norm_key] = board
+
+    return store.list_boards(user_id)
+
+
 class MemoryTicketStore:
     """Thread-safe in-memory store for boards and tickets."""
 
@@ -404,55 +463,7 @@ class MemoryTicketStore:
             return dict(board)
 
     def ensure_default_boards(self, user_id: str) -> List[Dict[str, Any]]:
-        from bigas.portfolio import board_name_for_project, jira_project_keys
-
-        existing = self.list_boards(user_id)
-        by_project = {
-            (b.get("project_key") or "").strip().upper(): b
-            for b in existing
-            if (b.get("project_key") or "").strip()
-        }
-        has_personal = any(not (b.get("project_key") or "").strip() for b in existing)
-
-        if not existing:
-            self.create_board(user_id, name="Personal tasks", project_key=None)
-            for key in jira_project_keys() or ["VFA", "BIG"]:
-                norm_key = (key or "").strip().upper()
-                if norm_key:
-                    self.create_board(
-                        user_id,
-                        name=board_name_for_project(norm_key),
-                        project_key=norm_key,
-                    )
-            return self.list_boards(user_id)
-
-        if not has_personal:
-            self.create_board(user_id, name="Personal tasks", project_key=None)
-
-        for key in jira_project_keys():
-            norm_key = (key or "").strip().upper()
-            if not norm_key:
-                continue
-            wanted = board_name_for_project(norm_key)
-            existing_board = by_project.get(norm_key)
-            if existing_board:
-                if existing_board.get("name") != wanted:
-                    updated = self.update_board(
-                        existing_board["board_id"],
-                        user_id=user_id,
-                        name=wanted,
-                    )
-                    if updated:
-                        by_project[norm_key] = updated
-                continue
-            board = self.create_board(
-                user_id,
-                name=wanted,
-                project_key=norm_key,
-            )
-            by_project[norm_key] = board
-
-        return self.list_boards(user_id)
+        return _ensure_default_boards_for_store(self, user_id)
 
     def list_tickets(
         self,
@@ -1012,55 +1023,7 @@ class FirestoreTicketStore:
         return board
 
     def ensure_default_boards(self, user_id: str) -> List[Dict[str, Any]]:
-        from bigas.portfolio import board_name_for_project, jira_project_keys
-
-        existing = self.list_boards(user_id)
-        by_project = {
-            (b.get("project_key") or "").strip().upper(): b
-            for b in existing
-            if (b.get("project_key") or "").strip()
-        }
-        has_personal = any(not (b.get("project_key") or "").strip() for b in existing)
-
-        if not existing:
-            self.create_board(user_id, name="Personal tasks", project_key=None)
-            for key in jira_project_keys() or ["VFA", "BIG"]:
-                norm_key = (key or "").strip().upper()
-                if norm_key:
-                    self.create_board(
-                        user_id,
-                        name=board_name_for_project(norm_key),
-                        project_key=norm_key,
-                    )
-            return self.list_boards(user_id)
-
-        if not has_personal:
-            self.create_board(user_id, name="Personal tasks", project_key=None)
-
-        for key in jira_project_keys():
-            norm_key = (key or "").strip().upper()
-            if not norm_key:
-                continue
-            wanted = board_name_for_project(norm_key)
-            existing_board = by_project.get(norm_key)
-            if existing_board:
-                if existing_board.get("name") != wanted:
-                    updated = self.update_board(
-                        existing_board["board_id"],
-                        user_id=user_id,
-                        name=wanted,
-                    )
-                    if updated:
-                        by_project[norm_key] = updated
-                continue
-            board = self.create_board(
-                user_id,
-                name=wanted,
-                project_key=norm_key,
-            )
-            by_project[norm_key] = board
-
-        return self.list_boards(user_id)
+        return _ensure_default_boards_for_store(self, user_id)
 
     def list_tickets(
         self,
