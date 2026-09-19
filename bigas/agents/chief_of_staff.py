@@ -21,7 +21,6 @@ from bigas.chat.reply_style import (
     REPLY_STYLE,
     latest_user_text,
     looks_like_incomplete_chat_reply,
-    looks_like_ticket_dump,
     tool_facts_from_messages,
 )
 from bigas.github_refs import is_owner_repo, parse_cursor_agent_id, resolve_repo_and_pr
@@ -632,7 +631,7 @@ def _finalize_chat_reply(
         llm=llm,
         generation_kwargs=generation_kwargs,
     )
-    if rewritten and not looks_like_ticket_dump(rewritten):
+    if rewritten:
         return rewritten
     return _RAW_DUMP_FALLBACK
 

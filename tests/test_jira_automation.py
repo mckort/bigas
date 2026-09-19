@@ -1789,6 +1789,38 @@ def test_implement_timeout_comments_inline(monkeypatch):
     assert any("monitor timed out" in body for body in comments)
 
 
+def test_lookup_implement_branch_rejects_prefix_issue_key_collision(monkeypatch):
+    from bigas.resources.product.jira_automation import implement as impl
+
+    class FakeResp:
+        status_code = 200
+        text = "[]"
+
+        def json(self):
+            return [
+                {
+                    "ref": (
+                        "refs/heads/cursor/bigas-implement-gpww-40-"
+                        "add-direct-store-catalog-product-modules-ea11"
+                    )
+                },
+                {
+                    "ref": (
+                        "refs/heads/cursor/bigas-implement-gpww-49-"
+                        "other-work-ea11"
+                    )
+                },
+            ]
+
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
+    monkeypatch.setattr(impl.requests, "get", lambda *a, **k: FakeResp())
+    branch = impl.lookup_implement_branch(
+        repo="Green-Promo-Wear-Global/greenpromowear-website",
+        issue_key="GPWW-4",
+    )
+    assert branch == ""
+
+
 def test_lookup_implement_branch_matches_issue_key(monkeypatch):
     from bigas.resources.product.jira_automation import implement as impl
 

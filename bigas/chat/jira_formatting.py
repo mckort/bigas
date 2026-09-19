@@ -102,7 +102,7 @@ def _format_lookup_issue_line(
         summary=str(issue.get("summary") or key).strip(),
         include_transition_button=include_transition_button,
     )
-    extras: List[str] = []
+    extras: list[str] = []
     agent = str(issue.get("agent_url") or "").strip()
     review = issue.get("review") if isinstance(issue.get("review"), dict) else {}
     pr_url = str(issue.get("pr_url") or review.get("pr_url") or "").strip()

@@ -41,9 +41,16 @@ _DUMP_KEY_HINT_RE = re.compile(
 )
 
 
-_LINK_ONLY_RE = re.compile(r"^\[.+\]\([^)]+\)$")
-_LINK_WITH_STATUS_RE = re.compile(r"^\[.+\]\([^)]+\)\s+—\s+.+")
-_BULLET_LINK_LINE_RE = re.compile(r"^-\s+\[.+\]\([^)]+\)(?:\s+—\s+.+)?$")
+_LINK_ONLY_RE = re.compile(r"^\[[^\]]+\]\([^)]+\)$")
+# Jira lookup metadata: short status (+ optional date), not prose answers after em dash.
+_TICKET_STATUS_TAIL = r"[\w\s()/-]{1,80}(?:\s\(\d{4}-\d{2}-\d{2}\))?"
+_LINK_WITH_STATUS_RE = re.compile(
+    rf"^\[[^\]]+\]\([^)]+\)\s+—\s+{_TICKET_STATUS_TAIL}$"
+)
+_BULLET_LINK_ONLY_RE = re.compile(r"^-\s+\[[^\]]+\]\([^)]+\)$")
+_BULLET_LINK_WITH_STATUS_RE = re.compile(
+    rf"^-\s+\[[^\]]+\]\([^)]+\)\s+—\s+{_TICKET_STATUS_TAIL}$"
+)
 _PARENT_LINE_RE = re.compile(r"^Parent \([^)]+\):\s+")
 
 
@@ -64,7 +71,9 @@ def _is_ticket_dump_line(stripped: str) -> bool:
         return True
     if _LINK_WITH_STATUS_RE.match(stripped):
         return True
-    if _BULLET_LINK_LINE_RE.match(stripped):
+    if _BULLET_LINK_ONLY_RE.match(stripped):
+        return True
+    if _BULLET_LINK_WITH_STATUS_RE.match(stripped):
         return True
     return False
 

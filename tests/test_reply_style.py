@@ -69,6 +69,25 @@ def test_looks_like_ticket_dump_detects_title_and_move_button():
     )
 
 
+def test_looks_like_ticket_dump_ignores_prose_with_links_and_bullets():
+    prose_link = (
+        "[PROJ-123: Feature Title](https://example.atlassian.net/browse/PROJ-123) — "
+        "The fix has been deployed to production and verified."
+    )
+    assert not looks_like_ticket_dump(prose_link)
+    two_links = (
+        "[Docs](https://example.com/docs) for auth can be found "
+        "[here](https://example.com/auth)"
+    )
+    assert not looks_like_ticket_dump(two_links)
+    changelog = (
+        "Finished this sprint:\n\n"
+        "- [GPWW-1: Login](/board?ticket=GPWW-1) — shipped SSO to all tenants.\n"
+        "- [GPWW-2: Billing](/board?ticket=GPWW-2) — fixed proration edge case."
+    )
+    assert not looks_like_ticket_dump(changelog)
+
+
 def test_looks_like_ticket_dump_detects_atlassian_move_button_only():
     dump = (
         "[Fix checkout](https://example.atlassian.net/browse/GPWW-40)\n\n"

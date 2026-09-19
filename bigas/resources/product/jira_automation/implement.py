@@ -187,7 +187,13 @@ def lookup_implement_branch(*, repo: str, issue_key: str) -> str:
             if not ref.startswith("refs/heads/"):
                 continue
             branch = ref[len("refs/heads/") :]
-            if key in branch.lower() and branch not in prefix_matches:
+            if (
+                re.search(
+                    rf"(?:^|[^a-z0-9]){re.escape(key)}(?:[^a-z0-9]|$)",
+                    branch.lower(),
+                )
+                and branch not in prefix_matches
+            ):
                 prefix_matches.append(branch)
         if prefix_matches:
             return prefix_matches[-1]
@@ -231,7 +237,7 @@ def ensure_implement_pr_from_branch_hint(
         summary=summary,
         agent_url=agent_url,
     )
-    if (result.get("pr_url") or "").strip():
+    if isinstance(result, dict) and (result.get("pr_url") or "").strip():
         return result
     return None
 
