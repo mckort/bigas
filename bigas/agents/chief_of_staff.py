@@ -689,8 +689,6 @@ def _run_tool_call(client: MCPClient, tool_name: str, arguments: Dict[str, Any])
             else None
         )
         if lookup_facts:
-            if result.get("is_error"):
-                return lookup_facts
             return lookup_facts
         human = humanize_tool_result(raw_text) or humanize_tool_result(structured)
         text = human or raw_text.strip()

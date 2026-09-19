@@ -175,9 +175,12 @@ def is_jira_lookup_tool_payload(payload: Dict[str, Any]) -> bool:
 
 
 def _lookup_issue_fact_lines(issue: Dict[str, Any]) -> List[str]:
+    from bigas.tickets.review import infer_agent_url
+
     key = str(issue.get("key") or "").strip()
     if not key:
         return []
+    review = issue.get("review") if isinstance(issue.get("review"), dict) else {}
     lines = [
         f"key: {key}",
         f"summary: {str(issue.get('summary') or issue.get('title') or key).strip()}",
@@ -185,10 +188,19 @@ def _lookup_issue_fact_lines(issue: Dict[str, Any]) -> List[str]:
     status = str(issue.get("status") or "").strip()
     if status:
         lines.append(f"status: {status}")
-    for field in ("issue_type", "fix_version", "url", "agent_url", "pr_url", "pr_title"):
+    for field in ("issue_type", "fix_version", "url"):
         val = str(issue.get(field) or "").strip()
         if val:
             lines.append(f"{field}: {val}")
+    agent_url = infer_agent_url(issue) or str(issue.get("agent_url") or "").strip()
+    if agent_url:
+        lines.append(f"agent_url: {agent_url}")
+    pr_url = str(issue.get("pr_url") or review.get("pr_url") or "").strip()
+    if pr_url:
+        lines.append(f"pr_url: {pr_url}")
+    pr_title = str(issue.get("pr_title") or review.get("pr_title") or "").strip()
+    if pr_title:
+        lines.append(f"pr_title: {pr_title}")
     parent = issue.get("parent")
     if isinstance(parent, dict) and (parent.get("key") or "").strip():
         pkey = str(parent.get("key") or "").strip()
@@ -232,9 +244,10 @@ def jira_lookup_tool_facts(payload: Dict[str, Any]) -> Optional[str]:
                     blocks.append(block)
             if blocks:
                 chunks.append("\n\n".join(blocks))
-        missing = payload.get("missing")
-        if isinstance(missing, list) and missing:
-            chunks.append("Missing keys: " + ", ".join(str(k) for k in missing if k))
+
+    missing = payload.get("missing")
+    if isinstance(missing, list) and missing:
+        chunks.append("Missing keys: " + ", ".join(str(k) for k in missing if k))
 
     jql = str(payload.get("jql") or "").strip()
     if jql:

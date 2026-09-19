@@ -56,7 +56,13 @@ def looks_like_jira_ticket_dump(text: Optional[str]) -> bool:
         stripped = re.sub(r"Parent \([^)]+\):", "", stripped, flags=re.I)
         stripped = re.sub(r"Missing:\s*[^\n]+", "", stripped, flags=re.I)
         stripped = re.sub(r"\s+", " ", stripped).strip(" -–—•")
-        return len(stripped) < 80
+        if len(stripped) >= 80:
+            return False
+        if re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", stripped) and re.search(
+            r"[.!?]\s*$", stripped
+        ):
+            return False
+        return True
     if "Open Epics:" in blob and _LINK_RE.search(blob):
         lines = [ln.strip() for ln in blob.splitlines() if ln.strip()]
         if len(lines) <= 6 and all(ln.startswith("- [") or ln.startswith("Open Epics:") for ln in lines):

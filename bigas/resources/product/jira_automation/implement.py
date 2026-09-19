@@ -571,24 +571,33 @@ class ImplementHandler:
                     summary=summary,
                     agent_url=agent_url,
                 )
-                if recovered and recovered.get("kind") == "pr_opened":
-                    self._report_implementation_outcome(
-                        issue_key=issue_key,
-                        label=issue_discord_label(issue_key, summary),
-                        outcome=recovered,
-                        agent_url=(recovered.get("agent_url") or agent_url or agent_id),
-                        agent_id=agent_id,
-                    )
-                    outcome = recovered
+                if recovered:
+                    recovered_status = (recovered.get("status") or "").strip().upper()
+                    still_running = recovered_status == "RUNNING"
+                    if recovered.get("kind") == "pr_opened" or not still_running:
+                        self._report_implementation_outcome(
+                            issue_key=issue_key,
+                            label=issue_discord_label(issue_key, summary),
+                            outcome=recovered,
+                            agent_url=(
+                                recovered.get("agent_url") or agent_url or agent_id
+                            ),
+                            agent_id=agent_id,
+                        )
+                        outcome = recovered
+                    else:
+                        self._report_implementation_timeout(
+                            issue_key=issue_key,
+                            summary=summary,
+                            agent_url=(
+                                recovered.get("agent_url") or agent_url or agent_id
+                            ),
+                        )
                 else:
                     self._report_implementation_timeout(
                         issue_key=issue_key,
                         summary=summary,
-                        agent_url=(
-                            (recovered or {}).get("agent_url")
-                            or agent_url
-                            or agent_id
-                        ),
+                        agent_url=agent_url or agent_id,
                     )
 
         return {
