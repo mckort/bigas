@@ -176,7 +176,7 @@ Quickstart is chat plus Bigas's **own board** at `/board` and Objectives at `/ob
 - `CURSOR_API_KEY` — drag a card to **In Progress (AI)** and get a PR
 - In the product repo: copy [`docs/pr-review.caller.yml`](docs/pr-review.caller.yml) and set `BIGAS_URL` + `BIGAS_API_KEY`
 
-**Optional:** `DISCORD_WEBHOOK_URL_CTO`. Map a board project to a repo with `BIGAS_JIRA_PROJECT_REPO_MAP` when you have more than one repo (the name is historical — it works for the internal board too).
+**Optional:** `DISCORD_WEBHOOK_URL_CTO`. Map a board project to a repo with `BIGAS_JIRA_PROJECT_REPO_MAP` when you have more than one repo (the name is historical — it works for the internal board too). Example: [Friman investments (FRI)](docs/friman-investments-board.md).
 
 **Try:** open a PR, or on `/board` write a short Brief and drag to **In Progress (AI)**. In the CTO thread: *"Summarize my open PRs and flag blockers."*
 
@@ -396,7 +396,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `JIRA_BASE_URL` | Jira instance URL (optional — omit to use the native Kanban board at `/board`) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
-| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. |
+| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL,FRI`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. |
 | `USE_INTERNAL_BOARD` | `true` (default, even if `JIRA_*` is set) uses the native `/board`; set `false` to drive external Jira |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |

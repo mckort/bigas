@@ -154,6 +154,8 @@ Or paste keys into `.env` by hand. Suggested order after the MVP:
 3. **Marketing** — GA4 property + Google service account
 4. **Production** — deploy to Google Cloud Run ([deploy tutorial](../README.md#tutorial-deploy-your-first-bigas-server))
 
+To add another product board (for example **Friman investments** / project `FRI`), extend `JIRA_PROJECT_KEY` and follow [friman-investments-board.md](friman-investments-board.md).
+
 After each change, restart: `docker compose up --build`.
 
 ---

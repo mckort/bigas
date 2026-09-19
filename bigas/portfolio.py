@@ -13,6 +13,12 @@ DEFAULT_PROJECT_ALIASES: Dict[str, List[str]] = {
     "GPWW": ["greenpromowear", "green promo wear", "green promo", "gpww"],
     "FYDA": ["fyda", "fulfillyourdreamadventure", "fulfill your dream adventure"],
     "MYL": ["mylifesdeed", "my lifes deed", "my life's deed"],
+    "FRI": [
+        "friman investments",
+        "friman investment",
+        "friman-investments",
+        "friman investments board",
+    ],
 }
 
 DEFAULT_BRAND_NAMES: Dict[str, str] = {
@@ -23,6 +29,35 @@ DEFAULT_BRAND_NAMES: Dict[str, str] = {
     "GPWW": "Green Promo Wear",
     "FYDA": "Fulfill Your Dream Adventure",
     "MYL": "My Life's Deed",
+    "FRI": "Friman investments",
+}
+
+DEFAULT_BOARD_NAMES: Dict[str, str] = {
+    "FRI": "Friman investments",
+}
+
+# Jira project key → GitHub owner/repo (override via BIGAS_JIRA_PROJECT_REPO_MAP).
+DEFAULT_PROJECT_REPOS: Dict[str, str] = {
+    "VFA": "mckort/vcfieldassistant",
+    "WAYW": "mckort/roadpal",
+    "BIG": "mckort/bigas",
+    "REM": "mckort/remotebrief",
+    "GPWW": "Green-Promo-Wear-Global/greenpromowear-website",
+    "FYDA": "mckort/fulfillyourdreamadventure",
+    "MYL": "mckort/mylifesdeed",
+    "FRI": "mckort/friman-investments",
+}
+
+# owner/repo → default branch for Cursor implement / deploy refs
+DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
+    "mckort/vcfieldassistant": "main",
+    "mckort/roadpal": "main",
+    "mckort/bigas": "main",
+    "mckort/remotebrief": "main",
+    "Green-Promo-Wear-Global/greenpromowear-website": "main",
+    "mckort/fulfillyourdreamadventure": "master",
+    "mckort/mylifesdeed": "main",
+    "mckort/friman-investments": "main",
 }
 
 DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
@@ -81,8 +116,31 @@ def jira_project_keys() -> List[str]:
 
 def repo_map() -> Dict[str, str]:
     """Jira key → owner/repo."""
+    out = dict(DEFAULT_PROJECT_REPOS)
     parsed = parse_csv_map(os.environ.get("BIGAS_JIRA_PROJECT_REPO_MAP") or "")
+    out.update({k.upper(): v for k, v in parsed.items()})
+    return out
+
+
+def local_path_map() -> Dict[str, str]:
+    """Optional Jira key → local checkout path (for operator docs / future local tooling)."""
+    parsed = parse_csv_map(os.environ.get("BIGAS_PROJECT_LOCAL_PATH_MAP") or "")
     return {k.upper(): v for k, v in parsed.items()}
+
+
+def local_path_for_project(project_key: Optional[str]) -> Optional[str]:
+    key = (project_key or "").strip().upper()
+    if not key:
+        return None
+    path = (local_path_map().get(key) or "").strip()
+    return path or None
+
+
+def board_name_for_project(project_key: str) -> str:
+    key = (project_key or "").strip().upper()
+    if not key:
+        return ""
+    return DEFAULT_BOARD_NAMES.get(key) or f"{key} Board"
 
 
 def ga4_property_map() -> Dict[str, str]:

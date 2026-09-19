@@ -11,9 +11,12 @@ from bigas.github_refs import (
     resolve_repo_and_pr,
 )
 from bigas.portfolio import (
+    board_name_for_project,
     ga4_property_for_project,
+    local_path_for_project,
     normalize_project_key,
     prompt_block,
+    repo_map,
     resolve_ga4_property,
     resolve_project,
     scrub_analytics_question,
@@ -22,12 +25,13 @@ from bigas.portfolio import (
 
 @pytest.fixture
 def portfolio_env(monkeypatch):
-    monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA,WAYW,BIG,REM,GPWW,FYDA,MYL")
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA,WAYW,BIG,REM,GPWW,FYDA,MYL,FRI")
     monkeypatch.setenv(
         "BIGAS_JIRA_PROJECT_REPO_MAP",
         "VFA:mckort/vcfieldassistant,WAYW:mckort/roadpal,BIG:mckort/bigas,"
         "REM:mckort/remotebrief,GPWW:Green-Promo-Wear-Global/greenpromowear-website,"
-        "FYDA:mckort/fulfillyourdreamadventure,MYL:mckort/mylifesdeed",
+        "FYDA:mckort/fulfillyourdreamadventure,MYL:mckort/mylifesdeed,"
+        "FRI:mckort/friman-investments",
     )
     monkeypatch.setenv("GA4_PROPERTY_ID", "473559548")
     monkeypatch.setenv("BIGAS_GA4_PROPERTY_MAP", "GPWW:473559548")
@@ -44,6 +48,7 @@ def test_resolve_project_from_brand_and_repo(portfolio_env):
     assert resolve_project("VFA-12 is stuck") == "VFA"
     assert resolve_project("how is fyda.today doing") == "FYDA"
     assert resolve_project("deploya bigas") == "BIG"
+    assert resolve_project("friman investments board") == "FRI"
     assert resolve_project("hello") is None
 
 
@@ -105,11 +110,23 @@ def test_normalize_project_key_accepts_list():
 
 def test_prompt_block_lists_all_projects(portfolio_env):
     block = prompt_block()
-    for key in ("VFA", "WAYW", "BIG", "REM", "GPWW", "FYDA", "MYL"):
+    for key in ("VFA", "WAYW", "BIG", "REM", "GPWW", "FYDA", "MYL", "FRI"):
         assert key in block
     assert "mckort/roadpal" in block
+    assert "mckort/friman-investments" in block
     assert "not configured" in block
     assert "pr_url" in block
+
+
+def test_board_name_and_local_path_for_fri(monkeypatch):
+    monkeypatch.setenv(
+        "BIGAS_PROJECT_LOCAL_PATH_MAP",
+        "FRI:/Users/marcusfriman/Documents/Code/friman-investments",
+    )
+    assert board_name_for_project("FRI") == "Friman investments"
+    assert board_name_for_project("VFA") == "VFA Board"
+    assert local_path_for_project("FRI").endswith("friman-investments")
+    assert repo_map()["FRI"] == "mckort/friman-investments"
 
 
 def test_format_pr_discord_line_uses_title_as_markdown_link():

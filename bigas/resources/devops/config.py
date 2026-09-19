@@ -30,6 +30,7 @@ RISKY_PATH_PATTERNS: tuple[str, ...] = (
 DEFAULT_WORKFLOW_MAP: Dict[str, List[str]] = {
     "VFA": ["deploy-backend.yml", "deploy-web.yml"],
     "BIG": ["deploy.yml"],
+    "FRI": ["deploy.yml"],
 }
 
 

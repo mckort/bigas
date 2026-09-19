@@ -561,8 +561,12 @@ class TicketService:
         uid = user_id or _sync_user_id()
         board = self._store.find_board_for_project(project_key, uid)
         if not board:
+            from bigas.portfolio import board_name_for_project
+
             board = self._store.create_board(
-                uid, name=f"{project_key} Board", project_key=project_key
+                uid,
+                name=board_name_for_project(project_key),
+                project_key=project_key,
             )
         from bigas.tickets.releases import fix_version_for_new_ticket
 

@@ -701,6 +701,19 @@ def test_allocate_key_skips_occupied_auto_keys(client):
     assert ticket["key"] == "PERS-2"
 
 
+def test_ensure_default_boards_adds_missing_project_board(monkeypatch):
+    store = get_ticket_store()
+    uid = "boards-merge-user"
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA,BIG")
+    boards = store.ensure_default_boards(uid)
+    assert {b.get("project_key") for b in boards} >= {"VFA", "BIG"}
+
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "VFA,BIG,FRI")
+    boards2 = store.ensure_default_boards(uid)
+    fri = next(b for b in boards2 if b.get("project_key") == "FRI")
+    assert fri["name"] == "Friman investments"
+
+
 def test_update_ticket_persists_review_and_agent_url():
     store = get_ticket_store()
     boards = store.ensure_default_boards("test-user")
