@@ -48,9 +48,7 @@ def _apply_legacy_board_name_migrations(
         new_name = board_name_migration_target(norm_key, board.get("name"))
         if not new_name:
             continue
-        updated = update_board(board["board_id"], user_id=user_id, name=new_name)
-        if updated:
-            by_project[norm_key] = updated
+        update_board(board["board_id"], user_id=user_id, name=new_name)
 
 
 def _make_comment(
