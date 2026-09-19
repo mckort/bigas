@@ -1207,6 +1207,21 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "simple ticket that skipped those steps" in prompt
     assert "dead/unused code created by THIS implementation" in prompt
     assert "Do not do a repo-wide unused-code cleanup" in prompt
+    assert "Required PR base is `main`" in prompt
+
+    staging_prompt = build_implement_prompt(
+        issue_key="VFA-14",
+        summary="Brand reports",
+        brief="logo",
+        research="research",
+        plan="plan",
+        comments_text="(none)",
+        repo="mckort/vcfieldassistant",
+        base_branch="staging-0.18.0",
+    )
+    assert "Required PR base is `staging-0.18.0`" in staging_prompt
+    assert "gh pr edit" in staging_prompt
+    assert "Never leave a feature PR targeting `main`" in staging_prompt
 
 
 def test_can_launch_implement_allows_simple_ticket():
@@ -1503,6 +1518,7 @@ def test_resolve_workstream_defaults_to_product():
     assert "Do NOT ask for confirmation" in marketing_impl
     assert "dead/unused code created by THIS implementation" in marketing_impl
     assert "Do not do a repo-wide unused-code cleanup" in marketing_impl
+    assert "Required PR base is `main`" in marketing_impl
 
 
 def test_extract_pr_and_branch_from_cursor_payload():

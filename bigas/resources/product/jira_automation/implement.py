@@ -591,6 +591,7 @@ class ImplementHandler:
             comments_text=comments_text,
             repo=repo,
             attachments_text=attachments_text,
+            base_branch=base_branch,
         )
         repo_url = f"https://github.com/{repo}"
         agent_name = f"Bigas implement {issue_key} {_slugify(summary)}"[:100]
