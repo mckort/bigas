@@ -22,9 +22,7 @@ _ISSUE_TYPE_ALIASES = {
 
 def normalize_issue_type(value: Optional[str], *, default: str = "Task") -> str:
     """Map a free-text issue type (and common aliases) to a canonical name."""
-    raw = (value or "").strip() or default
-    if not raw:
-        raw = default
+    raw = str(value or "").strip() or default
     aliased = _ISSUE_TYPE_ALIASES.get(raw.lower())
     if aliased:
         return aliased
