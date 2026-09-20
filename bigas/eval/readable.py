@@ -196,13 +196,17 @@ def humanize_model_output(output: Mapping[str, Any]) -> str:
 
 
 def _latency(result: EvalModelResult) -> str:
-    return f"{result.usage.latency_ms:.0f} ms"
+    usage = result.usage
+    if not usage or not usage.latency_ms:
+        return "—"
+    return f"{usage.latency_ms:.0f} ms"
 
 
 def _cost(result: EvalModelResult) -> str:
-    if result.usage.cost_usd is None:
+    usage = result.usage
+    if not usage or usage.cost_usd is None:
         return "n/a"
-    return f"${result.usage.cost_usd:.4f}"
+    return f"${usage.cost_usd:.4f}"
 
 
 def judge_column_keys(run: EvalRunResult) -> List[str]:
@@ -225,6 +229,13 @@ def _judge_label(key: str) -> str:
 def _score_cell(value: Optional[float]) -> str:
     if value is None:
         return "—"
+    return f"{value:.1f}"
+
+
+def _score_display(value: Optional[float]) -> str:
+    """Score for prose (e.g. executive summary); avoids format errors on None."""
+    if value is None:
+        return "N/A"
     return f"{value:.1f}"
 
 
@@ -343,7 +354,7 @@ def _build_executive_summary(run: EvalRunResult) -> List[str]:
     lines = [
         "## Executive Summary",
         "",
-        f"**Recommended model:** `{champion.model_id}` with score **{champion.score:.1f}/100**",
+        f"**Recommended model:** `{champion.model_id}` with score **{_score_display(champion.score)}/100**",
         "",
     ]
 
@@ -352,19 +363,22 @@ def _build_executive_summary(run: EvalRunResult) -> List[str]:
         sign = "+" if improvement > 0 else ""
         lines.append(
             f"**vs. current production** (`{baseline_result.model_id}`): "
-            f"{baseline_result.score:.1f}/100 → {champion.score:.1f}/100 ({sign}{improvement:.1f} points)"
+            f"{_score_display(baseline_result.score)}/100 → {_score_display(champion.score)}/100 "
+            f"({sign}{improvement:.1f} points)"
         )
         lines.append("")
 
-    cost_champion = champion.usage.cost_usd
-    latency_champion = champion.usage.latency_ms
+    champion_usage = champion.usage
+    cost_champion = champion_usage.cost_usd if champion_usage else None
+    latency_champion = champion_usage.latency_ms if champion_usage else None
     if cost_champion is not None:
         lines.append(f"**Cost:** ${cost_champion:.4f} per run")
     if latency_champion:
         lines.append(f"**Latency:** {latency_champion / 1000:.1f}s")
 
     if baseline_result and baseline_result is not champion:
-        cost_baseline = baseline_result.usage.cost_usd
+        baseline_usage = baseline_result.usage
+        cost_baseline = baseline_usage.cost_usd if baseline_usage else None
         if cost_champion is not None and cost_baseline is not None and cost_baseline > 0:
             cost_ratio = cost_champion / cost_baseline
             lines.append(f"**Cost comparison:** {cost_ratio:.1f}× vs. production model")
@@ -583,8 +597,12 @@ def format_motivation_structured(result: EvalModelResult) -> str:
     return "\n".join(parts) or "_No rationale provided._"
 
 
-def build_summary_markdown(run: EvalRunResult) -> str:
-    """Short ranking for Discord / PM chat."""
+def build_summary_markdown(run: EvalRunResult, *, include_navigation: bool = False) -> str:
+    """Short ranking for Discord / PM chat.
+
+    When ``include_navigation`` is True (full HTML/markdown reports), prepend executive
+    summary and table of contents with anchor links.
+    """
     ranked = run.ranked_results()
     lines = [
         "# AI Model Evaluation Report",
@@ -605,15 +623,16 @@ def build_summary_markdown(run: EvalRunResult) -> str:
             lines.append(f"- {item.model_id}: {item.error}")
         return "\n".join(lines).strip()
 
-    lines.extend(_build_executive_summary(run))
-    lines.extend(_build_table_of_contents(run))
+    if include_navigation:
+        lines.extend(_build_executive_summary(run))
+        lines.extend(_build_table_of_contents(run))
 
     champion = ranked[0]
     judge_keys = judge_column_keys(run)
     headers = ["Rank", "Model", "Role", "Mean", *[_judge_label(key) for key in judge_keys], "Mech", "Latency", "Est. cost"]
     lines.extend(
         [
-            f"**Champion:** {champion.model_id} (mean {champion.score:.1f}/100)",
+            f"**Champion:** {champion.model_id} (mean {_score_display(champion.score)}/100)",
             "",
             "## Ranking",
             "",
@@ -652,8 +671,7 @@ def build_summary_markdown(run: EvalRunResult) -> str:
         lines.append(format_motivation_structured(result))
         lines.append("")
 
-    if errors:
-        lines.extend(["## Failed Models", ""])
+    if errors and not include_navigation:
         for item in errors:
             lines.append(f"- **{item.model_id}:** {item.error}")
         lines.append("")
@@ -665,7 +683,7 @@ def build_summary_markdown(run: EvalRunResult) -> str:
 
 def build_full_markdown(run: EvalRunResult) -> str:
     """Full readable report: ranking plus each model's written output."""
-    lines = [build_summary_markdown(run)]
+    lines = [build_summary_markdown(run, include_navigation=True)]
     if not run.results:
         lines.extend(["", "---", "", "## Model Outputs", "", "_No model outputs._"])
         return "\n".join(lines).strip()
