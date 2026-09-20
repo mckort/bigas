@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -203,7 +204,7 @@ def format_duration_ms(ms: Optional[float]) -> str:
         value = float(ms)
     except (TypeError, ValueError):
         return "—"
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         return "—"
     if value < 1000:
         return f"{value:.0f} ms"
@@ -258,7 +259,7 @@ def time_per_company_ms(
 
 def cost_per_company_usd(result: EvalModelResult, run: EvalRunResult) -> Optional[float]:
     per_company = result.cost_usd_per_company()
-    if per_company is not None:
+    if per_company is not None and result.fixture_scores:
         return per_company
     usage = result.usage
     if not usage or usage.cost_usd is None:
@@ -275,17 +276,6 @@ def _cost_per_company(result: EvalModelResult, run: EvalRunResult) -> str:
     if value is None:
         return "n/a"
     return f"${value:.4f}"
-
-
-def _latency(result: EvalModelResult) -> str:
-    return format_duration_ms(result.generate_ms_per_company())
-
-
-def _cost(result: EvalModelResult) -> str:
-    cost = result.cost_usd_per_company()
-    if cost is None:
-        return "n/a"
-    return f"${cost:.4f}"
 
 
 def judge_column_keys(run: EvalRunResult) -> List[str]:

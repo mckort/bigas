@@ -145,7 +145,10 @@ class EvalModelResult:
             return sum(costs) / len(costs)
         if not self.usage or self.usage.cost_usd is None:
             return None
-        n = len(self.fixture_scores)
+        rows = self.fixture_scores or []
+        n = len(rows)
+        if n == 0:
+            return None
         if n > 1:
             return float(self.usage.cost_usd) / n
         return float(self.usage.cost_usd)

@@ -327,7 +327,6 @@ class EvalRunner:
                         )
                     ]
                 judge_ms = (time.perf_counter() - judge_started) * 1000
-            usage.judge_latency_ms += judge_ms
 
             judge_mean = mean_score([item.score for item in verdicts])
             score = None
