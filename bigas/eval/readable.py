@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from bigas.eval.base import EvalModelResult, EvalRunResult
+from bigas.eval.base import EvalModelResult, EvalRunResult, EvalUsage
 
 
 def _slugify(text: str) -> str:
@@ -195,18 +195,81 @@ def humanize_model_output(output: Mapping[str, Any]) -> str:
     return "\n".join(parts).strip()
 
 
-def _latency(result: EvalModelResult) -> str:
-    usage = result.usage
-    if not usage or not usage.latency_ms:
+def human_duration_ms(ms: Optional[float]) -> str:
+    """Format milliseconds as a short human duration (s, min, hr)."""
+    if ms is None or ms <= 0:
         return "—"
-    return f"{usage.latency_ms:.0f} ms"
+    seconds = ms / 1000.0
+    if seconds < 60:
+        return f"{seconds:.1f}s" if seconds >= 10 else f"{seconds:.2f}s"
+    minutes = seconds / 60.0
+    if minutes < 60:
+        return f"{minutes:.1f} min"
+    hours = minutes / 60.0
+    return f"{hours:.1f} hr"
 
 
-def _cost(result: EvalModelResult) -> str:
+def fixture_count_for_result(
+    result: EvalModelResult, run: Optional[EvalRunResult] = None
+) -> int:
+    if result.fixture_scores:
+        return max(1, len(result.fixture_scores))
+    if run is not None:
+        fixtures = run.all_fixtures()
+        return max(1, len(fixtures))
+    return 1
+
+
+def _pack_wall_clock_ms(usage: Optional[EvalUsage]) -> Optional[float]:
+    if usage is None:
+        return None
+    gen_jud = usage.generate_latency_ms + usage.judge_latency_ms
+    if gen_jud > 0:
+        return gen_jud
+    if usage.latency_ms and usage.latency_ms > 0:
+        return usage.latency_ms
+    return None
+
+
+def time_per_company_ms(
+    result: EvalModelResult, run: Optional[EvalRunResult] = None
+) -> Optional[float]:
+    if result.fixture_scores:
+        per_fixture: List[float] = []
+        for row in result.fixture_scores:
+            gen_ms = row.get("generate_ms")
+            jud_ms = row.get("judge_ms")
+            if gen_ms is not None or jud_ms is not None:
+                per_fixture.append(float(gen_ms or 0) + float(jud_ms or 0))
+        if per_fixture:
+            return sum(per_fixture) / len(per_fixture)
+    usage = result.usage
+    if not usage:
+        return None
+    n = fixture_count_for_result(result, run)
+    if usage.generate_latency_ms or usage.judge_latency_ms:
+        return (usage.generate_latency_ms + usage.judge_latency_ms) / n
+    if usage.latency_ms:
+        return usage.latency_ms / n
+    return None
+
+
+def cost_per_company_usd(result: EvalModelResult, run: EvalRunResult) -> Optional[float]:
     usage = result.usage
     if not usage or usage.cost_usd is None:
+        return None
+    return usage.cost_usd / fixture_count_for_result(result, run)
+
+
+def _time_per_company(result: EvalModelResult, run: EvalRunResult) -> str:
+    return human_duration_ms(time_per_company_ms(result, run))
+
+
+def _cost_per_company(result: EvalModelResult, run: EvalRunResult) -> str:
+    value = cost_per_company_usd(result, run)
+    if value is None:
         return "n/a"
-    return f"${usage.cost_usd:.4f}"
+    return f"${value:.4f}"
 
 
 def judge_column_keys(run: EvalRunResult) -> List[str]:
@@ -368,19 +431,36 @@ def _build_executive_summary(run: EvalRunResult) -> List[str]:
         )
         lines.append("")
 
+    pack_fixtures = run.all_fixtures()
+    pack_size = max(1, len(pack_fixtures))
+    company_label = "company" if pack_size == 1 else "companies"
+    lines.append(f"**Pack size:** {pack_size} {company_label}")
+
     champion_usage = champion.usage
     cost_champion = champion_usage.cost_usd if champion_usage else None
-    latency_champion = champion_usage.latency_ms if champion_usage else None
+    wall_clock_ms = _pack_wall_clock_ms(champion_usage)
+    if wall_clock_ms is not None:
+        lines.append(
+            f"**Wall clock (champion, full pack):** {human_duration_ms(wall_clock_ms)}"
+        )
+    champion_time_co = time_per_company_ms(champion, run)
+    if champion_time_co:
+        lines.append(f"**Time / company (champion):** {human_duration_ms(champion_time_co)}")
     if cost_champion is not None:
-        lines.append(f"**Cost:** ${cost_champion:.4f} per run")
-    if latency_champion:
-        lines.append(f"**Latency:** {latency_champion / 1000:.1f}s")
+        lines.append(f"**Est. cost (pack total):** ${cost_champion:.4f}")
+        lines.append(
+            f"**Est. cost / company:** ${cost_per_company_usd(champion, run):.4f}"
+        )
 
     if baseline_result and baseline_result is not champion:
-        baseline_usage = baseline_result.usage
-        cost_baseline = baseline_usage.cost_usd if baseline_usage else None
-        if cost_champion is not None and cost_baseline is not None and cost_baseline > 0:
-            cost_ratio = cost_champion / cost_baseline
+        per_co_champion = cost_per_company_usd(champion, run)
+        per_co_baseline = cost_per_company_usd(baseline_result, run)
+        if (
+            per_co_champion is not None
+            and per_co_baseline is not None
+            and per_co_baseline > 0
+        ):
+            cost_ratio = per_co_champion / per_co_baseline
             lines.append(f"**Cost comparison:** {cost_ratio:.1f}× vs. production model")
 
     lines.append("")
@@ -629,7 +709,16 @@ def build_summary_markdown(run: EvalRunResult, *, include_navigation: bool = Fal
 
     champion = ranked[0]
     judge_keys = judge_column_keys(run)
-    headers = ["Rank", "Model", "Role", "Mean", *[_judge_label(key) for key in judge_keys], "Mech", "Latency", "Est. cost"]
+    headers = [
+        "Rank",
+        "Model",
+        "Role",
+        "Mean",
+        *[_judge_label(key) for key in judge_keys],
+        "Mech",
+        "Time / co.",
+        "Est. cost / co.",
+    ]
     lines.extend(
         [
             f"**Champion:** {champion.model_id} (mean {_score_display(champion.score)}/100)",
@@ -653,8 +742,8 @@ def build_summary_markdown(run: EvalRunResult, *, include_navigation: bool = Fal
         cells.extend(
             [
                 f"−{result.mechanical_penalty:.0f}" if result.mechanical_penalty else "0",
-                _latency(result),
-                _cost(result),
+                _time_per_company(result, run),
+                _cost_per_company(result, run),
             ]
         )
         lines.append("| " + " | ".join(cells) + " |")
@@ -711,7 +800,8 @@ def build_full_markdown(run: EvalRunResult) -> str:
             extra = f" · {judge_bits}" if judge_bits else ""
             mech = f" · mech −{result.mechanical_penalty:.0f}" if result.mechanical_penalty else ""
             lines.append(
-                f"**Mean:** {result.score:.1f}/100{extra}{mech} · {_latency(result)} · {_cost(result)}"
+                f"**Mean:** {result.score:.1f}/100{extra}{mech} · "
+                f"{_time_per_company(result, run)} / co. · {_cost_per_company(result, run)} / co."
             )
             lines.append("")
         

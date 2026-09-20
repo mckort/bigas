@@ -74,6 +74,8 @@ class EvalUsage:
     cached_tokens: int = 0
     total_tokens: int = 0
     latency_ms: float = 0.0
+    generate_latency_ms: float = 0.0
+    judge_latency_ms: float = 0.0
     cost_usd: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -83,6 +85,8 @@ class EvalUsage:
             "cached_tokens": self.cached_tokens,
             "total_tokens": self.total_tokens,
             "latency_ms": self.latency_ms,
+            "generate_latency_ms": self.generate_latency_ms,
+            "judge_latency_ms": self.judge_latency_ms,
             "cost_usd": self.cost_usd,
         }
 
@@ -142,6 +146,8 @@ class EvalModelResult:
                 cached_tokens=int(usage_raw.get("cached_tokens") or 0),
                 total_tokens=int(usage_raw.get("total_tokens") or 0),
                 latency_ms=float(usage_raw.get("latency_ms") or 0),
+                generate_latency_ms=float(usage_raw.get("generate_latency_ms") or 0),
+                judge_latency_ms=float(usage_raw.get("judge_latency_ms") or 0),
                 cost_usd=usage_raw.get("cost_usd"),
             ),
             score=raw.get("score"),
