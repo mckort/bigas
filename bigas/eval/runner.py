@@ -271,7 +271,9 @@ class EvalRunner:
 
         for fixture in fixtures:
             try:
+                generate_started = time.perf_counter()
                 output, step_usage = evaluator.run(fixture, candidate.model_id)
+                generate_ms = (time.perf_counter() - generate_started) * 1000
             except Exception as exc:
                 logger.exception("Eval failed for %s on %s", candidate.model_id, fixture.company_name)
                 first_error = first_error or str(exc)
@@ -284,6 +286,7 @@ class EvalRunner:
                     output_tokens=step_usage.output_tokens,
                 )
             _merge_usage(usage, step_usage)
+            usage.generate_latency_ms += generate_ms
 
             verdicts: List[JudgeVerdict] = []
             mechanical = run_mechanical_checks(
@@ -291,6 +294,7 @@ class EvalRunner:
                 fixture,
                 required_steps=_required_steps(evaluator),
             )
+            judge_started = time.perf_counter()
             if not skip_judge:
                 try:
                     verdicts = self.judge.score_panel(
@@ -308,6 +312,8 @@ class EvalRunner:
                             rationale=f"Judge error: {exc}",
                         )
                     ]
+            judge_ms = (time.perf_counter() - judge_started) * 1000
+            usage.judge_latency_ms += judge_ms
 
             judge_mean = mean_score([item.score for item in verdicts])
             score = None
@@ -322,6 +328,8 @@ class EvalRunner:
                 {
                     "company": fixture.company_name,
                     "url": fixture.website_url,
+                    "generate_ms": round(generate_ms, 1),
+                    "judge_ms": round(judge_ms, 1),
                     "score": score,
                     "judge_mean": judge_mean,
                     "mechanical_penalty": mechanical.penalty,

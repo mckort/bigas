@@ -407,6 +407,46 @@ class MechanicalCheckTests(unittest.TestCase):
         self.assertGreater(check.penalty, 0)
 
 
+class ReadableMetricsTests(unittest.TestCase):
+    def test_human_duration_ms(self):
+        from bigas.eval.readable import human_duration_ms
+
+        self.assertEqual(human_duration_ms(None), "—")
+        self.assertEqual(human_duration_ms(45000), "45.0s")
+        self.assertEqual(human_duration_ms(150000), "2.5 min")
+
+    def test_time_and_cost_per_company(self):
+        from bigas.eval.readable import cost_per_company_usd, time_per_company_ms
+
+        run = EvalRunResult(
+            use_case="vc-field-assistant",
+            run_id="x",
+            fixture=EvalFixture("A", "https://a.example"),
+            fixtures=[
+                EvalFixture("A", "https://a.example"),
+                EvalFixture("B", "https://b.example"),
+            ],
+            results=[],
+        )
+        result = EvalModelResult(
+            model_id="gpt-4o",
+            provider="openai",
+            output={},
+            usage=EvalUsage(
+                latency_ms=120_000,
+                generate_latency_ms=80_000,
+                judge_latency_ms=40_000,
+                cost_usd=0.30,
+            ),
+            fixture_scores=[
+                {"company": "A", "generate_ms": 30_000, "judge_ms": 10_000},
+                {"company": "B", "generate_ms": 50_000, "judge_ms": 30_000},
+            ],
+        )
+        self.assertEqual(time_per_company_ms(result), 60_000)
+        self.assertAlmostEqual(cost_per_company_usd(result, run), 0.15)
+
+
 class ReporterTests(unittest.TestCase):
     def test_build_markdown_report(self):
         run = EvalRunResult(
@@ -438,6 +478,50 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("90.0", md)
         self.assertIn("Mean", md)
         self.assertNotIn('{"score"', md)
+
+    def test_executive_summary_per_company_metrics(self):
+        run = EvalRunResult(
+            use_case="vc-field-assistant",
+            run_id="abc123",
+            fixture=EvalFixture("Co A", "https://a.example"),
+            fixtures=[
+                EvalFixture("Co A", "https://a.example"),
+                EvalFixture("Co B", "https://b.example"),
+            ],
+            baseline_model="gemini:gemini-2.5-pro",
+            results=[
+                EvalModelResult(
+                    model_id="gpt-4o",
+                    provider="openai",
+                    output={},
+                    usage=EvalUsage(
+                        latency_ms=180_000,
+                        generate_latency_ms=120_000,
+                        judge_latency_ms=60_000,
+                        cost_usd=0.30,
+                    ),
+                    score=90.0,
+                    fixture_scores=[
+                        {"company": "Co A", "generate_ms": 50_000, "judge_ms": 25_000},
+                        {"company": "Co B", "generate_ms": 70_000, "judge_ms": 35_000},
+                    ],
+                ),
+                EvalModelResult(
+                    model_id="gemini-2.5-pro",
+                    provider="gemini",
+                    output={},
+                    usage=EvalUsage(cost_usd=0.20, latency_ms=100_000),
+                    score=75.0,
+                ),
+            ],
+        )
+        md = build_full_markdown(run)
+        self.assertIn("**Pack size:** 2 companies", md)
+        self.assertIn("**Wall clock (champion, full pack):**", md)
+        self.assertIn("**Est. cost (pack total):** $0.3000", md)
+        self.assertIn("**Est. cost / company:** $0.1500", md)
+        self.assertIn("Time / co.", md)
+        self.assertNotIn("per run", md)
 
     def test_full_report_unwraps_json_steps(self):
         run = EvalRunResult(
