@@ -73,7 +73,10 @@ class EvalUsage:
     output_tokens: int = 0
     cached_tokens: int = 0
     total_tokens: int = 0
+    # Mean generate time per company (user-facing). Pack total stays on pack_generate_ms.
     latency_ms: float = 0.0
+    pack_generate_ms: float = 0.0
+    judge_ms: float = 0.0
     cost_usd: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -83,6 +86,8 @@ class EvalUsage:
             "cached_tokens": self.cached_tokens,
             "total_tokens": self.total_tokens,
             "latency_ms": self.latency_ms,
+            "pack_generate_ms": self.pack_generate_ms,
+            "judge_ms": self.judge_ms,
             "cost_usd": self.cost_usd,
         }
 
@@ -103,6 +108,43 @@ class EvalModelResult:
     mechanical_penalty: float = 0.0
     mechanical_notes: List[str] = field(default_factory=list)
     fixture_scores: List[Dict[str, Any]] = field(default_factory=list)
+
+    def generate_ms_per_company(self) -> Optional[float]:
+        """User-facing wait: mean generate time across fixtures. Judges excluded."""
+        times: List[float] = []
+        for row in self.fixture_scores:
+            raw = row.get("generate_ms")
+            if raw is None:
+                continue
+            try:
+                times.append(float(raw))
+            except (TypeError, ValueError):
+                continue
+        if times:
+            return sum(times) / len(times)
+        if self.usage and self.usage.latency_ms:
+            return float(self.usage.latency_ms)
+        return None
+
+    def cost_usd_per_company(self) -> Optional[float]:
+        """Candidate cost for one company. Pack total stays on usage.cost_usd."""
+        costs: List[float] = []
+        for row in self.fixture_scores:
+            raw = row.get("cost_usd")
+            if raw is None:
+                continue
+            try:
+                costs.append(float(raw))
+            except (TypeError, ValueError):
+                continue
+        if costs:
+            return sum(costs) / len(costs)
+        if not self.usage or self.usage.cost_usd is None:
+            return None
+        n = len(self.fixture_scores)
+        if n > 1:
+            return float(self.usage.cost_usd) / n
+        return float(self.usage.cost_usd)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -142,6 +184,8 @@ class EvalModelResult:
                 cached_tokens=int(usage_raw.get("cached_tokens") or 0),
                 total_tokens=int(usage_raw.get("total_tokens") or 0),
                 latency_ms=float(usage_raw.get("latency_ms") or 0),
+                pack_generate_ms=float(usage_raw.get("pack_generate_ms") or 0),
+                judge_ms=float(usage_raw.get("judge_ms") or 0),
                 cost_usd=usage_raw.get("cost_usd"),
             ),
             score=raw.get("score"),
@@ -184,6 +228,9 @@ class EvalRunResult:
     fixtures: List[EvalFixture] = field(default_factory=list)
     judge_models: List[str] = field(default_factory=list)
     rubric: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    elapsed_ms: float = 0.0
 
     def all_fixtures(self) -> List[EvalFixture]:
         if self.fixtures:
@@ -211,6 +258,9 @@ class EvalRunResult:
             "report_markdown_blob": self.report_markdown_blob,
             "report_url": self.report_url,
             "dry_run": self.dry_run,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "elapsed_ms": self.elapsed_ms,
             "results": [r.to_dict() for r in self.results],
         }
 
@@ -246,6 +296,9 @@ class EvalRunResult:
             fixtures=fixtures,
             judge_models=[str(item) for item in (raw.get("judge_models") or [])],
             rubric=str(raw.get("rubric") or ""),
+            started_at=str(raw.get("started_at") or ""),
+            finished_at=str(raw.get("finished_at") or ""),
+            elapsed_ms=float(raw.get("elapsed_ms") or 0),
         )
 
 

@@ -195,18 +195,49 @@ def humanize_model_output(output: Mapping[str, Any]) -> str:
     return "\n".join(parts).strip()
 
 
-def _latency(result: EvalModelResult) -> str:
-    usage = result.usage
-    if not usage or not usage.latency_ms:
+def format_duration_ms(ms: Optional[float]) -> str:
+    """Human duration for reports — never dump raw millisecond walls."""
+    if ms is None:
         return "—"
-    return f"{usage.latency_ms:.0f} ms"
+    try:
+        value = float(ms)
+    except (TypeError, ValueError):
+        return "—"
+    if value <= 0:
+        return "—"
+    if value < 1000:
+        return f"{value:.0f} ms"
+    seconds = value / 1000.0
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    total_seconds = int(round(seconds))
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m {secs:02d}s"
+
+
+def _company_count(run: EvalRunResult, result: Optional[EvalModelResult] = None) -> int:
+    if result and result.fixture_scores:
+        return len(result.fixture_scores)
+    fixtures = run.all_fixtures()
+    return max(len(fixtures), 1)
+
+
+def _pack_label(count: int) -> str:
+    return "1 company" if count == 1 else f"{count} companies"
+
+
+def _latency(result: EvalModelResult) -> str:
+    return format_duration_ms(result.generate_ms_per_company())
 
 
 def _cost(result: EvalModelResult) -> str:
-    usage = result.usage
-    if not usage or usage.cost_usd is None:
+    cost = result.cost_usd_per_company()
+    if cost is None:
         return "n/a"
-    return f"${usage.cost_usd:.4f}"
+    return f"${cost:.4f}"
 
 
 def judge_column_keys(run: EvalRunResult) -> List[str]:
@@ -249,6 +280,9 @@ def format_motivation(result: EvalModelResult) -> str:
             heading = f"**{company}**"
             if mean is not None:
                 heading += f" — mean {_score_cell(float(mean))}"
+            gen = row.get("generate_ms")
+            if gen:
+                heading += f" · {format_duration_ms(float(gen))}"
             per_judge = []
             for verdict in row.get("judges") or []:
                 if not isinstance(verdict, Mapping):
@@ -368,20 +402,38 @@ def _build_executive_summary(run: EvalRunResult) -> List[str]:
         )
         lines.append("")
 
-    champion_usage = champion.usage
-    cost_champion = champion_usage.cost_usd if champion_usage else None
-    latency_champion = champion_usage.latency_ms if champion_usage else None
+    n = _company_count(run, champion)
+    pack_note = _pack_label(n)
+    cost_champion = champion.cost_usd_per_company()
+    pack_cost = champion.usage.cost_usd if champion.usage else None
     if cost_champion is not None:
-        lines.append(f"**Cost:** ${cost_champion:.4f} per run")
-    if latency_champion:
-        lines.append(f"**Latency:** {latency_champion / 1000:.1f}s")
+        if n > 1 and pack_cost is not None:
+            lines.append(
+                f"**Cost:** ${cost_champion:.4f} per company "
+                f"(pack: {pack_note}, ${float(pack_cost):.4f} total)"
+            )
+        else:
+            lines.append(f"**Cost:** ${cost_champion:.4f} per company")
+    time_champion = champion.generate_ms_per_company()
+    if time_champion:
+        lines.append(f"**Time:** {format_duration_ms(time_champion)} per company")
+    if run.elapsed_ms:
+        lines.append(
+            f"**This eval:** {format_duration_ms(run.elapsed_ms)} wall clock "
+            "(all models + judges)"
+        )
 
     if baseline_result and baseline_result is not champion:
-        baseline_usage = baseline_result.usage
-        cost_baseline = baseline_usage.cost_usd if baseline_usage else None
-        if cost_champion is not None and cost_baseline is not None and cost_baseline > 0:
-            cost_ratio = cost_champion / cost_baseline
-            lines.append(f"**Cost comparison:** {cost_ratio:.1f}× vs. production model")
+        cost_baseline = baseline_result.cost_usd_per_company()
+        if cost_champion is not None and cost_baseline and cost_baseline > 0:
+            lines.append(
+                f"**Cost comparison:** {cost_champion / cost_baseline:.1f}× vs. production model"
+            )
+        time_baseline = baseline_result.generate_ms_per_company()
+        if time_champion and time_baseline and time_baseline > 0:
+            lines.append(
+                f"**Time comparison:** {time_champion / time_baseline:.1f}× vs. production model"
+            )
 
     lines.append("")
     return lines
@@ -500,6 +552,9 @@ def format_motivation_structured(result: EvalModelResult) -> str:
             heading = f"**{company}**"
             if mean is not None:
                 heading += f" — mean {_score_cell(float(mean))}"
+            gen = row.get("generate_ms")
+            if gen:
+                heading += f" · {format_duration_ms(float(gen))}"
             parts.append(heading)
             parts.append("")
             
@@ -629,7 +684,16 @@ def build_summary_markdown(run: EvalRunResult, *, include_navigation: bool = Fal
 
     champion = ranked[0]
     judge_keys = judge_column_keys(run)
-    headers = ["Rank", "Model", "Role", "Mean", *[_judge_label(key) for key in judge_keys], "Mech", "Latency", "Est. cost"]
+    headers = [
+        "Rank",
+        "Model",
+        "Role",
+        "Mean",
+        *[_judge_label(key) for key in judge_keys],
+        "Mech",
+        "Time / company",
+        "Est. cost / company",
+    ]
     lines.extend(
         [
             f"**Champion:** {champion.model_id} (mean {_score_display(champion.score)}/100)",
@@ -658,6 +722,18 @@ def build_summary_markdown(run: EvalRunResult, *, include_navigation: bool = Fal
             ]
         )
         lines.append("| " + " | ".join(cells) + " |")
+
+    pack_note = _pack_label(_company_count(run))
+    lines.extend(
+        [
+            "",
+            f"_Time and cost are per company (this pack: {pack_note}). Judge time is excluded._",
+        ]
+    )
+    if run.elapsed_ms:
+        lines.append(
+            f"_This eval took {format_duration_ms(run.elapsed_ms)} (all models + judges)._"
+        )
 
     lines.extend(["", "## Model Results", ""])
     for idx, result in enumerate(ranked, start=1):

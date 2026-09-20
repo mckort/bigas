@@ -14,13 +14,14 @@ from bigas.eval.base import (
 )
 from bigas.eval.checks import run_mechanical_checks
 from bigas.eval.judge import (
+    JudgeVerdict,
     LLMJudge,
     OKR_SUBSCORE_WEIGHTS,
     judge_weights_for,
     resolve_judge_models,
     weighted_score,
 )
-from bigas.eval.readable import format_motivation
+from bigas.eval.readable import format_duration_ms, format_motivation
 from bigas.eval.discover import (
     OFFICIAL_MODEL_PAGES,
     discover_flagship_models,
@@ -407,6 +408,94 @@ class MechanicalCheckTests(unittest.TestCase):
         self.assertGreater(check.penalty, 0)
 
 
+class DurationFormatTests(unittest.TestCase):
+    def test_format_duration_ms(self):
+        self.assertEqual(format_duration_ms(250), "250 ms")
+        self.assertEqual(format_duration_ms(1500), "1.5s")
+        self.assertEqual(format_duration_ms(125000), "2m 05s")
+        self.assertEqual(format_duration_ms(3_723_000), "1h 2m")
+        self.assertEqual(format_duration_ms(0), "—")
+
+
+class PerCompanyReportTests(unittest.TestCase):
+    def test_report_shows_per_company_time_and_cost(self):
+        run = EvalRunResult(
+            use_case="vc-field-assistant",
+            run_id="abc123",
+            fixture=EvalFixture("VC Field Assistant", "https://vcfieldassistant.com"),
+            fixtures=[
+                EvalFixture("VC Field Assistant", "https://vcfieldassistant.com"),
+                EvalFixture("Stripe", "https://stripe.com"),
+            ],
+            baseline_model="gemini:gemini-3.1-pro-preview",
+            elapsed_ms=1_800_000,
+            results=[
+                EvalModelResult(
+                    model_id="claude-fable-5-1",
+                    provider="anthropic",
+                    output={},
+                    usage=EvalUsage(latency_ms=240_000, cost_usd=2.40),
+                    score=73.0,
+                    score_rationale="Stronger analysis.",
+                    fixture_scores=[
+                        {
+                            "company": "VC Field Assistant",
+                            "score": 74,
+                            "generate_ms": 180_000,
+                            "judge_ms": 20_000,
+                            "cost_usd": 1.20,
+                            "judges": [],
+                        },
+                        {
+                            "company": "Stripe",
+                            "score": 72,
+                            "generate_ms": 300_000,
+                            "judge_ms": 20_000,
+                            "cost_usd": 1.20,
+                            "judges": [],
+                        },
+                    ],
+                ),
+                EvalModelResult(
+                    model_id="gemini-3.1-pro-preview",
+                    provider="gemini",
+                    output={},
+                    usage=EvalUsage(latency_ms=120_000, cost_usd=0.15),
+                    score=67.5,
+                    score_rationale="Solid production baseline.",
+                    fixture_scores=[
+                        {
+                            "company": "VC Field Assistant",
+                            "score": 68,
+                            "generate_ms": 100_000,
+                            "cost_usd": 0.08,
+                            "judges": [],
+                        },
+                        {
+                            "company": "Stripe",
+                            "score": 67,
+                            "generate_ms": 140_000,
+                            "cost_usd": 0.07,
+                            "judges": [],
+                        },
+                    ],
+                ),
+            ],
+        )
+        md = build_full_markdown(run)
+        self.assertIn("Time / company", md)
+        self.assertIn("Est. cost / company", md)
+        self.assertIn("$1.2000 per company", md)
+        self.assertIn("$2.4000 total", md)
+        self.assertIn("2 companies", md)
+        self.assertIn("4m 00s per company", md)
+        self.assertIn("30m 00s", md)
+        self.assertIn("16.0× vs. production model", md)
+        self.assertIn("Judge time is excluded", md)
+        self.assertNotIn("per run", md)
+        self.assertNotIn("4779688", md)
+
+
 class ReporterTests(unittest.TestCase):
     def test_build_markdown_report(self):
         run = EvalRunResult(
@@ -437,7 +526,10 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("gpt-4o", md)
         self.assertIn("90.0", md)
         self.assertIn("Mean", md)
+        self.assertIn("Time / company", md)
+        self.assertIn("Est. cost / company", md)
         self.assertNotIn('{"score"', md)
+        self.assertNotIn("Latency", md)
 
     def test_full_report_unwraps_json_steps(self):
         run = EvalRunResult(
@@ -570,6 +662,41 @@ class EvalRunnerTests(unittest.TestCase):
         self.assertTrue(result.dry_run)
         self.assertEqual(len(result.results), 1)
         evaluator.run.assert_not_called()
+
+    @patch("bigas.eval.runner.time.perf_counter")
+    @patch("bigas.eval.runner.publish_report")
+    def test_evaluate_model_times_generate_not_judges(self, _mock_publish, mock_clock):
+        mock_clock.side_effect = [0.0, 10.0, 10.0, 15.0, 15.0, 21.0, 21.0, 22.0]
+        evaluator = MagicMock()
+        evaluator.use_case_id = "vc-field-assistant"
+        evaluator.pack = None
+        fixtures = [
+            EvalFixture("VFA", "https://vfa.example"),
+            EvalFixture("Stripe", "https://stripe.com"),
+        ]
+        evaluator.run.side_effect = [
+            ({"steps": {"classify": "ok"}}, EvalUsage(prompt_tokens=100, output_tokens=50)),
+            ({"steps": {"classify": "ok"}}, EvalUsage(prompt_tokens=80, output_tokens=40)),
+        ]
+        judge = MagicMock()
+        judge.score_panel.return_value = [
+            JudgeVerdict(model_id="gemini-x", provider="gemini", score=80, rationale="ok"),
+        ]
+        runner = EvalRunner(storage=MagicMock(), judge=judge)
+        result = runner._evaluate_model(
+            evaluator,
+            fixtures,
+            ModelCandidate("gemini", "gemini-3.1-pro-preview"),
+            skip_judge=False,
+            run_id="test",
+        )
+        self.assertAlmostEqual(result.usage.latency_ms, 8000.0)
+        self.assertAlmostEqual(result.usage.pack_generate_ms, 16000.0)
+        self.assertAlmostEqual(result.usage.judge_ms, 6000.0)
+        self.assertEqual(result.fixture_scores[0]["generate_ms"], 10000.0)
+        self.assertEqual(result.fixture_scores[0]["judge_ms"], 5000.0)
+        self.assertEqual(result.fixture_scores[1]["generate_ms"], 6000.0)
+        self.assertAlmostEqual(result.generate_ms_per_company() or 0, 8000.0)
 
 
 class AnthropicCompleteTests(unittest.TestCase):
