@@ -280,9 +280,9 @@ def format_motivation(result: EvalModelResult) -> str:
             heading = f"**{company}**"
             if mean is not None:
                 heading += f" — mean {_score_cell(float(mean))}"
-            gen = row.get("generate_ms")
-            if gen:
-                heading += f" · {format_duration_ms(float(gen))}"
+            dur = format_duration_ms(row.get("generate_ms"))
+            if dur != "—":
+                heading += f" · {dur}"
             per_judge = []
             for verdict in row.get("judges") or []:
                 if not isinstance(verdict, Mapping):
@@ -552,9 +552,9 @@ def format_motivation_structured(result: EvalModelResult) -> str:
             heading = f"**{company}**"
             if mean is not None:
                 heading += f" — mean {_score_cell(float(mean))}"
-            gen = row.get("generate_ms")
-            if gen:
-                heading += f" · {format_duration_ms(float(gen))}"
+            dur = format_duration_ms(row.get("generate_ms"))
+            if dur != "—":
+                heading += f" · {dur}"
             parts.append(heading)
             parts.append("")
             
@@ -723,7 +723,7 @@ def build_summary_markdown(run: EvalRunResult, *, include_navigation: bool = Fal
         )
         lines.append("| " + " | ".join(cells) + " |")
 
-    pack_note = _pack_label(_company_count(run))
+    pack_note = _pack_label(_company_count(run, champion))
     lines.extend(
         [
             "",

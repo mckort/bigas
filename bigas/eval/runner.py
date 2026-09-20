@@ -289,7 +289,9 @@ class EvalRunner:
                 logger.exception("Eval failed for %s on %s", candidate.model_id, fixture.company_name)
                 first_error = first_error or str(exc)
                 continue
-            if step_usage.cost_usd is None:
+            if step_usage is None:
+                step_usage = EvalUsage()
+            if getattr(step_usage, "cost_usd", None) is None:
                 step_usage.cost_usd = estimate_model_cost_usd(
                     candidate.provider,
                     candidate.model_id,
@@ -351,7 +353,7 @@ class EvalRunner:
                     "subscores": _mean_map([item.subscores for item in verdicts if item.subscores]),
                     "generate_ms": generate_ms,
                     "judge_ms": judge_ms,
-                    "cost_usd": step_usage.cost_usd,
+                    "cost_usd": getattr(step_usage, "cost_usd", None),
                     "output": output,
                 }
             )
@@ -366,6 +368,13 @@ class EvalRunner:
             usage.pack_generate_ms / len(generate_times) if generate_times else 0.0
         )
         usage.judge_ms = sum(float(row.get("judge_ms") or 0) for row in fixture_rows)
+        fixture_costs = [
+            float(row["cost_usd"])
+            for row in fixture_rows
+            if row.get("cost_usd") is not None
+        ]
+        if fixture_costs:
+            usage.cost_usd = sum(fixture_costs)
         if first_error and not fixture_rows:
             return EvalModelResult(
                 model_id=candidate.model_id,
