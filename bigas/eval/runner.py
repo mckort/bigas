@@ -282,9 +282,9 @@ class EvalRunner:
         for fixture in fixtures:
             generate_ms = 0.0
             try:
-                gen_started = time.perf_counter()
+                generate_started = time.perf_counter()
                 output, step_usage = evaluator.run(fixture, candidate.model_id)
-                generate_ms = (time.perf_counter() - gen_started) * 1000
+                generate_ms = (time.perf_counter() - generate_started) * 1000
             except Exception as exc:
                 logger.exception("Eval failed for %s on %s", candidate.model_id, fixture.company_name)
                 first_error = first_error or str(exc)
@@ -299,6 +299,7 @@ class EvalRunner:
                     output_tokens=step_usage.output_tokens,
                 )
             _merge_usage(usage, step_usage)
+            usage.generate_latency_ms += generate_ms
 
             verdicts: List[JudgeVerdict] = []
             mechanical = run_mechanical_checks(
@@ -326,6 +327,7 @@ class EvalRunner:
                         )
                     ]
                 judge_ms = (time.perf_counter() - judge_started) * 1000
+            usage.judge_latency_ms += judge_ms
 
             judge_mean = mean_score([item.score for item in verdicts])
             score = None
@@ -351,8 +353,8 @@ class EvalRunner:
                         if item.score is not None
                     },
                     "subscores": _mean_map([item.subscores for item in verdicts if item.subscores]),
-                    "generate_ms": generate_ms,
-                    "judge_ms": judge_ms,
+                    "generate_ms": round(generate_ms, 1),
+                    "judge_ms": round(judge_ms, 1),
                     "cost_usd": getattr(step_usage, "cost_usd", None),
                     "output": output,
                 }
@@ -363,11 +365,11 @@ class EvalRunner:
             for row in fixture_rows
             if row.get("generate_ms") is not None
         ]
-        usage.pack_generate_ms = sum(generate_times)
+        usage.generate_latency_ms = sum(generate_times)
         usage.latency_ms = (
-            usage.pack_generate_ms / len(generate_times) if generate_times else 0.0
+            usage.generate_latency_ms / len(generate_times) if generate_times else 0.0
         )
-        usage.judge_ms = sum(float(row.get("judge_ms") or 0) for row in fixture_rows)
+        usage.judge_latency_ms = sum(float(row.get("judge_ms") or 0) for row in fixture_rows)
         fixture_costs = [
             float(row["cost_usd"])
             for row in fixture_rows

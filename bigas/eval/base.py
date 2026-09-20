@@ -73,10 +73,10 @@ class EvalUsage:
     output_tokens: int = 0
     cached_tokens: int = 0
     total_tokens: int = 0
-    # Mean generate time per company (user-facing). Pack total stays on pack_generate_ms.
+    # latency_ms = mean generate time per company (user-facing).
     latency_ms: float = 0.0
-    pack_generate_ms: float = 0.0
-    judge_ms: float = 0.0
+    generate_latency_ms: float = 0.0
+    judge_latency_ms: float = 0.0
     cost_usd: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -86,8 +86,8 @@ class EvalUsage:
             "cached_tokens": self.cached_tokens,
             "total_tokens": self.total_tokens,
             "latency_ms": self.latency_ms,
-            "pack_generate_ms": self.pack_generate_ms,
-            "judge_ms": self.judge_ms,
+            "generate_latency_ms": self.generate_latency_ms,
+            "judge_latency_ms": self.judge_latency_ms,
             "cost_usd": self.cost_usd,
         }
 
@@ -111,8 +111,9 @@ class EvalModelResult:
 
     def generate_ms_per_company(self) -> Optional[float]:
         """User-facing wait: mean generate time across fixtures. Judges excluded."""
+        rows = self.fixture_scores or []
         times: List[float] = []
-        for row in self.fixture_scores:
+        for row in rows:
             raw = row.get("generate_ms")
             if raw is None:
                 continue
@@ -122,14 +123,17 @@ class EvalModelResult:
                 continue
         if times:
             return sum(times) / len(times)
-        if self.usage and self.usage.latency_ms:
-            return float(self.usage.latency_ms)
+        usage = self.usage
+        if usage and usage.generate_latency_ms:
+            return float(usage.generate_latency_ms) / max(len(rows), 1)
+        if usage and usage.latency_ms:
+            return float(usage.latency_ms)
         return None
 
     def cost_usd_per_company(self) -> Optional[float]:
         """Candidate cost for one company. Pack total stays on usage.cost_usd."""
         costs: List[float] = []
-        for row in self.fixture_scores:
+        for row in self.fixture_scores or []:
             raw = row.get("cost_usd")
             if raw is None:
                 continue
@@ -184,8 +188,12 @@ class EvalModelResult:
                 cached_tokens=int(usage_raw.get("cached_tokens") or 0),
                 total_tokens=int(usage_raw.get("total_tokens") or 0),
                 latency_ms=float(usage_raw.get("latency_ms") or 0),
-                pack_generate_ms=float(usage_raw.get("pack_generate_ms") or 0),
-                judge_ms=float(usage_raw.get("judge_ms") or 0),
+                generate_latency_ms=float(
+                    usage_raw.get("generate_latency_ms") or usage_raw.get("pack_generate_ms") or 0
+                ),
+                judge_latency_ms=float(
+                    usage_raw.get("judge_latency_ms") or usage_raw.get("judge_ms") or 0
+                ),
                 cost_usd=usage_raw.get("cost_usd"),
             ),
             score=raw.get("score"),
