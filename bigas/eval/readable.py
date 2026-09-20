@@ -7,6 +7,12 @@ from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from bigas.eval.base import EvalModelResult, EvalRunResult
 
+
+def _slugify(text: str) -> str:
+    """Convert text to a URL-safe anchor slug."""
+    slug = re.sub(r"[^\w\s-]", "", text.lower())
+    return re.sub(r"[\s_]+", "-", slug).strip("-")
+
 _FENCE_RE = re.compile(r"^```(?:json|markdown|md)?\s*\n(.*)\n```\s*$", re.DOTALL | re.IGNORECASE)
 
 
@@ -319,6 +325,264 @@ def _scoring_header(run: EvalRunResult) -> List[str]:
     return lines
 
 
+def _build_executive_summary(run: EvalRunResult) -> List[str]:
+    """Build a concise executive summary box."""
+    ranked = run.ranked_results()
+    if not ranked:
+        return []
+
+    champion = ranked[0]
+    baseline = run.baseline_model or ""
+    baseline_result = None
+    for result in ranked:
+        key = model_key(result)
+        if key == baseline or result.model_id == baseline or result.model_id == baseline.split(":", 1)[-1]:
+            baseline_result = result
+            break
+
+    lines = [
+        "## Executive Summary",
+        "",
+        f"**Recommended model:** `{champion.model_id}` with score **{champion.score:.1f}/100**",
+        "",
+    ]
+
+    if baseline_result and baseline_result is not champion:
+        improvement = (champion.score or 0) - (baseline_result.score or 0)
+        sign = "+" if improvement > 0 else ""
+        lines.append(
+            f"**vs. current production** (`{baseline_result.model_id}`): "
+            f"{baseline_result.score:.1f}/100 → {champion.score:.1f}/100 ({sign}{improvement:.1f} points)"
+        )
+        lines.append("")
+
+    cost_champion = champion.usage.cost_usd
+    latency_champion = champion.usage.latency_ms
+    if cost_champion is not None:
+        lines.append(f"**Cost:** ${cost_champion:.4f} per run")
+    if latency_champion:
+        lines.append(f"**Latency:** {latency_champion / 1000:.1f}s")
+
+    if baseline_result and baseline_result is not champion:
+        cost_baseline = baseline_result.usage.cost_usd
+        if cost_champion is not None and cost_baseline is not None and cost_baseline > 0:
+            cost_ratio = cost_champion / cost_baseline
+            lines.append(f"**Cost comparison:** {cost_ratio:.1f}× vs. production model")
+
+    lines.append("")
+    return lines
+
+
+def _build_table_of_contents(run: EvalRunResult) -> List[str]:
+    """Build a table of contents with anchor links."""
+    ranked = run.ranked_results()
+    errors = [item for item in run.results if item.error]
+
+    lines = [
+        "## Contents",
+        "",
+        "- [Executive Summary](#executive-summary)",
+        "- [Ranking](#ranking)",
+    ]
+
+    if ranked:
+        lines.append("- [Model Results](#model-results)")
+        for idx, result in enumerate(ranked, start=1):
+            role = result_roles(result, run)
+            role_suffix = f" ({format_roles(role)})" if role else ""
+            slug = _slugify(f"{idx}-{result.model_id}")
+            lines.append(f"  - [{idx}. {result.model_id}{role_suffix}](#{slug})")
+
+    if errors:
+        lines.append("- [Failed Models](#failed-models)")
+
+    lines.extend(["", "---", ""])
+    return lines
+
+
+def _parse_rationale_to_bullets(rationale: str) -> List[Tuple[str, str, str]]:
+    """Parse rationale text into structured bullet points.
+    
+    Returns list of (status, category, text) tuples.
+    Status is one of: 'good', 'warning', 'bad', 'neutral'
+    """
+    bullets: List[Tuple[str, str, str]] = []
+    text = (rationale or "").strip()
+    if not text:
+        return bullets
+
+    positive_patterns = [
+        (r"well[- ]grounded", "Grounding"),
+        (r"grounding[:\s]+(?:strong|solid|good|100)", "Grounding"),
+        (r"all required sections", "Structure"),
+        (r"structure[:\s]+(?:strong|solid|good|complete|100)", "Structure"),
+        (r"no (?:fabricated|invented|hallucinated)", "Hallucination"),
+        (r"hallucination[:\s]+(?:low|none|0|100)", "Hallucination"),
+        (r"correctly (?:categorizes|separates|populates)", "Landscape"),
+        (r"landscape[:\s]+(?:strong|solid|good|complete|100)", "Landscape"),
+    ]
+
+    warning_patterns = [
+        (r"slightly weaken", "Minor issue"),
+        (r"some (?:numeric|specifics)", "Minor issue"),
+        (r"inferred|extrapolated", "Inference"),
+        (r"truncated", "Structure"),
+    ]
+
+    negative_patterns = [
+        (r"empty|missing", "Missing content"),
+        (r"failed|failure", "Failure"),
+        (r"landscape.*empty", "Landscape"),
+        (r"violat", "Violation"),
+    ]
+
+    sentences = re.split(r"(?<=[.;])\s+", text)
+    
+    for sentence in sentences[:5]:
+        sentence = sentence.strip()
+        if not sentence or len(sentence) < 20:
+            continue
+            
+        status = "neutral"
+        category = "Note"
+        
+        sentence_lower = sentence.lower()
+        for pattern, cat in positive_patterns:
+            if re.search(pattern, sentence_lower):
+                status = "good"
+                category = cat
+                break
+        
+        if status == "neutral":
+            for pattern, cat in warning_patterns:
+                if re.search(pattern, sentence_lower):
+                    status = "warning"
+                    category = cat
+                    break
+        
+        if status == "neutral":
+            for pattern, cat in negative_patterns:
+                if re.search(pattern, sentence_lower):
+                    status = "bad"
+                    category = cat
+                    break
+        
+        if len(sentence) > 150:
+            sentence = sentence[:147] + "..."
+        
+        bullets.append((status, category, sentence))
+    
+    return bullets[:4]
+
+
+def format_motivation_structured(result: EvalModelResult) -> str:
+    """Format motivation with structured bullet points."""
+    parts: List[str] = []
+    
+    if result.fixture_scores:
+        for row in result.fixture_scores:
+            company = str(row.get("company") or "Fixture")
+            mean = row.get("score")
+            heading = f"**{company}**"
+            if mean is not None:
+                heading += f" — mean {_score_cell(float(mean))}"
+            parts.append(heading)
+            parts.append("")
+            
+            for verdict in row.get("judges") or []:
+                if not isinstance(verdict, Mapping):
+                    continue
+                label = str(verdict.get("model_id") or "judge")
+                score = verdict.get("score")
+                rationale = _prose_only(str(verdict.get("rationale") or ""))
+                
+                score_bit = f" ({float(score):.0f})" if score is not None else ""
+                parts.append(f"**{label}{score_bit}:**")
+                
+                bullets = _parse_rationale_to_bullets(rationale)
+                if bullets:
+                    for status, category, text in bullets:
+                        if status == "good":
+                            icon = "✓"
+                        elif status == "warning":
+                            icon = "⚠"
+                        elif status == "bad":
+                            icon = "✗"
+                        else:
+                            icon = "•"
+                        parts.append(f"- {icon} **{category}:** {text}")
+                elif rationale:
+                    parts.append(f"- {rationale[:200]}{'...' if len(rationale) > 200 else ''}")
+                parts.append("")
+            
+            mech = [str(item) for item in (row.get("mechanical_notes") or [])]
+            if mech:
+                parts.append("**Mechanical penalties:**")
+                for note in mech:
+                    parts.append(f"- ✗ {note}")
+                parts.append("")
+    
+    elif result.judges:
+        for verdict in result.judges:
+            if not isinstance(verdict, Mapping):
+                continue
+            label = str(verdict.get("model_id") or "judge")
+            score = verdict.get("score")
+            rationale = _prose_only(str(verdict.get("rationale") or ""))
+            if not rationale:
+                continue
+            
+            score_bit = f" ({float(score):.0f})" if score is not None else ""
+            parts.append(f"**{label}{score_bit}:**")
+            
+            bullets = _parse_rationale_to_bullets(rationale)
+            if bullets:
+                for status, category, text in bullets:
+                    if status == "good":
+                        icon = "✓"
+                    elif status == "warning":
+                        icon = "⚠"
+                    elif status == "bad":
+                        icon = "✗"
+                    else:
+                        icon = "•"
+                    parts.append(f"- {icon} **{category}:** {text}")
+            elif rationale:
+                parts.append(f"- {rationale[:200]}{'...' if len(rationale) > 200 else ''}")
+            parts.append("")
+        
+        if result.mechanical_notes:
+            parts.append("**Mechanical penalties:**")
+            for note in result.mechanical_notes:
+                parts.append(f"- ✗ {note}")
+            parts.append("")
+    
+    else:
+        prose = _prose_only(result.score_rationale)
+        if prose:
+            bullets = _parse_rationale_to_bullets(prose)
+            if bullets:
+                for status, category, text in bullets:
+                    if status == "good":
+                        icon = "✓"
+                    elif status == "warning":
+                        icon = "⚠"
+                    elif status == "bad":
+                        icon = "✗"
+                    else:
+                        icon = "•"
+                    parts.append(f"- {icon} **{category}:** {text}")
+            else:
+                parts.append(prose)
+        if result.mechanical_notes:
+            parts.append("")
+            parts.append("**Mechanical penalties:**")
+            for note in result.mechanical_notes:
+                parts.append(f"- ✗ {note}")
+    
+    return "\n".join(parts) or "_No rationale provided._"
+
+
 def build_summary_markdown(run: EvalRunResult) -> str:
     """Short ranking for Discord / PM chat."""
     ranked = run.ranked_results()
@@ -340,6 +604,9 @@ def build_summary_markdown(run: EvalRunResult) -> str:
         for item in errors:
             lines.append(f"- {item.model_id}: {item.error}")
         return "\n".join(lines).strip()
+
+    lines.extend(_build_executive_summary(run))
+    lines.extend(_build_table_of_contents(run))
 
     champion = ranked[0]
     judge_keys = judge_column_keys(run)
@@ -373,18 +640,20 @@ def build_summary_markdown(run: EvalRunResult) -> str:
         )
         lines.append("| " + " | ".join(cells) + " |")
 
-    lines.extend(["", "## Motivation", ""])
+    lines.extend(["", "## Model Results", ""])
     for idx, result in enumerate(ranked, start=1):
         role = format_roles(result_roles(result, run))
-        heading = f"### {idx}. {result.model_id}"
+        slug = _slugify(f"{idx}-{result.model_id}")
+        heading = f"### {idx}. {result.model_id} {{#{slug}}}"
         if role:
-            heading = f"{heading} ({role})"
+            heading = f"### {idx}. {result.model_id} ({role}) {{#{slug}}}"
         lines.append(heading)
-        lines.append(format_motivation(result))
+        lines.append("")
+        lines.append(format_motivation_structured(result))
         lines.append("")
 
     if errors:
-        lines.extend(["## Failed models", ""])
+        lines.extend(["## Failed Models", ""])
         for item in errors:
             lines.append(f"- **{item.model_id}:** {item.error}")
         lines.append("")
@@ -396,22 +665,27 @@ def build_summary_markdown(run: EvalRunResult) -> str:
 
 def build_full_markdown(run: EvalRunResult) -> str:
     """Full readable report: ranking plus each model's written output."""
-    lines = [build_summary_markdown(run), "", "## Model outputs", ""]
+    lines = [build_summary_markdown(run)]
     if not run.results:
-        lines.append("_No model outputs._")
+        lines.extend(["", "---", "", "## Model Outputs", "", "_No model outputs._"])
         return "\n".join(lines).strip()
 
-    for result in run.results:
+    lines.extend(["", "---", "", "## Full Model Outputs", ""])
+    lines.append("_Detailed outputs from each model, including all generated sections._")
+    lines.append("")
+
+    ranked = run.ranked_results()
+    errors = [item for item in run.results if item.error]
+    
+    for idx, result in enumerate(ranked, start=1):
         role = format_roles(result_roles(result, run))
+        slug = _slugify(f"output-{result.model_id}")
         title = result.model_id
         if role:
             title = f"{title} ({role})"
-        lines.append(f"# {title}")
+        lines.append(f"# {title} {{#{slug}}}")
         lines.append("")
-        if result.error:
-            lines.append(f"**Error:** {result.error}")
-            lines.append("")
-            continue
+        
         if result.score is not None:
             judge_bits = " · ".join(
                 f"{_judge_label(key)} {value:.1f}" for key, value in result.judge_scores.items()
@@ -421,11 +695,29 @@ def build_full_markdown(run: EvalRunResult) -> str:
             lines.append(
                 f"**Mean:** {result.score:.1f}/100{extra}{mech} · {_latency(result)} · {_cost(result)}"
             )
-        motivation = format_motivation(result)
+            lines.append("")
+        
+        motivation = format_motivation_structured(result)
         if motivation and motivation != "_No rationale provided._":
+            lines.append("### Judge Assessment")
             lines.append("")
             lines.append(motivation)
+            lines.append("")
+        
+        lines.append("### Generated Output")
         lines.append("")
         lines.append(humanize_model_output(result.output or {}))
         lines.append("")
+        lines.append("---")
+        lines.append("")
+    
+    if errors:
+        lines.append("## Failed Models")
+        lines.append("")
+        for item in errors:
+            lines.append(f"### {item.model_id}")
+            lines.append("")
+            lines.append(f"**Error:** {item.error}")
+            lines.append("")
+
     return "\n".join(lines).strip()
