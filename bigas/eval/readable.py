@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from bigas.eval.base import EvalModelResult, EvalRunResult
+from bigas.eval.base import EvalModelResult, EvalRunResult, EvalUsage
 
 
 def _slugify(text: str) -> str:
@@ -209,27 +209,44 @@ def human_duration_ms(ms: Optional[float]) -> str:
     return f"{hours:.1f} hr"
 
 
-def fixture_count_for_result(result: EvalModelResult, run: EvalRunResult) -> int:
+def fixture_count_for_result(
+    result: EvalModelResult, run: Optional[EvalRunResult] = None
+) -> int:
     if result.fixture_scores:
         return max(1, len(result.fixture_scores))
-    fixtures = run.all_fixtures()
-    return max(1, len(fixtures))
+    if run is not None:
+        fixtures = run.all_fixtures()
+        return max(1, len(fixtures))
+    return 1
 
 
-def time_per_company_ms(result: EvalModelResult) -> Optional[float]:
+def _pack_wall_clock_ms(usage: Optional[EvalUsage]) -> Optional[float]:
+    if usage is None:
+        return None
+    gen_jud = usage.generate_latency_ms + usage.judge_latency_ms
+    if gen_jud > 0:
+        return gen_jud
+    if usage.latency_ms and usage.latency_ms > 0:
+        return usage.latency_ms
+    return None
+
+
+def time_per_company_ms(
+    result: EvalModelResult, run: Optional[EvalRunResult] = None
+) -> Optional[float]:
     if result.fixture_scores:
         per_fixture: List[float] = []
         for row in result.fixture_scores:
-            gen = float(row.get("generate_ms") or 0)
-            jud = float(row.get("judge_ms") or 0)
-            if gen or jud:
-                per_fixture.append(gen + jud)
+            gen_ms = row.get("generate_ms")
+            jud_ms = row.get("judge_ms")
+            if gen_ms is not None or jud_ms is not None:
+                per_fixture.append(float(gen_ms or 0) + float(jud_ms or 0))
         if per_fixture:
             return sum(per_fixture) / len(per_fixture)
     usage = result.usage
     if not usage:
         return None
-    n = max(1, len(result.fixture_scores))
+    n = fixture_count_for_result(result, run)
     if usage.generate_latency_ms or usage.judge_latency_ms:
         return (usage.generate_latency_ms + usage.judge_latency_ms) / n
     if usage.latency_ms:
@@ -245,7 +262,7 @@ def cost_per_company_usd(result: EvalModelResult, run: EvalRunResult) -> Optiona
 
 
 def _time_per_company(result: EvalModelResult, run: EvalRunResult) -> str:
-    return human_duration_ms(time_per_company_ms(result))
+    return human_duration_ms(time_per_company_ms(result, run))
 
 
 def _cost_per_company(result: EvalModelResult, run: EvalRunResult) -> str:
@@ -421,12 +438,12 @@ def _build_executive_summary(run: EvalRunResult) -> List[str]:
 
     champion_usage = champion.usage
     cost_champion = champion_usage.cost_usd if champion_usage else None
-    wall_clock_ms = champion_usage.latency_ms if champion_usage else None
-    if wall_clock_ms:
+    wall_clock_ms = _pack_wall_clock_ms(champion_usage)
+    if wall_clock_ms is not None:
         lines.append(
             f"**Wall clock (champion, full pack):** {human_duration_ms(wall_clock_ms)}"
         )
-    champion_time_co = time_per_company_ms(champion)
+    champion_time_co = time_per_company_ms(champion, run)
     if champion_time_co:
         lines.append(f"**Time / company (champion):** {human_duration_ms(champion_time_co)}")
     if cost_champion is not None:
@@ -436,7 +453,6 @@ def _build_executive_summary(run: EvalRunResult) -> List[str]:
         )
 
     if baseline_result and baseline_result is not champion:
-        cost_baseline = baseline_result.usage.cost_usd if baseline_result.usage else None
         per_co_champion = cost_per_company_usd(champion, run)
         per_co_baseline = cost_per_company_usd(baseline_result, run)
         if (

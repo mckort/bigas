@@ -446,6 +446,82 @@ class ReadableMetricsTests(unittest.TestCase):
         self.assertEqual(time_per_company_ms(result), 60_000)
         self.assertAlmostEqual(cost_per_company_usd(result, run), 0.15)
 
+    def test_time_per_company_none_fixture_scores(self):
+        from bigas.eval.readable import time_per_company_ms
+
+        run = EvalRunResult(
+            use_case="vc-field-assistant",
+            run_id="x",
+            fixture=EvalFixture("A", "https://a.example"),
+            fixtures=[
+                EvalFixture("A", "https://a.example"),
+                EvalFixture("B", "https://b.example"),
+            ],
+            results=[],
+        )
+        result = EvalModelResult(
+            model_id="legacy",
+            provider="openai",
+            output={},
+            usage=EvalUsage(
+                latency_ms=100_000,
+                generate_latency_ms=60_000,
+                judge_latency_ms=40_000,
+            ),
+            fixture_scores=None,
+        )
+        self.assertEqual(time_per_company_ms(result, run), 50_000)
+
+    def test_time_per_company_empty_fixture_scores_uses_run_fixtures(self):
+        from bigas.eval.readable import time_per_company_ms
+
+        run = EvalRunResult(
+            use_case="vc-field-assistant",
+            run_id="x",
+            fixture=EvalFixture("A", "https://a.example"),
+            fixtures=[
+                EvalFixture("A", "https://a.example"),
+                EvalFixture("B", "https://b.example"),
+            ],
+            results=[],
+        )
+        result = EvalModelResult(
+            model_id="legacy",
+            provider="openai",
+            output={},
+            usage=EvalUsage(
+                generate_latency_ms=80_000,
+                judge_latency_ms=40_000,
+            ),
+            fixture_scores=[],
+        )
+        self.assertEqual(time_per_company_ms(result, run), 60_000)
+
+    def test_executive_summary_wall_clock_includes_judge(self):
+        from bigas.eval.readable import build_summary_markdown
+
+        run = EvalRunResult(
+            use_case="vc-field-assistant",
+            run_id="x",
+            fixture=EvalFixture("A", "https://a.example"),
+            results=[
+                EvalModelResult(
+                    model_id="gpt-4o",
+                    provider="openai",
+                    output={},
+                    usage=EvalUsage(
+                        latency_ms=0.0,
+                        generate_latency_ms=90_000,
+                        judge_latency_ms=30_000,
+                        cost_usd=0.10,
+                    ),
+                    score=95.0,
+                ),
+            ],
+        )
+        md = build_summary_markdown(run, include_navigation=True)
+        self.assertIn("**Wall clock (champion, full pack):** 2.0 min", md)
+
 
 class ReporterTests(unittest.TestCase):
     def test_build_markdown_report(self):
