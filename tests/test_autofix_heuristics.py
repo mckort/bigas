@@ -108,6 +108,18 @@ def test_ready_to_merge_clean_re_review_verdict_in_minor():
     assert ok is False
 
 
+def test_empty_section_marker_accepts_bullets_and_emphasis():
+    body = (
+        "### Blockers\n- **None.**\n\n"
+        "### Important\n* N/A\n\n"
+        "### Minor\n- None.\n\n"
+        "Ready to merge.\n"
+    )
+    assert review_is_ready_to_merge(body) is True
+    ok, _reason = review_needs_autofix(body)
+    assert ok is False
+
+
 def test_clean_structured_review_security_closer_under_minor():
     """None. Minor + security wording in closer must not launch nits-only autofix."""
     review = (

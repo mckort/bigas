@@ -154,9 +154,34 @@ def _section_bodies(review_body: str) -> dict[str, str]:
     return sections
 
 
+_EMPTY_MARKER_BULLET = re.compile(r"^[-*]\s+")
+
+
+def _normalize_empty_section_marker_line(line: str) -> str:
+    """Strip list bullets and outer markdown emphasis before empty-marker matching."""
+    text = (line or "").strip()
+    text = _EMPTY_MARKER_BULLET.sub("", text, count=1).strip()
+    while text:
+        prev = text
+        if len(text) >= 4 and text.startswith("**") and text.endswith("**"):
+            text = text[2:-2].strip()
+        elif (
+            len(text) >= 2
+            and text[0] == "*"
+            and text[-1] == "*"
+            and not text.startswith("**")
+        ):
+            text = text[1:-1].strip()
+        else:
+            break
+        if text == prev:
+            break
+    return text
+
+
 def _line_is_empty_section_marker(line: str) -> bool:
     """True for structured-review empty markers (None., N/A, etc.)."""
-    text = (line or "").strip()
+    text = _normalize_empty_section_marker_line(line)
     if not text:
         return False
     if re.fullmatch(r"(?is)none\.?", text):
