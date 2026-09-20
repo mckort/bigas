@@ -182,13 +182,15 @@ def markdown_to_html_body(markdown: str) -> str:
             else:
                 anchor_id = None
 
+            heading_id = anchor_id
             if level == 2:
                 close_section_div()
                 if anchor_id in _SECTION_WRAPPER_IDS:
                     parts.append(f'<div id="{html.escape(anchor_id)}">')
                     open_section_id = anchor_id
+                    heading_id = None
 
-            id_attr = f' id="{html.escape(anchor_id)}"' if anchor_id else ""
+            id_attr = f' id="{html.escape(heading_id)}"' if heading_id else ""
             class_attr = ""
             if level == 3 and explicit_anchor:
                 class_attr = ' class="model-result-card-header"'
