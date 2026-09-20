@@ -5,6 +5,7 @@ import logging
 import os
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from bigas.eval.base import (
@@ -75,6 +76,10 @@ def _merge_usage(total: EvalUsage, part: EvalUsage) -> None:
 
 def _clip(value: float) -> float:
     return max(0.0, min(100.0, value))
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _mean_map(rows: Sequence[Dict[str, float]]) -> Dict[str, float]:
@@ -191,7 +196,9 @@ class EvalRunner:
             dry_run=dry_run,
             judge_models=judge_models,
             rubric=rubric,
+            started_at=_utc_now_iso(),
         )
+        clock_started = time.perf_counter()
 
         if dry_run:
             run.results = [
@@ -209,6 +216,8 @@ class EvalRunner:
                 for c in candidates
             ]
             attach_report_paths(run)
+            run.finished_at = _utc_now_iso()
+            run.elapsed_ms = (time.perf_counter() - clock_started) * 1000
             run.report_markdown = build_markdown_report(run)
             if not skip_report:
                 publish_report(run, post_discord=False, post_chat=False)
@@ -248,6 +257,8 @@ class EvalRunner:
             )
 
         attach_report_paths(run)
+        run.finished_at = _utc_now_iso()
+        run.elapsed_ms = (time.perf_counter() - clock_started) * 1000
         run.report_markdown = build_markdown_report(run)
         self._persist_run_artifacts(run)
 
@@ -264,12 +275,12 @@ class EvalRunner:
         skip_judge: bool,
         run_id: str,
     ) -> EvalModelResult:
-        started = time.perf_counter()
         usage = EvalUsage()
         fixture_rows: List[Dict[str, Any]] = []
         first_error: Optional[str] = None
 
         for fixture in fixtures:
+            generate_ms = 0.0
             try:
                 generate_started = time.perf_counter()
                 output, step_usage = evaluator.run(fixture, candidate.model_id)
@@ -278,7 +289,9 @@ class EvalRunner:
                 logger.exception("Eval failed for %s on %s", candidate.model_id, fixture.company_name)
                 first_error = first_error or str(exc)
                 continue
-            if step_usage.cost_usd is None:
+            if step_usage is None:
+                step_usage = EvalUsage()
+            if getattr(step_usage, "cost_usd", None) is None:
                 step_usage.cost_usd = estimate_model_cost_usd(
                     candidate.provider,
                     candidate.model_id,
@@ -294,8 +307,9 @@ class EvalRunner:
                 fixture,
                 required_steps=_required_steps(evaluator),
             )
-            judge_started = time.perf_counter()
+            judge_ms = 0.0
             if not skip_judge:
+                judge_started = time.perf_counter()
                 try:
                     verdicts = self.judge.score_panel(
                         evaluator=evaluator,
@@ -312,8 +326,7 @@ class EvalRunner:
                             rationale=f"Judge error: {exc}",
                         )
                     ]
-            judge_ms = (time.perf_counter() - judge_started) * 1000
-            usage.judge_latency_ms += judge_ms
+                judge_ms = (time.perf_counter() - judge_started) * 1000
 
             judge_mean = mean_score([item.score for item in verdicts])
             score = None
@@ -328,8 +341,6 @@ class EvalRunner:
                 {
                     "company": fixture.company_name,
                     "url": fixture.website_url,
-                    "generate_ms": round(generate_ms, 1),
-                    "judge_ms": round(judge_ms, 1),
                     "score": score,
                     "judge_mean": judge_mean,
                     "mechanical_penalty": mechanical.penalty,
@@ -341,12 +352,30 @@ class EvalRunner:
                         if item.score is not None
                     },
                     "subscores": _mean_map([item.subscores for item in verdicts if item.subscores]),
+                    "generate_ms": round(generate_ms, 1),
+                    "judge_ms": round(judge_ms, 1),
+                    "cost_usd": getattr(step_usage, "cost_usd", None),
                     "output": output,
                 }
             )
 
-        latency_ms = (time.perf_counter() - started) * 1000
-        usage.latency_ms = latency_ms
+        generate_times = [
+            float(row["generate_ms"])
+            for row in fixture_rows
+            if row.get("generate_ms") is not None
+        ]
+        usage.generate_latency_ms = sum(generate_times)
+        usage.latency_ms = (
+            usage.generate_latency_ms / len(generate_times) if generate_times else 0.0
+        )
+        usage.judge_latency_ms = sum(float(row.get("judge_ms") or 0) for row in fixture_rows)
+        fixture_costs = [
+            float(row["cost_usd"])
+            for row in fixture_rows
+            if row.get("cost_usd") is not None
+        ]
+        if fixture_costs:
+            usage.cost_usd = sum(fixture_costs)
         if first_error and not fixture_rows:
             return EvalModelResult(
                 model_id=candidate.model_id,
