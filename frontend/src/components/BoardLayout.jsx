@@ -2025,7 +2025,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         onClose={() => setSidebarOpen(false)}
       />
 
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="flex-1 flex flex-col min-w-0 min-h-0">
         <header className="header-bar px-3 sm:px-4 py-3 flex flex-col gap-2">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
             <div className="flex items-center gap-2 min-w-0 lg:flex-1">
@@ -2149,7 +2149,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         </header>
 
         {/* Mobile: horizontal snap-scroll kanban */}
-        <div className="flex-1 overflow-x-auto overflow-y-hidden lg:hidden snap-x-mandatory scrollbar-hide flex gap-3 p-3">
+        <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden lg:hidden snap-x-mandatory scrollbar-hide flex gap-3 p-3">
           {columns.map((col) => {
             const colTickets = visibleTickets.filter((t) => t.status === col)
             return (
