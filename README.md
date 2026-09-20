@@ -890,7 +890,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Bigas AI usage | `0 16 * * 0` | `.../weekly_cto_ai_report` (CFO chat) |
 | Email ingest (COS inbox) | `0 5 * * *` | `.../api/v1/providers/email/sync` |
 | Proactive goal evaluation | `0 23 * * 0` | `.../api/agents/evaluate-goals` |
-| AI model evaluation (VFA pack) | `0 16 * * 0` (even ISO weeks) | `.../tasks/eval/vfa-living-analysis` |
+| AI model evaluation (VFA pack) | `0 16 1 * *` (1st of each month) | `.../tasks/eval/vfa-living-analysis` |
 | AI model evaluation (OKR loop) | `0 7 * * 1` | `.../tasks/eval/okr-goal-loop` |
 
 All jobs use **HTTP POST** to your Cloud Run service URL. Since Cloud Run scales to zero between runs, a scheduled job is also a scheduled cold-start — expect the first request after idle time to take a few seconds longer.
@@ -918,17 +918,17 @@ python scripts/run_eval.py --pack vfa-living-analysis \
 
 `--use-case vc-field-assistant` is the same pack (kept for the existing scheduler path).
 
-Cloud Scheduler (same Sunday 16:00 slot as `weekly_cto_ai_report` / `progress_updates`, so Cloud Run is already warm). Body `every_n_weeks: 2` runs every other week from a fixed Sunday epoch (true fortnightly cadence across ISO year boundaries). Same auth as evaluate-goals (`X-Bigas-Access-Key` or `CRON_SECRET`):
+Cloud Scheduler (1st of each month at 16:00 Europe/Stockholm). Body `every_n_weeks: 1` so the app does not skip the monthly fire. Same auth as evaluate-goals (`X-Bigas-Access-Key` or `CRON_SECRET`):
 
 ```bash
 gcloud scheduler jobs create http bigas-eval-vfa-models \
   --location=europe-west1 \
-  --schedule="0 16 * * 0" \
+  --schedule="0 16 1 * *" \
   --time-zone="Europe/Stockholm" \
   --uri="https://YOUR-SERVICE-URL.a.run.app/tasks/eval/vfa-living-analysis" \
   --http-method=POST \
   --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
-  --message-body='{"every_n_weeks":2}' \
+  --message-body='{"every_n_weeks":1}' \
   --attempt-deadline=1800s
 ```
 
