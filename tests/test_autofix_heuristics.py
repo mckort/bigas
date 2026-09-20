@@ -108,6 +108,32 @@ def test_ready_to_merge_clean_re_review_verdict_in_minor():
     assert ok is False
 
 
+def test_empty_section_marker_accepts_bullets_and_emphasis():
+    body = (
+        "### Blockers\n- **None.**\n\n"
+        "### Important\n* N/A\n\n"
+        "### Minor\n- None.\n\n"
+        "Ready to merge.\n"
+    )
+    assert review_is_ready_to_merge(body) is True
+    ok, _reason = review_needs_autofix(body)
+    assert ok is False
+
+
+def test_clean_structured_review_security_closer_under_minor():
+    """None. Minor + security wording in closer must not launch nits-only autofix."""
+    review = (
+        "### Blockers\nNone.\n\n"
+        "### Important\nNone.\n\n"
+        "### Minor\nNone.\n\n"
+        "All previous security issues have been resolved; the PR is ready to merge.\n"
+    )
+    assert review_is_ready_to_merge(review) is True
+    ok, reason = review_needs_autofix(review)
+    assert ok is False
+    assert "clean" in reason.lower() or "lgtm" in reason.lower()
+
+
 def test_mixed_negated_severity_and_actionable_not_stripped_as_closer():
     """A trailing line with negated severity plus a real finding must not be dropped."""
     review = (

@@ -154,16 +154,60 @@ def _section_bodies(review_body: str) -> dict[str, str]:
     return sections
 
 
+_EMPTY_MARKER_BULLET = re.compile(r"^[-*]\s+")
+
+
+def _normalize_empty_section_marker_line(line: str) -> str:
+    """Strip list bullets and outer markdown emphasis before empty-marker matching."""
+    text = (line or "").strip()
+    text = _EMPTY_MARKER_BULLET.sub("", text, count=1).strip()
+    while text:
+        prev = text
+        if len(text) >= 4 and text.startswith("**") and text.endswith("**"):
+            text = text[2:-2].strip()
+        elif (
+            len(text) >= 2
+            and text[0] == "*"
+            and text[-1] == "*"
+            and not text.startswith("**")
+        ):
+            text = text[1:-1].strip()
+        else:
+            break
+        if text == prev:
+            break
+    return text
+
+
+def _line_is_empty_section_marker(line: str) -> bool:
+    """True for structured-review empty markers (None., N/A, etc.)."""
+    text = _normalize_empty_section_marker_line(line)
+    if not text:
+        return False
+    if re.fullmatch(r"(?is)none\.?", text):
+        return True
+    if re.fullmatch(r"(?is)n/?a\.?", text):
+        return True
+    if re.fullmatch(r"(?is)no (issues|findings|blockers|important issues)\.?", text):
+        return True
+    return False
+
+
 def _section_has_findings(body: str) -> bool:
+    raw = (body or "").replace(BIGAS_REVIEW_MARKER, "").strip()
+    first_line = next(
+        (ln.strip() for ln in raw.splitlines() if ln.strip()),
+        "",
+    )
+    # Empty when the section opens with None./N/A even if a verdict closer follows
+    # (closers may mention "security" and fail _strip_section_closer).
+    if first_line and _line_is_empty_section_marker(first_line):
+        return False
+
     text = _strip_section_closer(body)
     if not text:
         return False
-    # Common empty markers from the structured prompt.
-    if re.fullmatch(r"(?is)none\.?", text):
-        return False
-    if re.fullmatch(r"(?is)n/?a\.?", text):
-        return False
-    if re.fullmatch(r"(?is)no (issues|findings|blockers|important issues)\.?", text):
+    if _line_is_empty_section_marker(text):
         return False
     return True
 
