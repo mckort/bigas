@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import zipfile
+from datetime import datetime, timezone
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from bigas.providers.monitoring.service import _check_http_status
@@ -90,6 +91,97 @@ def workflow_deploy_kind(workflow: str) -> str:
     if "web" in name or "frontend" in name:
         return "web"
     return "app"
+
+
+def stamp_unchanged_prod_markers(
+    client: GitHubActionsClient,
+    owner: str,
+    repo: str,
+    ref: str,
+    skipped: List[Dict[str, str]],
+) -> List[Dict[str, str]]:
+    """Record a deploy-* prerelease for surfaces whose build was skipped.
+
+    Prepare compares every lagging deploy-* tag to main. A skipped web or
+    backend workflow used to leave the old tag in place, so the next prepare
+    treated already released commits as extra. The marker is the commit being
+    deployed, and only when that surface is not already tagged there.
+    """
+    stamped: List[Dict[str, str]] = []
+    if not skipped:
+        return stamped
+    try:
+        deploy_sha = client.get_commit_sha(owner, repo, ref)
+    except Exception:
+        logger.exception("Could not resolve %s@%s for a prod marker", repo, ref)
+        return stamped
+
+    seen: set[str] = set()
+    now = datetime.now(timezone.utc)
+    for item in skipped:
+        reason = (item.get("reason") or "").strip().lower()
+        if not reason.startswith("no "):
+            continue
+        kind = workflow_deploy_kind(item.get("workflow") or "")
+        if kind not in ("backend", "web", "app") or kind in seen:
+            continue
+        seen.add(kind)
+        prefix = f"deploy-{kind}-"
+        try:
+            current = client.latest_release_with_prefix(owner, repo, prefix)
+        except Exception:
+            logger.exception("Could not read current %s prod marker", kind)
+            continue
+        current_tag = ((current or {}).get("tag_name") or "").strip()
+        if current_tag:
+            try:
+                current_sha = client.get_commit_sha(owner, repo, current_tag)
+            except Exception:
+                logger.exception("Could not resolve prod tag %s", current_tag)
+                current_sha = ""
+            if current_sha and current_sha == deploy_sha:
+                continue
+        short = deploy_sha[:7]
+        ts = now.strftime("%Y%m%d-%H%M%S")
+        tag_name = f"{prefix}{ts}-{short}"
+        title = f"Deploy {kind} {ts} ({short})"
+        body = (
+            f"Production {kind} marker for {deploy_sha}. "
+            f"No {kind} file changes versus the previous prod tag; "
+            "recorded so the next prepare compares from this commit."
+        )
+        try:
+            created = client.create_prerelease(
+                owner,
+                repo,
+                tag_name=tag_name,
+                target_sha=deploy_sha,
+                name=title,
+                body=body,
+            )
+        except Exception:
+            logger.exception("Could not record %s prod marker %s", kind, tag_name)
+            continue
+        stamped.append(
+            {
+                "component": kind,
+                "tag_name": (created.get("tag_name") or tag_name).strip(),
+                "sha": deploy_sha,
+                "html_url": (created.get("html_url") or "").strip(),
+            }
+        )
+    return stamped
+
+
+def _prod_marker_line(stamped: List[Dict[str, str]]) -> str:
+    if not stamped:
+        return ""
+    bits = []
+    for item in stamped:
+        label = f"{item['component']} {item['tag_name']}"
+        url = (item.get("html_url") or "").strip()
+        bits.append(f"{label} ({url})" if url else label)
+    return "Recorded prod marker " + "; ".join(bits) + "."
 
 
 def filter_unchanged_workflows(
@@ -582,6 +674,15 @@ def trigger_deployment(
             workflow_names, risk_info
         )
 
+    prod_markers = stamp_unchanged_prod_markers(
+        client,
+        product_owner,
+        product_name,
+        product_ref,
+        skipped_workflows,
+    )
+    marker_line = _prod_marker_line(prod_markers)
+
     inputs = dict(target.workflow_inputs or {})
     if cross_repo:
         inputs["ref"] = product_ref
@@ -591,12 +692,15 @@ def trigger_deployment(
         skip_text = "; ".join(
             f"{item['workflow']} ({item['reason']})" for item in skipped_workflows
         )
+        summary = (
+            f"Nothing to deploy on {target.dispatch_repo} @ {dispatch_branch}. "
+            f"Skipped {skip_text}."
+        )
+        if marker_line:
+            summary = f"{summary} {marker_line}"
         return {
             "status": "ok",
-            "summary": (
-                f"Nothing to deploy on {target.dispatch_repo} @ {dispatch_branch}. "
-                f"Skipped {skip_text}."
-            ),
+            "summary": summary,
             "repo": target.repo,
             "deploy_repo": target.dispatch_repo,
             "project_key": target.project_key,
@@ -604,6 +708,7 @@ def trigger_deployment(
             "dispatch_ref": dispatch_branch,
             "triggered": [],
             "skipped_workflows": skipped_workflows,
+            "prod_markers": prod_markers,
             "errors": [],
             "site_urls": target.site_urls,
             "workflow_inputs": inputs or None,
@@ -666,6 +771,8 @@ def trigger_deployment(
             )
             + "."
         )
+    if marker_line:
+        lines.append(marker_line)
     if errors:
         lines.append("Errors: " + "; ".join(errors))
     lines.append(
@@ -683,6 +790,7 @@ def trigger_deployment(
         "dispatch_ref": dispatch_branch,
         "triggered": triggered,
         "skipped_workflows": skipped_workflows,
+        "prod_markers": prod_markers,
         "errors": errors,
         "site_urls": target.site_urls,
         "workflow_inputs": inputs or None,
