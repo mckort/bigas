@@ -600,7 +600,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
   const [releasesError, setReleasesError] = useState('')
   const [releasesRetryKey, setReleasesRetryKey] = useState(0)
   const [commandGroups, setCommandGroups] = useState([])
-  const [openGroup, setOpenGroup] = useState('')
+  const [actionPrompt, setActionPrompt] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -609,9 +609,16 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
     fetchChatProjects()
       .then((res) => {
         if (cancelled) return
-        const items = res.projects || []
+        const versioned = res.projects || []
+        const groups = res.command_groups || []
+        const items = [
+          ...versioned,
+          ...groups
+            .filter((group) => !versioned.some((item) => item.key === group.key))
+            .map((group) => ({ key: group.key, name: group.name || group.key })),
+        ]
         setProjects(items)
-        setCommandGroups(res.command_groups || [])
+        setCommandGroups(groups)
         setProjectKey((current) =>
           items.some((item) => item.key === current) ? current : items[0]?.key || '',
         )
@@ -633,7 +640,9 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
   }, [projectsRetryKey])
 
   useEffect(() => {
-    if (!projectKey) {
+    const group = commandGroups.find((item) => item.key === projectKey)
+    const staging = (group?.commands?.length ?? 0) > 0
+    if (!projectKey || staging) {
       setReleases([])
       setVersion('')
       setReleasesLoading(false)
@@ -668,24 +677,44 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
     return () => {
       cancelled = true
     }
-  }, [projectKey, releasesRetryKey])
+  }, [projectKey, releasesRetryKey, commandGroups])
 
   useEffect(() => {
     if (releasesLoading || releasesError || releases.length === 0) return
     setVersion((current) => pickDefaultRelease(releases, current))
   }, [releases, releasesLoading, releasesError])
 
+  useEffect(() => {
+    const group = commandGroups.find((item) => item.key === projectKey)
+    const commands = group?.commands || []
+    if (commands.length === 0) {
+      setActionPrompt('')
+      return
+    }
+    setActionPrompt((current) =>
+      commands.some((command) => command.prompt === current) ? current : commands[0].prompt,
+    )
+  }, [commandGroups, projectKey])
+
+  const selectedGroup = commandGroups.find((group) => group.key === projectKey)
+  const stagingCommands = selectedGroup?.commands || []
+  const isStagingProject = stagingCommands.length > 0
+  const effectiveActionPrompt = stagingCommands.some((command) => command.prompt === actionPrompt)
+    ? actionPrompt
+    : stagingCommands[0]?.prompt || ''
+
   function handleGo() {
+    if (!projectKey || disabled) return
+    if (isStagingProject) {
+      if (!effectiveActionPrompt) return
+      onSubmit(effectiveActionPrompt)
+      setOpen(false)
+      return
+    }
     const ver = version.trim()
-    if (!projectKey || !ver || disabled) return
+    if (!ver) return
     onSubmit(`prepare deploy ${projectKey} ${ver}`)
     setOpen(false)
-  }
-
-  function sendCommand(prompt) {
-    if (disabled || !prompt) return
-    onSubmit(prompt)
-    setOpenGroup('')
   }
 
   return (
@@ -707,7 +736,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
               value={projectKey}
               onChange={(e) => setProjectKey(e.target.value)}
               disabled={disabled || projectsLoading || Boolean(projectsError)}
-              className="input-field text-xs min-h-[36px] w-[8.5rem] py-1"
+              className="input-field text-xs min-h-[36px] w-[12rem] py-1"
               aria-label="Project"
             >
               {projectsLoading && <option value="">Loading…</option>}
@@ -722,39 +751,58 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
                   </option>
                 ))}
             </select>
-            {/* Closed list: a datalist prefilled with the default hides older cuts (e.g. 0.1.0). */}
-            <select
-              value={version}
-              onChange={(e) => setVersion(e.target.value)}
-              disabled={disabled || releasesLoading || Boolean(releasesError) || releases.length === 0}
-              className="input-field text-xs min-h-[36px] min-w-[7.5rem] py-1"
-              aria-label="Release version"
-            >
-              {releasesLoading && <option value="">Loading…</option>}
-              {!releasesLoading && releasesError && <option value="">Failed to load</option>}
-              {!releasesLoading && !releasesError && releases.length === 0 && (
-                <option value="">No unreleased</option>
-              )}
-              {!releasesLoading &&
-                !releasesError &&
-                releases.length > 0 &&
-                !releases.some((release) => release.name === version) && (
-                  <option value="" disabled>
-                    Select version…
-                  </option>
-                )}
-              {!releasesLoading &&
-                releases.map((release) => (
-                  <option key={release.release_id || release.name} value={release.name}>
-                    {release.name}
-                    {release.is_default ? ' · default' : ''}
+            {isStagingProject ? (
+              <select
+                value={effectiveActionPrompt}
+                onChange={(e) => setActionPrompt(e.target.value)}
+                disabled={disabled || stagingCommands.length === 0}
+                className="input-field text-xs min-h-[36px] min-w-[9.5rem] py-1"
+                aria-label="Staging command"
+              >
+                {stagingCommands.map((command) => (
+                  <option key={command.prompt} value={command.prompt}>
+                    {command.label}
                   </option>
                 ))}
-            </select>
+              </select>
+            ) : (
+              <select
+                value={version}
+                onChange={(e) => setVersion(e.target.value)}
+                disabled={disabled || releasesLoading || Boolean(releasesError) || releases.length === 0}
+                className="input-field text-xs min-h-[36px] min-w-[7.5rem] py-1"
+                aria-label="Release version"
+              >
+                {releasesLoading && <option value="">Loading…</option>}
+                {!releasesLoading && releasesError && <option value="">Failed to load</option>}
+                {!releasesLoading && !releasesError && releases.length === 0 && (
+                  <option value="">No unreleased</option>
+                )}
+                {!releasesLoading &&
+                  !releasesError &&
+                  releases.length > 0 &&
+                  !releases.some((release) => release.name === version) && (
+                    <option value="" disabled>
+                      Select version…
+                    </option>
+                  )}
+                {!releasesLoading &&
+                  releases.map((release) => (
+                    <option key={release.release_id || release.name} value={release.name}>
+                      {release.name}
+                      {release.is_default ? ' · default' : ''}
+                    </option>
+                  ))}
+              </select>
+            )}
             <button
               type="button"
               onClick={handleGo}
-              disabled={disabled || !projectKey || !version.trim()}
+              disabled={
+                disabled ||
+                !projectKey ||
+                (isStagingProject ? !effectiveActionPrompt : !version.trim())
+              }
               className="btn-primary text-xs min-h-[36px] px-3 py-1"
             >
               Go
@@ -796,41 +844,6 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             </div>
           )}
         </div>
-      )}
-      {commandGroups.map((group) =>
-        openGroup === group.key ? (
-          <div key={group.key} className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted">{group.key}</span>
-            {(group.commands || []).map((command) => (
-              <button
-                key={command.prompt}
-                type="button"
-                disabled={disabled}
-                onClick={() => sendCommand(command.prompt)}
-                className="text-xs text-muted hover:text-text min-h-[36px] px-2 py-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40"
-              >
-                {command.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setOpenGroup('')}
-              className="btn-ghost text-xs min-h-[36px] px-2 py-1"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            key={group.key}
-            type="button"
-            disabled={disabled}
-            onClick={() => setOpenGroup(group.key)}
-            className="text-xs text-muted hover:text-text min-h-[36px] px-2 py-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40"
-          >
-            {group.key}
-          </button>
-        ),
       )}
     </div>
   )
