@@ -36,14 +36,14 @@ _WORKFLOW_PHASES = (
 )
 _STAGING_VERB_RE = re.compile(
     r"\b(?P<verb>prepare\s+staging|update\s+staging|teardown\s+staging)\b"
-    r"(?:\s+(?P<key>[A-Za-z][A-Za-z0-9-]*))?",
+    r"(?:\s+(?P<key>[A-Za-z][A-Za-z0-9_-]*))?",
     re.I,
 )
 _PREPARE_DEPLOY_RE = re.compile(
-    r"\bprepare\s+deploy(?:\s+(?P<key>[A-Za-z][A-Za-z0-9-]*))?(?:\s+(?P<rest>\S+))?",
+    r"\bprepare\s+deploy(?:\s+(?P<key>[A-Za-z][A-Za-z0-9_-]*))?(?:\s+(?P<rest>\S+))?",
     re.I,
 )
-_PROJECT_KEY_RE = re.compile(r"[A-Z][A-Z0-9]+(?:-[A-Z][A-Z0-9]+)*")
+_PROJECT_KEY_RE = re.compile(r"[A-Z0-9]+(?:[-_][A-Z0-9]+)*")
 
 
 @dataclass(frozen=True)
@@ -96,18 +96,34 @@ def _normalize_key(value: str) -> str:
     return (value or "").strip().upper()
 
 
+def _key_token(token: str) -> str:
+    key = _normalize_key(token)
+    if key and _PROJECT_KEY_RE.fullmatch(key):
+        return key
+    return ""
+
+
 def _env_from_mapping(key: str, item: Any) -> Optional[StagingEnv]:
     project_key = _normalize_key(key)
     if not isinstance(item, dict) or not project_key:
         return None
-    workflows_raw = item.get("workflows") if isinstance(item.get("workflows"), dict) else {}
-    workflows = {
-        phase: str(workflows_raw.get(phase) or "").strip()
-        for phase in _WORKFLOW_PHASES
-    }
-    if not all(workflows.values()):
-        logger.warning("Staging env %s is missing a workflow filename", project_key)
+    if not _key_token(project_key):
+        logger.warning("Staging env %s has an invalid project key", project_key)
         return None
+    workflows_raw = item.get("workflows") if isinstance(item.get("workflows"), dict) else {}
+    workflows: Dict[str, str] = {}
+    for phase in _WORKFLOW_PHASES:
+        raw_val = workflows_raw.get(phase)
+        if not isinstance(raw_val, str):
+            logger.warning(
+                "Staging env %s has invalid workflow mapping for %s", project_key, phase
+            )
+            return None
+        name = raw_val.strip()
+        if not name:
+            logger.warning("Staging env %s is missing workflow filename for %s", project_key, phase)
+            return None
+        workflows[phase] = name
     repo = str(item.get("repo") or "").strip()
     if "/" not in repo:
         logger.warning("Staging env %s needs repo owner/name", project_key)
@@ -149,20 +165,13 @@ def _owner_name(env: StagingEnv) -> tuple:
     return owner, name
 
 
-def _key_token(token: str) -> str:
-    key = _normalize_key(token)
-    if key and _PROJECT_KEY_RE.fullmatch(key):
-        return key
-    return ""
-
-
 def parse_staging_command(text: str) -> tuple:
     """Return ``(command, project_key)``. Command is empty when this is not a staging-env request."""
     blob = text or ""
     deploy = _PREPARE_DEPLOY_RE.search(blob)
     if deploy:
         key = _key_token(deploy.group("key") or "")
-        rest = (deploy.group("rest") or "").strip()
+        rest = (deploy.group("rest") or "").strip().rstrip(".,!?;:")
         if rest or not key or key not in staging_envs():
             return "", ""
         return "prepare_deploy", key
@@ -288,12 +297,28 @@ def _github():
     return _github_client()
 
 
+def _require_staging_env(env: Optional[StagingEnv]) -> StagingEnv:
+    if env is not None:
+        return env
+    configured = staging_envs()
+    if len(configured) == 1:
+        return next(iter(configured.values()))
+    if len(configured) == 0:
+        raise ValueError("No staging environments are configured.")
+    gpw = configured.get("GPW-PROD")
+    if gpw is not None:
+        return gpw
+    raise ValueError(
+        "Staging environment is required when multiple projects are configured."
+    )
+
+
 def review_candidate(env: Optional[StagingEnv] = None) -> Dict[str, Any]:
     """Review the candidate branch against production. Returns shas and whether it may proceed."""
     from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
     from bigas.resources.cto.pr_review.service import PRReviewService
 
-    env = env or next(iter(staging_envs().values()))
+    env = _require_staging_env(env)
     client = _github()
     owner, name = _owner_name(env)
     compare = client.compare_refs(owner, name, env.production_branch, env.candidate_branch)
@@ -372,7 +397,7 @@ def dispatch_gpw_workflow(
 ) -> Dict[str, Any]:
     from bigas.resources.devops.service import dispatch_workflow
 
-    env = env or next(iter(staging_envs().values()))
+    env = _require_staging_env(env)
     workflow = env.workflows[phase]
     client = _github()
     owner, name = _owner_name(env)
@@ -514,7 +539,11 @@ def _start_prepare_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[st
 
 def _same_rehearsal(rehearsal: Dict[str, Any], env: StagingEnv) -> bool:
     stored = _normalize_key(str(rehearsal.get("project_key") or ""))
-    return not stored or stored == env.project_key
+    if stored:
+        return stored == env.project_key
+    if len(staging_envs()) == 1:
+        return True
+    return env.project_key == "GPW-PROD"
 
 
 def _start_update_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str, Any]:
@@ -745,6 +774,13 @@ def _env_for_poll(poll: Dict[str, Any]) -> Optional[StagingEnv]:
     return env
 
 
+def _env_for_finish(poll: Dict[str, Any], rehearsal: Dict[str, Any]) -> Optional[StagingEnv]:
+    env = _env_for_poll(poll)
+    if env is None:
+        env = _env_from_record(rehearsal)
+    return env
+
+
 def _resolve_missing_gpw_run_id(poll: Dict[str, Any]) -> Optional[int]:
     """Find a workflow run id when dispatch returned before GitHub registered the run."""
     triggered = poll.get("triggered") or []
@@ -792,9 +828,7 @@ def _finish_success(thread_id: str, poll: Dict[str, Any]) -> None:
     candidate = (poll.get("candidate_sha") or "").strip()
     production = (poll.get("production_sha") or "").strip()
     rehearsal = _rehearsal(thread_id)
-    env = _env_from_record(poll) or _env_from_record(rehearsal)
-    if env is None and len(staging_envs()) == 1:
-        env = next(iter(staging_envs().values()))
+    env = _env_for_finish(poll, rehearsal)
     staging_url = env.staging_url if env else ""
     production_url = env.production_url if env else ""
     production_branch = env.production_branch if env else "production"
@@ -859,7 +893,17 @@ def _finish_success(thread_id: str, poll: Dict[str, Any]) -> None:
             },
         )
         return
-    if phase == "deploy_production" and env is not None:
+    if phase == "deploy_production":
+        if env is None:
+            rehearsal.update({"staging_ready": False, "updated_ok": False, "updated_sha": ""})
+            _set_rehearsal(thread_id, rehearsal)
+            _post(
+                thread_id,
+                "Production deploy finished, but the target repository could not be determined "
+                "from this poll (missing project key and repo). Rehearsal state was cleared. "
+                "Check production manually and verify whether maintenance is still on.",
+            )
+            return
         note = ""
         try:
             client = _github()
@@ -902,9 +946,7 @@ def _finish_failure(thread_id: str, poll: Dict[str, Any], failed_runs: list) -> 
     _post(thread_id, "\n".join(lines))
     if phase not in _AUTOFIX_PHASES:
         return
-    env = _env_from_record(poll)
-    if env is None and len(staging_envs()) == 1:
-        env = next(iter(staging_envs().values()))
+    env = _env_for_finish(poll, _rehearsal(thread_id))
     repo = (poll.get("repo") or (env.repo if env else "")).strip()
     branch = env.candidate_branch if env else "develop"
     project_key = env.project_key if env else str(poll.get("project_key") or "this project")
@@ -989,7 +1031,7 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
     try:
         status = get_deployment_status(repo=poll.get("repo") or "", run_id=run_id)
     except Exception as exc:
-        logger.warning("GPW poll failed for run %s: %s", run_id, exc)
+        logger.warning("Staging workflow poll failed for run %s: %s", run_id, exc)
         return {"status": "in_progress", "active": True}
     if (status.get("workflow_status") or "").lower() != "completed":
         return {"status": "in_progress", "active": True}
