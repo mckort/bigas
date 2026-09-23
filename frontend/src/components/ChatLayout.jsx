@@ -640,7 +640,8 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
   }, [projectsRetryKey])
 
   useEffect(() => {
-    const staging = commandGroups.some((group) => group.key === projectKey)
+    const group = commandGroups.find((item) => item.key === projectKey)
+    const staging = (group?.commands?.length ?? 0) > 0
     if (!projectKey || staging) {
       setReleases([])
       setVersion('')
@@ -698,14 +699,15 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
   const selectedGroup = commandGroups.find((group) => group.key === projectKey)
   const stagingCommands = selectedGroup?.commands || []
   const isStagingProject = stagingCommands.length > 0
+  const effectiveActionPrompt = stagingCommands.some((command) => command.prompt === actionPrompt)
+    ? actionPrompt
+    : stagingCommands[0]?.prompt || ''
 
   function handleGo() {
     if (!projectKey || disabled) return
     if (isStagingProject) {
-      const command =
-        stagingCommands.find((item) => item.prompt === actionPrompt) || stagingCommands[0]
-      if (!command?.prompt) return
-      onSubmit(command.prompt)
+      if (!effectiveActionPrompt) return
+      onSubmit(effectiveActionPrompt)
       setOpen(false)
       return
     }
@@ -751,7 +753,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             </select>
             {isStagingProject ? (
               <select
-                value={actionPrompt}
+                value={effectiveActionPrompt}
                 onChange={(e) => setActionPrompt(e.target.value)}
                 disabled={disabled || stagingCommands.length === 0}
                 className="input-field text-xs min-h-[36px] min-w-[9.5rem] py-1"
@@ -796,7 +798,11 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             <button
               type="button"
               onClick={handleGo}
-              disabled={disabled || !projectKey || (isStagingProject ? !actionPrompt : !version.trim())}
+              disabled={
+                disabled ||
+                !projectKey ||
+                (isStagingProject ? !effectiveActionPrompt : !version.trim())
+              }
               className="btn-primary text-xs min-h-[36px] px-3 py-1"
             >
               Go
