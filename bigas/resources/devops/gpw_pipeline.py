@@ -302,12 +302,24 @@ def _start_prepare_staging(thread_id: Optional[str]) -> Dict[str, Any]:
             note = f"Could not start autofix ({exc})."
         _complete_progress(thread_id)
         preview = (reviewed.get("review") or "").strip()
-        if len(preview) > 1200:
+        truncated = len(preview) > 1200
+        if truncated:
             preview = preview[:1200] + "…"
+        pr_url = (reviewed.get("pr_url") or "").strip()
+        if pr_url:
+            review_link = f"Full review: {pr_url}"
+        else:
+            owner, name = _owner_name()
+            compare_url = (
+                f"https://github.com/{owner}/{name}/compare/"
+                f"{PROD_BRANCH}...{CANDIDATE_BRANCH}"
+            )
+            review_link = f"Full diff: {compare_url}"
         _post(
             thread_id,
             "Review is not clean, so staging was not built.\n\n"
             + (preview + "\n\n" if preview else "")
+            + f"{review_link}\n\n"
             + note,
         )
         return {"status": "complete", "summary": "Review blocked staging."}
@@ -520,6 +532,34 @@ def run_gpw_pipeline(*, thread_id: Optional[str], user_message: str) -> Dict[str
     return {"status": "complete", "summary": "Unknown GPW command."}
 
 
+def _resolve_missing_gpw_run_id(poll: Dict[str, Any]) -> Optional[int]:
+    """Find a workflow run id when dispatch returned before GitHub registered the run."""
+    triggered = poll.get("triggered") or []
+    item = triggered[0] if triggered else {}
+    phase = (poll.get("phase") or "").strip()
+    workflow = (item.get("workflow") or _WORKFLOWS.get(phase) or "").strip()
+    if not workflow:
+        return None
+    started = _parse_started(poll.get("started_at") or "")
+    slack = timedelta(seconds=30)
+    try:
+        client = _github()
+        owner, name = _owner_name()
+        branch = client.get_default_branch(owner, name)
+        runs = client.list_workflow_runs(owner, name, workflow, branch=branch, limit=10)
+    except Exception as exc:
+        logger.warning("GPW could not list workflow runs for %s: %s", workflow, exc)
+        return None
+    for run in runs:
+        created = _parse_started(run.get("created_at") or "")
+        if created + slack < started:
+            continue
+        run_id = run.get("id")
+        if run_id:
+            return int(run_id)
+    return None
+
+
 def _parse_started(value: str) -> datetime:
     text = (value or "").strip()
     if text.endswith("Z"):
@@ -608,6 +648,8 @@ def _finish_success(thread_id: str, poll: Dict[str, Any]) -> None:
             note = (
                 f"\n\nThe store is updated, but `{PROD_BRANCH}` was not fast-forwarded: {exc}"
             )
+        rehearsal.update({"staging_ready": False, "updated_ok": False, "updated_sha": ""})
+        _set_rehearsal(thread_id, rehearsal)
         _post(
             thread_id,
             "Production deploy and post-deploy check passed. Maintenance is off.\n\n"
@@ -681,12 +723,26 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
     poll = thread.get("pending_deploy_poll")
     if not isinstance(poll, dict) or poll.get("kind") != "gpw":
         return {"status": "complete", "active": False}
-    triggered = poll.get("triggered") or []
-    if not triggered or not triggered[0].get("run_id"):
-        _complete_progress(thread_id)
-        _patch(thread_id, pending_deploy_poll=None, has_pending_deploy_poll=False)
-        _post(thread_id, "No GitHub Actions run id came back. Check the Actions tab.")
-        return {"status": "complete", "active": False}
+    triggered = poll.get("triggered") or [{}]
+    if not triggered[0].get("run_id"):
+        resolved = _resolve_missing_gpw_run_id(poll)
+        if resolved:
+            item = dict(triggered[0])
+            item["run_id"] = resolved
+            if not item.get("workflow"):
+                phase = (poll.get("phase") or "").strip()
+                item["workflow"] = _WORKFLOWS.get(phase) or phase
+            triggered = [item]
+            poll = {**poll, "triggered": triggered}
+            _patch(thread_id, pending_deploy_poll=poll)
+        else:
+            started = _parse_started(poll.get("started_at") or "")
+            if datetime.now(timezone.utc) < started + timedelta(seconds=_POLL_TIMEOUT_SEC):
+                return {"status": "in_progress", "active": True}
+            _complete_progress(thread_id)
+            _patch(thread_id, pending_deploy_poll=None, has_pending_deploy_poll=False)
+            _post(thread_id, "No GitHub Actions run id came back. Check the Actions tab.")
+            return {"status": "complete", "active": False}
 
     item = triggered[0]
     run_id = int(item["run_id"])
