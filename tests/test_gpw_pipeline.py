@@ -72,7 +72,7 @@ def test_prepare_deploy_gpw_does_not_use_versioned_prepare(monkeypatch):
 def test_teardown_waits_for_yes_then_dispatches(monkeypatch):
     dispatched = {}
 
-    def _dispatch(phase, inputs=None):
+    def _dispatch(phase, inputs=None, **_kwargs):
         dispatched["phase"] = phase
         dispatched["inputs"] = inputs
         return {"workflow": "teardown-staging.yml", "run_id": 42, "html_url": "https://example.test/42"}
@@ -114,7 +114,7 @@ def test_update_staging_requires_prepare(monkeypatch):
 def test_prepare_staging_dispatches_after_clean_review(monkeypatch):
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
-        lambda: {
+        lambda env=None: {
             "ok": True,
             "production_sha": "abc123456789",
             "candidate_sha": "def123456789",
@@ -123,7 +123,7 @@ def test_prepare_staging_dispatches_after_clean_review(monkeypatch):
     )
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.dispatch_gpw_workflow",
-        lambda phase, inputs=None: {
+        lambda phase, inputs=None, **_kwargs: {
             "workflow": "prepare-staging.yml",
             "run_id": 7,
             "html_url": "https://example.test/7",
@@ -330,11 +330,47 @@ def test_command_shortcuts_are_only_gpw_prod():
     groups = list_gpw_command_shortcuts()
     assert [group["key"] for group in groups] == ["GPW-PROD"]
     assert [item["prompt"] for item in groups[0]["commands"]] == [
-        "prepare staging",
-        "update staging",
-        "teardown staging",
+        "prepare staging GPW-PROD",
+        "update staging GPW-PROD",
+        "teardown staging GPW-PROD",
         "prepare deploy GPW-PROD",
     ]
+
+
+def test_bare_staging_command_asks_when_several_projects(monkeypatch):
+    from bigas.resources.devops.gpw_pipeline import StagingEnv
+
+    other = StagingEnv(
+        project_key="DEMO",
+        repo="example/demo",
+        candidate_branch="develop",
+        production_branch="main",
+        staging_url="https://staging.example.test",
+        production_url="https://example.test",
+        workflows={
+            "prepare_staging": "prepare-staging.yml",
+            "update_staging": "update-staging.yml",
+            "teardown": "teardown-staging.yml",
+            "backup": "backup-production.yml",
+            "deploy_production": "deploy-production.yml",
+        },
+    )
+    gpw = list_gpw_command_shortcuts()[0]
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.staging_envs",
+        lambda: {"GPW-PROD": other, "DEMO": other},
+    )
+    # The shortcut list follows staging_envs, so two groups appear.
+    assert len(list_gpw_command_shortcuts()) == 2
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    result = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="prepare staging",
+    )
+    assert result["status"] == "complete"
+    assert "which project" in _texts(thread["thread_id"]).lower()
+    assert gpw["key"] == "GPW-PROD"
 
 
 def test_parse_commands():
@@ -343,3 +379,21 @@ def test_parse_commands():
     assert parse_gpw_command("teardown staging") == "teardown"
     assert parse_gpw_command("prepare deploy GPW-PROD") == "prepare_deploy"
     assert parse_gpw_command("prepare deploy VFA 0.1.0") == ""
+
+
+def test_staging_env_map_adds_a_project(monkeypatch):
+    monkeypatch.setenv(
+        "BIGAS_STAGING_ENV_MAP",
+        '{"DEMO":{"repo":"example/demo","candidate_branch":"develop",'
+        '"production_branch":"main","staging_url":"https://staging.example.test",'
+        '"production_url":"https://example.test","workflows":{'
+        '"prepare_staging":"prepare-staging.yml","update_staging":"update-staging.yml",'
+        '"teardown":"teardown-staging.yml","backup":"backup-production.yml",'
+        '"deploy_production":"deploy-production.yml"}}}',
+    )
+    from bigas.resources.devops.gpw_pipeline import staging_envs
+
+    keys = list(staging_envs())
+    assert keys == ["GPW-PROD", "DEMO"]
+    assert staging_envs()["DEMO"].repo == "example/demo"
+    assert parse_gpw_command("prepare deploy VFA") == ""
