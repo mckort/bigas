@@ -11,6 +11,8 @@ import requests
 
 from bigas.discord_webhook import post_to_discord
 from bigas.github_refs import format_pr_discord_line
+from bigas.portfolio import ISSUE_KEY_SEARCH_RE as _ISSUE_KEY_RE
+from bigas.portfolio import project_key_from_issue_key
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
     JiraConfig,
@@ -30,7 +32,6 @@ from bigas.resources.product.release_workflow import (
 
 logger = logging.getLogger(__name__)
 
-_ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
 _RELEASE_TITLE_RE = re.compile(
     r"^(release\s+|prepare deploy\b|resolve conflicts\b)",
     re.I,
@@ -326,7 +327,7 @@ def ensure_board_ticket_for_pr(
     from bigas.tickets.releases import project_key_for_repo
 
     if issue_key:
-        project_key = issue_key.split("-", 1)[0].upper()
+        project_key = project_key_from_issue_key(issue_key)
     else:
         project_key = (project_key_for_repo(repo) or "").strip().upper()
     if not project_key:
@@ -527,7 +528,7 @@ def transition_issue_to_final_approval_for_pr(
                 "pr_url": pr_url,
             }
 
-    project_key = issue_key.split("-", 1)[0].upper()
+    project_key = project_key_from_issue_key(issue_key)
     try:
         if not cfg.is_project_allowed(project_key):
             return {

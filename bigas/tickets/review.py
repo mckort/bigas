@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from urllib.parse import urlparse
 
 from bigas.github_refs import parse_github_pr
-from bigas.portfolio import site_urls_for_project
+from bigas.portfolio import project_key_from_issue_key, site_urls_for_project
 from bigas.resources.product.jira_automation.config import BIGAS_COMMENT_MARKER
 
 logger = logging.getLogger(__name__)
@@ -272,7 +272,7 @@ def attach_review_from_pr(
     proj = (
         (project_key or "").strip().upper()
         or str(ticket.get("project_key") or "").strip().upper()
-        or key.split("-", 1)[0]
+        or project_key_from_issue_key(key)
     )
     pages = public_page_items(paths, project_key=proj)
     review = merge_review(ticket.get("review"), pr_url=url, pr_title=pr_title, items=pages)

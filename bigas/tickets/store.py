@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import os
-import re
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from bigas.okr.model import normalize_key_results, promote_objective_type
+from bigas.portfolio import ISSUE_KEY_RE as _ISSUE_KEY_RE
+from bigas.portfolio import issue_number_from_key, project_key_from_issue_key
 from bigas.tickets.constants import ISSUE_TYPES, columns_for_board, is_valid_status, normalize_issue_type
 from bigas.tickets.labels import has_marketing, normalize_labels, resolve_ticket_labels
 
@@ -18,8 +19,6 @@ def _is_epic_ticket(ticket: Optional[Dict[str, Any]]) -> bool:
 
 
 _GOAL_ISSUE_TYPES = ISSUE_TYPES
-
-_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
 
 def _utcnow_iso() -> str:
@@ -311,13 +310,7 @@ def _apply_ticket_field_updates(
 
 
 def _key_number(key: str, prefix: str) -> Optional[int]:
-    display = (key or "").strip().upper()
-    if not display.startswith(f"{prefix}-"):
-        return None
-    try:
-        return int(display.split("-", 1)[1])
-    except (IndexError, ValueError):
-        return None
+    return issue_number_from_key(key, prefix)
 
 
 class MemoryTicketStore:
@@ -782,7 +775,7 @@ class MemoryTicketStore:
                     continue
                 key = (ticket.get("key") or "").strip().upper()
                 if "-" in key:
-                    keys.add(key.split("-", 1)[0])
+                    keys.add(project_key_from_issue_key(key))
         return sorted(keys)
 
     def list_epics(self, project_key: str) -> List[Dict[str, Any]]:
@@ -1405,7 +1398,7 @@ class FirestoreTicketStore:
                 continue
             key = (ticket.get("key") or "").strip().upper()
             if "-" in key:
-                keys.add(key.split("-", 1)[0])
+                keys.add(project_key_from_issue_key(key))
         return sorted(keys)
 
     def list_epics(self, project_key: str) -> List[Dict[str, Any]]:

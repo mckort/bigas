@@ -396,7 +396,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `JIRA_BASE_URL` | Jira instance URL (optional — omit to use the native Kanban board at `/board`) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
-| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,FYDA,MYL,FRI`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. |
+| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,FRI`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. GPW-PROD is the store (`store.greenpromowear.com`); GPWW is the marketing site. |
 | `USE_INTERNAL_BOARD` | `true` (default, even if `JIRA_*` is set) uses the native `/board`; set `false` to drive external Jira |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |

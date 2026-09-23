@@ -536,7 +536,9 @@ class ImplementHandler:
         project = fields.get("project") if isinstance(fields.get("project"), dict) else {}
         project_key = (project.get("key") or "").strip().upper()
         if not project_key and issue_key and "-" in issue_key:
-            project_key = issue_key.split("-", 1)[0].upper()
+            from bigas.portfolio import project_key_from_issue_key
+
+            project_key = project_key_from_issue_key(issue_key)
         labels = fields.get("labels") or []
         description_plain = adf_to_plain_text(fields.get("description"))
         brief = extract_brief(description_plain) or description_plain or summary

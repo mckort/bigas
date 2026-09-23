@@ -126,7 +126,9 @@ def parse_automation_payload(data: Optional[Dict[str, Any]]) -> Dict[str, str]:
     )
     project_key = str(project_key).strip().upper()
     if not project_key and issue_key and "-" in issue_key:
-        project_key = issue_key.split("-", 1)[0].upper()
+        from bigas.portfolio import project_key_from_issue_key
+
+        project_key = project_key_from_issue_key(issue_key)
 
     idem = (
         data.get("idempotency_key")
@@ -181,7 +183,9 @@ class JiraAutomationService:
         to_status = (to_status or "").strip()
         project_key = (project_key or "").strip().upper()
         if not project_key and issue_key and "-" in issue_key:
-            project_key = issue_key.split("-", 1)[0].upper()
+            from bigas.portfolio import project_key_from_issue_key
+
+            project_key = project_key_from_issue_key(issue_key)
 
         if not issue_key or not to_status:
             raise JiraAutomationError("issue_key and to_status are required")

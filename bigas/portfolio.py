@@ -11,6 +11,12 @@ DEFAULT_PROJECT_ALIASES: Dict[str, List[str]] = {
     "BIG": ["bigas"],
     "REM": ["remotebrief", "remote brief"],
     "GPWW": ["greenpromowear", "green promo wear", "green promo", "gpww"],
+    "GPW-PROD": [
+        "gpw-prod",
+        "gpw store",
+        "green promo wear store",
+        "store.greenpromowear.com",
+    ],
     "FYDA": ["fyda", "fulfillyourdreamadventure", "fulfill your dream adventure"],
     "MYL": ["mylifesdeed", "my lifes deed", "my life's deed"],
     "FRI": [
@@ -28,6 +34,7 @@ DEFAULT_BRAND_NAMES: Dict[str, str] = {
     "BIG": "Bigas",
     "REM": "RemoteBrief",
     "GPWW": "Green Promo Wear",
+    "GPW-PROD": "Green Promo Wear Store",
     "FYDA": "Fulfill Your Dream Adventure",
     "MYL": "My Life's Deed",
     "FRI": "Friman investments",
@@ -45,6 +52,7 @@ DEFAULT_PROJECT_REPOS: Dict[str, str] = {
     "BIG": "mckort/bigas",
     "REM": "mckort/remotebrief",
     "GPWW": "Green-Promo-Wear-Global/greenpromowear-website",
+    "GPW-PROD": "Green-Promo-Wear-Global/GPW",
     "FYDA": "mckort/fulfillyourdreamadventure",
     "MYL": "mckort/mylifesdeed",
     "FRI": "mckort/frimaninvestments",
@@ -57,6 +65,7 @@ DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
     "mckort/bigas": "main",
     "mckort/remotebrief": "main",
     "Green-Promo-Wear-Global/greenpromowear-website": "main",
+    "Green-Promo-Wear-Global/GPW": "develop",
     "mckort/fulfillyourdreamadventure": "master",
     "mckort/mylifesdeed": "main",
     "mckort/frimaninvestments": "main",
@@ -65,6 +74,8 @@ DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
 DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
     "greenpromowear.com": "GPWW",
     "www.greenpromowear.com": "GPWW",
+    "store.greenpromowear.com": "GPW-PROD",
+    "staging.greenpromowear.com": "GPW-PROD",
     "vcfieldassistant.com": "VFA",
     "www.vcfieldassistant.com": "VFA",
     "fyda.today": "FYDA",
@@ -85,6 +96,58 @@ def normalize_project_key(value: Optional[object]) -> str:
     if isinstance(value, (list, tuple)):
         value = value[0] if value else ""
     return str(value or "").strip().upper()
+
+
+# Project keys that themselves contain a hyphen. Ticket keys are ``GPW-PROD-12``,
+# so splitting on the first hyphen would read the project as ``GPW``.
+HYPHENATED_PROJECT_KEYS: Tuple[str, ...] = ("GPW-PROD",)
+
+# ``GPW-PROD`` is listed first so ``GPW-PROD-12`` is one key, not ``PROD-12``.
+ISSUE_KEY_PATTERN = r"(?:GPW-PROD|[A-Z][A-Z0-9]+)-\d+"
+ISSUE_KEY_RE = re.compile(rf"^{ISSUE_KEY_PATTERN}$")
+ISSUE_KEY_SEARCH_RE = re.compile(rf"\b({ISSUE_KEY_PATTERN})\b", re.IGNORECASE)
+
+
+def hyphenated_project_keys() -> List[str]:
+    keys = list(HYPHENATED_PROJECT_KEYS)
+    for key in list(DEFAULT_PROJECT_REPOS) + jira_project_keys():
+        if "-" in key and key not in keys:
+            keys.append(key)
+    return sorted(keys, key=len, reverse=True)
+
+
+def project_key_from_issue_key(issue_key: Optional[str]) -> str:
+    """Project key for ``VFA-12`` or ``GPW-PROD-12``."""
+    raw = (issue_key or "").strip().upper()
+    if not raw:
+        return ""
+    for key in hyphenated_project_keys():
+        if raw == key or re.fullmatch(rf"{re.escape(key)}-\d+", raw):
+            return key
+    if "-" not in raw:
+        return raw
+    return raw.split("-", 1)[0]
+
+
+def issue_number_from_key(issue_key: Optional[str], prefix: str) -> Optional[int]:
+    display = (issue_key or "").strip().upper()
+    prefix_u = (prefix or "").strip().upper()
+    needle = f"{prefix_u}-"
+    if not prefix_u or not display.startswith(needle):
+        return None
+    rest = display[len(needle) :]
+    if rest.isdigit():
+        return int(rest)
+    return None
+
+
+def known_project_keys() -> List[str]:
+    """Env portfolio plus built-in keys, so GPW-PROD resolves before the secret is updated."""
+    keys = list(jira_project_keys())
+    for key in DEFAULT_PROJECT_ALIASES:
+        if key not in keys:
+            keys.append(key)
+    return keys
 
 
 def parse_csv_map(raw: str) -> Dict[str, str]:
@@ -228,7 +291,7 @@ def resolve_project(text: str) -> Optional[str]:
     blob = (text or "").lower()
     if not blob:
         return None
-    keys = jira_project_keys() or list(DEFAULT_PROJECT_ALIASES.keys())
+    keys = known_project_keys()
     # Explicit Jira key as a token (VFA, GPWW-12, etc.)
     for key in keys:
         if re.search(rf"\b{re.escape(key.lower())}(?:-\d+)?\b", blob):
@@ -304,7 +367,7 @@ def scrub_analytics_question(question: str, project_key: Optional[str] = None) -
 
 def prompt_block() -> str:
     """Human-readable catalog injected into chat agent system prompts."""
-    keys = jira_project_keys() or list(repo_map().keys()) or list(DEFAULT_PROJECT_ALIASES.keys())
+    keys = known_project_keys() or list(repo_map().keys())
     repos = repo_map()
     ga4 = ga4_property_map()
     sites = _site_to_project()

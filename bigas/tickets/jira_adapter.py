@@ -292,7 +292,9 @@ class TicketJiraAdapter:
             or ""
         ).strip().upper()
         if not proj and issue_key and "-" in issue_key:
-            proj = issue_key.split("-", 1)[0].upper()
+            from bigas.portfolio import project_key_from_issue_key
+
+            proj = project_key_from_issue_key(issue_key)
 
         existing = (ticket.get("fix_version") or "").strip()
         if existing and not (proj and is_board_version_closed_for_prs(proj, existing)):

@@ -599,6 +599,8 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
   const [releasesLoading, setReleasesLoading] = useState(false)
   const [releasesError, setReleasesError] = useState('')
   const [releasesRetryKey, setReleasesRetryKey] = useState(0)
+  const [commandGroups, setCommandGroups] = useState([])
+  const [openGroup, setOpenGroup] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -609,6 +611,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
         if (cancelled) return
         const items = res.projects || []
         setProjects(items)
+        setCommandGroups(res.command_groups || [])
         setProjectKey((current) =>
           items.some((item) => item.key === current) ? current : items[0]?.key || '',
         )
@@ -616,6 +619,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
       .catch((err) => {
         if (!cancelled) {
           setProjects([])
+          setCommandGroups([])
           setProjectKey('')
           setProjectsError(err.message || 'Failed to load deploy targets')
         }
@@ -678,14 +682,20 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
     setOpen(false)
   }
 
+  function sendCommand(prompt) {
+    if (disabled || !prompt) return
+    onSubmit(prompt)
+    setOpenGroup('')
+  }
+
   return (
-    <div className="mb-2">
+    <div className="mb-2 flex flex-wrap items-start gap-x-3 gap-y-1">
       {!open ? (
         <button
           type="button"
           disabled={disabled}
           onClick={() => setOpen(true)}
-          className="text-xs text-muted hover:text-text px-1 py-1 disabled:opacity-40"
+          className="text-xs text-muted hover:text-text min-h-[36px] px-2 py-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40"
         >
           Prepare deploy
         </button>
@@ -786,6 +796,41 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             </div>
           )}
         </div>
+      )}
+      {commandGroups.map((group) =>
+        openGroup === group.key ? (
+          <div key={group.key} className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted">{group.key}</span>
+            {(group.commands || []).map((command) => (
+              <button
+                key={command.prompt}
+                type="button"
+                disabled={disabled}
+                onClick={() => sendCommand(command.prompt)}
+                className="text-xs text-muted hover:text-text min-h-[36px] px-2 py-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40"
+              >
+                {command.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setOpenGroup('')}
+              className="btn-ghost text-xs min-h-[36px] px-2 py-1"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            key={group.key}
+            type="button"
+            disabled={disabled}
+            onClick={() => setOpenGroup(group.key)}
+            className="text-xs text-muted hover:text-text min-h-[36px] px-2 py-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40"
+          >
+            {group.key}
+          </button>
+        ),
       )}
     </div>
   )

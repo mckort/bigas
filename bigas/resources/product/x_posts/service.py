@@ -90,7 +90,9 @@ def fallback_tweets_from_jira_features(
         )
         project = str(feat.get("project_key") or "").strip().upper()
         if not project and key:
-            project = key.split("-", 1)[0].upper()
+            from bigas.portfolio import project_key_from_issue_key
+
+            project = project_key_from_issue_key(key)
         summary = _public_feature_summary(str(feat.get("subject") or ""))
         if not summary:
             continue
@@ -231,7 +233,9 @@ def _done_issue_from_raw(issue: Dict[str, Any], *, source: str) -> Dict[str, Any
     key = str(issue.get("key") or "").strip()
     project = str((fields.get("project") or {}).get("key") or "").strip().upper()
     if not project and "-" in key:
-        project = key.split("-", 1)[0].upper()
+        from bigas.portfolio import project_key_from_issue_key
+
+        project = project_key_from_issue_key(key)
     issuetype = fields.get("issuetype") or {}
     type_name = issuetype.get("name") if isinstance(issuetype, dict) else ""
     return {
@@ -362,7 +366,9 @@ def _filter_done_issues(
         project = str(item.get("project_key") or "").strip().upper()
         key = str(item.get("key") or "").strip().upper()
         if not project and "-" in key:
-            project = key.split("-", 1)[0]
+            from bigas.portfolio import project_key_from_issue_key
+
+            project = project_key_from_issue_key(key)
         if wanted and project not in wanted:
             continue
         out.append(item)

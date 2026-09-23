@@ -9,13 +9,13 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import requests
 
+from bigas.portfolio import ISSUE_KEY_SEARCH_RE as _JIRA_ISSUE_KEY_RE
 from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 
 logger = logging.getLogger(__name__)
 
 _AUTOFIX_MARKER_RE = re.compile(r"\[bigas-autofix\]", re.IGNORECASE)
 _MERGE_SUBJECT_RE = re.compile(r"^merge\b", re.IGNORECASE)
-_JIRA_ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b", re.IGNORECASE)
 
 
 class GitHubCommitsError(RuntimeError):
@@ -269,7 +269,9 @@ def jira_feature_commits(
             issue = jira_issue_key_in_subject(subject)
             if not issue:
                 continue
-            prefix = issue.split("-", 1)[0].upper()
+            from bigas.portfolio import project_key_from_issue_key
+
+            prefix = project_key_from_issue_key(issue)
             if allowed and prefix not in allowed:
                 continue
             sig = (issue, subject)

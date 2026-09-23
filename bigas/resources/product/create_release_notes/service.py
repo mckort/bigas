@@ -143,10 +143,12 @@ def _default_issue_client() -> Any:
 
 
 def _project_key_from_issue_key(key: str) -> str:
-    raw = (key or "").strip().upper()
-    if "-" not in raw:
+    from bigas.portfolio import project_key_from_issue_key
+
+    raw = (key or "").strip()
+    if not raw:
         return ""
-    return raw.split("-", 1)[0]
+    return project_key_from_issue_key(raw)
 
 
 def _resolved_project_keys(client: Any, project_keys: Optional[Any]) -> List[str]:

@@ -6,6 +6,7 @@ import logging
 from flask import Blueprint, g, jsonify, request
 
 from bigas.chat.auth import require_chat_auth
+from bigas.portfolio import project_key_from_issue_key
 from bigas.tickets.config import jira_configured, use_internal_board
 from bigas.tickets.constants import columns_for_board
 from bigas.tickets.attachments import AttachmentError
@@ -234,7 +235,7 @@ def ticket_automation_worker():
         ticket,
         old_status=old_status,
         new_status=new_status,
-        project_key=project_key or (issue_key.split("-", 1)[0] if "-" in issue_key else ""),
+        project_key=project_key or project_key_from_issue_key(issue_key),
     )
     return jsonify({"ok": True, "issue_key": issue_key or ticket.get("key")})
 

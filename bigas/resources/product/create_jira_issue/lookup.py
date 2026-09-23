@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
+from bigas.portfolio import ISSUE_KEY_SEARCH_RE as _ISSUE_KEY_SEARCH_RE
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
     JiraConfig,
@@ -15,7 +16,6 @@ from bigas.resources.product.create_release_notes.jira_client import (
 
 MAX_LOOKUP_KEYS = 40
 
-_ISSUE_KEY_SEARCH_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b", re.IGNORECASE)
 _RANGE_RE = re.compile(
     r"\b([A-Z][A-Z0-9]+)-(\d+)\s*(?:to|through|–|—|-|\.\.)\s*(?:([A-Z][A-Z0-9]+)-)?(\d+)\b",
     re.IGNORECASE,
