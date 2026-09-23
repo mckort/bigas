@@ -400,7 +400,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `USE_INTERNAL_BOARD` | `true` (default, even if `JIRA_*` is set) uses the native `/board`; set `false` to drive external Jira |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
-| `PROJECT_BRANCH_MAPPING` | Per-project automerge target, e.g. `VFA:staging,DEFAULT:main`. Issues with a `hotfix` label target the production branch instead. Works with Jira and the internal `/board`. |
+| `PROJECT_BRANCH_MAPPING` | Per-project automerge target, e.g. `VFA:staging,GPW-PROD:develop,DEFAULT:main`. Issues with a `hotfix` label target the production branch instead. Works with Jira and the internal `/board`. |
 | `BIGAS_PROJECT_ACTIVE_FIX_VERSION` | Fallback only. Prefer **Releases** on `/board` (BIG-43). Used when a project has no default unreleased board version, e.g. `VFA:0.9.0,BIG:1.0.0` |
 | `GITHUB_TOKEN` | GitHub token — PR review, Jira AI repo context, DevOps workflow dispatch (needs Actions write), and self-healing CI PR creation |
 | `GITHUB_WEBHOOK_SECRET` | Shared secret for GitHub `workflow_run` webhooks (`X-Hub-Signature-256`). Falls back to `JIRA_AUTOMATION_WEBHOOK_SECRET` if unset |
@@ -534,7 +534,7 @@ Some products (e.g. VC Field Assistant) accumulate features on **versioned stagi
 
 | Setting | Purpose |
 |---|---|
-| `PROJECT_BRANCH_MAPPING=VFA:staging,DEFAULT:main` | Cursor implement + fallback PRs target `staging-{version}` for VFA; other projects stay on `main` |
+| `PROJECT_BRANCH_MAPPING=VFA:staging,GPW-PROD:develop,DEFAULT:main` | Cursor implement + fallback PRs target `staging-{version}` for VFA and `develop` for the GPW store; other projects stay on `main` |
 | Board **Releases** (or Jira Fix Version) | Ticket version selects the staging branch (`staging-0.2.3`). Default unreleased version, or `BIGAS_PROJECT_ACTIVE_FIX_VERSION` as fallback |
 | `hotfix` Jira/board label | Routes that issue's PR straight to `main`, skipping staging |
 | `@bigas hotfix VFA-123` / `POST cherry_pick_hotfix` | Cherry-picks a merged staging PR onto `main` and opens a hotfix PR |
