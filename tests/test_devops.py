@@ -49,6 +49,7 @@ class _FakeGitHubClient:
         self._pending_new_runs: set[str] = set()
         self.compared: list[tuple[str, str]] = []
         self.dispatches: list[tuple] = []
+        self.prereleases: list[dict] = []
 
     def get_default_branch(self, owner, repo):
         if repo == "greenpromowear-website":
@@ -88,6 +89,22 @@ class _FakeGitHubClient:
                 {"filename": "requirements.txt"},
             ]
         }
+
+    def get_commit_sha(self, owner, repo, ref):
+        if str(ref).startswith("deploy-"):
+            return "old-prod-commit"
+        return "new-deploy-commit"
+
+    def create_prerelease(self, owner, repo, *, tag_name, target_sha, name, body):
+        created = {
+            "tag_name": tag_name,
+            "target_sha": target_sha,
+            "name": name,
+            "body": body,
+            "html_url": f"https://github.com/{owner}/{repo}/releases/tag/{tag_name}",
+        }
+        self.prereleases.append(created)
+        return created
 
     def trigger_workflow(self, owner, repo, workflow_id, ref, inputs=None):
         self.dispatches.append((owner, repo, workflow_id, ref, inputs))
@@ -560,6 +577,10 @@ def test_trigger_deployment_skips_backend_when_web_only(monkeypatch):
     assert [item["workflow"] for item in result["triggered"]] == ["deploy-web.yml"]
     assert result["skipped_workflows"][0]["workflow"] == "deploy-backend.yml"
     assert [dispatch[2] for dispatch in fake.dispatches] == ["deploy-web.yml"]
+    assert [item["component"] for item in result["prod_markers"]] == ["backend"]
+    assert result["prod_markers"][0]["tag_name"].startswith("deploy-backend-")
+    assert result["prod_markers"][0]["sha"] == "new-deploy-commit"
+    assert "recorded prod marker" in result["summary"].lower()
 
 
 def test_trigger_deployment_skips_all_when_no_changes(monkeypatch):
@@ -575,3 +596,23 @@ def test_trigger_deployment_skips_all_when_no_changes(monkeypatch):
     assert fake.dispatches == []
     assert len(result["skipped_workflows"]) == 2
     assert "nothing to deploy" in result["summary"].lower()
+    assert {item["component"] for item in result["prod_markers"]} == {"backend", "web"}
+    assert "recorded prod marker" in result["summary"].lower()
+
+
+class _AlreadyMarkedGitHubClient(_NoChangeGitHubClient):
+    def get_commit_sha(self, owner, repo, ref):
+        return "same-deploy-commit"
+
+
+def test_trigger_deployment_does_not_restamp_current_prod_sha(monkeypatch):
+    monkeypatch.setattr("bigas.resources.devops.service.time.sleep", lambda _: None)
+    fake = _AlreadyMarkedGitHubClient()
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: fake,
+    )
+    result = trigger_deployment(project_key="VFA")
+    assert result["triggered"] == []
+    assert result["prod_markers"] == []
+    assert fake.prereleases == []

@@ -7,6 +7,7 @@ import re
 import tempfile
 import zipfile
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -153,6 +154,56 @@ class GitHubActionsClient:
             )
         resp.raise_for_status()
         return resp.json() or {}
+
+    def get_commit_sha(self, owner: str, repo: str, ref: str) -> str:
+        ref_enc = quote(ref, safe="")
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref_enc}"
+        resp = requests.get(url, headers=self._headers, timeout=30)
+        if resp.status_code == 404:
+            raise GitHubActionsError(f"Commit not found: {owner}/{repo}@{ref}")
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        data = resp.json() if resp.text else {}
+        sha = (data.get("sha") or "").strip() if isinstance(data, dict) else ""
+        if not sha:
+            raise GitHubActionsError(f"Commit not found: {owner}/{repo}@{ref}")
+        return sha
+
+    def create_prerelease(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        tag_name: str,
+        target_sha: str,
+        name: str,
+        body: str,
+    ) -> Dict[str, Any]:
+        """Create a prerelease tag pinned to target_sha. Does not become Latest."""
+        url = f"https://api.github.com/repos/{owner}/{repo}/releases"
+        payload = {
+            "tag_name": tag_name,
+            "target_commitish": target_sha,
+            "name": name,
+            "body": body,
+            "draft": False,
+            "prerelease": True,
+            "make_latest": "false",
+        }
+        resp = requests.post(url, headers=self._headers, json=payload, timeout=60)
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        if resp.status_code >= 400:
+            raise GitHubActionsError(
+                f"Could not create prod marker {tag_name}: {_github_error_detail(resp)}"
+            )
+        data = resp.json() if resp.text else {}
+        return data if isinstance(data, dict) else {}
 
     def trigger_workflow(
         self,
