@@ -909,6 +909,68 @@ def test_chief_deploy_intent_delegates_without_llm(monkeypatch):
     assert "Delegated to devops" in (result.get("message") or {}).get("content", "")
 
 
+def test_chief_prepare_staging_delegates_without_llm(monkeypatch):
+    from bigas.agents.chief_of_staff import handle_chat_message
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    store.upsert_user("chief-staging-user", "chief@bigas.local")
+    chief = store.create_thread("chief-staging-user", "chief")
+    called = {}
+
+    def fake_run(agent_id, task, **kwargs):
+        called["agent_id"] = agent_id
+        called["task"] = task
+        return "Delegated to devops agent. Results will appear in this thread when ready."
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("LLM should not run for a staging command")
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+    monkeypatch.setattr("bigas.agents.chief_of_staff.get_llm_client", boom)
+
+    handle_chat_message(
+        thread_id=chief["thread_id"],
+        user_id="chief-staging-user",
+        user_message="prepare staging GPW-PROD",
+    )
+    assert called["agent_id"] == "devops"
+    assert called["task"] == "prepare staging GPW-PROD"
+
+
+def test_chief_staging_yes_delegates_without_llm(monkeypatch):
+    from bigas.agents.chief_of_staff import handle_chat_message
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    store.upsert_user("chief-staging-yes-user", "chief@bigas.local")
+    chief = store.create_thread("chief-staging-yes-user", "chief")
+    store.patch_thread(
+        chief["thread_id"],
+        pending_deploy={"kind": "gpw", "action": "teardown", "project_key": "GPW-PROD"},
+    )
+    called = {}
+
+    def fake_run(agent_id, task, **kwargs):
+        called["agent_id"] = agent_id
+        called["task"] = task
+        return "Delegated to devops agent. Results will appear in this thread when ready."
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("LLM should not run for a staging confirmation")
+
+    monkeypatch.setattr("bigas.agents.chief_of_staff.run_specialist_task", fake_run)
+    monkeypatch.setattr("bigas.agents.chief_of_staff.get_llm_client", boom)
+
+    handle_chat_message(
+        thread_id=chief["thread_id"],
+        user_id="chief-staging-yes-user",
+        user_message="yes",
+    )
+    assert called["agent_id"] == "devops"
+    assert called["task"] == "yes"
+
+
 def test_chief_gemini_delegate_json_reaches_devops(monkeypatch):
     from bigas.agents.chief_of_staff import handle_chat_message
     from bigas.chat.db import get_chat_store
