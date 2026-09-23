@@ -99,6 +99,7 @@ def stamp_unchanged_prod_markers(
     repo: str,
     ref: str,
     skipped: List[Dict[str, str]],
+    workflows_to_run: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
     """Record a deploy-* prerelease for surfaces whose build was skipped.
 
@@ -116,6 +117,7 @@ def stamp_unchanged_prod_markers(
         logger.exception("Could not resolve %s@%s for a prod marker", repo, ref)
         return stamped
 
+    active_kinds = {workflow_deploy_kind(w) for w in (workflows_to_run or [])}
     seen: set[str] = set()
     now = datetime.now(timezone.utc)
     for item in skipped:
@@ -123,7 +125,11 @@ def stamp_unchanged_prod_markers(
         if not reason.startswith("no "):
             continue
         kind = workflow_deploy_kind(item.get("workflow") or "")
-        if kind not in ("backend", "web", "app") or kind in seen:
+        if (
+            kind not in ("backend", "web", "app")
+            or kind in seen
+            or kind in active_kinds
+        ):
             continue
         seen.add(kind)
         prefix = f"deploy-{kind}-"
@@ -181,6 +187,8 @@ def _prod_marker_line(stamped: List[Dict[str, str]]) -> str:
         label = f"{item['component']} {item['tag_name']}"
         url = (item.get("html_url") or "").strip()
         bits.append(f"{label} ({url})" if url else label)
+    if len(stamped) > 1:
+        return "Recorded prod markers: " + "; ".join(bits) + "."
     return "Recorded prod marker " + "; ".join(bits) + "."
 
 
@@ -674,21 +682,21 @@ def trigger_deployment(
             workflow_names, risk_info
         )
 
-    prod_markers = stamp_unchanged_prod_markers(
-        client,
-        product_owner,
-        product_name,
-        product_ref,
-        skipped_workflows,
-    )
-    marker_line = _prod_marker_line(prod_markers)
-
     inputs = dict(target.workflow_inputs or {})
     if cross_repo:
         inputs["ref"] = product_ref
     triggered: List[Dict[str, Any]] = []
     errors: List[str] = []
     if not workflow_names and skipped_workflows:
+        prod_markers = stamp_unchanged_prod_markers(
+            client,
+            product_owner,
+            product_name,
+            product_ref,
+            skipped_workflows,
+            workflows_to_run=[],
+        )
+        marker_line = _prod_marker_line(prod_markers)
         skip_text = "; ".join(
             f"{item['workflow']} ({item['reason']})" for item in skipped_workflows
         )
@@ -752,6 +760,19 @@ def trigger_deployment(
 
     if not triggered and errors:
         raise DevOpsError("; ".join(errors))
+
+    prod_markers: List[Dict[str, str]] = []
+    marker_line = ""
+    if not errors:
+        prod_markers = stamp_unchanged_prod_markers(
+            client,
+            product_owner,
+            product_name,
+            product_ref,
+            skipped_workflows,
+            workflows_to_run=workflow_names,
+        )
+        marker_line = _prod_marker_line(prod_markers)
 
     lines = [
         f"Triggered {len(triggered)} workflow(s) on {target.dispatch_repo} @ {dispatch_branch}.",

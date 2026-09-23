@@ -7,6 +7,7 @@ import re
 import tempfile
 import zipfile
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -155,7 +156,8 @@ class GitHubActionsClient:
         return resp.json() or {}
 
     def get_commit_sha(self, owner: str, repo: str, ref: str) -> str:
-        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}"
+        ref_enc = quote(ref, safe="")
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref_enc}"
         resp = requests.get(url, headers=self._headers, timeout=30)
         if resp.status_code == 404:
             raise GitHubActionsError(f"Commit not found: {owner}/{repo}@{ref}")
@@ -164,7 +166,8 @@ class GitHubActionsClient:
                 f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
             )
         resp.raise_for_status()
-        sha = ((resp.json() or {}).get("sha") or "").strip()
+        data = resp.json() if resp.text else {}
+        sha = (data.get("sha") or "").strip() if isinstance(data, dict) else ""
         if not sha:
             raise GitHubActionsError(f"Commit not found: {owner}/{repo}@{ref}")
         return sha
