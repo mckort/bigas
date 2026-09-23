@@ -20,6 +20,7 @@ from bigas.portfolio import (
 )
 from bigas.resources.devops.gpw_pipeline import (
     keep_maintenance,
+    list_gpw_command_shortcuts,
     parse_gpw_command,
     poll_gpw,
 )
@@ -216,6 +217,17 @@ def test_failed_production_deploy_keeps_maintenance_message(monkeypatch):
 def test_keep_maintenance_until_check_is_green():
     assert keep_maintenance(health_ok=False) is True
     assert keep_maintenance(health_ok=True) is False
+
+
+def test_command_shortcuts_are_only_gpw_prod():
+    groups = list_gpw_command_shortcuts()
+    assert [group["key"] for group in groups] == ["GPW-PROD"]
+    assert [item["prompt"] for item in groups[0]["commands"]] == [
+        "prepare staging",
+        "update staging",
+        "teardown staging",
+        "prepare deploy GPW-PROD",
+    ]
 
 
 def test_parse_commands():

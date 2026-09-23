@@ -57,6 +57,24 @@ def is_gpw_command(text: str) -> bool:
     )
 
 
+def list_gpw_command_shortcuts() -> list:
+    """Chat composer shortcuts. Only GPW-PROD uses this deploy flow."""
+    from bigas.portfolio import brand_name
+
+    return [
+        {
+            "key": PROJECT_KEY,
+            "name": brand_name(PROJECT_KEY) or PROJECT_KEY,
+            "commands": [
+                {"label": "Prepare staging", "prompt": "prepare staging"},
+                {"label": "Update staging", "prompt": "update staging"},
+                {"label": "Teardown staging", "prompt": "teardown staging"},
+                {"label": "Prepare deploy", "prompt": "prepare deploy GPW-PROD"},
+            ],
+        }
+    ]
+
+
 def parse_gpw_command(text: str) -> str:
     blob = text or ""
     if _PREPARE_DEPLOY_RE.search(blob):

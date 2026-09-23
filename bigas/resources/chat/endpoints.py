@@ -79,9 +79,13 @@ def list_agents():
 @chat_bp.route("/api/chat/projects", methods=["GET"])
 @require_chat_auth
 def list_chat_projects():
+    from bigas.resources.devops.gpw_pipeline import list_gpw_command_shortcuts
     from bigas.resources.devops.prepare import list_shortcut_projects
 
-    return jsonify({"projects": list_shortcut_projects()})
+    return jsonify({
+        "projects": list_shortcut_projects(),
+        "command_groups": list_gpw_command_shortcuts(),
+    })
 
 
 @chat_bp.route("/api/agents/<agent_id>", methods=["PUT"])
