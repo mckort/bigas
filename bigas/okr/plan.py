@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from bigas.okr.context import format_evidence_pack, gather_okr_evidence
+from bigas.portfolio import ISSUE_KEY_RE as _ISSUE_KEY_RE
 from bigas.okr.model import normalize_key_results
 from bigas.okr.research import _extract_json_object
 
@@ -74,8 +75,6 @@ _DISTINCTIVE_PAIRS = frozenset(
         ("fork", "run"),
     }
 )
-
-_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
 OKR_IN_PROGRESS_SYSTEM = """You are a Chief of Staff during the weekly OKR pulse for an Objective
 already In Progress.

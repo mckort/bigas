@@ -140,7 +140,9 @@ def chief_discord_webhook_url() -> Optional[str]:
 def _project_key_from_issue(issue: Dict[str, Any]) -> str:
     key = (issue.get("key") or "").strip()
     if "-" in key:
-        return key.split("-", 1)[0].upper()
+        from bigas.portfolio import project_key_from_issue_key
+
+        return project_key_from_issue_key(key)
     fields = issue.get("fields") or {}
     project = fields.get("project") or {}
     return (project.get("key") or "").strip().upper() or "UNKNOWN"

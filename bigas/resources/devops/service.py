@@ -282,6 +282,42 @@ def _wait_for_new_workflow_run(
     return None
 
 
+def dispatch_workflow(
+    *,
+    repo: str,
+    workflow: str,
+    ref: str,
+    inputs: Optional[Dict[str, str]] = None,
+    github_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch one workflow and return the new run, if GitHub has registered it."""
+    owner, name = parse_repo(repo)
+    client = _github_client(github_token)
+    branch = (ref or "").strip() or client.get_default_branch(owner, name)
+    workflow_id = (workflow or "").strip()
+    if not workflow_id:
+        raise DevOpsError("workflow is required")
+    previous_run_id: Optional[int] = None
+    try:
+        prior = client.list_workflow_runs(owner, name, workflow_id, branch=branch, limit=1)
+        if prior:
+            previous_run_id = prior[0].get("id")
+    except GitHubActionsError as exc:
+        logger.warning("Could not list prior runs for %s: %s", workflow_id, exc)
+    client.trigger_workflow(owner, name, workflow_id, branch, inputs=inputs or None)
+    run = _wait_for_new_workflow_run(
+        client, owner, name, workflow_id, branch, previous_run_id
+    )
+    return {
+        "repo": repo,
+        "workflow": workflow_id,
+        "ref": branch,
+        "run_id": run.get("id") if run else None,
+        "html_url": run.get("html_url") if run else None,
+        "status": run.get("status") if run else None,
+    }
+
+
 def _collect_compare_files(compare: Dict[str, Any]) -> List[Dict[str, Any]]:
     files = compare.get("files") or []
     return files if isinstance(files, list) else []

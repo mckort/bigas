@@ -143,6 +143,47 @@ class GitHubActionsClient:
             page += 1
         return None
 
+    def get_compare_diff(self, owner: str, repo: str, base: str, head: str) -> str:
+        url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
+        headers = dict(self._headers)
+        headers["Accept"] = "application/vnd.github.diff"
+        resp = requests.get(url, headers=headers, timeout=60)
+        if resp.status_code == 404:
+            raise GitHubActionsError(f"Compare not found: {base}...{head}")
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        return resp.text or ""
+
+    def update_branch_ref(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+        sha: str,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Move a branch to ``sha``. ``force=False`` is a fast-forward."""
+        url = f"https://api.github.com/repos/{owner}/{repo}/git/refs/heads/{branch}"
+        resp = requests.patch(
+            url,
+            headers=self._headers,
+            json={"sha": sha, "force": force},
+            timeout=30,
+        )
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        if resp.status_code == 422:
+            raise GitHubActionsError(
+                f"Could not update {branch}: {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+
     def compare_refs(self, owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
         url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
         resp = requests.get(url, headers=self._headers, timeout=60)

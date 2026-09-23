@@ -29,7 +29,9 @@ def resolve_project_key(ticket: Dict[str, Any]) -> str:
         return key
     issue_key = str(ticket.get("key") or "").strip()
     if "-" in issue_key:
-        return issue_key.split("-", 1)[0].upper()
+        from bigas.portfolio import project_key_from_issue_key
+
+        return project_key_from_issue_key(issue_key)
     board_id = str(ticket.get("board_id") or "").strip()
     if board_id:
         try:

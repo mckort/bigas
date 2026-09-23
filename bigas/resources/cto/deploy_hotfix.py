@@ -49,6 +49,7 @@ def build_failed_deploy_prompt(
     repo: str,
     failures: List[Dict[str, Any]],
     starting_ref: str = "main",
+    extra_instructions: str = "",
 ) -> str:
     blocks: List[str] = []
     for item in failures:
@@ -63,6 +64,9 @@ def build_failed_deploy_prompt(
         blocks.append(f"{header}\n\n```\n{excerpt}\n```")
 
     failure_text = "\n\n".join(blocks) if blocks else "(no failed runs provided)"
+    extra = (extra_instructions or "").strip()
+    if extra:
+        extra = "\n" + extra
     return f"""You are the Bigas CTO agent fixing a failed production deploy.
 
 Repository: {repo}
@@ -79,6 +83,7 @@ Base branch: {starting_ref}
 5. Open a pull request with a concise explanation of the root cause and fix.
 6. Do not merge, do not force-push, and do not change unrelated files.
 7. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+{extra}
 """
 
 
@@ -89,6 +94,7 @@ def launch_failed_deploy_fix(
     starting_ref: str = "main",
     cursor_api_key: Optional[str] = None,
     model_id: Optional[str] = None,
+    extra_instructions: str = "",
 ) -> Dict[str, Any]:
     """Launch a Cursor cloud agent that implements a fix and opens a PR."""
     if not is_owner_repo(repo):
@@ -107,7 +113,12 @@ def launch_failed_deploy_fix(
         if (item.get("workflow") or "").strip()
     ]
     label = workflows[0] if workflows else "deploy"
-    prompt = build_failed_deploy_prompt(repo=repo, failures=failures, starting_ref=ref)
+    prompt = build_failed_deploy_prompt(
+        repo=repo,
+        failures=failures,
+        starting_ref=ref,
+        extra_instructions=extra_instructions,
+    )
     client = CursorCloudAgentClient(api_key=key)
     try:
         launched = client.launch_implementation(

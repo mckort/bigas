@@ -65,7 +65,9 @@ class UpdateTicketService:
                 "source": "internal_board",
             }
 
-        proj = key.split("-", 1)[0]
+        from bigas.portfolio import project_key_from_issue_key
+
+        proj = project_key_from_issue_key(key)
         resolved = resolve_column_status(raw, project_key=proj) or raw
         try:
             client = JiraClient(JiraConfig.from_env())

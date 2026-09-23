@@ -10,6 +10,8 @@ import logging
 import requests
 from requests.auth import HTTPBasicAuth
 
+from bigas.portfolio import ISSUE_KEY_RE as _ISSUE_KEY_RE
+
 logger = logging.getLogger(__name__)
 
 _BACKWARD_TRANSITION_KEYWORDS = frozenset(
@@ -37,9 +39,6 @@ def parse_project_keys(raw: Optional[str]) -> List[str]:
         seen.add(key)
         keys.append(key)
     return keys
-
-
-_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
 
 def normalize_parent_epic_key(

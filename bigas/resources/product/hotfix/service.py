@@ -6,6 +6,7 @@ import os
 import re
 from typing import Any, Dict, Optional
 
+from bigas.portfolio import ISSUE_KEY_RE as _ISSUE_KEY_RE
 from bigas.resources.devops.github_actions import GitHubActionsClient, GitHubActionsError
 from bigas.resources.product.hotfix.cherry_pick import CherryPickError, find_merged_pr_for_issue
 from bigas.resources.product.jira_automation.config import JiraAutomationConfig
@@ -18,7 +19,6 @@ from bigas.resources.product.release_workflow import (
 
 logger = logging.getLogger(__name__)
 
-_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 _CHERRY_PICK_WORKFLOW = "cherry_pick.yml"
 
 
@@ -79,7 +79,9 @@ class HotfixService:
         Chat / MCP: `@bigas hotfix VFA-123`
         """
         key = _issue_key_from_input(issue_key)
-        project_key = key.split("-", 1)[0]
+        from bigas.portfolio import project_key_from_issue_key
+
+        project_key = project_key_from_issue_key(key)
         mapped_repo = repo or self._config.repo_for_project(project_key)
         if not mapped_repo:
             raise HotfixError(f"No GitHub repo mapped for project {project_key}")

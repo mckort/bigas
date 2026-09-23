@@ -41,7 +41,9 @@ def _project_key_from_issue_key(issue_key: str) -> str:
     raw = (issue_key or "").strip()
     if "-" not in raw:
         return raw or "UNKNOWN"
-    return raw.split("-", 1)[0].strip().upper() or "UNKNOWN"
+    from bigas.portfolio import project_key_from_issue_key
+
+    return project_key_from_issue_key(raw) or "UNKNOWN"
 
 
 def normalize_ignore_labels(raw: Optional[Any] = None) -> List[str]:

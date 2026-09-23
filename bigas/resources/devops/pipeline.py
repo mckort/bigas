@@ -120,8 +120,12 @@ def _clear_pending_deploy_state(thread_id: Optional[str]) -> None:
 
 def clear_stale_pending_deploy(user_message: str, thread_id: Optional[str] = None) -> None:
     """Drop leftover deploy state on unrelated messages or a new deploy command."""
+    from bigas.resources.devops.gpw_pipeline import is_gpw_command
     from bigas.resources.devops.prepare import is_prepare_start
 
+    if is_gpw_command(user_message):
+        _set_pending(thread_id, None)
+        return
     if is_prepare_start(user_message) or is_deploy_start(user_message):
         _clear_pending_deploy_state(thread_id)
         return
@@ -131,9 +135,10 @@ def clear_stale_pending_deploy(user_message: str, thread_id: Optional[str] = Non
 
 
 def should_run_deploy_pipeline(user_message: str, thread_id: Optional[str] = None) -> bool:
+    from bigas.resources.devops.gpw_pipeline import is_gpw_command
     from bigas.resources.devops.prepare import is_prepare_start, pending_release_notes
 
-    if is_prepare_start(user_message) or is_deploy_start(user_message):
+    if is_gpw_command(user_message) or is_prepare_start(user_message) or is_deploy_start(user_message):
         return True
     pending = _pending(thread_id)
     if pending and (is_confirm(user_message) or is_cancel(user_message)):
@@ -426,7 +431,12 @@ def _finalize_deploy_postcheck(
 
 def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
     """Single client-driven poll step for post-deploy workflow status and health."""
+    from bigas.resources.devops.gpw_pipeline import poll_gpw
     from bigas.resources.devops.prepare import pending_prepare_poll, poll_prepare_followup
+
+    gpw_poll = _deploy_poll(thread_id)
+    if isinstance(gpw_poll, dict) and gpw_poll.get("kind") == "gpw":
+        return poll_gpw(thread_id)
 
     if pending_prepare_poll(thread_id):
         result = poll_prepare_followup(thread_id)
@@ -756,6 +766,15 @@ def run_chat_deploy_pipeline(
         pending_release_notes,
         run_prepare_deploy,
     )
+
+    from bigas.resources.devops.gpw_pipeline import (
+        is_gpw_command,
+        pending_gpw_action,
+        run_gpw_pipeline,
+    )
+
+    if is_gpw_command(user_message) or pending_gpw_action(thread_id):
+        return run_gpw_pipeline(thread_id=thread_id, user_message=user_message)
 
     if is_prepare_start(user_message):
         return run_prepare_deploy(thread_id=thread_id, user_message=user_message)
