@@ -179,6 +179,113 @@ def test_poll_marks_rehearsal_ready(monkeypatch):
     assert "staging.greenpromowear.com" in _texts(thread["thread_id"])
 
 
+def test_production_deploy_success_clears_rehearsal(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.devops.service.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "success",
+            "html_url": "https://example.test/11",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline._github",
+        lambda: type(
+            "Client",
+            (),
+            {
+                "update_branch_ref": staticmethod(lambda *args, **kwargs: None),
+            },
+        )(),
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    chat.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll={
+            "kind": "gpw",
+            "phase": "deploy_production",
+            "triggered": [{"workflow": "deploy-production.yml", "run_id": 11}],
+            "candidate_sha": "def123456789",
+            "started_at": _started(),
+        },
+        gpw_rehearsal={
+            "candidate_sha": "def123456789",
+            "production_sha": "abc123456789",
+            "staging_ready": True,
+            "updated_ok": True,
+            "updated_sha": "def123456789",
+        },
+    )
+    poll_gpw(thread["thread_id"])
+    rehearsal = chat.get_thread(thread["thread_id"])["gpw_rehearsal"]
+    assert rehearsal["updated_ok"] is False
+    assert rehearsal["updated_sha"] == ""
+    assert rehearsal["staging_ready"] is False
+
+
+def test_poll_waits_for_run_id_when_dispatch_late(monkeypatch):
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    chat.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll={
+            "kind": "gpw",
+            "phase": "prepare_staging",
+            "repo": "Green-Promo-Wear-Global/GPW",
+            "triggered": [{"workflow": "prepare-staging.yml", "run_id": None}],
+            "started_at": _started(),
+        },
+    )
+    result = poll_gpw(thread["thread_id"])
+    assert result["active"] is True
+    assert chat.get_thread(thread["thread_id"]).get("pending_deploy_poll")
+
+
+def test_poll_resolves_missing_run_id(monkeypatch):
+    class _Client:
+        def get_default_branch(self, owner, name):
+            return "develop"
+
+        def list_workflow_runs(self, owner, name, workflow, branch=None, limit=5):
+            return [{"id": 99, "created_at": _started()}]
+
+    monkeypatch.setattr("bigas.resources.devops.gpw_pipeline._github", lambda: _Client())
+    monkeypatch.setattr(
+        "bigas.resources.devops.service.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "success",
+            "html_url": "https://example.test/99",
+        },
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    chat.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll={
+            "kind": "gpw",
+            "phase": "prepare_staging",
+            "repo": "Green-Promo-Wear-Global/GPW",
+            "triggered": [{"workflow": "prepare-staging.yml", "run_id": None}],
+            "production_sha": "abc123456789",
+            "candidate_sha": "def123456789",
+            "started_at": _started(),
+        },
+        gpw_rehearsal={
+            "candidate_sha": "def123456789",
+            "production_sha": "abc123456789",
+            "staging_ready": False,
+            "updated_ok": False,
+        },
+    )
+    result = poll_gpw(thread["thread_id"])
+    assert result["active"] is False
+    poll = chat.get_thread(thread["thread_id"]).get("pending_deploy_poll")
+    assert poll is None
+    assert chat.get_thread(thread["thread_id"])["gpw_rehearsal"]["staging_ready"] is True
+
+
 def test_failed_production_deploy_keeps_maintenance_message(monkeypatch):
     monkeypatch.setattr(
         "bigas.resources.devops.service.get_deployment_status",

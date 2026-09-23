@@ -695,7 +695,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
           type="button"
           disabled={disabled}
           onClick={() => setOpen(true)}
-          className="text-xs text-muted hover:text-text px-1 py-1 disabled:opacity-40"
+          className="text-xs text-muted hover:text-text min-h-[36px] px-2 py-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40"
         >
           Prepare deploy
         </button>
@@ -807,7 +807,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
                 type="button"
                 disabled={disabled}
                 onClick={() => sendCommand(command.prompt)}
-                className="text-xs text-muted hover:text-text px-1 py-1 disabled:opacity-40"
+                className="text-xs text-muted hover:text-text min-h-[36px] px-2 py-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40"
               >
                 {command.label}
               </button>
@@ -826,7 +826,7 @@ function PrepareDeployShortcut({ disabled, onSubmit }) {
             type="button"
             disabled={disabled}
             onClick={() => setOpenGroup(group.key)}
-            className="text-xs text-muted hover:text-text px-1 py-1 disabled:opacity-40"
+            className="text-xs text-muted hover:text-text min-h-[36px] px-2 py-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40"
           >
             {group.key}
           </button>
