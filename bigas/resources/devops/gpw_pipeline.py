@@ -459,10 +459,10 @@ def _start_prepare_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[st
         if pr_url:
             review_link = f"Full review: {pr_url}"
         else:
-            owner, name = _owner_name()
+            owner, name = _owner_name(env)
             compare_url = (
                 f"https://github.com/{owner}/{name}/compare/"
-                f"{PROD_BRANCH}...{CANDIDATE_BRANCH}"
+                f"{env.production_branch}...{env.candidate_branch}"
             )
             review_link = f"Full diff: {compare_url}"
         _post(
@@ -733,23 +733,36 @@ def run_gpw_pipeline(*, thread_id: Optional[str], user_message: str) -> Dict[str
     return {"status": "complete", "summary": "Unknown staging command."}
 
 
+def _env_for_poll(poll: Dict[str, Any]) -> Optional[StagingEnv]:
+    env = _env_from_record(poll)
+    if env is None and len(staging_envs()) == 1:
+        env = next(iter(staging_envs().values()))
+    if env is None:
+        repo = str(poll.get("repo") or "").strip()
+        matches = [item for item in staging_envs().values() if item.repo == repo]
+        if len(matches) == 1:
+            env = matches[0]
+    return env
+
+
 def _resolve_missing_gpw_run_id(poll: Dict[str, Any]) -> Optional[int]:
     """Find a workflow run id when dispatch returned before GitHub registered the run."""
     triggered = poll.get("triggered") or []
     item = triggered[0] if triggered else {}
     phase = (poll.get("phase") or "").strip()
-    workflow = (item.get("workflow") or _WORKFLOWS.get(phase) or "").strip()
-    if not workflow:
+    env = _env_for_poll(poll)
+    workflow = (item.get("workflow") or (env.workflows.get(phase) if env else "") or "").strip()
+    if not workflow or env is None:
         return None
     started = _parse_started(poll.get("started_at") or "")
     slack = timedelta(seconds=30)
     try:
         client = _github()
-        owner, name = _owner_name()
+        owner, name = _owner_name(env)
         branch = client.get_default_branch(owner, name)
         runs = client.list_workflow_runs(owner, name, workflow, branch=branch, limit=10)
     except Exception as exc:
-        logger.warning("GPW could not list workflow runs for %s: %s", workflow, exc)
+        logger.warning("Could not list workflow runs for %s: %s", workflow, exc)
         return None
     for run in runs:
         created = _parse_started(run.get("created_at") or "")
@@ -951,7 +964,8 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
             item["run_id"] = resolved
             if not item.get("workflow"):
                 phase = (poll.get("phase") or "").strip()
-                item["workflow"] = _WORKFLOWS.get(phase) or phase
+                env = _env_for_poll(poll)
+                item["workflow"] = (env.workflows.get(phase) if env else "") or phase
             triggered = [item]
             poll = {**poll, "triggered": triggered}
             _patch(thread_id, pending_deploy_poll=poll)
