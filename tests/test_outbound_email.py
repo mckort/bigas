@@ -239,3 +239,18 @@ class TestOutboundApi:
         assert edited["subject"] == "Edited subject"
         assert edited["purpose"] == "Invite founders to the update"
         assert edited["tone"] == "friendly"
+
+        saved_empty_purpose = client.put(
+            f"/api/boards/{board_id}/email-draft",
+            headers=headers,
+            json={
+                "subject": "Edited subject",
+                "body": draft["body"],
+                "purpose": "",
+                "tone": "",
+            },
+        )
+        assert saved_empty_purpose.status_code == 200
+        preserved = saved_empty_purpose.get_json()["draft"]
+        assert preserved["purpose"] == "Invite founders to the update"
+        assert preserved["tone"] == "friendly"

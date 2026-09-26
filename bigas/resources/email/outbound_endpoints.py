@@ -258,9 +258,13 @@ def board_email_draft(board_id: str):
     body = request.get_json(silent=True) or {}
     extra: Dict[str, Any] = {}
     if "purpose" in body:
-        extra["purpose"] = str(body.get("purpose") or "")
+        purpose_val = str(body.get("purpose") or "").strip()
+        if purpose_val:
+            extra["purpose"] = purpose_val
     if "tone" in body:
-        extra["tone"] = str(body.get("tone") or "")
+        tone_val = str(body.get("tone") or "").strip()
+        if tone_val:
+            extra["tone"] = tone_val
     draft = store.save_draft(
         board_id,
         subject=str(body.get("subject") or ""),

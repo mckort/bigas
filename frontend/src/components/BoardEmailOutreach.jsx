@@ -88,6 +88,7 @@ export default function BoardEmailOutreach({ boards }) {
     setPreview(null)
     setUploadMsg('')
     setSendMsg('')
+    setSettingsMsg('')
   }, [])
 
   useEffect(() => {
@@ -186,6 +187,7 @@ export default function BoardEmailOutreach({ boards }) {
       const res = await uploadBoardRecipients(boardId, file, true)
       setRecipients(res.recipients || [])
       setSelected(new Set())
+      setSearch('')
       setUploadMsg(
         `Added ${res.added} subscribers` +
           (res.invalid_rows?.length ? ` (${res.invalid_rows.length} invalid rows skipped)` : ''),

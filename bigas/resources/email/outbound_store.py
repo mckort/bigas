@@ -80,11 +80,19 @@ def compose_draft(
     if purpose is None:
         stored_purpose = str(previous.get("purpose") or "")
     else:
-        stored_purpose = (purpose or "").strip()
+        stripped_purpose = (purpose or "").strip()
+        stored_purpose = (
+            stripped_purpose if stripped_purpose else str(previous.get("purpose") or "")
+        )
     if tone is None:
         stored_tone = str(previous.get("tone") or "professional").strip() or "professional"
     else:
-        stored_tone = (tone or "").strip() or "professional"
+        stripped_tone = (tone or "").strip()
+        stored_tone = (
+            stripped_tone
+            if stripped_tone
+            else str(previous.get("tone") or "professional").strip() or "professional"
+        )
     return {
         "subject": (subject or "").strip(),
         "body": body or "",
