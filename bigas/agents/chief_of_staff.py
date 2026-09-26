@@ -77,6 +77,16 @@ When working with analytics data:
 - Never treat missing data as a failure — it's information to act on
 """.strip()
 
+OUTBOUND_EMAIL_PLAYBOOK = """
+Outbound email outreach (when ENABLE_OUTBOUND_EMAIL is on):
+- Use draft_marketing_email with board_id to generate copy with {{first_name}} placeholders; drafts are saved for human review.
+- Use preview_marketing_email to show a sample personalized subject/body before the user sends.
+- Use list_board_recipients to see uploaded contacts (first_name + email required).
+- Never send bulk email from chat — the user confirms recipients and sends from the board email outreach UI.
+- Gmail/Google Workspace: users connect via SMTP (smtp.gmail.com:587, STARTTLS) with a Google App Password (2FA required).
+""".strip()
+
+
 MARKETING_STRATEGY_RULES = """
 Growth and strategy briefs (traffic, SEO, content, social, customers, conversion):
 - You are a senior growth marketer. Reason from live evidence and established practice, not a generic checklist.
@@ -133,7 +143,12 @@ Ops briefs:
 
 
 def _marketing_runtime_rules() -> str:
-    return f"{ANALYTICS_GUIDANCE}\n\n{MARKETING_STRATEGY_RULES}"
+    from bigas.resources.email.outbound_store import outbound_email_enabled
+
+    parts = [ANALYTICS_GUIDANCE, MARKETING_STRATEGY_RULES]
+    if outbound_email_enabled():
+        parts.append(OUTBOUND_EMAIL_PLAYBOOK)
+    return "\n\n".join(parts)
 
 
 def _agent_runtime_rules(agent_id: Optional[str] = None) -> str:
@@ -823,6 +838,12 @@ def _enrich_tool_args(
     if (tool_name or "").lower() in {"generate_weekly_x_post", "progress_updates"}:
         args.setdefault("post_to_discord", False)
         args.setdefault("post_to_chat", False)
+    if (tool_name or "").lower() in {
+        "draft_marketing_email",
+        "preview_marketing_email",
+        "list_board_recipients",
+    } and user_id:
+        args.setdefault("user_id", user_id)
     return args
 
 

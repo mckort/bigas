@@ -436,6 +436,9 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `BIGAS_EMAIL_SMTP_PORT` | SMTP port (default `465`) |
 | `BIGAS_EMAIL_SYNC_USER_EMAIL` | Chat user email that receives overnight email triage (defaults to first `CHAT_ADMIN_EMAILS`) |
 | `BIGAS_EMAIL_MAX_BODY_CHARS` | Max plain-text email body passed to the COS LLM (default `8000`) |
+| `ENABLE_OUTBOUND_EMAIL` | When `true`, enables per-board SMTP outreach (Settings → Marketing email outreach) and Marketing Analyst MCP tools (`draft_marketing_email`, etc.) |
+| `OUTBOUND_EMAIL_SEND_DELAY_SECONDS` | Pause between bulk sends (default `1.5`) to reduce provider throttling |
+| `BOARD_EMAIL_SECRET` | Optional secret for encrypting board SMTP passwords at rest (defaults to first access key) |
 
 Per-feature model overrides: `BIGAS_MARKETING_LLM_MODEL`, `BIGAS_RELEASE_NOTES_MODEL`, `BIGAS_PROGRESS_UPDATES_MODEL`, `BIGAS_CTO_PR_REVIEW_MODEL`, `BIGAS_CFO_AI_USAGE_MODEL`, `BIGAS_JIRA_RESEARCH_MODEL`, `BIGAS_CHAT_MODEL`. See `env.example` and `bigas/llm/README.md`.
 

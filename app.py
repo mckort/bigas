@@ -161,6 +161,18 @@ def create_app():
         app.register_blueprint(email_bp)
         logger.info("Registered email ingest blueprint.")
 
+        get_outbound_email_manifest = None
+        if os.environ.get("ENABLE_OUTBOUND_EMAIL", "").strip().lower() in ("1", "true", "yes"):
+            from bigas.resources.email.outbound_endpoints import (
+                get_manifest as get_outbound_email_manifest,
+                outbound_email_bp,
+            )
+
+            app.register_blueprint(outbound_email_bp)
+            logger.info("Registered outbound email blueprint.")
+        else:
+            get_outbound_email_manifest = None
+
         from bigas.eval.endpoints import eval_bp
 
         app.register_blueprint(eval_bp)
@@ -291,6 +303,7 @@ def create_app():
         cto_manifest = {}
         devops_manifest = {}
         chat_manifest = {}
+        outbound_email_manifest = {}
 
         try:
             marketing_manifest = get_marketing_manifest() or {}
@@ -318,6 +331,12 @@ def create_app():
             except Exception:
                 logger.exception("Failed to build chat manifest")
 
+        try:
+            if get_outbound_email_manifest is not None:
+                outbound_email_manifest = get_outbound_email_manifest() or {}
+        except Exception:
+            logger.exception("Failed to build outbound email manifest")
+
         # Combine the tools from all manifests
         all_tools = (
             marketing_manifest.get('tools', [])
@@ -325,6 +344,7 @@ def create_app():
             + cto_manifest.get('tools', [])
             + devops_manifest.get('tools', [])
             + chat_manifest.get('tools', [])
+            + outbound_email_manifest.get('tools', [])
         )
 
         # Create the combined manifest

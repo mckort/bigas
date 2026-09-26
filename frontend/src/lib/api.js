@@ -299,3 +299,84 @@ export async function markProjectReleaseReleased(projectKey, releaseId, payload 
     { method: 'POST', body: JSON.stringify(payload) },
   )
 }
+
+export async function fetchOutboundEmailEnabled() {
+  return apiFetch('/api/outbound-email/enabled')
+}
+
+export async function fetchBoardEmailSettings(boardId) {
+  return apiFetch(`/api/boards/${boardId}/email-settings`)
+}
+
+export async function saveBoardEmailSettings(boardId, settings) {
+  return apiFetch(`/api/boards/${boardId}/email-settings`, {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  })
+}
+
+export async function testBoardEmailSettings(boardId) {
+  return apiFetch(`/api/boards/${boardId}/email-settings/test`, { method: 'POST' })
+}
+
+export async function fetchBoardRecipients(boardId) {
+  return apiFetch(`/api/boards/${boardId}/recipients`)
+}
+
+export async function uploadBoardRecipients(boardId, file, replace = true) {
+  const token = getToken()
+  const headers = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  const form = new FormData()
+  form.append('file', file)
+  const qs = replace ? '?replace=true' : ''
+  const res = await fetch(`/api/boards/${boardId}/recipients${qs}`, {
+    method: 'POST',
+    headers,
+    body: form,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
+  return data
+}
+
+export async function fetchBoardEmailDraft(boardId) {
+  return apiFetch(`/api/boards/${boardId}/email-draft`)
+}
+
+export async function saveBoardEmailDraft(boardId, payload) {
+  return apiFetch(`/api/boards/${boardId}/email-draft`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function previewBoardCampaign(boardId, payload) {
+  return apiFetch(`/api/boards/${boardId}/campaigns/preview`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function sendBoardCampaign(boardId, payload) {
+  return apiFetch(`/api/boards/${boardId}/campaigns/send`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function fetchBoardCampaign(boardId, campaignId) {
+  return apiFetch(`/api/boards/${boardId}/campaigns/${campaignId}`)
+}
+
+export async function pollBoardCampaign(boardId, campaignId, { attempts = 60, delayMs = 1500 } = {}) {
+  for (let i = 0; i < attempts; i += 1) {
+    const res = await fetchBoardCampaign(boardId, campaignId)
+    const status = res.campaign?.status
+    if (status && !['pending', 'in_progress'].includes(status)) {
+      return res
+    }
+    await new Promise((r) => setTimeout(r, delayMs))
+  }
+  return fetchBoardCampaign(boardId, campaignId)
+}

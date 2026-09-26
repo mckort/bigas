@@ -301,6 +301,27 @@ Cloud Scheduler (nightly) --> POST /api/v1/providers/email/sync
 - **Proposals**: assistant messages carry `metadata.type=action_proposal` with `actions[]` (`delegate`, `tool`, or `draft_reply`). `draft_reply` is sent via SMTP after the human edits and clicks Send; other approvals execute via `execute_proposal_action()`. Rejections update metadata only.
 - **Target thread**: `BIGAS_EMAIL_SYNC_USER_EMAIL` / `CHAT_ADMIN_EMAILS` → user's most recent Chief thread (`get_or_create_chief_thread`).
 
+## Outbound marketing email (BIG-111, optional)
+
+When `ENABLE_OUTBOUND_EMAIL=true`, founders configure **per-board SMTP** (Gmail App Password or custom SMTP) and run personalized outreach from Settings → **Marketing email outreach**. The Marketing Analyst can draft copy via MCP (`draft_marketing_email`, `preview_marketing_email`, `list_board_recipients`); **bulk send is human-confirmed in the UI** only.
+
+```text
+Settings UI / REST  -->  bigas/resources/email/outbound_endpoints.py
+MCP (Marketing)     -->  /mcp/tools/draft_marketing_email (no direct send tool)
+                              |
+                              v
+                    bigas/resources/email/outbound_store.py
+                    (board settings, CSV recipients, drafts, campaigns)
+                              |
+                              v
+                    bigas/providers/email/smtp_provider.py
+                    (STARTTLS/SSL, RFC headers, paced background send)
+```
+
+- **Credentials**: SMTP password stored encrypted/obfuscated at rest (`BOARD_EMAIL_SECRET` or first `BIGAS_ACCESS_KEYS` entry).
+- **Templates**: plain text with `{{first_name}}` / `{first_name}` substitution (`bigas/providers/email/templates.py`).
+- **Pacing**: `OUTBOUND_EMAIL_SEND_DELAY_SECONDS` between recipients; per-recipient status on the campaign record.
+
 ## AI Model Evaluation Engine (BIG-57)
 
 Modular eval under `bigas/eval/` discovers flagship models, runs YAML **eval packs**, scores outputs with LLM-as-a-judge, and stores artifacts in Bigas GCS only.
