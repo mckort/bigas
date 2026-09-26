@@ -11,11 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from bigas.llm.factory import get_llm_client
 from bigas.providers.email.templates import render_personalized_template
-from bigas.resources.email.outbound_store import (
-    assert_board_owner,
-    config_for_provider,
-    get_outbound_email_store,
-)
+from bigas.resources.email.outbound_store import config_for_provider, get_outbound_email_store
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +76,7 @@ def _run_campaign_send(
     delay_seconds: float = DEFAULT_SEND_DELAY_SECONDS,
 ) -> None:
     store = get_outbound_email_store()
-    campaign = store.get_campaign(campaign_id)
+    campaign = store.get_campaign(campaign_id, board_id=board_id)
     if not campaign or campaign.get("board_id") != board_id:
         logger.error("Campaign %s not found for board %s", campaign_id, board_id)
         return
@@ -128,7 +124,7 @@ def _run_campaign_send(
             )
         time.sleep(max(0.0, delay_seconds))
 
-    refreshed = store.get_campaign(campaign_id) or campaign
+    refreshed = store.get_campaign(campaign_id, board_id=board_id) or campaign
     statuses = [r.get("status") for r in refreshed.get("recipients") or []]
     if statuses and all(s == "sent" for s in statuses):
         final = "completed"

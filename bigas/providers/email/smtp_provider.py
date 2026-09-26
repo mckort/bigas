@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import logging
 import smtplib
-import uuid
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formataddr, formatdate, make_msgid
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -48,9 +47,7 @@ class SMTPOutboundProvider:
             raise ValueError("Invalid recipient email")
 
         cfg = self._config
-        from_header = cfg.sender_email
-        if (cfg.sender_name or "").strip():
-            from_header = f"{cfg.sender_name.strip()} <{cfg.sender_email}>"
+        from_header = formataddr((cfg.sender_name or "", cfg.sender_email))
 
         msg = EmailMessage()
         msg["From"] = from_header

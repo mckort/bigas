@@ -200,12 +200,19 @@ export default function BoardEmailOutreach({ boards }) {
       setSendMsg('Sending started…')
       if (campaignId) {
         const final = await pollBoardCampaign(boardId, campaignId)
+        const status = final.campaign?.status
         const counts = final.campaign?.counts
-        setSendMsg(
-          counts
-            ? `Done: ${counts.sent} sent, ${counts.failed} failed, ${counts.pending} pending.`
-            : 'Campaign finished.',
-        )
+        if (status === 'in_progress' || status === 'pending') {
+          setSendMsg(
+            'Send is still in progress. Refresh the page or check campaign status again shortly.',
+          )
+        } else if (counts) {
+          setSendMsg(
+            `Done: ${counts.sent} sent, ${counts.failed} failed, ${counts.pending} pending.`,
+          )
+        } else {
+          setSendMsg('Campaign finished.')
+        }
       }
     } catch (err) {
       setSendMsg(err.message)
