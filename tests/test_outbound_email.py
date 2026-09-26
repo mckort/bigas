@@ -203,3 +203,54 @@ class TestOutboundApi:
         )
         draft = draft_resp.get_json()["draft"]
         assert "{{first_name}}" in draft["body"]
+
+    def test_generate_draft_keeps_purpose_when_edited(self, client, monkeypatch):
+        board_id = _setup_board()
+        headers = _auth_headers()
+        missing = client.post(
+            f"/api/boards/{board_id}/email-draft/generate",
+            headers=headers,
+            json={},
+        )
+        assert missing.status_code == 400
+
+        monkeypatch.setattr(
+            "bigas.resources.email.outbound_endpoints.generate_email_draft",
+            lambda **_: {"subject": "Hi {{first_name}}", "body": "Hello {{first_name}},"},
+        )
+        resp = client.post(
+            f"/api/boards/{board_id}/email-draft/generate",
+            headers=headers,
+            json={"purpose": "Invite founders to the update", "tone": "friendly"},
+        )
+        assert resp.status_code == 200
+        draft = resp.get_json()["draft"]
+        assert draft["purpose"] == "Invite founders to the update"
+        assert draft["tone"] == "friendly"
+        assert "{{first_name}}" in draft["body"]
+
+        saved = client.put(
+            f"/api/boards/{board_id}/email-draft",
+            headers=headers,
+            json={"subject": "Edited subject", "body": draft["body"]},
+        )
+        assert saved.status_code == 200
+        edited = saved.get_json()["draft"]
+        assert edited["subject"] == "Edited subject"
+        assert edited["purpose"] == "Invite founders to the update"
+        assert edited["tone"] == "friendly"
+
+        saved_empty_purpose = client.put(
+            f"/api/boards/{board_id}/email-draft",
+            headers=headers,
+            json={
+                "subject": "Edited subject",
+                "body": draft["body"],
+                "purpose": "",
+                "tone": "",
+            },
+        )
+        assert saved_empty_purpose.status_code == 200
+        preserved = saved_empty_purpose.get_json()["draft"]
+        assert preserved["purpose"] == "Invite founders to the update"
+        assert preserved["tone"] == "friendly"

@@ -282,8 +282,7 @@ export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSy
         <section className="mt-8 pt-6 border-t border-border space-y-3">
           <h3 className="text-sm font-medium">Marketing email outreach</h3>
           <p className="text-[11px] text-muted leading-relaxed">
-            Optional per-board SMTP outreach for the Marketing Analyst. Upload contacts, edit templates
-            with {'{{first_name}}'}, preview, then send with pacing to protect deliverability.
+            Upload subscribers, describe the email, and generate a draft you can edit before sending.
           </p>
           <BoardEmailOutreach boards={boards} />
         </section>

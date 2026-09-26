@@ -351,6 +351,13 @@ export async function saveBoardEmailDraft(boardId, payload) {
   })
 }
 
+export async function generateBoardEmailDraft(boardId, payload) {
+  return apiFetch(`/api/boards/${boardId}/email-draft/generate`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function previewBoardCampaign(boardId, payload) {
   return apiFetch(`/api/boards/${boardId}/campaigns/preview`, {
     method: 'POST',
