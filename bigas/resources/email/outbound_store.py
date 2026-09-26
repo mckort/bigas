@@ -10,7 +10,12 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from bigas.providers.email.templates import validate_email_address
-from bigas.resources.email.crypto import decrypt_secret, encrypt_secret, mask_secret
+from bigas.resources.email.crypto import (
+    decrypt_secret,
+    encrypt_secret,
+    is_masked_password,
+    mask_secret,
+)
 from bigas.tickets.store import get_ticket_store
 
 
@@ -24,6 +29,38 @@ def outbound_email_enabled() -> bool:
         "true",
         "yes",
     )
+
+
+MAX_RECIPIENT_CSV_BYTES = int(os.environ.get("OUTBOUND_MAX_CSV_BYTES", "524288"))
+MAX_RECIPIENTS_PER_UPLOAD = int(os.environ.get("OUTBOUND_MAX_RECIPIENTS", "1000"))
+CAMPAIGN_STALE_SECONDS = int(os.environ.get("OUTBOUND_CAMPAIGN_STALE_SECONDS", "7200"))
+FIRESTORE_BATCH_SIZE = 400
+
+
+def _resolve_password_enc(existing: Dict[str, Any], payload: Dict[str, Any]) -> str:
+    """Preserve stored password unless the client submits a new plaintext secret."""
+    password_enc = existing.get("password_enc", "")
+    if "password" not in payload:
+        return password_enc
+    password = payload.get("password")
+    if password is None:
+        return password_enc
+    plain = str(password).strip()
+    if not plain or is_masked_password(plain):
+        return password_enc
+    return encrypt_secret(plain)
+
+
+def _parse_iso_timestamp(value: str) -> Optional[datetime]:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _normalize_headers(row: Dict[str, str]) -> Dict[str, str]:
@@ -96,12 +133,7 @@ class MemoryOutboundEmailStore:
     def save_email_config(self, board_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
             existing = self._config.get(board_id) or {}
-            password = payload.get("password")
-            password_enc = existing.get("password_enc", "")
-            if password is not None and str(password).strip():
-                password_enc = encrypt_secret(str(password).strip())
-            elif password is None and not password_enc:
-                password_enc = ""
+            password_enc = _resolve_password_enc(existing, payload)
 
             cfg = {
                 "provider_type": (payload.get("provider_type") or "smtp").strip(),
@@ -188,10 +220,39 @@ class MemoryOutboundEmailStore:
             self._campaigns[campaign_id] = campaign
         return dict(campaign)
 
-    def get_campaign(self, campaign_id: str) -> Optional[Dict[str, Any]]:
+    def _maybe_mark_stale_campaign(self, campaign: Dict[str, Any]) -> Dict[str, Any]:
+        if campaign.get("status") != "in_progress":
+            return campaign
+        updated_at = _parse_iso_timestamp(str(campaign.get("updated_at") or ""))
+        if not updated_at:
+            return campaign
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - updated_at).total_seconds()
+        if age <= CAMPAIGN_STALE_SECONDS:
+            return campaign
+        campaign_id = str(campaign.get("campaign_id") or "")
+        if not campaign_id:
+            return campaign
+        failed = self.update_campaign(
+            campaign_id,
+            status="failed",
+            error=(
+                "Campaign timed out or was interrupted before completion. "
+                "Please try sending again."
+            ),
+        )
+        return failed or campaign
+
+    def get_campaign(
+        self, campaign_id: str, board_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        del board_id
         with self._lock:
             camp = self._campaigns.get(campaign_id)
-            return dict(camp) if camp else None
+        if not camp:
+            return None
+        return self._maybe_mark_stale_campaign(dict(camp))
 
     def update_campaign(self, campaign_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -243,10 +304,7 @@ class FirestoreOutboundEmailStore(MemoryOutboundEmailStore):
 
     def save_email_config(self, board_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         existing = self.get_email_config(board_id) or {}
-        password = payload.get("password")
-        password_enc = existing.get("password_enc", "")
-        if password is not None and str(password).strip():
-            password_enc = encrypt_secret(str(password).strip())
+        password_enc = _resolve_password_enc(existing, payload)
         cfg = {
             "provider_type": (payload.get("provider_type") or "smtp").strip(),
             "smtp_host": (payload.get("smtp_host") or "").strip(),
@@ -269,17 +327,35 @@ class FirestoreOutboundEmailStore(MemoryOutboundEmailStore):
     def add_recipients(self, board_id: str, rows: List[Dict[str, Any]], *, replace: bool) -> int:
         col = self._board_ref(board_id).collection("outbound_recipients")
         if replace:
+            batch = self._db.batch()
+            pending = 0
             for doc in col.stream():
-                doc.reference.delete()
-        existing = {r.get("email") for r in self.list_recipients(board_id)}
+                batch.delete(doc.reference)
+                pending += 1
+                if pending >= FIRESTORE_BATCH_SIZE:
+                    batch.commit()
+                    batch = self._db.batch()
+                    pending = 0
+            if pending:
+                batch.commit()
+        existing = set() if replace else {r.get("email") for r in self.list_recipients(board_id)}
         added = 0
+        batch = self._db.batch()
+        pending = 0
         for row in rows:
             email = row.get("email")
             if email in existing:
                 continue
-            col.document(row["recipient_id"]).set(row)
+            batch.set(col.document(row["recipient_id"]), row)
             existing.add(email)
             added += 1
+            pending += 1
+            if pending >= FIRESTORE_BATCH_SIZE:
+                batch.commit()
+                batch = self._db.batch()
+                pending = 0
+        if pending:
+            batch.commit()
         return added
 
     def get_draft(self, board_id: str) -> Optional[Dict[str, Any]]:
@@ -331,12 +407,53 @@ class FirestoreOutboundEmailStore(MemoryOutboundEmailStore):
             self._campaigns[campaign_id] = campaign
         return campaign
 
-    def get_campaign(self, campaign_id: str) -> Optional[Dict[str, Any]]:
+    def get_campaign(
+        self, campaign_id: str, board_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        camp: Optional[Dict[str, Any]] = None
+        if board_id:
+            snap = (
+                self._board_ref(board_id)
+                .collection("outbound_campaigns")
+                .document(campaign_id)
+                .get()
+            )
+            if snap.exists:
+                camp = snap.to_dict()
+                with self._lock:
+                    self._campaigns[campaign_id] = camp
+        if not camp:
+            with self._lock:
+                cached = self._campaigns.get(campaign_id)
+            if cached:
+                camp = dict(cached)
+        if not camp:
+            return None
+        return self._maybe_mark_stale_campaign(dict(camp))
+
+    def update_campaign_recipient(
+        self,
+        campaign_id: str,
+        recipient_id: str,
+        *,
+        status: str,
+        error: Optional[str] = None,
+        sent_at: Optional[str] = None,
+    ) -> None:
+        super().update_campaign_recipient(
+            campaign_id,
+            recipient_id,
+            status=status,
+            error=error,
+            sent_at=sent_at,
+        )
         with self._lock:
-            cached = self._campaigns.get(campaign_id)
-        if cached:
-            return dict(cached)
-        return super().get_campaign(campaign_id)
+            camp = self._campaigns.get(campaign_id)
+        if not camp or not camp.get("board_id"):
+            return
+        self._board_ref(camp["board_id"]).collection("outbound_campaigns").document(
+            campaign_id
+        ).set(camp)
 
     def update_campaign(self, campaign_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
         updated = super().update_campaign(campaign_id, **fields)

@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from functools import wraps
+from typing import Any, Callable, Dict
 
 from flask import Blueprint, g, jsonify, request
 
-from bigas.chat.auth import require_chat_auth
+from bigas.access import provided_mcp_credential, verify_bigas_access_key
+from bigas.chat.auth import authenticate_request, require_chat_auth
+from bigas.oauth.service import verify_access_token
 from bigas.resources.email.outbound_service import (
     campaign_summary,
     generate_email_draft,
@@ -15,6 +18,8 @@ from bigas.resources.email.outbound_service import (
     start_campaign_send,
 )
 from bigas.resources.email.outbound_store import (
+    MAX_RECIPIENT_CSV_BYTES,
+    MAX_RECIPIENTS_PER_UPLOAD,
     assert_board_owner,
     config_for_provider,
     get_outbound_email_store,
@@ -32,6 +37,40 @@ def _feature_guard():
     if not outbound_email_enabled():
         return jsonify({"error": "Outbound email is disabled (set ENABLE_OUTBOUND_EMAIL=true)"}), 404
     return None
+
+
+def require_outbound_mcp_auth(view: Callable):
+    """MCP board tools require MCP access (when restricted) and a verified user identity."""
+
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        err = verify_bigas_access_key()
+        if err is not None:
+            return err
+
+        user, auth_err = authenticate_request()
+        if not auth_err and user and user.get("uid"):
+            g.outbound_mcp_user_id = str(user["uid"])
+            return view(*args, **kwargs)
+
+        provided = provided_mcp_credential()
+        if provided:
+            payload = verify_access_token(provided)
+            uid = (payload or {}).get("uid") if isinstance(payload, dict) else None
+            if uid:
+                g.outbound_mcp_user_id = str(uid)
+                return view(*args, **kwargs)
+
+        return jsonify({"error": "Missing authorization token"}), 401
+
+    return wrapper
+
+
+def _smtp_test_error_message() -> str:
+    return (
+        "Failed to connect or authenticate with the SMTP server. "
+        "Please verify your credentials and host settings."
+    )
 
 
 def get_manifest() -> Dict[str, Any]:
@@ -138,8 +177,8 @@ def board_email_settings_test(board_id: str):
         config_for_provider(config).test_connection()
         return jsonify({"ok": True, "message": "SMTP connection and authentication succeeded."})
     except Exception as exc:
-        logger.info("SMTP test failed for board %s: %s", board_id, exc)
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        logger.info("SMTP test failed for board %s: %s", board_id, exc, exc_info=True)
+        return jsonify({"ok": False, "error": _smtp_test_error_message()}), 400
 
 
 @outbound_email_bp.route("/api/boards/<board_id>/recipients", methods=["GET", "POST"])
@@ -161,11 +200,33 @@ def board_recipients(board_id: str):
     replace = request.args.get("replace", "false").lower() in ("1", "true", "yes")
     csv_text = ""
     if request.files and "file" in request.files:
-        csv_text = request.files["file"].read().decode("utf-8-sig", errors="replace")
+        raw = request.files["file"].read(MAX_RECIPIENT_CSV_BYTES + 1)
+        if len(raw) > MAX_RECIPIENT_CSV_BYTES:
+            return jsonify(
+                {
+                    "error": f"CSV file exceeds maximum size ({MAX_RECIPIENT_CSV_BYTES} bytes).",
+                }
+            ), 400
+        csv_text = raw.decode("utf-8-sig", errors="replace")
     else:
         body = request.get_json(silent=True) or {}
         csv_text = body.get("csv") or ""
+        if len((csv_text or "").encode("utf-8")) > MAX_RECIPIENT_CSV_BYTES:
+            return jsonify(
+                {
+                    "error": f"CSV exceeds maximum size ({MAX_RECIPIENT_CSV_BYTES} bytes).",
+                }
+            ), 400
     valid, invalid = parse_recipient_csv(csv_text)
+    if len(valid) > MAX_RECIPIENTS_PER_UPLOAD:
+        return jsonify(
+            {
+                "error": (
+                    f"Too many valid recipients ({len(valid)}). "
+                    f"Maximum allowed per upload is {MAX_RECIPIENTS_PER_UPLOAD}."
+                ),
+            }
+        ), 400
     added = store.add_recipients(board_id, valid, replace=replace) if valid else 0
     return jsonify(
         {
@@ -284,18 +345,21 @@ def board_campaign_status(board_id: str, campaign_id: str):
         return jsonify({"error": "Board not found"}), 404
 
     store = get_outbound_email_store()
-    campaign = store.get_campaign(campaign_id)
+    campaign = store.get_campaign(campaign_id, board_id=board_id)
     if not campaign or campaign.get("board_id") != board_id:
         return jsonify({"error": "Campaign not found"}), 404
     return jsonify({"campaign": campaign_summary(campaign)})
 
 
-def _mcp_board_guard(board_id: str, user_id: str | None) -> None:
-    if user_id:
-        assert_board_owner(board_id, user_id)
+def _mcp_board_guard(board_id: str) -> None:
+    user_id = getattr(g, "outbound_mcp_user_id", None)
+    if not user_id:
+        raise PermissionError("Unauthorized")
+    assert_board_owner(board_id, str(user_id))
 
 
 @outbound_email_bp.route("/mcp/tools/draft_marketing_email", methods=["POST"])
+@require_outbound_mcp_auth
 def mcp_draft_marketing_email():
     blocked = _feature_guard()
     if blocked:
@@ -305,9 +369,8 @@ def mcp_draft_marketing_email():
     prompt = str(data.get("prompt") or "").strip()
     if not board_id or not prompt:
         return jsonify({"error": "board_id and prompt are required"}), 400
-    user_id = str(data.get("user_id") or "").strip() or None
     try:
-        _mcp_board_guard(board_id, user_id)
+        _mcp_board_guard(board_id)
     except PermissionError:
         return jsonify({"error": "Board not found"}), 404
 
@@ -328,6 +391,7 @@ def mcp_draft_marketing_email():
 
 
 @outbound_email_bp.route("/mcp/tools/preview_marketing_email", methods=["POST"])
+@require_outbound_mcp_auth
 def mcp_preview_marketing_email():
     blocked = _feature_guard()
     if blocked:
@@ -338,9 +402,8 @@ def mcp_preview_marketing_email():
     body = str(data.get("body") or "")
     if not board_id:
         return jsonify({"error": "board_id is required"}), 400
-    user_id = str(data.get("user_id") or "").strip() or None
     try:
-        _mcp_board_guard(board_id, user_id)
+        _mcp_board_guard(board_id)
     except PermissionError:
         return jsonify({"error": "Board not found"}), 404
 
@@ -353,6 +416,7 @@ def mcp_preview_marketing_email():
 
 
 @outbound_email_bp.route("/mcp/tools/list_board_recipients", methods=["POST"])
+@require_outbound_mcp_auth
 def mcp_list_board_recipients():
     blocked = _feature_guard()
     if blocked:
@@ -361,9 +425,8 @@ def mcp_list_board_recipients():
     board_id = str(data.get("board_id") or "").strip()
     if not board_id:
         return jsonify({"error": "board_id is required"}), 400
-    user_id = str(data.get("user_id") or "").strip() or None
     try:
-        _mcp_board_guard(board_id, user_id)
+        _mcp_board_guard(board_id)
     except PermissionError:
         return jsonify({"error": "Board not found"}), 404
 

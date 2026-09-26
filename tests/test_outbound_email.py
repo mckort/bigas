@@ -16,7 +16,8 @@ os.environ["ENABLE_OUTBOUND_EMAIL"] = "true"
 
 from app import create_app
 from bigas.providers.email.templates import render_personalized_template, validate_email_address
-from bigas.resources.email.outbound_store import parse_recipient_csv
+from bigas.resources.email.crypto import decrypt_secret, mask_secret
+from bigas.resources.email.outbound_store import get_outbound_email_store, parse_recipient_csv
 
 
 @pytest.fixture
@@ -60,6 +61,38 @@ class TestTemplateAndCsv:
 
 
 class TestOutboundApi:
+    def test_password_not_overwritten_by_masked_placeholder(self, client):
+        board_id = _setup_board()
+        headers = _auth_headers()
+        save = client.put(
+            f"/api/boards/{board_id}/email-settings",
+            headers=headers,
+            json={
+                "smtp_host": "smtp.test.local",
+                "username": "user@test.local",
+                "password": "real-secret",
+                "sender_email": "user@test.local",
+            },
+        )
+        assert save.status_code == 200
+        cfg_before = get_outbound_email_store().get_email_config(board_id)
+        assert decrypt_secret(cfg_before["password_enc"]) == "real-secret"
+
+        update = client.put(
+            f"/api/boards/{board_id}/email-settings",
+            headers=headers,
+            json={
+                "smtp_host": "smtp.updated.local",
+                "username": "user@test.local",
+                "password": mask_secret(""),
+                "sender_email": "user@test.local",
+            },
+        )
+        assert update.status_code == 200
+        cfg_after = get_outbound_email_store().get_email_config(board_id)
+        assert cfg_after["smtp_host"] == "smtp.updated.local"
+        assert decrypt_secret(cfg_after["password_enc"]) == "real-secret"
+
     def test_settings_test_and_campaign_send(self, client, monkeypatch):
         board_id = _setup_board()
         headers = _auth_headers()
@@ -143,9 +176,16 @@ class TestOutboundApi:
             "bigas.resources.email.outbound_endpoints.generate_email_draft",
             lambda **_: {"subject": "Hey {{first_name}}", "body": "Hi {{first_name}},"},
         )
+        denied = client.post(
+            "/mcp/tools/draft_marketing_email",
+            json={"board_id": board_id, "prompt": "Intro email"},
+        )
+        assert denied.status_code == 401
+
         resp = client.post(
             "/mcp/tools/draft_marketing_email",
-            json={"board_id": board_id, "prompt": "Intro email", "user_id": "dev-user"},
+            headers=_auth_headers(),
+            json={"board_id": board_id, "prompt": "Intro email"},
         )
         assert resp.status_code == 200
         draft_resp = client.get(

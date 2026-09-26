@@ -32,4 +32,7 @@ tweepy>=4.14.0
 
 # Chat interface (Firebase Auth + Firestore)
 firebase-admin>=6.5.0
-google-cloud-firestore>=2.16.0 
+google-cloud-firestore>=2.16.0
+
+# Board SMTP credential encryption (Fernet)
+cryptography>=42.0.0 
