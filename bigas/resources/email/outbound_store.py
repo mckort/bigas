@@ -67,6 +67,33 @@ def _normalize_headers(row: Dict[str, str]) -> Dict[str, str]:
     return {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
 
 
+def compose_draft(
+    existing: Optional[Dict[str, Any]],
+    *,
+    subject: str,
+    body: str,
+    purpose: Optional[str] = None,
+    tone: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a draft document. Omitted purpose/tone keep the previous values."""
+    previous = existing or {}
+    if purpose is None:
+        stored_purpose = str(previous.get("purpose") or "")
+    else:
+        stored_purpose = (purpose or "").strip()
+    if tone is None:
+        stored_tone = str(previous.get("tone") or "professional").strip() or "professional"
+    else:
+        stored_tone = (tone or "").strip() or "professional"
+    return {
+        "subject": (subject or "").strip(),
+        "body": body or "",
+        "purpose": stored_purpose,
+        "tone": stored_tone,
+        "updated_at": _utcnow_iso(),
+    }
+
+
 def parse_recipient_csv(text: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Parse CSV with first_name and email columns. Returns (valid_rows, invalid_rows)."""
     valid: List[Dict[str, Any]] = []
@@ -175,13 +202,23 @@ class MemoryOutboundEmailStore:
             draft = self._drafts.get(board_id)
             return dict(draft) if draft else None
 
-    def save_draft(self, board_id: str, *, subject: str, body: str) -> Dict[str, Any]:
+    def save_draft(
+        self,
+        board_id: str,
+        *,
+        subject: str,
+        body: str,
+        purpose: Optional[str] = None,
+        tone: Optional[str] = None,
+    ) -> Dict[str, Any]:
         with self._lock:
-            draft = {
-                "subject": (subject or "").strip(),
-                "body": body or "",
-                "updated_at": _utcnow_iso(),
-            }
+            draft = compose_draft(
+                self._drafts.get(board_id),
+                subject=subject,
+                body=body,
+                purpose=purpose,
+                tone=tone,
+            )
             self._drafts[board_id] = draft
             return dict(draft)
 
@@ -362,12 +399,22 @@ class FirestoreOutboundEmailStore(MemoryOutboundEmailStore):
         snap = self._board_ref(board_id).collection("outbound_email").document("draft").get()
         return snap.to_dict() if snap.exists else None
 
-    def save_draft(self, board_id: str, *, subject: str, body: str) -> Dict[str, Any]:
-        draft = {
-            "subject": (subject or "").strip(),
-            "body": body or "",
-            "updated_at": _utcnow_iso(),
-        }
+    def save_draft(
+        self,
+        board_id: str,
+        *,
+        subject: str,
+        body: str,
+        purpose: Optional[str] = None,
+        tone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        draft = compose_draft(
+            self.get_draft(board_id),
+            subject=subject,
+            body=body,
+            purpose=purpose,
+            tone=tone,
+        )
         self._board_ref(board_id).collection("outbound_email").document("draft").set(draft)
         return draft
 

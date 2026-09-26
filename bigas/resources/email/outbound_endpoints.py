@@ -256,12 +256,56 @@ def board_email_draft(board_id: str):
         return jsonify({"draft": draft})
 
     body = request.get_json(silent=True) or {}
+    extra: Dict[str, Any] = {}
+    if "purpose" in body:
+        extra["purpose"] = str(body.get("purpose") or "")
+    if "tone" in body:
+        extra["tone"] = str(body.get("tone") or "")
     draft = store.save_draft(
         board_id,
         subject=str(body.get("subject") or ""),
         body=str(body.get("body") or ""),
+        **extra,
     )
     return jsonify({"draft": draft})
+
+
+@outbound_email_bp.route("/api/boards/<board_id>/email-draft/generate", methods=["POST"])
+@require_chat_auth
+def board_email_draft_generate(board_id: str):
+    blocked = _feature_guard()
+    if blocked:
+        return blocked
+    user_id = g.chat_user["uid"]
+    try:
+        assert_board_owner(board_id, user_id)
+    except PermissionError:
+        return jsonify({"error": "Board not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    purpose = str(body.get("purpose") or body.get("prompt") or "").strip()
+    if not purpose:
+        return jsonify({"error": "Describe the email purpose before generating a draft."}), 400
+    if len(purpose) > 4000:
+        return jsonify({"error": "Purpose is too long."}), 400
+    tone = str(body.get("tone") or "professional").strip() or "professional"
+    if len(tone) > 40:
+        tone = tone[:40]
+
+    try:
+        draft = generate_email_draft(prompt=purpose, tone=tone, goal=purpose)
+    except Exception:
+        logger.exception("Failed to generate email draft for board %s", board_id)
+        return jsonify({"error": "Could not generate a draft. Try again."}), 502
+
+    saved = get_outbound_email_store().save_draft(
+        board_id,
+        subject=draft["subject"],
+        body=draft["body"],
+        purpose=purpose,
+        tone=tone,
+    )
+    return jsonify({"draft": saved})
 
 
 @outbound_email_bp.route("/api/boards/<board_id>/campaigns/preview", methods=["POST"])

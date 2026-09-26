@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   fetchBoardEmailDraft,
   fetchBoardEmailSettings,
   fetchBoardRecipients,
   fetchOutboundEmailEnabled,
+  generateBoardEmailDraft,
   pollBoardCampaign,
   previewBoardCampaign,
   saveBoardEmailDraft,
@@ -12,6 +13,12 @@ import {
   testBoardEmailSettings,
   uploadBoardRecipients,
 } from '../lib/api'
+
+const TONES = [
+  { value: 'professional', label: 'Professional' },
+  { value: 'friendly', label: 'Friendly' },
+  { value: 'concise', label: 'Concise' },
+]
 
 function emptySettings() {
   return {
@@ -34,11 +41,15 @@ export default function BoardEmailOutreach({ boards }) {
   const [testing, setTesting] = useState(false)
   const [recipients, setRecipients] = useState([])
   const [selected, setSelected] = useState(() => new Set())
+  const [search, setSearch] = useState('')
+  const [purpose, setPurpose] = useState('')
+  const [tone, setTone] = useState('professional')
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [preview, setPreview] = useState(null)
   const [uploadMsg, setUploadMsg] = useState('')
   const [sendMsg, setSendMsg] = useState('')
+  const [generating, setGenerating] = useState(false)
   const [sending, setSending] = useState(false)
 
   useEffect(() => {
@@ -67,13 +78,16 @@ export default function BoardEmailOutreach({ boards }) {
       reply_to: s.reply_to || '',
     })
     const draft = draftRes.draft
-    if (draft) {
-      setSubject(draft.subject || '')
-      setBody(draft.body || '')
-    }
+    setPurpose(draft?.purpose || '')
+    setTone(draft?.tone || 'professional')
+    setSubject(draft?.subject || '')
+    setBody(draft?.body || '')
     setRecipients(recipientsRes.recipients || [])
     setSelected(new Set())
+    setSearch('')
     setPreview(null)
+    setUploadMsg('')
+    setSendMsg('')
   }, [])
 
   useEffect(() => {
@@ -87,6 +101,25 @@ export default function BoardEmailOutreach({ boards }) {
       loadBoardData(boardId).catch((err) => setSettingsMsg(err.message))
     }
   }, [boardId, enabled, loadBoardData])
+
+  const visibleRecipients = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    const rows = [...recipients].sort((a, b) => {
+      const name = (a.first_name || '').localeCompare(b.first_name || '')
+      if (name !== 0) return name
+      return (a.email || '').localeCompare(b.email || '')
+    })
+    if (!query) return rows
+    return rows.filter((row) => {
+      const name = (row.first_name || '').toLowerCase()
+      const email = (row.email || '').toLowerCase()
+      return name.includes(query) || email.includes(query)
+    })
+  }, [recipients, search])
+
+  const allVisibleSelected =
+    visibleRecipients.length > 0 &&
+    visibleRecipients.every((row) => selected.has(row.recipient_id))
 
   if (!enabled) {
     return (
@@ -110,12 +143,16 @@ export default function BoardEmailOutreach({ boards }) {
     })
   }
 
-  function toggleAll() {
-    if (selected.size === recipients.length) {
-      setSelected(new Set())
-    } else {
-      setSelected(new Set(recipients.map((r) => r.recipient_id)))
-    }
+  function toggleAllVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allVisibleSelected) {
+        visibleRecipients.forEach((row) => next.delete(row.recipient_id))
+      } else {
+        visibleRecipients.forEach((row) => next.add(row.recipient_id))
+      }
+      return next
+    })
   }
 
   async function handleSaveSettings(e) {
@@ -123,7 +160,7 @@ export default function BoardEmailOutreach({ boards }) {
     setSettingsMsg('')
     try {
       await saveBoardEmailSettings(boardId, settings)
-      setSettingsMsg('Email settings saved.')
+      setSettingsMsg('Sending account saved.')
     } catch (err) {
       setSettingsMsg(err.message)
     }
@@ -150,7 +187,7 @@ export default function BoardEmailOutreach({ boards }) {
       setRecipients(res.recipients || [])
       setSelected(new Set())
       setUploadMsg(
-        `Added ${res.added} contacts` +
+        `Added ${res.added} subscribers` +
           (res.invalid_rows?.length ? ` (${res.invalid_rows.length} invalid rows skipped)` : ''),
       )
     } catch (err) {
@@ -158,10 +195,34 @@ export default function BoardEmailOutreach({ boards }) {
     }
   }
 
+  async function handleGenerate() {
+    const text = purpose.trim()
+    if (!text) {
+      setSendMsg('Describe the email purpose first.')
+      return
+    }
+    setGenerating(true)
+    setSendMsg('')
+    setPreview(null)
+    try {
+      const res = await generateBoardEmailDraft(boardId, { purpose: text, tone })
+      const draft = res.draft || {}
+      setSubject(draft.subject || '')
+      setBody(draft.body || '')
+      setPurpose(draft.purpose || text)
+      setTone(draft.tone || tone)
+      setSendMsg('Draft ready. Edit it before sending.')
+    } catch (err) {
+      setSendMsg(err.message)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   async function handleSaveDraft() {
     setSendMsg('')
     try {
-      await saveBoardEmailDraft(boardId, { subject, body })
+      await saveBoardEmailDraft(boardId, { subject, body, purpose, tone })
       setSendMsg('Draft saved.')
     } catch (err) {
       setSendMsg(err.message)
@@ -171,7 +232,7 @@ export default function BoardEmailOutreach({ boards }) {
   async function handlePreview() {
     setSendMsg('')
     try {
-      const sampleId = selected.size ? [...selected][0] : recipients[0]?.recipient_id
+      const sampleId = selected.size ? [...selected][0] : visibleRecipients[0]?.recipient_id
       const res = await previewBoardCampaign(boardId, {
         subject,
         body,
@@ -185,7 +246,7 @@ export default function BoardEmailOutreach({ boards }) {
 
   async function handleSend() {
     if (!selected.size) {
-      setSendMsg('Select at least one recipient.')
+      setSendMsg('Select at least one subscriber.')
       return
     }
     setSending(true)
@@ -221,11 +282,16 @@ export default function BoardEmailOutreach({ boards }) {
     }
   }
 
+  const selectedLabel = selected.size === 1 ? '1 subscriber' : `${selected.size} subscribers`
+
   return (
     <div className="space-y-6">
       <div>
-        <label className="text-sm text-muted font-medium">Board</label>
+        <label className="text-sm text-muted font-medium" htmlFor="outreach-board">
+          Board
+        </label>
         <select
+          id="outreach-board"
           value={boardId}
           onChange={(e) => setBoardId(e.target.value)}
           className="w-full mt-1.5 input-field"
@@ -238,79 +304,15 @@ export default function BoardEmailOutreach({ boards }) {
         </select>
       </div>
 
-      <form onSubmit={handleSaveSettings} className="space-y-3 border border-border rounded-lg p-3">
-        <h4 className="text-sm font-medium">Outbound SMTP</h4>
-        <p className="text-[11px] text-muted leading-relaxed">
-          Gmail / Google Workspace: use smtp.gmail.com, port 587, STARTTLS, and a 16-character App
-          Password (requires 2FA on the Google account).
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input
-            className="input-field"
-            placeholder="SMTP host"
-            value={settings.smtp_host}
-            onChange={(e) => setSettings({ ...settings, smtp_host: e.target.value })}
-          />
-          <input
-            className="input-field"
-            type="number"
-            placeholder="Port"
-            value={settings.smtp_port}
-            onChange={(e) => setSettings({ ...settings, smtp_port: Number(e.target.value) })}
-          />
-          <select
-            className="input-field"
-            value={settings.security}
-            onChange={(e) => setSettings({ ...settings, security: e.target.value })}
-          >
-            <option value="starttls">STARTTLS (587)</option>
-            <option value="ssl">SSL (465)</option>
-          </select>
-          <input
-            className="input-field"
-            placeholder="Username"
-            value={settings.username}
-            onChange={(e) => setSettings({ ...settings, username: e.target.value })}
-          />
-          <input
-            className="input-field sm:col-span-2"
-            type="password"
-            placeholder="Password / App password"
-            value={settings.password}
-            onChange={(e) => setSettings({ ...settings, password: e.target.value })}
-          />
-          <input
-            className="input-field"
-            placeholder="Sender name"
-            value={settings.sender_name}
-            onChange={(e) => setSettings({ ...settings, sender_name: e.target.value })}
-          />
-          <input
-            className="input-field"
-            placeholder="Sender email"
-            value={settings.sender_email}
-            onChange={(e) => setSettings({ ...settings, sender_email: e.target.value })}
-          />
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <h4 className="text-sm font-medium">Subscribers</h4>
+          <p className="text-[11px] text-muted">
+            {recipients.length} total
+            {selected.size ? ` · ${selected.size} selected` : ''}
+          </p>
         </div>
-        {settingsMsg && <p className="text-sm text-muted">{settingsMsg}</p>}
-        <div className="flex flex-wrap gap-2">
-          <button type="submit" className="btn-primary px-4 py-2.5 min-h-[44px] rounded-lg">
-            Save settings
-          </button>
-          <button
-            type="button"
-            disabled={testing}
-            onClick={handleTestConnection}
-            className="btn-secondary px-4 py-2.5 min-h-[44px] rounded-lg disabled:opacity-50"
-          >
-            {testing ? 'Testing…' : 'Test connection'}
-          </button>
-        </div>
-      </form>
-
-      <section className="space-y-2">
-        <h4 className="text-sm font-medium">Recipients (CSV)</h4>
-        <p className="text-[11px] text-muted">Required columns: first_name, email</p>
+        <p className="text-[11px] text-muted">CSV columns: first_name, email. Uploading replaces the list.</p>
         <input
           type="file"
           accept=".csv,text/csv"
@@ -319,62 +321,118 @@ export default function BoardEmailOutreach({ boards }) {
         />
         {uploadMsg && <p className="text-sm text-muted">{uploadMsg}</p>}
         {recipients.length > 0 && (
-          <div className="border border-border rounded-lg overflow-x-auto max-h-48 overflow-y-auto">
-            <table className="w-full text-sm min-w-[280px]">
-              <thead className="bg-surface sticky top-0">
-                <tr>
-                  <th className="p-2 text-left w-10">
-                    <input
-                      type="checkbox"
-                      checked={selected.size === recipients.length && recipients.length > 0}
-                      onChange={toggleAll}
-                      aria-label="Select all recipients"
-                      className="min-w-[20px] min-h-[20px]"
-                    />
-                  </th>
-                  <th className="p-2 text-left">First name</th>
-                  <th className="p-2 text-left">Email</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recipients.map((r) => (
-                  <tr key={r.recipient_id} className="border-t border-border">
-                    <td className="p-2">
+          <>
+            <input
+              className="input-field w-full"
+              placeholder="Search name or email"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search subscribers"
+            />
+            <div className="border border-border rounded-lg overflow-x-auto max-h-64 overflow-y-auto">
+              <table className="w-full text-sm min-w-[280px]">
+                <thead className="bg-surface sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left w-10">
                       <input
                         type="checkbox"
-                        checked={selected.has(r.recipient_id)}
-                        onChange={() => toggleRecipient(r.recipient_id)}
+                        checked={allVisibleSelected}
+                        onChange={toggleAllVisible}
+                        aria-label="Select visible subscribers"
                         className="min-w-[20px] min-h-[20px]"
                       />
-                    </td>
-                    <td className="p-2">{r.first_name}</td>
-                    <td className="p-2 break-all">{r.email}</td>
+                    </th>
+                    <th className="p-2 text-left">Name</th>
+                    <th className="p-2 text-left">Email</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {visibleRecipients.map((r) => (
+                    <tr key={r.recipient_id} className="border-t border-border">
+                      <td className="p-2">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.recipient_id)}
+                          onChange={() => toggleRecipient(r.recipient_id)}
+                          aria-label={`Select ${r.email}`}
+                          className="min-w-[20px] min-h-[20px]"
+                        />
+                      </td>
+                      <td className="p-2">{r.first_name}</td>
+                      <td className="p-2 break-all">{r.email}</td>
+                    </tr>
+                  ))}
+                  {visibleRecipients.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="p-3 text-sm text-muted">
+                        No subscribers match that search.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
 
-      <section className="space-y-2">
-        <h4 className="text-sm font-medium">Email draft</h4>
-        <p className="text-[11px] text-muted">Use {'{{first_name}}'} in subject and body.</p>
+      <section className="space-y-3 border border-border rounded-lg p-3">
+        <h4 className="text-sm font-medium">Email</h4>
+        <label className="block text-[11px] text-muted" htmlFor="outreach-purpose">
+          What is this email for?
+        </label>
+        <textarea
+          id="outreach-purpose"
+          className="input-field w-full resize-y min-h-[88px]"
+          placeholder="Invite founders to next month’s portfolio update and ask them to reply with one metric."
+          value={purpose}
+          onChange={(e) => setPurpose(e.target.value)}
+          rows={3}
+        />
+        <label className="block text-[11px] text-muted" htmlFor="outreach-tone">
+          Tone
+        </label>
+        <select
+          id="outreach-tone"
+          className="input-field"
+          value={tone}
+          onChange={(e) => setTone(e.target.value)}
+        >
+          {TONES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={generating || !purpose.trim()}
+          onClick={handleGenerate}
+          className="btn-primary px-4 py-2.5 min-h-[44px] rounded-lg disabled:opacity-50"
+        >
+          {generating ? 'Generating…' : 'Generate draft'}
+        </button>
+        <p className="text-[11px] text-muted">
+          The draft uses {'{{first_name}}'}. Edit the subject and body before sending.
+        </p>
         <input
           className="input-field w-full"
           placeholder="Subject"
+          aria-label="Email subject"
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
         />
         <textarea
-          className="input-field w-full resize-y min-h-[120px]"
+          className="input-field w-full resize-y min-h-[140px]"
           placeholder="Body"
+          aria-label="Email body"
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          rows={6}
+          rows={8}
         />
         {preview && (
           <div className="text-sm bg-surface border border-border rounded-lg p-3 whitespace-pre-wrap break-words">
+            <p className="text-[11px] text-muted mb-1">Preview with the name filled in</p>
             <p className="font-medium mb-1">{preview.subject}</p>
             {preview.body}
           </div>
@@ -389,14 +447,93 @@ export default function BoardEmailOutreach({ boards }) {
           </button>
           <button
             type="button"
-            disabled={sending}
+            disabled={sending || !selected.size}
             onClick={handleSend}
             className="btn-primary px-4 py-2.5 min-h-[44px] rounded-lg disabled:opacity-50"
           >
-            {sending ? 'Sending…' : 'Send to selected'}
+            {sending ? 'Sending…' : selected.size ? `Send to ${selectedLabel}` : 'Send'}
           </button>
         </div>
       </section>
+
+      <details className="border border-border rounded-lg p-3">
+        <summary className="text-sm font-medium cursor-pointer">Sending account</summary>
+        <form onSubmit={handleSaveSettings} className="space-y-3 mt-3">
+          <p className="text-[11px] text-muted leading-relaxed">
+            Gmail / Google Workspace: use smtp.gmail.com, port 587, STARTTLS, and a 16-character App
+            Password (requires 2FA on the Google account).
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input
+              className="input-field"
+              placeholder="SMTP host"
+              aria-label="SMTP host"
+              value={settings.smtp_host}
+              onChange={(e) => setSettings({ ...settings, smtp_host: e.target.value })}
+            />
+            <input
+              className="input-field"
+              type="number"
+              placeholder="Port"
+              aria-label="SMTP port"
+              value={settings.smtp_port}
+              onChange={(e) => setSettings({ ...settings, smtp_port: Number(e.target.value) })}
+            />
+            <select
+              className="input-field"
+              aria-label="SMTP security"
+              value={settings.security}
+              onChange={(e) => setSettings({ ...settings, security: e.target.value })}
+            >
+              <option value="starttls">STARTTLS (587)</option>
+              <option value="ssl">SSL (465)</option>
+            </select>
+            <input
+              className="input-field"
+              placeholder="Username"
+              aria-label="SMTP username"
+              value={settings.username}
+              onChange={(e) => setSettings({ ...settings, username: e.target.value })}
+            />
+            <input
+              className="input-field sm:col-span-2"
+              type="password"
+              placeholder="Password / App password"
+              aria-label="SMTP password"
+              value={settings.password}
+              onChange={(e) => setSettings({ ...settings, password: e.target.value })}
+            />
+            <input
+              className="input-field"
+              placeholder="Sender name"
+              aria-label="Sender name"
+              value={settings.sender_name}
+              onChange={(e) => setSettings({ ...settings, sender_name: e.target.value })}
+            />
+            <input
+              className="input-field"
+              placeholder="Sender email"
+              aria-label="Sender email"
+              value={settings.sender_email}
+              onChange={(e) => setSettings({ ...settings, sender_email: e.target.value })}
+            />
+          </div>
+          {settingsMsg && <p className="text-sm text-muted">{settingsMsg}</p>}
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="btn-primary px-4 py-2.5 min-h-[44px] rounded-lg">
+              Save settings
+            </button>
+            <button
+              type="button"
+              disabled={testing}
+              onClick={handleTestConnection}
+              className="btn-secondary px-4 py-2.5 min-h-[44px] rounded-lg disabled:opacity-50"
+            >
+              {testing ? 'Testing…' : 'Test connection'}
+            </button>
+          </div>
+        </form>
+      </details>
     </div>
   )
 }
