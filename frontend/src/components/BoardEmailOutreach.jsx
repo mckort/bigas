@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchBoardEmailDraft,
   fetchBoardEmailSettings,
@@ -50,6 +50,19 @@ function formatSendProgress(campaign) {
       text: total ? `Sending ${sent} of ${total}${failedNote}` : 'Sending…',
     }
   }
+  const isCampaignError = status === 'failed' || status === 'error'
+  if (isCampaignError) {
+    const errorMsg = (campaign?.error || '').trim()
+    let text = errorMsg
+    if (!text) {
+      text = total
+        ? `Send failed. Sent to ${sent} of ${total}${failed ? ` (${failed} could not be sent).` : '.'}`
+        : 'Send failed.'
+    } else if (total) {
+      text = `${errorMsg} Sent to ${sent} of ${total}.`
+    }
+    return { phase: 'error', sent, failed, total, text, error: errorMsg }
+  }
   if (!total) {
     return { phase: 'done', sent, failed, total, text: 'Sending done.' }
   }
@@ -77,7 +90,7 @@ function formatUploadMessage(res) {
   if (!invalid.length) return added
   const reasons = [...new Set(invalid.map((row) => row.error).filter(Boolean))]
   if (invalid.length === 1 && invalid[0].row === 0 && reasons.length === 1) {
-    return `${added} (${reasons[0]})`
+    return reasons[0]
   }
   const reasonText = reasons.length ? `: ${reasons.join('; ')}` : ''
   return `${added} (${invalid.length} invalid rows skipped${reasonText})`
@@ -102,6 +115,20 @@ export default function BoardEmailOutreach({ boards }) {
   const [generating, setGenerating] = useState(false)
   const [sending, setSending] = useState(false)
   const [sendProgress, setSendProgress] = useState(null)
+  const pollAbortRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      pollAbortRef.current?.abort()
+    }
+  }, [])
+
+  useEffect(() => {
+    pollAbortRef.current?.abort()
+    pollAbortRef.current = null
+    setSendProgress(null)
+    setSending(false)
+  }, [boardId])
 
   useEffect(() => {
     fetchOutboundEmailEnabled()
@@ -295,10 +322,15 @@ export default function BoardEmailOutreach({ boards }) {
   }
 
   async function handleSend() {
+    if (sending) return
     if (!selected.size) {
       setSendMsg('Select at least one subscriber.')
       return
     }
+    pollAbortRef.current?.abort()
+    const pollController = new AbortController()
+    pollAbortRef.current = pollController
+    const { signal } = pollController
     setSending(true)
     setSendMsg('')
     setSendProgress(null)
@@ -308,14 +340,18 @@ export default function BoardEmailOutreach({ boards }) {
         body,
         recipient_ids: [...selected],
       })
+      if (signal.aborted) return
       const campaignId = res.campaign?.campaign_id
       if (res.campaign) setSendProgress(formatSendProgress(res.campaign))
       if (campaignId) {
         const final = await pollBoardCampaign(boardId, campaignId, {
+          signal,
           onUpdate: (update) => {
+            if (signal.aborted) return
             if (update.campaign) setSendProgress(formatSendProgress(update.campaign))
           },
         })
+        if (signal.aborted) return
         const progress = formatSendProgress(final.campaign)
         if (progress.phase === 'sending') {
           setSendProgress({
@@ -329,9 +365,15 @@ export default function BoardEmailOutreach({ boards }) {
         }
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return
       setSendMsg(err.message)
     } finally {
-      setSending(false)
+      if (pollAbortRef.current === pollController) {
+        pollAbortRef.current = null
+      }
+      if (!signal.aborted) {
+        setSending(false)
+      }
     }
   }
 
@@ -497,16 +539,30 @@ export default function BoardEmailOutreach({ boards }) {
             role="status"
             aria-live="polite"
             className={`rounded-lg border px-3 py-2 ${
-              sendProgress.phase === 'done' ? 'border-accent/40 bg-accent-muted' : 'border-border bg-surface'
+              sendProgress.phase === 'done'
+                ? 'border-accent/40 bg-accent-muted'
+                : sendProgress.phase === 'error'
+                  ? 'border-red-200 bg-red-50 dark:bg-red-950/40 dark:border-red-800'
+                  : 'border-border bg-surface'
             }`}
           >
-            <p className={`text-sm ${sendProgress.phase === 'done' ? 'font-medium text-text' : 'text-muted'}`}>
+            <p
+              className={`text-sm ${
+                sendProgress.phase === 'done'
+                  ? 'font-medium text-text'
+                  : sendProgress.phase === 'error'
+                    ? 'font-medium text-red-800 dark:text-red-200'
+                    : 'text-muted'
+              }`}
+            >
               {sendProgress.text}
             </p>
             {sendProgress.total > 0 && (
               <div className="mt-2 h-1.5 rounded-full bg-border overflow-hidden" aria-hidden="true">
                 <div
-                  className="h-full bg-accent transition-[width] duration-300"
+                  className={`h-full transition-[width] duration-300 ${
+                    sendProgress.phase === 'error' ? 'bg-red-500' : 'bg-accent'
+                  }`}
                   style={{
                     width: `${Math.min(
                       100,

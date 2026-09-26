@@ -63,12 +63,36 @@ def _parse_iso_timestamp(value: str) -> Optional[datetime]:
         return None
 
 
+def _delimiter_count_outside_quotes(line: str, delimiter: str) -> int:
+    count = 0
+    in_quotes = False
+    i = 0
+    while i < len(line):
+        char = line[i]
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == delimiter and not in_quotes:
+            count += 1
+        i += 1
+    return count
+
+
 def _detect_csv_delimiter(text: str) -> str:
     """Prefer semicolon when the first row uses it more than commas (Excel locales)."""
     for line in text.splitlines():
         if line.strip():
-            if line.count(";") > line.count(","):
+            semi = _delimiter_count_outside_quotes(line, ";")
+            comma = _delimiter_count_outside_quotes(line, ",")
+            if semi > comma:
                 return ";"
+            if comma > semi:
+                return ","
+            try:
+                dialect = csv.Sniffer().sniff(line, delimiters=";,")
+                if dialect.delimiter in (";", ","):
+                    return dialect.delimiter
+            except csv.Error:
+                pass
             return ","
     return ","
 
@@ -145,6 +169,12 @@ def parse_recipient_csv(text: str) -> Tuple[List[Dict[str, Any]], List[Dict[str,
         email_index = header_index["email"]
         data_rows = parsed_rows[1:]
     elif len(first_cells) >= 2 and validate_email_address(first_cells[1]):
+        name_index = 0
+        email_index = 1
+        data_rows = parsed_rows
+    elif any(
+        len(cells) >= 2 and validate_email_address(cells[1]) for _idx, cells in parsed_rows
+    ):
         name_index = 0
         email_index = 1
         data_rows = parsed_rows

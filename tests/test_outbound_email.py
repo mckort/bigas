@@ -83,6 +83,22 @@ class TestTemplateAndCsv:
         assert valid == []
         assert invalid == [{"row": 0, "error": "CSV must include columns: first_name, email"}]
 
+    def test_csv_parser_headerless_invalid_first_row_still_parses_rest(self):
+        csv_text = "Bad;not-an-email\nJane;jane@example.com\n"
+        valid, invalid = parse_recipient_csv(csv_text)
+        assert len(valid) == 1
+        assert valid[0]["email"] == "jane@example.com"
+        assert len(invalid) == 1
+        assert invalid[0]["row"] == 1
+
+    def test_csv_parser_semicolon_with_comma_in_quoted_name(self):
+        csv_text = '"Smith, Jane";jane@example.com\nBob;bob@example.com\n'
+        valid, invalid = parse_recipient_csv(csv_text)
+        assert invalid == []
+        assert len(valid) == 2
+        assert valid[0]["first_name"] == "Smith, Jane"
+        assert valid[0]["email"] == "jane@example.com"
+
 
 class TestOutboundApi:
     def test_enabled_flag_bypasses_access_key(self, client, monkeypatch):

@@ -376,22 +376,49 @@ export async function fetchBoardCampaign(boardId, campaignId) {
   return apiFetch(`/api/boards/${boardId}/campaigns/${campaignId}`)
 }
 
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError')
+  }
+}
+
+function delayMsWithAbort(ms, signal) {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
+}
+
 export async function pollBoardCampaign(
   boardId,
   campaignId,
-  { attempts = 2400, delayMs = 1000, onUpdate } = {},
+  { attempts = 2400, delayMs = 1000, onUpdate, signal } = {},
 ) {
   let latest = null
   for (let i = 0; i < attempts; i += 1) {
+    throwIfAborted(signal)
     latest = await fetchBoardCampaign(boardId, campaignId)
+    throwIfAborted(signal)
     if (onUpdate) onUpdate(latest)
     const status = latest.campaign?.status
     if (status && !['pending', 'in_progress'].includes(status)) {
       return latest
     }
-    await new Promise((r) => setTimeout(r, delayMs))
+    await delayMsWithAbort(delayMs, signal)
   }
-  latest = await fetchBoardCampaign(boardId, campaignId)
-  if (onUpdate) onUpdate(latest)
   return latest
 }
