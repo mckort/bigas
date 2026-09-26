@@ -1495,12 +1495,12 @@ def continue_after_main_ready(
         "extra_commit_count": len(extra),
         "site_urls": risk.get("site_urls") or [],
     }
-    from bigas.resources.devops.pipeline import _set_pending
+    from bigas.resources.devops.pipeline import _set_pending, plain_risk_clause
 
     _set_pending(thread_id, pending)
     reasons = []
     if risk_level in ("high", "medium"):
-        reasons.append(f"risk level is **{risk_level}**")
+        reasons.append(f"risk level is **{risk_level}**{plain_risk_clause(risk)}")
     if open_tickets:
         reasons.append(f"**{len(open_tickets)} open ticket(s)** would be left out")
     if missing:
