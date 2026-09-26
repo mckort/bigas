@@ -26,6 +26,7 @@ from bigas.resources.devops.pipeline import (
     expire_stale_deploy_poll,
     is_confirm,
     is_deploy_start,
+    plain_risk_clause,
     poll_deploy_postcheck,
     resume_deploy_postcheck_from_workflow,
     run_chat_deploy_pipeline,
@@ -127,6 +128,30 @@ def test_pipeline_posts_precheck_then_triggers(monkeypatch):
     assert "HTTP 200" in blob
 
 
+def test_plain_risk_clause_names_files_and_truncates():
+    clause = plain_risk_clause(
+        {
+            "findings": {
+                "database_migration": ["db/migrations/002.sql"],
+                "dependency_change": [f"lock-{i}" for i in range(6)],
+                "infrastructure_config": [".github/workflows/deploy.yml"],
+            }
+        }
+    )
+    assert clause == (
+        " because this deploy changes the database (`db/migrations/002.sql`), "
+        "updates dependencies (`lock-0`, `lock-1`, `lock-2`, `lock-3`, `lock-4`, and 1 more), "
+        "and changes deploy configuration (`.github/workflows/deploy.yml`)"
+    )
+    assert plain_risk_clause({"findings": {}}) == ""
+    assert plain_risk_clause(
+        {"findings": {"other_risky": ["prod.env"]}}
+    ) == (
+        " because this deploy touches files that look like secrets or production settings "
+        "(`prod.env`)"
+    )
+
+
 def test_pipeline_asks_confirmation_on_high_risk(monkeypatch):
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
@@ -158,6 +183,12 @@ def test_pipeline_asks_confirmation_on_high_risk(monkeypatch):
     assert pending and pending["risk_level"] == "high"
     contents = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
     assert "yes" in contents.lower()
+    assert "Database changes: `db/migrations/002.sql`" in contents
+    assert (
+        "Risk level is **high** because this deploy changes the database "
+        "(`db/migrations/002.sql`). Reply **yes** to deploy anyway, or **no** to cancel."
+        in contents
+    )
 
     monkeypatch.setattr(
         "bigas.resources.devops.pipeline.trigger_deployment",

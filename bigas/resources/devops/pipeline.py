@@ -179,14 +179,65 @@ def _format_remaining_runs(triggered: List[Dict[str, Any]], done_ids: set) -> st
     return ", ".join(leftover)
 
 
+_RISK_FINDINGS = (
+    ("database_migration", "Database changes", "changes the database"),
+    ("dependency_change", "Dependency updates", "updates dependencies"),
+    ("infrastructure_config", "Deploy configuration", "changes deploy configuration"),
+    (
+        "other_risky",
+        "Secrets or production settings",
+        "touches files that look like secrets or production settings",
+    ),
+)
+
+
+def _finding_paths(findings: Dict[str, Any], key: str) -> List[str]:
+    paths: List[str] = []
+    for item in findings.get(key) or []:
+        path = str(item).strip()
+        if path and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _quoted_paths(paths: List[str], limit: int) -> str:
+    shown = paths[:limit]
+    text = ", ".join(f"`{path}`" for path in shown)
+    extra = len(paths) - len(shown)
+    if extra:
+        text += f", and {extra} more"
+    return text
+
+
+def _join_clauses(parts: List[str]) -> str:
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return ", ".join(parts[:-1]) + ", and " + parts[-1]
+
+
+def plain_risk_clause(risk: Dict[str, Any]) -> str:
+    """' because this deploy …' for a high or medium confirmation, or empty."""
+    findings = risk.get("findings") or {}
+    parts: List[str] = []
+    for key, _label, verb in _RISK_FINDINGS:
+        paths = _finding_paths(findings, key)
+        if paths:
+            parts.append(f"{verb} ({_quoted_paths(paths, 5)})")
+    if not parts:
+        return ""
+    return " because this deploy " + _join_clauses(parts)
+
+
 def _format_risk_for_chat(risk: Dict[str, Any]) -> str:
     lines = ["**Pre-check complete.**", risk.get("summary") or ""]
     findings = risk.get("findings") or {}
     risky = []
-    for key in ("database_migration", "dependency_change", "infrastructure_config", "other_risky"):
-        items = findings.get(key) or []
-        if items:
-            risky.append(f"- {key}: " + ", ".join(items[:8]))
+    for key, label, _verb in _RISK_FINDINGS:
+        paths = _finding_paths(findings, key)
+        if paths:
+            risky.append(f"- {label}: {_quoted_paths(paths, 8)}")
     if risky:
         lines.append("Changed risk files:")
         lines.extend(risky)
@@ -854,7 +905,8 @@ def run_chat_deploy_pipeline(
         )
         _post(
             thread_id,
-            f"Risk level is **{risk_level}**. Reply **yes** to deploy anyway, or **no** to cancel.",
+            f"Risk level is **{risk_level}**{plain_risk_clause(risk)}. "
+            "Reply **yes** to deploy anyway, or **no** to cancel.",
         )
         return {"status": "complete", "summary": risk.get("summary") or ""}
 

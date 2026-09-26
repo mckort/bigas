@@ -428,6 +428,11 @@ def test_prepare_asks_on_medium_risk(monkeypatch):
     assert pending and pending["risk_level"] == "high"
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
     assert "high" in blob.lower()
+    assert (
+        "risk level is **high** because this deploy changes the database "
+        "(`db/migrations/002.sql`)"
+        in blob
+    )
 
 
 def test_prepare_asks_when_final_approval_matches_git(monkeypatch):
