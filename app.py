@@ -203,6 +203,7 @@ def create_app():
         "/mcp/tools/github_workflow_run",
         "/openapi.json",
         "/api/auth/config",
+        "/api/outbound-email/enabled",
     }
 
     def _is_public_path(path: str) -> bool:
