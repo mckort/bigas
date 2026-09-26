@@ -33,6 +33,56 @@ function emptySettings() {
   }
 }
 
+function formatSendProgress(campaign) {
+  const counts = campaign?.counts || {}
+  const sent = Number(counts.sent) || 0
+  const failed = Number(counts.failed) || 0
+  const total = Number(counts.total) || 0
+  const status = campaign?.status
+  const stillSending = !status || status === 'pending' || status === 'in_progress'
+  if (stillSending) {
+    const failedNote = failed ? ` (${failed} failed)` : ''
+    return {
+      phase: 'sending',
+      sent,
+      failed,
+      total,
+      text: total ? `Sending ${sent} of ${total}${failedNote}` : 'Sending…',
+    }
+  }
+  if (!total) {
+    return { phase: 'done', sent, failed, total, text: 'Sending done.' }
+  }
+  if (failed > 0) {
+    return {
+      phase: 'done',
+      sent,
+      failed,
+      total,
+      text: `Sending done. Sent to ${sent} of ${total}. ${failed} could not be sent.`,
+    }
+  }
+  return {
+    phase: 'done',
+    sent,
+    failed,
+    total,
+    text: `Sending done. Sent to ${sent} of ${total}.`,
+  }
+}
+
+function formatUploadMessage(res) {
+  const added = `Added ${res.added} subscribers`
+  const invalid = res.invalid_rows || []
+  if (!invalid.length) return added
+  const reasons = [...new Set(invalid.map((row) => row.error).filter(Boolean))]
+  if (invalid.length === 1 && invalid[0].row === 0 && reasons.length === 1) {
+    return `${added} (${reasons[0]})`
+  }
+  const reasonText = reasons.length ? `: ${reasons.join('; ')}` : ''
+  return `${added} (${invalid.length} invalid rows skipped${reasonText})`
+}
+
 export default function BoardEmailOutreach({ boards }) {
   const [enabled, setEnabled] = useState(false)
   const [boardId, setBoardId] = useState('')
@@ -51,6 +101,7 @@ export default function BoardEmailOutreach({ boards }) {
   const [sendMsg, setSendMsg] = useState('')
   const [generating, setGenerating] = useState(false)
   const [sending, setSending] = useState(false)
+  const [sendProgress, setSendProgress] = useState(null)
 
   useEffect(() => {
     fetchOutboundEmailEnabled()
@@ -188,10 +239,7 @@ export default function BoardEmailOutreach({ boards }) {
       setRecipients(res.recipients || [])
       setSelected(new Set())
       setSearch('')
-      setUploadMsg(
-        `Added ${res.added} subscribers` +
-          (res.invalid_rows?.length ? ` (${res.invalid_rows.length} invalid rows skipped)` : ''),
-      )
+      setUploadMsg(formatUploadMessage(res))
     } catch (err) {
       setUploadMsg(err.message)
     }
@@ -253,6 +301,7 @@ export default function BoardEmailOutreach({ boards }) {
     }
     setSending(true)
     setSendMsg('')
+    setSendProgress(null)
     try {
       const res = await sendBoardCampaign(boardId, {
         subject,
@@ -260,21 +309,23 @@ export default function BoardEmailOutreach({ boards }) {
         recipient_ids: [...selected],
       })
       const campaignId = res.campaign?.campaign_id
-      setSendMsg('Sending started…')
+      if (res.campaign) setSendProgress(formatSendProgress(res.campaign))
       if (campaignId) {
-        const final = await pollBoardCampaign(boardId, campaignId)
-        const status = final.campaign?.status
-        const counts = final.campaign?.counts
-        if (status === 'in_progress' || status === 'pending') {
-          setSendMsg(
-            'Send is still in progress. Refresh the page or check campaign status again shortly.',
-          )
-        } else if (counts) {
-          setSendMsg(
-            `Done: ${counts.sent} sent, ${counts.failed} failed, ${counts.pending} pending.`,
-          )
+        const final = await pollBoardCampaign(boardId, campaignId, {
+          onUpdate: (update) => {
+            if (update.campaign) setSendProgress(formatSendProgress(update.campaign))
+          },
+        })
+        const progress = formatSendProgress(final.campaign)
+        if (progress.phase === 'sending') {
+          setSendProgress({
+            ...progress,
+            text: progress.total
+              ? `Sending is still going. Sent ${progress.sent} of ${progress.total} so far.`
+              : 'Sending is still going.',
+          })
         } else {
-          setSendMsg('Campaign finished.')
+          setSendProgress(progress)
         }
       }
     } catch (err) {
@@ -314,7 +365,9 @@ export default function BoardEmailOutreach({ boards }) {
             {selected.size ? ` · ${selected.size} selected` : ''}
           </p>
         </div>
-        <p className="text-[11px] text-muted">CSV columns: first_name, email. Uploading replaces the list.</p>
+        <p className="text-[11px] text-muted">
+          CSV columns: first_name, email. Comma or semicolon; a header row is optional. Uploading replaces the list.
+        </p>
         <input
           type="file"
           accept=".csv,text/csv"
@@ -439,6 +492,32 @@ export default function BoardEmailOutreach({ boards }) {
             {preview.body}
           </div>
         )}
+        {sendProgress && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`rounded-lg border px-3 py-2 ${
+              sendProgress.phase === 'done' ? 'border-accent/40 bg-accent-muted' : 'border-border bg-surface'
+            }`}
+          >
+            <p className={`text-sm ${sendProgress.phase === 'done' ? 'font-medium text-text' : 'text-muted'}`}>
+              {sendProgress.text}
+            </p>
+            {sendProgress.total > 0 && (
+              <div className="mt-2 h-1.5 rounded-full bg-border overflow-hidden" aria-hidden="true">
+                <div
+                  className="h-full bg-accent transition-[width] duration-300"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(((sendProgress.sent + sendProgress.failed) / sendProgress.total) * 100),
+                    )}%`,
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
         {sendMsg && <p className="text-sm text-muted">{sendMsg}</p>}
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={handleSaveDraft} className="btn-secondary px-4 py-2.5 min-h-[44px] rounded-lg">
@@ -453,7 +532,13 @@ export default function BoardEmailOutreach({ boards }) {
             onClick={handleSend}
             className="btn-primary px-4 py-2.5 min-h-[44px] rounded-lg disabled:opacity-50"
           >
-            {sending ? 'Sending…' : selected.size ? `Send to ${selectedLabel}` : 'Send'}
+            {sending
+              ? sendProgress?.total
+                ? `Sending ${sendProgress.sent} of ${sendProgress.total}`
+                : 'Sending…'
+              : selected.size
+                ? `Send to ${selectedLabel}`
+                : 'Send'}
           </button>
         </div>
       </section>

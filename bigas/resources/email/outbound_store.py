@@ -63,8 +63,19 @@ def _parse_iso_timestamp(value: str) -> Optional[datetime]:
         return None
 
 
-def _normalize_headers(row: Dict[str, str]) -> Dict[str, str]:
-    return {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+def _detect_csv_delimiter(text: str) -> str:
+    """Prefer semicolon when the first row uses it more than commas (Excel locales)."""
+    for line in text.splitlines():
+        if line.strip():
+            if line.count(";") > line.count(","):
+                return ";"
+            return ","
+    return ","
+
+
+def _cells_are_name_email_header(cells: List[str]) -> bool:
+    headers = {(cell or "").strip().lower() for cell in cells if (cell or "").strip()}
+    return "first_name" in headers and "email" in headers
 
 
 def compose_draft(
@@ -103,18 +114,41 @@ def compose_draft(
 
 
 def parse_recipient_csv(text: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Parse CSV with first_name and email columns. Returns (valid_rows, invalid_rows)."""
+    """Parse CSV with first_name and email columns. Returns (valid_rows, invalid_rows).
+
+    Accepts comma or semicolon separators. A header row is optional when each data
+    row is two columns: first name, then email.
+    """
     valid: List[Dict[str, Any]] = []
     invalid: List[Dict[str, Any]] = []
-    if not (text or "").strip():
+    raw_text = (text or "").lstrip("\ufeff")
+    if not raw_text.strip():
         return valid, [{"row": 0, "error": "Empty file"}]
 
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        return valid, [{"row": 0, "error": "Missing header row"}]
+    delimiter = _detect_csv_delimiter(raw_text)
+    parsed_rows: List[Tuple[int, List[str]]] = []
+    for idx, raw in enumerate(csv.reader(io.StringIO(raw_text), delimiter=delimiter), start=1):
+        cells = [(cell or "").strip() for cell in raw]
+        if not any(cells):
+            continue
+        parsed_rows.append((idx, cells))
 
-    headers = {h.strip().lower() for h in reader.fieldnames if h}
-    if "email" not in headers or "first_name" not in headers:
+    if not parsed_rows:
+        return valid, [{"row": 0, "error": "Empty file"}]
+
+    _first_idx, first_cells = parsed_rows[0]
+    if _cells_are_name_email_header(first_cells):
+        header_index = {
+            name.strip().lower(): index for index, name in enumerate(first_cells) if name.strip()
+        }
+        name_index = header_index["first_name"]
+        email_index = header_index["email"]
+        data_rows = parsed_rows[1:]
+    elif len(first_cells) >= 2 and validate_email_address(first_cells[1]):
+        name_index = 0
+        email_index = 1
+        data_rows = parsed_rows
+    else:
         return valid, [
             {
                 "row": 0,
@@ -122,10 +156,9 @@ def parse_recipient_csv(text: str) -> Tuple[List[Dict[str, Any]], List[Dict[str,
             }
         ]
 
-    for idx, raw in enumerate(reader, start=2):
-        row = _normalize_headers(raw)
-        first_name = row.get("first_name", "")
-        email = row.get("email", "")
+    for idx, cells in data_rows:
+        first_name = cells[name_index] if name_index < len(cells) else ""
+        email = cells[email_index] if email_index < len(cells) else ""
         if not first_name:
             invalid.append({"row": idx, "email": email, "error": "first_name is required"})
             continue

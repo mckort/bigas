@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,6 +60,28 @@ class TestTemplateAndCsv:
         assert len(valid) == 1
         assert valid[0]["first_name"] == "Jane"
         assert len(invalid) == 2
+
+    def test_csv_parser_semicolon_without_header(self):
+        csv_text = "Marcus;mckort@gmail.com\nMarcus2;marcus@scaleupadvisor.io\n"
+        valid, invalid = parse_recipient_csv(csv_text)
+        assert invalid == []
+        assert [row["first_name"] for row in valid] == ["Marcus", "Marcus2"]
+        assert [row["email"] for row in valid] == [
+            "mckort@gmail.com",
+            "marcus@scaleupadvisor.io",
+        ]
+
+    def test_csv_parser_semicolon_with_header(self):
+        csv_text = "first_name;email\nJane;jane@example.com\n"
+        valid, invalid = parse_recipient_csv(csv_text)
+        assert invalid == []
+        assert valid[0]["first_name"] == "Jane"
+        assert valid[0]["email"] == "jane@example.com"
+
+    def test_csv_parser_rejects_single_column_with_reason(self):
+        valid, invalid = parse_recipient_csv("just-a-name\n")
+        assert valid == []
+        assert invalid == [{"row": 0, "error": "CSV must include columns: first_name, email"}]
 
 
 class TestOutboundApi:
@@ -162,8 +186,6 @@ class TestOutboundApi:
             assert send.status_code == 202
             campaign_id = send.get_json()["campaign"]["campaign_id"]
 
-            import time
-
             for _ in range(30):
                 status = client.get(
                     f"/api/boards/{board_id}/campaigns/{campaign_id}",
@@ -178,6 +200,85 @@ class TestOutboundApi:
             args = mock_provider.send_email.call_args_list[0].kwargs
             assert args["subject"] == "Hello Alex"
             assert "Hi Alex" in args["body"]
+
+    def test_campaign_status_counts_up_while_sending(self, client):
+        board_id = _setup_board()
+        headers = _auth_headers()
+        client.put(
+            f"/api/boards/{board_id}/email-settings",
+            headers=headers,
+            json={
+                "smtp_host": "smtp.test.local",
+                "smtp_port": 587,
+                "security": "starttls",
+                "username": "user@test.local",
+                "password": "secret",
+                "sender_email": "user@test.local",
+                "sender_name": "Tester",
+            },
+        )
+        client.post(
+            f"/api/boards/{board_id}/recipients?replace=true",
+            headers=headers,
+            json={"csv": "first_name,email\nAlex,alex@example.com\nSam,sam@example.com\n"},
+        )
+
+        release_second = threading.Event()
+        second_started = threading.Event()
+
+        def send_email(**kwargs):
+            if kwargs.get("to_email") == "sam@example.com":
+                second_started.set()
+                assert release_second.wait(3)
+            return "<msg@test>"
+
+        mock_provider = MagicMock()
+        mock_provider.send_email.side_effect = send_email
+
+        with patch(
+            "bigas.resources.email.outbound_service.config_for_provider",
+            return_value=mock_provider,
+        ), patch("bigas.resources.email.outbound_service.time.sleep", return_value=None):
+            send = client.post(
+                f"/api/boards/{board_id}/campaigns/send",
+                headers=headers,
+                json={
+                    "subject": "Hello {{first_name}}",
+                    "body": "Hi {{first_name}},",
+                    "select_all": True,
+                },
+            )
+            assert send.status_code == 202
+            campaign_id = send.get_json()["campaign"]["campaign_id"]
+            finished = None
+            try:
+                assert second_started.wait(3)
+
+                mid = client.get(
+                    f"/api/boards/{board_id}/campaigns/{campaign_id}",
+                    headers=headers,
+                )
+                data = mid.get_json()["campaign"]
+                assert data["status"] == "in_progress"
+                assert data["counts"] == {"sent": 1, "failed": 0, "pending": 1, "total": 2}
+
+                release_second.set()
+                for _ in range(50):
+                    status = client.get(
+                        f"/api/boards/{board_id}/campaigns/{campaign_id}",
+                        headers=headers,
+                    )
+                    finished = status.get_json()["campaign"]
+                    if finished["status"] not in ("pending", "in_progress"):
+                        break
+                    time.sleep(0.02)
+            finally:
+                release_second.set()
+
+        assert finished is not None
+        assert finished["status"] == "completed"
+        assert finished["counts"]["sent"] == 2
+        assert finished["counts"]["total"] == 2
 
     def test_mcp_draft_tool_saves_draft(self, client, monkeypatch):
         board_id = _setup_board()

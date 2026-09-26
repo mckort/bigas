@@ -376,14 +376,22 @@ export async function fetchBoardCampaign(boardId, campaignId) {
   return apiFetch(`/api/boards/${boardId}/campaigns/${campaignId}`)
 }
 
-export async function pollBoardCampaign(boardId, campaignId, { attempts = 60, delayMs = 1500 } = {}) {
+export async function pollBoardCampaign(
+  boardId,
+  campaignId,
+  { attempts = 2400, delayMs = 1000, onUpdate } = {},
+) {
+  let latest = null
   for (let i = 0; i < attempts; i += 1) {
-    const res = await fetchBoardCampaign(boardId, campaignId)
-    const status = res.campaign?.status
+    latest = await fetchBoardCampaign(boardId, campaignId)
+    if (onUpdate) onUpdate(latest)
+    const status = latest.campaign?.status
     if (status && !['pending', 'in_progress'].includes(status)) {
-      return res
+      return latest
     }
     await new Promise((r) => setTimeout(r, delayMs))
   }
-  return fetchBoardCampaign(boardId, campaignId)
+  latest = await fetchBoardCampaign(boardId, campaignId)
+  if (onUpdate) onUpdate(latest)
+  return latest
 }
