@@ -61,6 +61,15 @@ class TestTemplateAndCsv:
 
 
 class TestOutboundApi:
+    def test_enabled_flag_bypasses_access_key(self, client, monkeypatch):
+        monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_MODE", "restricted")
+        monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_KEYS", {"secret-key"})
+        monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+
+        res = client.get("/api/outbound-email/enabled")
+        assert res.status_code == 200
+        assert res.get_json()["enabled"] is True
+
     def test_password_not_overwritten_by_masked_placeholder(self, client):
         board_id = _setup_board()
         headers = _auth_headers()
