@@ -9,6 +9,7 @@ import re
 from typing import Callable, List, Sequence, Tuple
 
 from bigas.resources.cto.autofix.heuristics import (
+    _section_bodies,
     review_findings_by_section,
     review_is_ready_to_merge,
 )
@@ -92,7 +93,7 @@ def _b_path(header: str) -> str:
         raw = parts[-1] if parts else rest
     else:
         idx = rest.rfind(" b/")
-        raw = rest[idx + 3 :] if idx != -1 else rest
+        raw = rest[idx + 1 :] if idx != -1 else rest
     if raw.startswith("b/"):
         raw = raw[2:]
     return raw
@@ -151,18 +152,23 @@ def review_slices(
     return slices
 
 
+def _finding_chunks(text: str) -> List[str]:
+    body = (text or "").strip()
+    if not body:
+        return []
+    return [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+
+
 def _dedupe(items: Sequence[str]) -> List[str]:
     seen = set()
     unique: List[str] = []
     for item in items:
-        text = (item or "").strip()
-        if not text:
-            continue
-        key = re.sub(r"\s+", " ", text)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(text)
+        for chunk in _finding_chunks(item):
+            key = re.sub(r"\s+", " ", chunk)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(chunk)
     return unique
 
 
@@ -179,6 +185,8 @@ def merge_slice_reviews(parts: Sequence[str]) -> str:
                 grouped[name].append(body)
             continue
         if review_is_ready_to_merge(text):
+            continue
+        if _section_bodies(text):
             continue
         grouped["important"].append(text)
 

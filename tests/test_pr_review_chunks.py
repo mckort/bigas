@@ -49,8 +49,6 @@ None.
 
 ### Minor
 None.
-
-This slice is ready to merge.
 """
     bug = """### Blockers
 - Order cancel leaves invoices open.
@@ -73,7 +71,7 @@ None.
     merged = merge_slice_reviews([clean, bug, same])
     assert merged.count("Order cancel leaves invoices open") == 1
     assert "Toast icon is white" in merged
-    assert "ready to merge" not in merged.lower()
+    assert "### Important\n### Blockers" not in merged
     assert "Fix these findings before staging." in merged
 
 
@@ -86,8 +84,6 @@ None.
 
 ### Minor
 None.
-
-ready to merge
 """
     merged = merge_slice_reviews([clean, ""])
     assert "ready to merge" in merged.lower()
@@ -126,7 +122,14 @@ None.
     assert "Slice 2 of 2" in seen[1][1]
     assert "do not report an undefined name" in SLICE_INSTRUCTIONS
     assert "Cancel is wrong" in merged
+    assert "### Important\nNone." in merged
     assert all("yarn.lock" not in slice_diff for slice_diff, _instructions in seen)
+
+
+def test_split_parses_paths_under_top_level_b_directory():
+    diff = _file("b/order.py", "cancel\n")
+    files = split_unified_diff(diff)
+    assert [path for path, _text in files] == ["b/order.py"]
 
 
 def test_prepare_staging_autofix_receives_the_full_review(monkeypatch):
