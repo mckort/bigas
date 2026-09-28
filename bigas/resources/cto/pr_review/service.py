@@ -38,8 +38,7 @@ _CONTINUE_PROMPT = (
 
 
 # Max diff size (chars); overridable via BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS env.
-DEFAULT_MAX_DIFF_CHARS = 500_000
-# Upper bound for env override (default stays conservative; raise for large-context models).
+DEFAULT_MAX_DIFF_CHARS = 2_000_000
 MAX_DIFF_CHARS_CAP = 2_000_000
 
 
