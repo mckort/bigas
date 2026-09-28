@@ -44,6 +44,14 @@ def _post_discord_cto(message: str) -> None:
         logger.warning("Discord CTO notify failed for deploy hotfix", exc_info=True)
 
 
+def _fence(text: str) -> str:
+    """Wrap text so an inner markdown fence cannot close the block early."""
+    tick = "```"
+    while tick in (text or ""):
+        tick += "`"
+    return f"{tick}\n{text}\n{tick}"
+
+
 def build_failed_deploy_prompt(
     *,
     repo: str,
@@ -61,7 +69,7 @@ def build_failed_deploy_prompt(
         header = f"### {workflow} run #{run_id} ({conclusion})"
         if html_url:
             header += f"\n{html_url}"
-        blocks.append(f"{header}\n\n```\n{excerpt}\n```")
+        blocks.append(f"{header}\n\n{_fence(excerpt)}")
 
     failure_text = "\n\n".join(blocks) if blocks else "(no failed runs provided)"
     extra = (extra_instructions or "").strip()
