@@ -307,6 +307,7 @@ def test_pr_review_prompts_respect_project_helpers():
     for text in (PR_REVIEW_INITIAL_SYSTEM_PROMPT, PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT):
         assert "deleteField()" in text
         assert "Project helpers" in text
+        assert "If the import block is not in the diff, do not report an undefined name" in text
 
     assert "mobile/responsive" in PR_REVIEW_INITIAL_SYSTEM_PROMPT
     assert "small mobile screens" in PR_REVIEW_SYSTEM_PROMPT

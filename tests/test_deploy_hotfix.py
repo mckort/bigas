@@ -44,6 +44,24 @@ def test_failed_deploy_prompt_forbids_confirmation_and_expo_install():
     assert "32361338781" in prompt
 
 
+def test_failed_deploy_prompt_keeps_a_review_that_contains_fences():
+    review = "### Blockers\n\n```python\nname = CA_PROVINCE_CODES\n```\n\nStill here."
+    prompt = build_failed_deploy_prompt(
+        repo="Green-Promo-Wear-Global/GPW",
+        starting_ref="develop",
+        failures=[
+            {
+                "workflow": "prepare-staging review",
+                "run_id": "",
+                "conclusion": "review",
+                "excerpt": review,
+            }
+        ],
+    )
+    assert "Still here." in prompt
+    assert "CA_PROVINCE_CODES" in prompt
+
+
 def test_deploy_hotfix_summary_includes_agent_link():
     text = summarize_deploy_hotfix_result(
         {

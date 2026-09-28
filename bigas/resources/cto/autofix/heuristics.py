@@ -238,6 +238,20 @@ def _strip_section_closer(body: str) -> str:
     return "\n".join(lines).strip()
 
 
+def review_findings_by_section(review_body: str) -> dict[str, str]:
+    """Section bodies that still contain findings, with verdict closers removed."""
+    sections = _section_bodies(review_body)
+    found: dict[str, str] = {}
+    for name in ("blockers", "important", "minor"):
+        body = sections.get(name, "")
+        if not _section_has_findings(body):
+            continue
+        cleaned = _strip_section_closer(body)
+        if cleaned:
+            found[name] = cleaned
+    return found
+
+
 def review_is_nits_only(review_body: str) -> bool:
     """True when leftover findings are Minor / nits only (no Blockers or Important)."""
     body = (review_body or "").strip()

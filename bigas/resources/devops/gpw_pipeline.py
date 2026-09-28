@@ -316,6 +316,7 @@ def _require_staging_env(env: Optional[StagingEnv]) -> StagingEnv:
 def review_candidate(env: Optional[StagingEnv] = None) -> Dict[str, Any]:
     """Review the candidate branch against production. Returns shas and whether it may proceed."""
     from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
+    from bigas.resources.cto.pr_review.chunks import review_compare_diff
     from bigas.resources.cto.pr_review.service import PRReviewService
 
     env = _require_staging_env(env)
@@ -336,8 +337,14 @@ def review_candidate(env: Optional[StagingEnv] = None) -> Dict[str, Any]:
             "candidate_sha": candidate_sha,
         }
     diff = client.get_compare_diff(owner, name, env.production_branch, env.candidate_branch)
-    review = PRReviewService().review(diff)
-    body = (review.text or "").strip()
+    service = PRReviewService()
+    body = review_compare_diff(
+        diff,
+        review_slice=lambda slice_diff, instructions: service.review(
+            slice_diff,
+            instructions=instructions,
+        ).text,
+    ).strip()
     ready = review_is_ready_to_merge(body)
     pr = client.find_open_pull_request(
         owner, name, head=env.candidate_branch, base=env.production_branch
@@ -350,6 +357,17 @@ def review_candidate(env: Optional[StagingEnv] = None) -> Dict[str, Any]:
         "pr_number": (pr or {}).get("number"),
         "pr_url": (pr or {}).get("html_url") or "",
     }
+
+
+# Safety valve for the fix-agent prompt. A merged slice review stays far below this.
+_REVIEW_EXCERPT_MAX = 100_000
+
+
+def _review_excerpt(body: str) -> str:
+    text = (body or "").strip() or "(empty review)"
+    if len(text) <= _REVIEW_EXCERPT_MAX:
+        return text
+    return text[:_REVIEW_EXCERPT_MAX] + "\n\n... (review truncated for the fix agent)\n"
 
 
 def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> str:
@@ -375,13 +393,14 @@ def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> str:
                 "workflow": "prepare-staging review",
                 "run_id": "",
                 "conclusion": "review",
-                "excerpt": body[:4000] or "(empty review)",
+                "excerpt": _review_excerpt(body),
             }
         ],
         starting_ref=env.candidate_branch,
         extra_instructions=(
             f"This is a code review of {env.candidate_branch} against {env.production_branch} "
-            f"for {env.project_key}. Fix the review findings on {env.candidate_branch}. "
+            f"for {env.project_key}. Fix every finding in the review on {env.candidate_branch}, "
+            "including findings from later sections. Do not stop after the first few. "
             "Do not deploy and do not touch production."
         ),
     )

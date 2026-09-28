@@ -36,9 +36,12 @@ Project helpers / imports (avoid false blockers):
 - Do NOT flag `deleteField()` (or similar helpers) as missing/wrong solely because
   the call site does not import `FieldValue` from `firebase-admin`, if the same
   file imports the helper from a local module (e.g. `from '../firebase'`).
-- Only report an import/API blocker when the symbol is truly undefined in the
-  shown diff (no import and no local definition), or when the wrong SDK API is
-  used without a project wrapper.
+- Report a missing import or NameError only when the file's import block is
+  visible in the shown diff and the symbol is neither imported nor defined there.
+  If the import block is not in the diff, do not report an undefined name: the
+  import may already exist above the hunk.
+- Only report a wrong SDK API when the call is used without a project wrapper
+  that the shown diff already imports.
 - When re-checking a previous finding about helpers/imports, look at imports in
   the same file in the diff. If the helper is imported from the project wrapper,
   treat the finding as resolved — do not repeat it.
