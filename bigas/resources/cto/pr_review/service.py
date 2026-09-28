@@ -38,14 +38,18 @@ _CONTINUE_PROMPT = (
 
 
 # Max diff size (chars); overridable via BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS env.
+DEFAULT_MAX_DIFF_CHARS = 500_000
+MAX_DIFF_CHARS_CAP = 500_000
+
+
 def _max_diff_chars() -> int:
     raw = os.environ.get("BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS", "").strip()
     if not raw:
-        return 150_000
+        return DEFAULT_MAX_DIFF_CHARS
     try:
-        return max(10_000, min(500_000, int(raw)))
+        return max(10_000, min(MAX_DIFF_CHARS_CAP, int(raw)))
     except ValueError:
-        return 150_000
+        return DEFAULT_MAX_DIFF_CHARS
 
 
 def _max_review_tokens() -> int:

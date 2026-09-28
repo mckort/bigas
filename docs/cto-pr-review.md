@@ -63,6 +63,7 @@ Dead/unused code this PR introduced or made unused (imports, functions, helpers,
    - Optional: `BIGAS_CTO_PR_REVIEW_MODEL` to override the model (default: `gemini-3.1-pro-preview`; recommended: `gemini-pro-latest`).
    - Optional: `BIGAS_CTO_PR_REVIEW_MAX_TOKENS` (default `8000`, max `65536`) for longer reviews.
    - Optional: `BIGAS_CTO_PR_REVIEW_THINKING_BUDGET` (default `8192`) and `BIGAS_CTO_PR_REVIEW_MAX_CONTINUATIONS` (default `3`) to avoid mid-review cutoffs on Gemini thinking models.
+   - Optional: `BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS` (default `500000`, max `500000`) for how much of the diff is sent to the model.
 
 ## Request
 
@@ -135,7 +136,7 @@ If `GITHUB_TOKEN` is configured in Bigas (e.g. via Secret Manager), you can omit
 
 ## Diff size
 
-Diffs larger than 150,000 characters are truncated and a note is prepended to the review. You can change `MAX_DIFF_CHARS` in `bigas/resources/cto/pr_review/service.py` if needed.
+Diffs larger than 500,000 characters are truncated and a note is prepended to the review. Override with `BIGAS_CTO_PR_REVIEW_MAX_DIFF_CHARS` (minimum 10,000, maximum 500,000).
 
 ## Review length / tokens
 
