@@ -370,7 +370,15 @@ def _review_excerpt(body: str) -> str:
     return text[:_REVIEW_EXCERPT_MAX] + "\n\n... (review truncated for the fix agent)\n"
 
 
-def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> str:
+def _launch_note(launched: Dict[str, Any], *, on_branch: str = "") -> str:
+    url = (launched.get("agent_url") or launched.get("pr_url") or "").strip()
+    if on_branch:
+        return f"Autofix started on `{on_branch}`{(': ' + url) if url else '.'}"
+    return f"Autofix started on the open PR{(': ' + url) if url else '.'}"
+
+
+def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> Dict[str, Any]:
+    """Start one autofix round. A skipped launch is not reported as started."""
     repo = env.repo
     pr_number = result.get("pr_number")
     body = result.get("review") or ""
@@ -382,8 +390,16 @@ def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> str:
             pr_number=int(pr_number),
             review_body=body,
         )
-        url = (launched.get("agent_url") or launched.get("pr_url") or "").strip()
-        return f"Autofix started on the open PR{(': ' + url) if url else '.'}"
+        launched = dict(launched or {})
+        started = bool(launched.get("launched")) and not launched.get("skipped")
+        note = _launch_note(launched) if started else ""
+        return {
+            **launched,
+            "launched": started,
+            "note": note,
+            "pr_number": int(pr_number),
+            "follows_new_pr": False,
+        }
     from bigas.resources.cto.deploy_hotfix import launch_failed_deploy_fix
 
     launched = launch_failed_deploy_fix(
@@ -401,11 +417,22 @@ def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> str:
             f"This is a code review of {env.candidate_branch} against {env.production_branch} "
             f"for {env.project_key}. Fix every finding in the review on {env.candidate_branch}, "
             "including findings from later sections. Do not stop after the first few. "
+            "Open a pull request with the fixes. Do not merge it. "
             "Do not deploy and do not touch production."
         ),
     )
-    url = (launched.get("agent_url") or "").strip()
-    return f"Autofix started on `{env.candidate_branch}`{(': ' + url) if url else '.'}"
+    launched = dict(launched or {})
+    if "launched" in launched:
+        started = bool(launched.get("launched")) and not launched.get("skipped")
+    else:
+        started = bool(launched.get("agent_id") or launched.get("agent_url"))
+    return {
+        **launched,
+        "launched": started,
+        "note": _launch_note(launched, on_branch=env.candidate_branch) if started else "",
+        "pr_number": None,
+        "follows_new_pr": True,
+    }
 
 
 def dispatch_gpw_workflow(
@@ -465,58 +492,122 @@ def _begin_poll(
         + "\n\nI'll post here when it finishes.",
         status="in_progress",
     )
-    return {"status": "in_progress", "summary": f"{phase} started", "deploy_poll_active": True}
+    return {
+        "status": "in_progress",
+        "active": True,
+        "summary": f"{phase} started",
+        "deploy_poll_active": True,
+    }
 
 
-def _start_prepare_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str, Any]:
-    _post(
-        thread_id,
-        f"Reviewing `{env.candidate_branch}` against `{env.production_branch}` "
-        f"for **{env.project_key}** before building staging.",
-        status="in_progress",
-    )
-    try:
-        reviewed = review_candidate(env)
-    except Exception as exc:
-        logger.exception("Prepare-staging review failed for %s", env.project_key)
-        _complete_progress(thread_id)
-        _post(thread_id, f"Review failed: {exc}")
-        return {"status": "complete", "summary": str(exc)}
-    if not reviewed.get("ok"):
-        reason = (reviewed.get("reason") or "").strip()
-        if reason:
-            _complete_progress(thread_id)
-            _post(thread_id, reason)
-            return {"status": "complete", "summary": reason}
-        note = ""
-        try:
-            note = _launch_review_autofix(env, reviewed)
-        except Exception as exc:
-            logger.exception("Review autofix failed for %s", env.project_key)
-            note = f"Could not start autofix ({exc})."
-        _complete_progress(thread_id)
-        preview = (reviewed.get("review") or "").strip()
-        truncated = len(preview) > 1200
-        if truncated:
-            preview = preview[:1200] + "…"
-        pr_url = (reviewed.get("pr_url") or "").strip()
-        if pr_url:
-            review_link = f"Full review: {pr_url}"
-        else:
-            owner, name = _owner_name(env)
-            compare_url = (
-                f"https://github.com/{owner}/{name}/compare/"
-                f"{env.production_branch}...{env.candidate_branch}"
-            )
-            review_link = f"Full diff: {compare_url}"
-        _post(
-            thread_id,
-            "Review is not clean, so staging was not built.\n\n"
-            + (preview + "\n\n" if preview else "")
-            + f"{review_link}\n\n"
-            + note,
+def _pr_number_from_url(url: str) -> Optional[int]:
+    match = re.search(r"/pull/(\d+)", url or "")
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _clear_gpw_poll(thread_id: Optional[str]) -> None:
+    _patch(thread_id, pending_deploy_poll=None, has_pending_deploy_poll=False)
+
+
+def _stop_staging_review(thread_id: Optional[str], message: str) -> Dict[str, Any]:
+    _complete_progress(thread_id)
+    _clear_gpw_poll(thread_id)
+    _post(thread_id, message)
+    return {"status": "complete", "active": False, "summary": message}
+
+
+def _review_preview(env: StagingEnv, reviewed: Dict[str, Any], *, final: bool = False) -> str:
+    preview = (reviewed.get("review") or "").strip()
+    if len(preview) > 1200:
+        preview = preview[:1200] + "…"
+    pr_url = (reviewed.get("pr_url") or "").strip()
+    if pr_url:
+        review_link = f"Full review: {pr_url}"
+    else:
+        owner, name = _owner_name(env)
+        compare_url = (
+            f"https://github.com/{owner}/{name}/compare/"
+            f"{env.production_branch}...{env.candidate_branch}"
         )
-        return {"status": "complete", "summary": "Review blocked staging."}
+        review_link = f"Full diff: {compare_url}"
+    built = "was not built." if final else "was not built yet."
+    parts = [f"Review is not clean, so staging {built}"]
+    if preview:
+        parts.append(preview)
+    parts.append(review_link)
+    return "\n\n".join(parts)
+
+
+def _post_staging_review_comment(repo: str, pr_number: int, body: str) -> None:
+    text = (body or "").strip()
+    if not pr_number or not text or "/" not in repo:
+        return
+    try:
+        from bigas.resources.cto.pr_review.github_client import (
+            BIGAS_REVIEW_MARKER,
+            GitHubPRCommentClient,
+        )
+
+        owner, name = repo.split("/", 1)
+        GitHubPRCommentClient(token=(os.environ.get("GITHUB_TOKEN") or "").strip()).post_or_update_pr_comment(
+            owner=owner,
+            repo=name,
+            pr_number=pr_number,
+            body=text,
+            marker=BIGAS_REVIEW_MARKER,
+        )
+    except Exception:
+        logger.warning(
+            "Could not post prepare-staging review on %s#%s",
+            repo,
+            pr_number,
+            exc_info=True,
+        )
+
+
+def _autofix_counts(repo: str, pr_number: Optional[int]) -> tuple:
+    if not pr_number or "/" not in (repo or ""):
+        return 0, 0
+    try:
+        from bigas.resources.cto.pr_review.github_client import GitHubPRCommentClient
+
+        owner, name = repo.split("/", 1)
+        client = GitHubPRCommentClient(token=(os.environ.get("GITHUB_TOKEN") or "").strip())
+        return client.count_autofix_rounds(owner, name, int(pr_number))
+    except Exception:
+        logger.warning(
+            "Could not count autofix commits for %s#%s",
+            repo,
+            pr_number,
+            exc_info=True,
+        )
+        return 0, 0
+
+
+def _review_allows_staging(env: StagingEnv, reviewed: Dict[str, Any]) -> bool:
+    """Clean review, or leftover nits after the same autofix budget prepare deploy uses."""
+    if reviewed.get("merged"):
+        return False
+    if reviewed.get("ok"):
+        return True
+    body = (reviewed.get("review") or "").strip()
+    if not body or (reviewed.get("reason") or "").strip():
+        return False
+    from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
+
+    autofix_count, minor_count = _autofix_counts(env.repo, reviewed.get("pr_number"))
+    return review_is_ready_to_merge(
+        body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_count,
+    )
+
+
+def _dispatch_after_clean_review(
+    thread_id: Optional[str], env: StagingEnv, reviewed: Dict[str, Any]
+) -> Dict[str, Any]:
     production_sha = reviewed.get("production_sha") or ""
     candidate_sha = reviewed.get("candidate_sha") or ""
     _set_rehearsal(
@@ -538,9 +629,7 @@ def _start_prepare_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[st
         )
     except Exception as exc:
         logger.exception("Prepare-staging dispatch failed for %s", env.project_key)
-        _complete_progress(thread_id)
-        _post(thread_id, f"Could not start prepare-staging: {exc}")
-        return {"status": "complete", "summary": str(exc)}
+        return _stop_staging_review(thread_id, f"Could not start prepare-staging: {exc}")
     _post(
         thread_id,
         "Review is clean. Building a full staging environment from production "
@@ -554,6 +643,188 @@ def _start_prepare_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[st
         production_sha=production_sha,
         candidate_sha=candidate_sha,
     )
+
+
+def _begin_review_autofix_poll(
+    thread_id: Optional[str],
+    env: StagingEnv,
+    launched: Dict[str, Any],
+    *,
+    follows_new_pr: bool,
+    rounds_started: int,
+    review_body: str = "",
+    cooldown_until: str = "",
+) -> Dict[str, Any]:
+    pr_number = launched.get("pr_number")
+    started_at = datetime.now(timezone.utc).isoformat()
+    if cooldown_until and thread_id:
+        current = _thread(thread_id).get("pending_deploy_poll") or {}
+        if isinstance(current, dict) and current.get("started_at"):
+            started_at = current["started_at"]
+    _patch(
+        thread_id,
+        pending_deploy_poll={
+            "kind": "gpw",
+            "phase": "review_autofix",
+            "project_key": env.project_key,
+            "repo": env.repo,
+            "agent_id": (launched.get("agent_id") or "").strip(),
+            "run_id": launched.get("run_id") or "",
+            "pr_number": int(pr_number) if pr_number else None,
+            "pr_url": (launched.get("pr_url") or "").strip(),
+            "follows_new_pr": bool(follows_new_pr),
+            "rounds_started": rounds_started,
+            "pending_review_body": review_body if cooldown_until else "",
+            "cooldown_until": cooldown_until,
+            "started_at": started_at,
+            "triggered": [],
+        },
+        has_pending_deploy_poll=True,
+    )
+    return {
+        "status": "in_progress",
+        "active": True,
+        "summary": "Review autofix started",
+        "deploy_poll_active": True,
+    }
+
+
+def _handle_dirty_staging_review(
+    thread_id: Optional[str],
+    env: StagingEnv,
+    reviewed: Dict[str, Any],
+    *,
+    rounds_started: int = 0,
+    follows_new_pr: bool = False,
+    announce: bool = True,
+) -> Dict[str, Any]:
+    from bigas.resources.cto.autofix.heuristics import (
+        autofix_max_iterations,
+        format_loop_protection_message,
+    )
+
+    reason = (reviewed.get("reason") or "").strip()
+    if reason and not (reviewed.get("review") or "").strip():
+        return _stop_staging_review(thread_id, reason)
+    if _review_allows_staging(env, reviewed):
+        return _dispatch_after_clean_review(thread_id, env, reviewed)
+
+    max_iters = autofix_max_iterations()
+    if rounds_started >= max_iters:
+        return _stop_staging_review(
+            thread_id,
+            _review_preview(env, reviewed, final=True)
+            + "\n\n"
+            + format_loop_protection_message(
+                autofix_count=rounds_started, max_iterations=max_iters
+            ),
+        )
+    preview = _review_preview(env, reviewed)
+
+    pr_number = reviewed.get("pr_number")
+    if pr_number:
+        _post_staging_review_comment(env.repo, int(pr_number), reviewed.get("review") or "")
+    try:
+        launched = _launch_review_autofix(env, reviewed)
+    except Exception as exc:
+        logger.exception("Review autofix failed for %s", env.project_key)
+        return _stop_staging_review(
+            thread_id,
+            _review_preview(env, reviewed, final=True)
+            + f"\n\nCould not start autofix ({exc}).",
+        )
+
+    if launched.get("cooldown"):
+        seconds = int(launched.get("cooldown_seconds") or 120)
+        until = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+        _post(
+            thread_id,
+            f"Autofix is in a short cooldown. I'll try again in about {seconds}s.",
+            status="in_progress",
+        )
+        return _begin_review_autofix_poll(
+            thread_id,
+            env,
+            {
+                "pr_number": pr_number,
+                "pr_url": (reviewed.get("pr_url") or launched.get("pr_url") or ""),
+            },
+            follows_new_pr=follows_new_pr,
+            rounds_started=rounds_started,
+            review_body=reviewed.get("review") or "",
+            cooldown_until=until,
+        )
+
+    if not launched.get("launched"):
+        if launched.get("review_clean"):
+            if follows_new_pr and reviewed.get("pr_number"):
+                return _merge_fix_pr_then_stage(
+                    thread_id or "",
+                    env,
+                    {
+                        "kind": "gpw",
+                        "project_key": env.project_key,
+                        "repo": env.repo,
+                        "rounds_started": rounds_started,
+                        "pr_number": reviewed.get("pr_number"),
+                        "pr_url": reviewed.get("pr_url") or "",
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    int(reviewed["pr_number"]),
+                    (reviewed.get("pr_url") or "").strip(),
+                )
+            if not reviewed.get("candidate_sha"):
+                try:
+                    reviewed = review_candidate(env)
+                except Exception as exc:
+                    logger.exception("Prepare-staging re-review failed for %s", env.project_key)
+                    return _stop_staging_review(thread_id, f"Review failed: {exc}")
+            return _dispatch_after_clean_review(thread_id, env, reviewed)
+        skip_reason = (launched.get("reason") or "skipped").strip()
+        return _stop_staging_review(
+            thread_id,
+            _review_preview(env, reviewed, final=True)
+            + f"\n\nAutofix did not start ({skip_reason}).",
+        )
+
+    next_round = rounds_started + 1
+    target = (launched.get("note") or "Autofix started.").strip()
+    if announce:
+        message = (
+            f"{preview}\n\n{target}\n"
+            f"I'll review the updated pull request and continue, up to {max_iters} rounds."
+        )
+    else:
+        message = (
+            f"Review still has findings. Autofix round {next_round}/{max_iters}. {target}\n"
+            "I'll review again when it finishes."
+        )
+    _post(thread_id, message, status="in_progress")
+    sticky_new_pr = follows_new_pr or bool(launched.get("follows_new_pr"))
+    return _begin_review_autofix_poll(
+        thread_id,
+        env,
+        launched,
+        follows_new_pr=sticky_new_pr,
+        rounds_started=next_round,
+    )
+
+
+def _start_prepare_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str, Any]:
+    _post(
+        thread_id,
+        f"Reviewing `{env.candidate_branch}` against `{env.production_branch}` "
+        f"for **{env.project_key}** before building staging.",
+        status="in_progress",
+    )
+    try:
+        reviewed = review_candidate(env)
+    except Exception as exc:
+        logger.exception("Prepare-staging review failed for %s", env.project_key)
+        return _stop_staging_review(thread_id, f"Review failed: {exc}")
+    if not reviewed.get("ok"):
+        return _handle_dirty_staging_review(thread_id, env, reviewed)
+    return _dispatch_after_clean_review(thread_id, env, reviewed)
 
 
 def _same_rehearsal(rehearsal: Dict[str, Any], env: StagingEnv) -> bool:
@@ -1009,6 +1280,284 @@ def _finish_failure(thread_id: str, poll: Dict[str, Any], failed_runs: list) -> 
     )
 
 
+def _poll_timed_out(poll: Dict[str, Any]) -> bool:
+    started = _parse_started(poll.get("started_at") or "")
+    return datetime.now(timezone.utc) >= started + timedelta(seconds=_POLL_TIMEOUT_SEC)
+
+
+def _github_pr_client():
+    from bigas.resources.cto.pr_review.github_client import GitHubPRCommentClient
+
+    return GitHubPRCommentClient(token=(os.environ.get("GITHUB_TOKEN") or "").strip())
+
+
+def _open_pr_for_branch(env: StagingEnv, branch: str) -> Optional[Dict[str, Any]]:
+    head = (branch or "").strip()
+    if not head:
+        return None
+    client = _github()
+    owner, name = _owner_name(env)
+    for base in (env.candidate_branch, env.production_branch):
+        if not base or base == head:
+            continue
+        found = client.find_open_pull_request(owner, name, head=head, base=base)
+        if found:
+            return found
+    return None
+
+
+def _review_fix_pull_request(
+    env: StagingEnv, pr_number: int, *, phase: str = "post_autofix"
+) -> Dict[str, Any]:
+    from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
+    from bigas.resources.cto.pr_review.service import PRReviewService
+
+    owner, name = _owner_name(env)
+    gh = _github_pr_client()
+    pr = gh.get_pull_request(owner, name, pr_number)
+    pr_url = (pr.get("html_url") or f"https://github.com/{env.repo}/pull/{pr_number}").strip()
+    if pr.get("merged"):
+        return {
+            "ok": False,
+            "merged": True,
+            "review": "",
+            "pr_number": pr_number,
+            "pr_url": pr_url,
+        }
+    diff = gh.get_pr_diff(owner, name, pr_number)
+    body = PRReviewService().review(diff=diff, phase=phase).text
+    autofix_count, minor_count = _autofix_counts(env.repo, pr_number)
+    ready = review_is_ready_to_merge(
+        body,
+        autofix_count=autofix_count,
+        minor_autofix_count=minor_count,
+    )
+    return {
+        "ok": ready,
+        "merged": False,
+        "review": body,
+        "pr_number": pr_number,
+        "pr_url": pr_url,
+        "production_sha": "",
+        "candidate_sha": "",
+    }
+
+
+def _resolve_fix_pull_request(
+    env: StagingEnv, poll: Dict[str, Any], status: Dict[str, Any]
+) -> tuple:
+    pr_url = (status.get("pr_url") or poll.get("pr_url") or "").strip()
+    pr_number = poll.get("pr_number") or _pr_number_from_url(pr_url)
+    if pr_number:
+        return int(pr_number), pr_url
+    branch = (status.get("branch_name") or "").strip()
+    found = _open_pr_for_branch(env, branch)
+    if not found:
+        return None, pr_url
+    number = found.get("number")
+    url = (found.get("html_url") or pr_url).strip()
+    return (int(number) if number else None), url
+
+
+def _after_candidate_rereview(
+    thread_id: str,
+    env: StagingEnv,
+    poll: Dict[str, Any],
+    reviewed: Dict[str, Any],
+) -> Dict[str, Any]:
+    if (reviewed.get("reason") or "").strip() and not (reviewed.get("review") or "").strip():
+        return _stop_staging_review(thread_id, reviewed["reason"])
+    if _review_allows_staging(env, reviewed):
+        _clear_gpw_poll(thread_id)
+        return _dispatch_after_clean_review(thread_id, env, reviewed)
+    return _handle_dirty_staging_review(
+        thread_id,
+        env,
+        reviewed,
+        rounds_started=int(poll.get("rounds_started") or 0),
+        follows_new_pr=False,
+        announce=False,
+    )
+
+
+def _merge_fix_pr_then_stage(
+    thread_id: str, env: StagingEnv, poll: Dict[str, Any], pr_number: int, pr_url: str
+) -> Dict[str, Any]:
+    from bigas.resources.cto.pr_review.github_client import (
+        GitHubMergeNotReadyError,
+        GitHubPRCommentError,
+    )
+
+    owner, name = _owner_name(env)
+    gh = _github_pr_client()
+    try:
+        gh.merge_pull_request(owner, name, pr_number, merge_method="squash")
+    except GitHubMergeNotReadyError:
+        try:
+            gh.enable_pull_request_auto_merge(owner, name, pr_number, merge_method="squash")
+        except Exception as exc:
+            logger.warning("Could not enable auto-merge on staging fix PR: %s", exc)
+        _post(
+            thread_id,
+            f"Fix PR is clean. Waiting for required checks, then GitHub will merge {pr_url}",
+            status="in_progress",
+        )
+        _patch(
+            thread_id,
+            pending_deploy_poll={
+                **poll,
+                "phase": "wait_fix_merge",
+                "pr_number": pr_number,
+            "pr_url": pr_url,
+            "agent_id": "",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        },
+            has_pending_deploy_poll=True,
+        )
+        return {"status": "in_progress", "active": True}
+    except GitHubPRCommentError as exc:
+        return _stop_staging_review(thread_id, f"Could not merge the fix PR: {exc}")
+    _post(thread_id, f"Merged the fix PR into `{env.candidate_branch}`: {pr_url}")
+    return _review_candidate_after_fix_merge(thread_id, env, poll)
+
+
+def _review_candidate_after_fix_merge(
+    thread_id: str, env: StagingEnv, poll: Dict[str, Any]
+) -> Dict[str, Any]:
+    try:
+        reviewed = review_candidate(env)
+    except Exception as exc:
+        logger.exception("Prepare-staging re-review failed for %s", env.project_key)
+        return _stop_staging_review(thread_id, f"Review failed: {exc}")
+    return _after_candidate_rereview(thread_id, env, poll, reviewed)
+
+
+def _continue_after_review_autofix(
+    thread_id: str, poll: Dict[str, Any], status: Dict[str, Any]
+) -> Dict[str, Any]:
+    env = _env_for_poll(poll)
+    if env is None:
+        return _stop_staging_review(
+            thread_id, "Autofix finished, but the staging environment is unknown."
+        )
+    follows_new_pr = bool(poll.get("follows_new_pr"))
+    if follows_new_pr:
+        pr_number, pr_url = _resolve_fix_pull_request(env, poll, status)
+        if not pr_number:
+            return _stop_staging_review(
+                thread_id,
+                "Autofix finished but did not open a pull request, so staging was not built.",
+            )
+        try:
+            reviewed = _review_fix_pull_request(env, pr_number)
+        except Exception as exc:
+            logger.exception("Prepare-staging fix PR review failed for %s", env.project_key)
+            return _stop_staging_review(thread_id, f"Review failed: {exc}")
+        if reviewed.get("merged"):
+            _post(thread_id, f"Fix PR already merged: {reviewed.get('pr_url') or pr_url}")
+            return _review_candidate_after_fix_merge(thread_id, env, poll)
+        _post_staging_review_comment(env.repo, pr_number, reviewed.get("review") or "")
+        if _review_allows_staging(env, reviewed):
+            return _merge_fix_pr_then_stage(thread_id, env, poll, pr_number, pr_url or reviewed.get("pr_url") or "")
+        reviewed["pr_number"] = pr_number
+        reviewed["pr_url"] = pr_url or reviewed.get("pr_url") or ""
+        return _handle_dirty_staging_review(
+            thread_id,
+            env,
+            reviewed,
+            rounds_started=int(poll.get("rounds_started") or 0),
+            follows_new_pr=True,
+            announce=False,
+        )
+
+    try:
+        reviewed = review_candidate(env)
+    except Exception as exc:
+        logger.exception("Prepare-staging re-review failed for %s", env.project_key)
+        return _stop_staging_review(thread_id, f"Review failed: {exc}")
+    return _after_candidate_rereview(thread_id, env, poll, reviewed)
+
+
+def _poll_review_autofix(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]:
+    if _poll_timed_out(poll):
+        return _stop_staging_review(
+            thread_id,
+            "Prepare staging timed out waiting for autofix. "
+            "Ask me to prepare staging again.",
+        )
+    agent_id = (poll.get("agent_id") or "").strip()
+    if not agent_id:
+        cooldown_until = (poll.get("cooldown_until") or "").strip()
+        if cooldown_until and _parse_started(cooldown_until) > datetime.now(timezone.utc):
+            return {"status": "in_progress", "active": True}
+        env = _env_for_poll(poll)
+        if env is None:
+            return _stop_staging_review(
+                thread_id, "Could not retry autofix because the staging environment is unknown."
+            )
+        reviewed = {
+            "review": poll.get("pending_review_body") or "",
+            "pr_number": poll.get("pr_number"),
+            "pr_url": poll.get("pr_url") or "",
+        }
+        return _handle_dirty_staging_review(
+            thread_id,
+            env,
+            reviewed,
+            rounds_started=int(poll.get("rounds_started") or 0),
+            follows_new_pr=bool(poll.get("follows_new_pr")),
+            announce=False,
+        )
+
+    from bigas.resources.cto.autofix.service import AutofixError, AutofixService
+
+    try:
+        status = AutofixService().poll_status(
+            agent_id=agent_id, run_id=poll.get("run_id") or None
+        )
+    except AutofixError as exc:
+        logger.warning("Prepare-staging autofix poll failed: %s", exc)
+        return {"status": "in_progress", "active": True}
+    if not status.get("done"):
+        return {"status": "in_progress", "active": True}
+    if not status.get("ok"):
+        pr_url = (poll.get("pr_url") or status.get("pr_url") or "").strip()
+        return _stop_staging_review(
+            thread_id,
+            f"Autofix failed ({status.get('status') or 'UNKNOWN'}). Staging was not built."
+            + (f" {pr_url}" if pr_url else ""),
+        )
+    return _continue_after_review_autofix(thread_id, poll, status)
+
+
+def _poll_wait_fix_merge(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]:
+    if _poll_timed_out(poll):
+        return _stop_staging_review(
+            thread_id,
+            "Prepare staging timed out waiting for the fix PR to merge. "
+            f"{poll.get('pr_url') or ''}".strip(),
+        )
+    env = _env_for_poll(poll)
+    pr_number = int(poll.get("pr_number") or 0)
+    if env is None or not pr_number:
+        return _stop_staging_review(thread_id, "Could not keep waiting on the fix pull request.")
+    try:
+        owner, name = _owner_name(env)
+        pr = _github_pr_client().get_pull_request(owner, name, pr_number)
+    except Exception as exc:
+        logger.warning("Fix PR poll failed: %s", exc)
+        return {"status": "in_progress", "active": True}
+    if pr.get("merged"):
+        _post(thread_id, f"Fix PR merged: {poll.get('pr_url') or pr.get('html_url')}")
+        return _review_candidate_after_fix_merge(thread_id, env, poll)
+    if (pr.get("state") or "").lower() == "closed":
+        return _stop_staging_review(
+            thread_id,
+            f"The fix PR was closed without merging. Staging was not built. {poll.get('pr_url') or ''}".strip(),
+        )
+    return {"status": "in_progress", "active": True}
+
+
 def poll_gpw(thread_id: str) -> Dict[str, Any]:
     """One client-driven poll step for a GPW workflow run."""
     from bigas.resources.devops.service import get_deployment_status
@@ -1017,6 +1566,11 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
     poll = thread.get("pending_deploy_poll")
     if not isinstance(poll, dict) or poll.get("kind") != "gpw":
         return {"status": "complete", "active": False}
+    phase = (poll.get("phase") or "").strip()
+    if phase == "review_autofix":
+        return _poll_review_autofix(thread_id, poll)
+    if phase == "wait_fix_merge":
+        return _poll_wait_fix_merge(thread_id, poll)
     triggered = poll.get("triggered") or [{}]
     if not triggered[0].get("run_id"):
         resolved = _resolve_missing_gpw_run_id(poll)
