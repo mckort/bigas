@@ -380,14 +380,14 @@ def _launch_note(launched: Dict[str, Any], *, on_branch: str = "") -> str:
 def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> Dict[str, Any]:
     """Start one autofix round. A skipped launch is not reported as started."""
     repo = env.repo
-    pr_number = result.get("pr_number")
+    pr_number = _safe_pr_number(result.get("pr_number"))
     body = result.get("review") or ""
     if pr_number:
         from bigas.resources.cto.autofix.service import AutofixService
 
         launched = AutofixService().run(
             repo=repo,
-            pr_number=int(pr_number),
+            pr_number=pr_number,
             review_body=body,
         )
         launched = dict(launched or {})
@@ -397,7 +397,7 @@ def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> Dict[str,
             **launched,
             "launched": started,
             "note": note,
-            "pr_number": int(pr_number),
+            "pr_number": pr_number,
             "follows_new_pr": False,
         }
     from bigas.resources.cto.deploy_hotfix import launch_failed_deploy_fix
@@ -500,11 +500,35 @@ def _begin_poll(
     }
 
 
+def _safe_pr_number(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    try:
+        text = str(value).strip()
+        if not text.isdigit():
+            return None
+        number = int(text)
+        return number if number > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _pr_number_from_url(url: str) -> Optional[int]:
     match = re.search(r"/pull/(\d+)", url or "")
     if not match:
         return None
-    return int(match.group(1))
+    return _safe_pr_number(match.group(1))
+
+
+def _gpw_in_progress_poll(**extra: Any) -> Dict[str, Any]:
+    return {
+        "status": "in_progress",
+        "active": True,
+        "deploy_poll_active": True,
+        **extra,
+    }
 
 
 def _clear_gpw_poll(thread_id: Optional[str]) -> None:
@@ -567,7 +591,8 @@ def _post_staging_review_comment(repo: str, pr_number: int, body: str) -> None:
         )
 
 
-def _autofix_counts(repo: str, pr_number: Optional[int]) -> tuple:
+def _autofix_counts(repo: str, pr_number: Optional[Any]) -> tuple:
+    pr_number = _safe_pr_number(pr_number)
     if not pr_number or "/" not in (repo or ""):
         return 0, 0
     try:
@@ -575,7 +600,7 @@ def _autofix_counts(repo: str, pr_number: Optional[int]) -> tuple:
 
         owner, name = repo.split("/", 1)
         client = GitHubPRCommentClient(token=(os.environ.get("GITHUB_TOKEN") or "").strip())
-        return client.count_autofix_rounds(owner, name, int(pr_number))
+        return client.count_autofix_rounds(owner, name, pr_number)
     except Exception:
         logger.warning(
             "Could not count autofix commits for %s#%s",
@@ -655,7 +680,7 @@ def _begin_review_autofix_poll(
     review_body: str = "",
     cooldown_until: str = "",
 ) -> Dict[str, Any]:
-    pr_number = launched.get("pr_number")
+    pr_number = _safe_pr_number(launched.get("pr_number"))
     started_at = datetime.now(timezone.utc).isoformat()
     if cooldown_until and thread_id:
         current = _thread(thread_id).get("pending_deploy_poll") or {}
@@ -670,7 +695,7 @@ def _begin_review_autofix_poll(
             "repo": env.repo,
             "agent_id": (launched.get("agent_id") or "").strip(),
             "run_id": launched.get("run_id") or "",
-            "pr_number": int(pr_number) if pr_number else None,
+            "pr_number": pr_number,
             "pr_url": (launched.get("pr_url") or "").strip(),
             "follows_new_pr": bool(follows_new_pr),
             "rounds_started": rounds_started,
@@ -721,9 +746,9 @@ def _handle_dirty_staging_review(
         )
     preview = _review_preview(env, reviewed)
 
-    pr_number = reviewed.get("pr_number")
+    pr_number = _safe_pr_number(reviewed.get("pr_number"))
     if pr_number:
-        _post_staging_review_comment(env.repo, int(pr_number), reviewed.get("review") or "")
+        _post_staging_review_comment(env.repo, pr_number, reviewed.get("review") or "")
     try:
         launched = _launch_review_autofix(env, reviewed)
     except Exception as exc:
@@ -756,8 +781,19 @@ def _handle_dirty_staging_review(
         )
 
     if not launched.get("launched"):
+        if launched.get("loop_protection"):
+            loop_reason = (launched.get("reason") or "").strip() or format_loop_protection_message(
+                autofix_count=int(launched.get("autofix_count") or rounds_started),
+                max_iterations=int(launched.get("max_iterations") or max_iters),
+            )
+            return _stop_staging_review(
+                thread_id,
+                _review_preview(env, reviewed, final=True)
+                + f"\n\nAutofix did not start ({loop_reason}).",
+            )
         if launched.get("review_clean"):
-            if follows_new_pr and reviewed.get("pr_number"):
+            fix_pr_number = _safe_pr_number(reviewed.get("pr_number"))
+            if follows_new_pr and fix_pr_number:
                 return _merge_fix_pr_then_stage(
                     thread_id or "",
                     env,
@@ -766,11 +802,11 @@ def _handle_dirty_staging_review(
                         "project_key": env.project_key,
                         "repo": env.repo,
                         "rounds_started": rounds_started,
-                        "pr_number": reviewed.get("pr_number"),
+                        "pr_number": fix_pr_number,
                         "pr_url": reviewed.get("pr_url") or "",
                         "started_at": datetime.now(timezone.utc).isoformat(),
                     },
-                    int(reviewed["pr_number"]),
+                    fix_pr_number,
                     (reviewed.get("pr_url") or "").strip(),
                 )
             if not reviewed.get("candidate_sha"):
@@ -1347,16 +1383,16 @@ def _resolve_fix_pull_request(
     env: StagingEnv, poll: Dict[str, Any], status: Dict[str, Any]
 ) -> tuple:
     pr_url = (status.get("pr_url") or poll.get("pr_url") or "").strip()
-    pr_number = poll.get("pr_number") or _pr_number_from_url(pr_url)
+    pr_number = _safe_pr_number(poll.get("pr_number")) or _pr_number_from_url(pr_url)
     if pr_number:
-        return int(pr_number), pr_url
+        return pr_number, pr_url
     branch = (status.get("branch_name") or "").strip()
     found = _open_pr_for_branch(env, branch)
     if not found:
         return None, pr_url
-    number = found.get("number")
+    number = _safe_pr_number(found.get("number"))
     url = (found.get("html_url") or pr_url).strip()
-    return (int(number) if number else None), url
+    return number, url
 
 
 def _after_candidate_rereview(
@@ -1408,13 +1444,13 @@ def _merge_fix_pr_then_stage(
                 **poll,
                 "phase": "wait_fix_merge",
                 "pr_number": pr_number,
-            "pr_url": pr_url,
-            "agent_id": "",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        },
+                "pr_url": pr_url,
+                "agent_id": "",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            },
             has_pending_deploy_poll=True,
         )
-        return {"status": "in_progress", "active": True}
+        return _gpw_in_progress_poll()
     except GitHubPRCommentError as exc:
         return _stop_staging_review(thread_id, f"Could not merge the fix PR: {exc}")
     _post(thread_id, f"Merged the fix PR into `{env.candidate_branch}`: {pr_url}")
@@ -1457,10 +1493,13 @@ def _continue_after_review_autofix(
             _post(thread_id, f"Fix PR already merged: {reviewed.get('pr_url') or pr_url}")
             return _review_candidate_after_fix_merge(thread_id, env, poll)
         _post_staging_review_comment(env.repo, pr_number, reviewed.get("review") or "")
+        effective_pr_url = (pr_url or reviewed.get("pr_url") or "").strip()
         if _review_allows_staging(env, reviewed):
-            return _merge_fix_pr_then_stage(thread_id, env, poll, pr_number, pr_url or reviewed.get("pr_url") or "")
+            return _merge_fix_pr_then_stage(
+                thread_id, env, poll, pr_number, effective_pr_url
+            )
         reviewed["pr_number"] = pr_number
-        reviewed["pr_url"] = pr_url or reviewed.get("pr_url") or ""
+        reviewed["pr_url"] = effective_pr_url
         return _handle_dirty_staging_review(
             thread_id,
             env,
@@ -1489,7 +1528,7 @@ def _poll_review_autofix(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
     if not agent_id:
         cooldown_until = (poll.get("cooldown_until") or "").strip()
         if cooldown_until and _parse_started(cooldown_until) > datetime.now(timezone.utc):
-            return {"status": "in_progress", "active": True}
+            return _gpw_in_progress_poll()
         env = _env_for_poll(poll)
         if env is None:
             return _stop_staging_review(
@@ -1517,9 +1556,9 @@ def _poll_review_autofix(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
         )
     except AutofixError as exc:
         logger.warning("Prepare-staging autofix poll failed: %s", exc)
-        return {"status": "in_progress", "active": True}
+        return _gpw_in_progress_poll()
     if not status.get("done"):
-        return {"status": "in_progress", "active": True}
+        return _gpw_in_progress_poll()
     if not status.get("ok"):
         pr_url = (poll.get("pr_url") or status.get("pr_url") or "").strip()
         return _stop_staging_review(
@@ -1538,7 +1577,7 @@ def _poll_wait_fix_merge(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
             f"{poll.get('pr_url') or ''}".strip(),
         )
     env = _env_for_poll(poll)
-    pr_number = int(poll.get("pr_number") or 0)
+    pr_number = _safe_pr_number(poll.get("pr_number"))
     if env is None or not pr_number:
         return _stop_staging_review(thread_id, "Could not keep waiting on the fix pull request.")
     try:
@@ -1546,7 +1585,7 @@ def _poll_wait_fix_merge(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
         pr = _github_pr_client().get_pull_request(owner, name, pr_number)
     except Exception as exc:
         logger.warning("Fix PR poll failed: %s", exc)
-        return {"status": "in_progress", "active": True}
+        return _gpw_in_progress_poll()
     if pr.get("merged"):
         _post(thread_id, f"Fix PR merged: {poll.get('pr_url') or pr.get('html_url')}")
         return _review_candidate_after_fix_merge(thread_id, env, poll)
@@ -1555,7 +1594,7 @@ def _poll_wait_fix_merge(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
             thread_id,
             f"The fix PR was closed without merging. Staging was not built. {poll.get('pr_url') or ''}".strip(),
         )
-    return {"status": "in_progress", "active": True}
+    return _gpw_in_progress_poll()
 
 
 def poll_gpw(thread_id: str) -> Dict[str, Any]:
