@@ -582,7 +582,8 @@ def test_prepare_staging_stops_at_five_autofix_rounds(monkeypatch):
     assert result["active"] is False
     assert autofix.runs == []
     text = _texts(thread["thread_id"])
-    assert "Exceeded autofix limit of 5" in text
+    assert "Autofix stopped after 5 rounds" in text
+    assert "manual handling" in text
     assert chat.get_thread(thread["thread_id"]).get("pending_deploy_poll") is None
 
 
@@ -698,3 +699,76 @@ def test_prepare_staging_follows_a_new_fix_pr(monkeypatch):
     assert merged == {"pr_number": 4, "method": "squash"}
     assert dispatched["inputs"]["candidate_sha"] == "fff123456789"
     assert "Merged the fix PR" in _texts(thread["thread_id"])
+
+
+def test_merged_fix_pr_followup_posts_once_while_rereview_runs(monkeypatch):
+    _silence_review_side_effects(monkeypatch)
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    nested = {}
+
+    def review_candidate(env=None):
+        nested["result"] = poll_gpw(thread_id)
+        return dict(_CLEAN)
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.review_candidate",
+        review_candidate,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline._review_fix_pull_request",
+        lambda env, pr_number, phase="post_autofix": {
+            "ok": False,
+            "merged": True,
+            "review": "",
+            "pr_number": pr_number,
+            "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/122",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.dispatch_gpw_workflow",
+        lambda phase, inputs=None, **_kwargs: {
+            "workflow": "prepare-staging.yml",
+            "run_id": 11,
+            "html_url": "https://example.test/11",
+        },
+    )
+
+    class _Done:
+        def poll_status(self, **kwargs):
+            return {
+                "done": True,
+                "ok": True,
+                "status": "FINISHED",
+                "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/122",
+            }
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda: _Done(),
+    )
+    chat.patch_thread(
+        thread_id,
+        pending_deploy_poll={
+            "kind": "gpw",
+            "phase": "review_autofix",
+            "project_key": "GPW-PROD",
+            "repo": "Green-Promo-Wear-Global/GPW",
+            "agent_id": "agent-1",
+            "run_id": "run-1",
+            "pr_number": 122,
+            "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/122",
+            "follows_new_pr": True,
+            "rounds_started": 2,
+            "started_at": _started(),
+            "triggered": [],
+        },
+        has_pending_deploy_poll=True,
+    )
+    result = poll_gpw(thread_id)
+    text = _texts(thread_id)
+    assert text.count("Fix PR already merged") == 1
+    assert nested["result"]["active"] is True
+    assert result.get("deploy_poll_active") is True
+    assert "Review is clean" in text

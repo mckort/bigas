@@ -535,6 +535,30 @@ def _clear_gpw_poll(thread_id: Optional[str]) -> None:
     _patch(thread_id, pending_deploy_poll=None, has_pending_deploy_poll=False)
 
 
+_GPW_FOLLOWUP_PHASES = ("review_autofix_followup", "review_after_fix_merge")
+
+
+def _claim_gpw_followup(thread_id: str, poll: Dict[str, Any], phase: str) -> bool:
+    """Claim a finished poll before slow review work.
+
+    Later polls, including after the chat is reopened, wait on this claim
+    instead of repeating the same message.
+    """
+    current = _thread(thread_id).get("pending_deploy_poll")
+    if not isinstance(current, dict):
+        return False
+    if (current.get("phase") or "") != (poll.get("phase") or ""):
+        return False
+    if (current.get("started_at") or "") != (poll.get("started_at") or ""):
+        return False
+    if (current.get("agent_id") or "") != (poll.get("agent_id") or ""):
+        return False
+    claimed = dict(poll)
+    claimed["phase"] = phase
+    _patch(thread_id, pending_deploy_poll=claimed, has_pending_deploy_poll=True)
+    return True
+
+
 def _stop_staging_review(thread_id: Optional[str], message: str) -> Dict[str, Any]:
     _complete_progress(thread_id)
     _clear_gpw_poll(thread_id)
@@ -723,10 +747,7 @@ def _handle_dirty_staging_review(
     follows_new_pr: bool = False,
     announce: bool = True,
 ) -> Dict[str, Any]:
-    from bigas.resources.cto.autofix.heuristics import (
-        autofix_max_iterations,
-        format_loop_protection_message,
-    )
+    from bigas.resources.cto.autofix.heuristics import autofix_max_iterations
 
     reason = (reviewed.get("reason") or "").strip()
     if reason and not (reviewed.get("review") or "").strip():
@@ -740,8 +761,9 @@ def _handle_dirty_staging_review(
             thread_id,
             _review_preview(env, reviewed, final=True)
             + "\n\n"
-            + format_loop_protection_message(
-                autofix_count=rounds_started, max_iterations=max_iters
+            + (
+                f"Autofix stopped after {max_iters} rounds. "
+                "Remaining findings need manual handling. Staging was not built."
             ),
         )
     preview = _review_preview(env, reviewed)
@@ -1566,6 +1588,8 @@ def _poll_review_autofix(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
             f"Autofix failed ({status.get('status') or 'UNKNOWN'}). Staging was not built."
             + (f" {pr_url}" if pr_url else ""),
         )
+    if not _claim_gpw_followup(thread_id, poll, "review_autofix_followup"):
+        return {"status": "in_progress", "active": True}
     return _continue_after_review_autofix(thread_id, poll, status)
 
 
@@ -1587,6 +1611,8 @@ def _poll_wait_fix_merge(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
         logger.warning("Fix PR poll failed: %s", exc)
         return _gpw_in_progress_poll()
     if pr.get("merged"):
+        if not _claim_gpw_followup(thread_id, poll, "review_after_fix_merge"):
+            return {"status": "in_progress", "active": True}
         _post(thread_id, f"Fix PR merged: {poll.get('pr_url') or pr.get('html_url')}")
         return _review_candidate_after_fix_merge(thread_id, env, poll)
     if (pr.get("state") or "").lower() == "closed":
@@ -1606,6 +1632,14 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
     if not isinstance(poll, dict) or poll.get("kind") != "gpw":
         return {"status": "complete", "active": False}
     phase = (poll.get("phase") or "").strip()
+    if phase in _GPW_FOLLOWUP_PHASES:
+        if _poll_timed_out(poll):
+            return _stop_staging_review(
+                thread_id,
+                "Prepare staging timed out during review follow-up. "
+                "Ask me to prepare staging again.",
+            )
+        return {"status": "in_progress", "active": True}
     if phase == "review_autofix":
         return _poll_review_autofix(thread_id, poll)
     if phase == "wait_fix_merge":
