@@ -553,7 +553,7 @@ def _claim_gpw_followup(thread_id: str, poll: Dict[str, Any], phase: str) -> boo
         return False
     if (current.get("agent_id") or "") != (poll.get("agent_id") or ""):
         return False
-    claimed = dict(poll)
+    claimed = dict(current)
     claimed["phase"] = phase
     _patch(thread_id, pending_deploy_poll=claimed, has_pending_deploy_poll=True)
     return True
