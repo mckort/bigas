@@ -397,3 +397,304 @@ def test_staging_env_map_adds_a_project(monkeypatch):
     assert keys == ["GPW-PROD", "DEMO"]
     assert staging_envs()["DEMO"].repo == "example/demo"
     assert parse_gpw_command("prepare deploy VFA") == ""
+
+
+_DIRTY = {
+    "ok": False,
+    "review": "### Blockers\n- Cancel is wrong.\n",
+    "pr_number": 9,
+    "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/9",
+    "production_sha": "abc123456789",
+    "candidate_sha": "def123456789",
+}
+_CLEAN = {
+    "ok": True,
+    "review": "No issues.",
+    "pr_number": 9,
+    "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/9",
+    "production_sha": "abc123456789",
+    "candidate_sha": "fff123456789",
+}
+
+
+class _Autofix:
+    def __init__(self, status):
+        self.status = status
+        self.runs = []
+
+    def run(self, **kwargs):
+        self.runs.append(kwargs)
+        return {
+            "launched": True,
+            "skipped": False,
+            "agent_id": "agent-1",
+            "agent_url": "https://cursor.com/agents/agent-1",
+            "run_id": "run-1",
+            "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/9",
+        }
+
+    def poll_status(self, **kwargs):
+        return self.status
+
+
+def _silence_review_side_effects(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline._post_staging_review_comment",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline._autofix_counts",
+        lambda *args, **kwargs: (0, 0),
+    )
+
+
+def test_prepare_staging_dirty_review_waits_for_autofix(monkeypatch):
+    _silence_review_side_effects(monkeypatch)
+    autofix = _Autofix({"done": False, "ok": False, "status": "RUNNING"})
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.review_candidate",
+        lambda env=None: dict(_DIRTY),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda: autofix,
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    result = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="prepare staging",
+    )
+    assert result.get("deploy_poll_active") is True
+    text = _texts(thread["thread_id"])
+    assert "up to 5 rounds" in text
+    assert "Autofix started on the open PR" in text
+    poll = chat.get_thread(thread["thread_id"])["pending_deploy_poll"]
+    assert poll["phase"] == "review_autofix"
+    assert poll["rounds_started"] == 1
+    assert poll["pr_number"] == 9
+    assert len(autofix.runs) == 1
+    assert "Cancel is wrong" in autofix.runs[0]["review_body"]
+
+
+def test_prepare_staging_rereviews_after_autofix_and_builds(monkeypatch):
+    _silence_review_side_effects(monkeypatch)
+    reviews = [dict(_DIRTY), dict(_CLEAN)]
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.review_candidate",
+        lambda env=None: reviews.pop(0),
+    )
+    dispatched = {}
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.dispatch_gpw_workflow",
+        lambda phase, inputs=None, **_kwargs: dispatched.update(
+            {"phase": phase, "inputs": inputs}
+        )
+        or {"workflow": "prepare-staging.yml", "run_id": 7, "html_url": "https://example.test/7"},
+    )
+    autofix = _Autofix(
+        {
+            "done": True,
+            "ok": True,
+            "status": "FINISHED",
+            "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/9",
+        }
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda: autofix,
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    started = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="prepare staging",
+    )
+    assert started.get("deploy_poll_active") is True
+    finished = poll_gpw(thread["thread_id"])
+    assert finished.get("deploy_poll_active") is True
+    assert dispatched["phase"] == "prepare_staging"
+    assert dispatched["inputs"]["candidate_sha"] == "fff123456789"
+    assert "Review is clean" in _texts(thread["thread_id"])
+
+
+def test_prepare_staging_starts_another_round_when_review_stays_dirty(monkeypatch):
+    _silence_review_side_effects(monkeypatch)
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.review_candidate",
+        lambda env=None: dict(_DIRTY),
+    )
+    autofix = _Autofix(
+        {"done": True, "ok": True, "status": "FINISHED", "pr_url": ""}
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda: autofix,
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="prepare staging",
+    )
+    result = poll_gpw(thread["thread_id"])
+    assert result.get("deploy_poll_active") is True
+    poll = chat.get_thread(thread["thread_id"])["pending_deploy_poll"]
+    assert poll["rounds_started"] == 2
+    assert "round 2/5" in _texts(thread["thread_id"])
+    assert len(autofix.runs) == 2
+
+
+def test_prepare_staging_stops_at_five_autofix_rounds(monkeypatch):
+    _silence_review_side_effects(monkeypatch)
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.review_candidate",
+        lambda env=None: dict(_DIRTY),
+    )
+    autofix = _Autofix(
+        {"done": True, "ok": True, "status": "FINISHED", "pr_url": ""}
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda: autofix,
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    chat.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll={
+            "kind": "gpw",
+            "phase": "review_autofix",
+            "project_key": "GPW-PROD",
+            "repo": "Green-Promo-Wear-Global/GPW",
+            "agent_id": "agent-1",
+            "run_id": "run-1",
+            "pr_number": 9,
+            "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/9",
+            "follows_new_pr": False,
+            "rounds_started": 5,
+            "started_at": _started(),
+            "triggered": [],
+        },
+        has_pending_deploy_poll=True,
+    )
+    result = poll_gpw(thread["thread_id"])
+    assert result["active"] is False
+    assert autofix.runs == []
+    text = _texts(thread["thread_id"])
+    assert "Exceeded autofix limit of 5" in text
+    assert chat.get_thread(thread["thread_id"]).get("pending_deploy_poll") is None
+
+
+def test_prepare_staging_reports_a_skipped_autofix(monkeypatch):
+    _silence_review_side_effects(monkeypatch)
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.review_candidate",
+        lambda env=None: dict(_DIRTY),
+    )
+
+    class _Skipped:
+        def run(self, **kwargs):
+            return {
+                "skipped": True,
+                "launched": False,
+                "loop_protection": True,
+                "reason": "Exceeded autofix limit of 5 (found 5 `[bigas-autofix]` commits on this PR).",
+            }
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda: _Skipped(),
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    result = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="prepare staging",
+    )
+    assert result["status"] == "complete"
+    text = _texts(thread["thread_id"])
+    assert "Autofix did not start" in text
+    assert "Autofix started" not in text
+
+
+def test_prepare_staging_follows_a_new_fix_pr(monkeypatch):
+    _silence_review_side_effects(monkeypatch)
+    reviews = [
+        {
+            "ok": False,
+            "review": "### Blockers\n- Cancel is wrong.\n",
+            "production_sha": "abc123456789",
+            "candidate_sha": "def123456789",
+        },
+        dict(_CLEAN),
+    ]
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.review_candidate",
+        lambda env=None: reviews.pop(0),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.deploy_hotfix.launch_failed_deploy_fix",
+        lambda **kwargs: {
+            "launched": True,
+            "agent_id": "agent-9",
+            "agent_url": "https://cursor.com/agents/agent-9",
+            "run_id": "run-9",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline._review_fix_pull_request",
+        lambda env, pr_number, phase="post_autofix": {
+            "ok": True,
+            "review": "No issues.",
+            "pr_number": pr_number,
+            "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/4",
+        },
+    )
+    merged = {}
+
+    class _GitHub:
+        def merge_pull_request(self, owner, repo, pr_number, merge_method="squash"):
+            merged["pr_number"] = pr_number
+            merged["method"] = merge_method
+            return {"merged": True}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline._github_pr_client",
+        lambda: _GitHub(),
+    )
+    dispatched = {}
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.dispatch_gpw_workflow",
+        lambda phase, inputs=None, **_kwargs: dispatched.update({"phase": phase, "inputs": inputs})
+        or {"workflow": "prepare-staging.yml", "run_id": 8, "html_url": "https://example.test/8"},
+    )
+
+    class _Done:
+        def poll_status(self, **kwargs):
+            return {
+                "done": True,
+                "ok": True,
+                "status": "FINISHED",
+                "pr_url": "https://github.com/Green-Promo-Wear-Global/GPW/pull/4",
+            }
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda: _Done(),
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    started = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="prepare staging",
+    )
+    assert started.get("deploy_poll_active") is True
+    poll = chat.get_thread(thread["thread_id"])["pending_deploy_poll"]
+    assert poll["follows_new_pr"] is True
+    assert poll["pr_number"] is None
+    finished = poll_gpw(thread["thread_id"])
+    assert finished.get("deploy_poll_active") is True
+    assert merged == {"pr_number": 4, "method": "squash"}
+    assert dispatched["inputs"]["candidate_sha"] == "fff123456789"
+    assert "Merged the fix PR" in _texts(thread["thread_id"])

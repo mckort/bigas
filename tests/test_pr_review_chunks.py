@@ -154,10 +154,12 @@ def test_prepare_staging_autofix_receives_the_full_review(monkeypatch):
     )
     body = "### Blockers\n" + ("- A real finding that must survive the handoff.\n" * 200)
     assert len(body) > 4000
-    note = _launch_review_autofix(env, {"review": body})
+    launched = _launch_review_autofix(env, {"review": body})
     excerpt = captured["failures"][0]["excerpt"]
     assert len(excerpt) > 4000
     assert excerpt.endswith("handoff.")
     assert "```python" not in excerpt or "handoff." in excerpt
     assert "Fix every finding" in captured["extra_instructions"]
-    assert "example.test/agent" in note
+    assert launched["launched"] is True
+    assert launched["follows_new_pr"] is True
+    assert "example.test/agent" in launched["note"]
