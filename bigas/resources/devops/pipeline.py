@@ -616,6 +616,11 @@ def expire_stale_deploy_poll(thread_id: Optional[str]) -> bool:
     poll = _deploy_poll(thread_id)
     if not poll:
         return False
+    # Prepare-staging waits on this same field while a review agent runs.
+    # That wait has its own timeout. Expiring it here posts a deploy Post-check
+    # and drops the follow-up review.
+    if (poll.get("kind") or "") == "gpw":
+        return False
     started = poll.get("started_at")
     if not started:
         return False

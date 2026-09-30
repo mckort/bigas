@@ -831,3 +831,24 @@ def test_expire_stale_deploy_poll_leaves_fresh_poll():
     store.patch_thread(thread["thread_id"], pending_deploy_poll=_pending_poll())
     assert expire_stale_deploy_poll(thread["thread_id"]) is False
     assert store.get_thread(thread["thread_id"]).get("pending_deploy_poll")
+
+
+def test_expire_stale_deploy_poll_leaves_gpw_review_wait():
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    started = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    store.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll={
+            "kind": "gpw",
+            "phase": "review_autofix",
+            "started_at": started,
+            "triggered": [],
+        },
+        has_pending_deploy_poll=True,
+    )
+    assert expire_stale_deploy_poll(thread["thread_id"]) is False
+    poll = store.get_thread(thread["thread_id"]).get("pending_deploy_poll")
+    assert poll["phase"] == "review_autofix"
+    blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
+    assert "Post-check" not in blob
