@@ -330,8 +330,11 @@ def review_candidate(
     from bigas.resources.cto.pr_review.service import PRReviewService
 
     env = _require_staging_env(env)
-    review_phase = "post_autofix" if phase == "post_autofix" else "initial"
     prior = (previous_review or "").strip() or None
+    if phase == "post_autofix" and prior is not None:
+        review_phase = "post_autofix"
+    else:
+        review_phase = "initial"
     client = _github()
     owner, name = _owner_name(env)
     compare = client.compare_refs(owner, name, env.production_branch, env.candidate_branch)
