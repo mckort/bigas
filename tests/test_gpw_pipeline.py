@@ -114,7 +114,7 @@ def test_update_staging_requires_prepare(monkeypatch):
 def test_prepare_staging_dispatches_after_clean_review(monkeypatch):
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
-        lambda env=None: {
+        lambda env=None, **_kwargs: {
             "ok": True,
             "production_sha": "abc123456789",
             "candidate_sha": "def123456789",
@@ -453,7 +453,7 @@ def test_prepare_staging_dirty_review_waits_for_autofix(monkeypatch):
     autofix = _Autofix({"done": False, "ok": False, "status": "RUNNING"})
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
-        lambda env=None: dict(_DIRTY),
+        lambda env=None, **_kwargs: dict(_DIRTY),
     )
     monkeypatch.setattr(
         "bigas.resources.cto.autofix.service.AutofixService",
@@ -473,6 +473,7 @@ def test_prepare_staging_dirty_review_waits_for_autofix(monkeypatch):
     assert poll["phase"] == "review_autofix"
     assert poll["rounds_started"] == 1
     assert poll["pr_number"] == 9
+    assert "Cancel is wrong" in (poll.get("pending_review_body") or "")
     assert len(autofix.runs) == 1
     assert "Cancel is wrong" in autofix.runs[0]["review_body"]
 
@@ -480,9 +481,16 @@ def test_prepare_staging_dirty_review_waits_for_autofix(monkeypatch):
 def test_prepare_staging_rereviews_after_autofix_and_builds(monkeypatch):
     _silence_review_side_effects(monkeypatch)
     reviews = [dict(_DIRTY), dict(_CLEAN)]
+    seen = {}
+
+    def _review(env=None, **kwargs):
+        seen["phase"] = kwargs.get("phase")
+        seen["previous"] = kwargs.get("previous_review")
+        return reviews.pop(0)
+
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
-        lambda env=None: reviews.pop(0),
+        _review,
     )
     dispatched = {}
     monkeypatch.setattr(
@@ -516,13 +524,15 @@ def test_prepare_staging_rereviews_after_autofix_and_builds(monkeypatch):
     assert dispatched["phase"] == "prepare_staging"
     assert dispatched["inputs"]["candidate_sha"] == "fff123456789"
     assert "Review is clean" in _texts(thread["thread_id"])
+    assert seen["phase"] == "post_autofix"
+    assert "Cancel is wrong" in (seen["previous"] or "")
 
 
 def test_prepare_staging_starts_another_round_when_review_stays_dirty(monkeypatch):
     _silence_review_side_effects(monkeypatch)
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
-        lambda env=None: dict(_DIRTY),
+        lambda env=None, **_kwargs: dict(_DIRTY),
     )
     autofix = _Autofix(
         {"done": True, "ok": True, "status": "FINISHED", "pr_url": ""}
@@ -549,7 +559,7 @@ def test_prepare_staging_stops_at_five_autofix_rounds(monkeypatch):
     _silence_review_side_effects(monkeypatch)
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
-        lambda env=None: dict(_DIRTY),
+        lambda env=None, **_kwargs: dict(_DIRTY),
     )
     autofix = _Autofix(
         {"done": True, "ok": True, "status": "FINISHED", "pr_url": ""}
@@ -587,11 +597,66 @@ def test_prepare_staging_stops_at_five_autofix_rounds(monkeypatch):
     assert chat.get_thread(thread["thread_id"]).get("pending_deploy_poll") is None
 
 
+def test_prepare_staging_accepts_leftover_nits_at_round_cap(monkeypatch):
+    _silence_review_side_effects(monkeypatch)
+    nits = {
+        "ok": False,
+        "review": (
+            "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+            "### Minor\n- Rename the helper.\n"
+        ),
+        "production_sha": "abc123456789",
+        "candidate_sha": "fff123456789",
+    }
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.review_candidate",
+        lambda env=None, **_kwargs: dict(nits),
+    )
+    dispatched = {}
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.dispatch_gpw_workflow",
+        lambda phase, inputs=None, **_kwargs: dispatched.update({"phase": phase})
+        or {"workflow": "prepare-staging.yml", "run_id": 12, "html_url": "https://example.test/12"},
+    )
+
+    class _Done:
+        def poll_status(self, **kwargs):
+            return {"done": True, "ok": True, "status": "FINISHED", "pr_url": ""}
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.AutofixService",
+        lambda: _Done(),
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    chat.patch_thread(
+        thread["thread_id"],
+        pending_deploy_poll={
+            "kind": "gpw",
+            "phase": "review_autofix",
+            "project_key": "GPW-PROD",
+            "repo": "Green-Promo-Wear-Global/GPW",
+            "agent_id": "agent-1",
+            "run_id": "run-1",
+            "follows_new_pr": False,
+            "rounds_started": 5,
+            "started_at": _started(),
+            "triggered": [],
+        },
+        has_pending_deploy_poll=True,
+    )
+    result = poll_gpw(thread["thread_id"])
+    assert result.get("deploy_poll_active") is True
+    assert dispatched["phase"] == "prepare_staging"
+    assert "Review is clean" in _texts(thread["thread_id"])
+    assert "manual handling" not in _texts(thread["thread_id"])
+
+
 def test_prepare_staging_reports_a_skipped_autofix(monkeypatch):
     _silence_review_side_effects(monkeypatch)
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
-        lambda env=None: dict(_DIRTY),
+        lambda env=None, **_kwargs: dict(_DIRTY),
     )
 
     class _Skipped:
@@ -632,7 +697,7 @@ def test_prepare_staging_follows_a_new_fix_pr(monkeypatch):
     ]
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
-        lambda env=None: reviews.pop(0),
+        lambda env=None, **_kwargs: reviews.pop(0),
     )
     monkeypatch.setattr(
         "bigas.resources.cto.deploy_hotfix.launch_failed_deploy_fix",
@@ -708,7 +773,8 @@ def test_merged_fix_pr_followup_posts_once_while_rereview_runs(monkeypatch):
     thread_id = thread["thread_id"]
     nested = {}
 
-    def review_candidate(env=None):
+    def review_candidate(env=None, **kwargs):
+        nested["phase"] = kwargs.get("phase")
         nested["result"] = poll_gpw(thread_id)
         return dict(_CLEAN)
 
@@ -770,5 +836,6 @@ def test_merged_fix_pr_followup_posts_once_while_rereview_runs(monkeypatch):
     text = _texts(thread_id)
     assert text.count("Fix PR already merged") == 1
     assert nested["result"]["active"] is True
+    assert nested["phase"] == "post_autofix"
     assert result.get("deploy_poll_active") is True
     assert "Review is clean" in text

@@ -1,5 +1,6 @@
 """Prepare-staging reviews are split by file and merged back together."""
 from bigas.resources.cto.pr_review.chunks import (
+    POST_AUTOFIX_SLICE_INSTRUCTIONS,
     SLICE_INSTRUCTIONS,
     is_noise_path,
     merge_slice_reviews,
@@ -124,6 +125,27 @@ None.
     assert "Cancel is wrong" in merged
     assert "### Important\nNone." in merged
     assert all("yarn.lock" not in slice_diff for slice_diff, _instructions in seen)
+
+
+def test_post_autofix_slices_verify_instead_of_hunting():
+    diff = _file("api/order.py")
+
+    def _review(slice_diff, instructions):
+        assert "after an autofix round merged" in instructions
+        assert "Do not report new Minor nits" in instructions
+        return """### Blockers
+None.
+
+### Important
+None.
+
+### Minor
+None.
+"""
+
+    merged = review_compare_diff(diff, review_slice=_review, phase="post_autofix")
+    assert "ready to merge" in merged.lower()
+    assert "after an autofix round merged" in POST_AUTOFIX_SLICE_INSTRUCTIONS
 
 
 def test_split_parses_paths_under_top_level_b_directory():

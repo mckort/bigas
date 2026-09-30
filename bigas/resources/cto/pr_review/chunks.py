@@ -42,6 +42,18 @@ block and the symbol is neither imported nor defined there. If the import block 
 not in the slice, do not report an undefined name.
 """.strip()
 
+POST_AUTOFIX_SLICE_INSTRUCTIONS = """
+This is one slice of the branch diff after an autofix round merged.
+Verify previous findings only when this slice shows the relevant code.
+If a previous finding is not in this slice, leave it out. Another slice covers it.
+Report a new Blocker or Important only when this slice shows the autofix introduced it.
+Do not report new Minor nits, style notes, or optional polish.
+Do not write "ready to merge". That verdict is decided after every slice is combined.
+Report a missing import or NameError only when this slice shows the file's import
+block and the symbol is neither imported nor defined there. If the import block is
+not in the slice, do not report an undefined name.
+""".strip()
+
 _CLEAN_REVIEW = """### Blockers
 None.
 
@@ -216,17 +228,21 @@ def review_compare_diff(
     review_slice: Callable[[str, str], str],
     max_chars: int = DEFAULT_SLICE_CHARS,
     max_slices: int = MAX_SLICES,
+    phase: str = "initial",
 ) -> str:
     """Review each slice, then merge. An empty kept diff is ready to merge."""
     slices = review_slices(diff, max_chars=max_chars, max_slices=max_slices)
     if not slices:
         return _CLEAN_REVIEW
     total = len(slices)
+    guidance = (
+        POST_AUTOFIX_SLICE_INSTRUCTIONS if phase == "post_autofix" else SLICE_INSTRUCTIONS
+    )
     parts: List[str] = []
     for index, slice_diff in enumerate(slices, start=1):
         instructions = (
             f"Slice {index} of {total} of a prepare-staging branch diff.\n"
-            f"{SLICE_INSTRUCTIONS}"
+            f"{guidance}"
         )
         parts.append(review_slice(slice_diff, instructions) or "")
     return merge_slice_reviews(parts)

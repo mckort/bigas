@@ -313,13 +313,28 @@ def _require_staging_env(env: Optional[StagingEnv]) -> StagingEnv:
     )
 
 
-def review_candidate(env: Optional[StagingEnv] = None) -> Dict[str, Any]:
-    """Review the candidate branch against production. Returns shas and whether it may proceed."""
+def review_candidate(
+    env: Optional[StagingEnv] = None,
+    *,
+    phase: str = "initial",
+    previous_review: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Review the candidate branch against production. Returns shas and whether it may proceed.
+
+    The first pass is exhaustive. After an autofix merges, pass phase=\"post_autofix\"
+    and the previous review so the next pass only checks those findings and regressions
+    the fix introduced.
+    """
     from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
     from bigas.resources.cto.pr_review.chunks import review_compare_diff
     from bigas.resources.cto.pr_review.service import PRReviewService
 
     env = _require_staging_env(env)
+    prior = (previous_review or "").strip() or None
+    if phase == "post_autofix" and prior is not None:
+        review_phase = "post_autofix"
+    else:
+        review_phase = "initial"
     client = _github()
     owner, name = _owner_name(env)
     compare = client.compare_refs(owner, name, env.production_branch, env.candidate_branch)
@@ -340,9 +355,12 @@ def review_candidate(env: Optional[StagingEnv] = None) -> Dict[str, Any]:
     service = PRReviewService()
     body = review_compare_diff(
         diff,
+        phase=review_phase,
         review_slice=lambda slice_diff, instructions: service.review(
             slice_diff,
             instructions=instructions,
+            phase=review_phase,
+            previous_review=prior if review_phase == "post_autofix" else None,
         ).text,
     ).strip()
     ready = review_is_ready_to_merge(body)
@@ -635,8 +653,18 @@ def _autofix_counts(repo: str, pr_number: Optional[Any]) -> tuple:
         return 0, 0
 
 
-def _review_allows_staging(env: StagingEnv, reviewed: Dict[str, Any]) -> bool:
-    """Clean review, or leftover nits after the same autofix budget prepare deploy uses."""
+def _review_allows_staging(
+    env: StagingEnv,
+    reviewed: Dict[str, Any],
+    *,
+    rounds_started: int = 0,
+) -> bool:
+    """Clean review, or leftover nits after the same autofix budget prepare deploy uses.
+
+    Branch compares often have no open pull request, so the commit counter stays
+    at zero. rounds_started is the prepare-staging round counter and counts
+    toward that same budget.
+    """
     if reviewed.get("merged"):
         return False
     if reviewed.get("ok"):
@@ -647,9 +675,13 @@ def _review_allows_staging(env: StagingEnv, reviewed: Dict[str, Any]) -> bool:
     from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
 
     autofix_count, minor_count = _autofix_counts(env.repo, reviewed.get("pr_number"))
+    try:
+        rounds = max(0, int(rounds_started or 0))
+    except (TypeError, ValueError):
+        rounds = 0
     return review_is_ready_to_merge(
         body,
-        autofix_count=autofix_count,
+        autofix_count=max(autofix_count, rounds),
         minor_autofix_count=minor_count,
     )
 
@@ -723,7 +755,7 @@ def _begin_review_autofix_poll(
             "pr_url": (launched.get("pr_url") or "").strip(),
             "follows_new_pr": bool(follows_new_pr),
             "rounds_started": rounds_started,
-            "pending_review_body": review_body if cooldown_until else "",
+            "pending_review_body": review_body or "",
             "cooldown_until": cooldown_until,
             "started_at": started_at,
             "triggered": [],
@@ -752,7 +784,7 @@ def _handle_dirty_staging_review(
     reason = (reviewed.get("reason") or "").strip()
     if reason and not (reviewed.get("review") or "").strip():
         return _stop_staging_review(thread_id, reason)
-    if _review_allows_staging(env, reviewed):
+    if _review_allows_staging(env, reviewed, rounds_started=rounds_started):
         return _dispatch_after_clean_review(thread_id, env, reviewed)
 
     max_iters = autofix_max_iterations()
@@ -865,6 +897,7 @@ def _handle_dirty_staging_review(
         launched,
         follows_new_pr=sticky_new_pr,
         rounds_started=next_round,
+        review_body=reviewed.get("review") or "",
     )
 
 
@@ -1425,14 +1458,15 @@ def _after_candidate_rereview(
 ) -> Dict[str, Any]:
     if (reviewed.get("reason") or "").strip() and not (reviewed.get("review") or "").strip():
         return _stop_staging_review(thread_id, reviewed["reason"])
-    if _review_allows_staging(env, reviewed):
+    rounds_started = int(poll.get("rounds_started") or 0)
+    if _review_allows_staging(env, reviewed, rounds_started=rounds_started):
         _clear_gpw_poll(thread_id)
         return _dispatch_after_clean_review(thread_id, env, reviewed)
     return _handle_dirty_staging_review(
         thread_id,
         env,
         reviewed,
-        rounds_started=int(poll.get("rounds_started") or 0),
+        rounds_started=rounds_started,
         follows_new_pr=False,
         announce=False,
     )
@@ -1482,8 +1516,13 @@ def _merge_fix_pr_then_stage(
 def _review_candidate_after_fix_merge(
     thread_id: str, env: StagingEnv, poll: Dict[str, Any]
 ) -> Dict[str, Any]:
+    previous = (poll.get("pending_review_body") or "").strip()
     try:
-        reviewed = review_candidate(env)
+        reviewed = review_candidate(
+            env,
+            phase="post_autofix",
+            previous_review=previous or None,
+        )
     except Exception as exc:
         logger.exception("Prepare-staging re-review failed for %s", env.project_key)
         return _stop_staging_review(thread_id, f"Review failed: {exc}")
@@ -1516,7 +1555,11 @@ def _continue_after_review_autofix(
             return _review_candidate_after_fix_merge(thread_id, env, poll)
         _post_staging_review_comment(env.repo, pr_number, reviewed.get("review") or "")
         effective_pr_url = (pr_url or reviewed.get("pr_url") or "").strip()
-        if _review_allows_staging(env, reviewed):
+        if _review_allows_staging(
+            env,
+            reviewed,
+            rounds_started=int(poll.get("rounds_started") or 0),
+        ):
             return _merge_fix_pr_then_stage(
                 thread_id, env, poll, pr_number, effective_pr_url
             )
@@ -1531,12 +1574,7 @@ def _continue_after_review_autofix(
             announce=False,
         )
 
-    try:
-        reviewed = review_candidate(env)
-    except Exception as exc:
-        logger.exception("Prepare-staging re-review failed for %s", env.project_key)
-        return _stop_staging_review(thread_id, f"Review failed: {exc}")
-    return _after_candidate_rereview(thread_id, env, poll, reviewed)
+    return _review_candidate_after_fix_merge(thread_id, env, poll)
 
 
 def _poll_review_autofix(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]:
