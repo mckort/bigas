@@ -11,6 +11,7 @@ os.environ.setdefault("CHAT_STORAGE_MODE", "memory")
 os.environ.setdefault("CHAT_AUTH_MODE", "dev")
 os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 os.environ.setdefault("GITHUB_TOKEN", "test-github-token")
+os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "test-webhook-secret")
 
 from bigas.chat.db import get_chat_store
 from bigas.portfolio import (
@@ -98,6 +99,63 @@ def test_teardown_waits_for_yes_then_dispatches(monkeypatch):
     assert second.get("deploy_poll_active") is True
     assert dispatched["phase"] == "teardown"
     assert dispatched["inputs"] == {"confirm": "yes"}
+
+
+def _gpw_staging_status_client():
+    from app import create_app
+
+    app = create_app()
+    app.config["TESTING"] = True
+    return app.test_client()
+
+
+def _gpw_staging_status_headers():
+    return {"X-Bigas-Webhook-Secret": os.environ["GITHUB_WEBHOOK_SECRET"]}
+
+
+def test_gpw_staging_status_route_unauthorized():
+    client = _gpw_staging_status_client()
+    resp = client.post(
+        "/mcp/tools/gpw_staging_status",
+        json={"message": "Update staging: ok."},
+        headers={"X-Bigas-Webhook-Secret": "wrong-secret"},
+    )
+    assert resp.status_code == 401
+    assert resp.get_json()["error"] == "unauthorized"
+
+
+def test_gpw_staging_status_route_missing_message():
+    client = _gpw_staging_status_client()
+    resp = client.post(
+        "/mcp/tools/gpw_staging_status",
+        json={},
+        headers=_gpw_staging_status_headers(),
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["error"] == "message is required"
+
+
+def test_gpw_staging_status_route_truncates_long_message(monkeypatch):
+    captured = {}
+
+    def _capture(message):
+        captured["message"] = message
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.post_staging_status",
+        _capture,
+    )
+    client = _gpw_staging_status_client()
+    long_message = "x" * 600
+    resp = client.post(
+        "/mcp/tools/gpw_staging_status",
+        json={"message": long_message},
+        headers=_gpw_staging_status_headers(),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+    assert captured["message"] == ("x" * 497) + "..."
+    assert len(captured["message"]) == 500
 
 
 def test_gpw_staging_status_posts_activity_and_discord(monkeypatch):

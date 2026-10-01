@@ -389,7 +389,9 @@ def gpw_staging_status_endpoint():
     if not secret or not verify_webhook_secret(header_secret, secret):
         return jsonify({"error": "unauthorized"}), 401
 
-    data = request.json or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid payload"}), 400
     message = str(data.get("message") or "").strip()
     if not message:
         return jsonify({"error": "message is required"}), 400
