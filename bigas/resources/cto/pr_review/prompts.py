@@ -61,6 +61,11 @@ Dead / unused code (classify as Important, not Minor):
 - Do NOT flag public APIs, feature-flagged / intentionally retained code, or
   symbols that are used outside the shown diff (tests, other modules, dynamic
   imports). If usage is unclear from the diff, leave it out.
+- Do NOT flag an import as unused unless this diff shows its call site was
+  removed. An import added at the top of a file is still required when the
+  call sits further down and is not in the diff. Leave it out.
+- Do NOT ask to restore an HTML required attribute, or any other line, that
+  this PR removed on purpose.
 """.strip()
 
 
@@ -184,6 +189,9 @@ Guidelines:
 - If a previous unused-file/asset finding remains but the file is still referenced
   (including outside this diff) or the autofix explained it is still used, mark it
   resolved — do not keep it as Important.
+- If the autofix deleted an import and this diff does not show that the call
+  site is gone, report that deletion as a new Blocker. Do not treat the
+  unused-import finding as resolved.
 
 {_PROJECT_HELPER_RULES}
 
