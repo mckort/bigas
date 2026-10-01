@@ -100,6 +100,26 @@ def test_teardown_waits_for_yes_then_dispatches(monkeypatch):
     assert dispatched["inputs"] == {"confirm": "yes"}
 
 
+def test_gpw_staging_status_posts_activity_and_discord(monkeypatch):
+    posted = {}
+
+    def _capture(url, message, **kwargs):
+        posted["url"] = url
+        posted["message"] = message
+        posted["kwargs"] = kwargs
+        return True
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL_DEVOPS", "https://discord.test/devops")
+    monkeypatch.setattr("bigas.discord_webhook.post_to_discord", _capture)
+    from bigas.resources.devops.gpw_pipeline import post_staging_status
+
+    post_staging_status("Update staging: building develop image abc1234.")
+    assert posted["message"] == "Update staging: building develop image abc1234."
+    assert posted["url"] == "https://discord.test/devops"
+    assert posted["kwargs"]["mirror_thread"] is False
+    assert posted["kwargs"]["chat_agent_id"] == "devops"
+
+
 def test_update_staging_requires_prepare(monkeypatch):
     chat = get_chat_store()
     thread = chat.create_thread("user-1", "devops")

@@ -242,6 +242,22 @@ def _store():
     return get_chat_store()
 
 
+def post_staging_status(message: str) -> None:
+    """Discord devops channel and the Activity feed. Not the devops chat thread."""
+    import os
+
+    from bigas.discord_webhook import post_to_discord
+
+    text = (message or "").strip()
+    if not text:
+        return
+    url = (
+        (os.environ.get("DISCORD_WEBHOOK_URL_DEVOPS") or "").strip()
+        or (os.environ.get("DISCORD_WEBHOOK_URL_CTO") or "").strip()
+    )
+    post_to_discord(url, text, chat_agent_id="devops", mirror_thread=False)
+
+
 def _post(thread_id: Optional[str], content: str, *, status: Optional[str] = None) -> None:
     if not thread_id or not (content or "").strip():
         return
