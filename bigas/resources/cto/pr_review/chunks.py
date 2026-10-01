@@ -37,7 +37,8 @@ SLICE_INSTRUCTIONS = """
 This is one slice of a prepare-staging release gate.
 Report a Blocker only for data loss, a security hole, a broken import this slice
 proves, or a staging/deploy script that would fail.
-Leave Important and Minor as None. Do not report CSS, theme, ARIA, copy,
+Report an Important finding only for a real behavior bug this slice proves.
+Leave Minor as None. Do not report CSS, theme, ARIA, copy,
 enum alias spelling, workflow style, unused imports, or third-party URL swaps.
 Do not write "ready to merge". That verdict is decided after every slice is combined.
 Report a missing import or NameError only when this slice shows the file's import
@@ -47,11 +48,12 @@ not in the slice, do not report an undefined name.
 
 POST_AUTOFIX_SLICE_INSTRUCTIONS = """
 This is one slice of the branch diff after a prepare-staging autofix merged.
-Verify previous Blockers only when this slice shows the relevant code.
-If a previous Blocker is not in this slice, leave it out. Another slice covers it.
-Report a new Blocker only when this slice shows the autofix introduced data loss,
-a security hole, a proven broken import, or a broken staging/deploy script.
-Leave Important and Minor as None. Do not report new nits, style, enum aliases,
+Verify previous Blockers and Important items only when this slice shows the relevant code.
+If a previous finding is not in this slice, leave it out. Another slice covers it.
+Report a new Blocker or Important item only when this slice shows the autofix
+introduced data loss, a security hole, a proven broken import, a broken
+staging/deploy script, or a real behavior bug.
+Leave Minor as None. Do not report new nits, style, enum aliases,
 or third-party URL swaps.
 Do not write "ready to merge". That verdict is decided after every slice is combined.
 Report a missing import or NameError only when this slice shows the file's import

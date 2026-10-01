@@ -8,7 +8,12 @@ from bigas.resources.cto.pr_review.chunks import (
     review_slices,
     split_unified_diff,
 )
-from bigas.resources.devops.gpw_pipeline import StagingEnv, _launch_review_autofix
+from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
+from bigas.resources.devops.gpw_pipeline import (
+    StagingEnv,
+    _launch_review_autofix,
+    staging_fix_review,
+)
 
 
 def _file(path: str, body: str = "line\n") -> str:
@@ -132,7 +137,8 @@ def test_post_autofix_slices_verify_instead_of_hunting():
 
     def _review(slice_diff, instructions):
         assert "after a prepare-staging autofix merged" in instructions
-        assert "Leave Important and Minor as None" in instructions
+        assert "Leave Minor as None" in instructions
+        assert "Important" in instructions
         return """### Blockers
 None.
 
@@ -177,20 +183,37 @@ def test_prepare_staging_autofix_receives_the_full_review(monkeypatch):
     body = (
         "### Blockers\n"
         + ("- A real finding that must survive the handoff.\n" * 200)
-        + "\n### Important\n- Restyle the button.\n\n### Minor\n- Rename a local.\n"
+        + "\n### Important\n- Guest checkout returns 500.\n\n### Minor\n- Rename a local.\n"
     )
     assert len(body) > 4000
     launched = _launch_review_autofix(env, {"review": body})
     excerpt = captured["failures"][0]["excerpt"]
     assert len(excerpt) > 4000
     assert "must survive the handoff." in excerpt
-    assert "Restyle the button" not in excerpt
+    assert "Guest checkout returns 500." in excerpt
     assert "Rename a local" not in excerpt
-    assert "### Important\nNone." in excerpt
+    assert "### Minor\nNone." in excerpt
     assert "```python" not in excerpt or "handoff." in excerpt
-    assert "Fix only the Blockers" in captured["extra_instructions"]
+    assert "Fix the Blockers and Important" in captured["extra_instructions"]
+    assert "Do not fix Minor" in captured["extra_instructions"]
     assert "not a draft" in captured["extra_instructions"]
     assert "COMMITTED next to COMMITED" in captured["extra_instructions"]
     assert launched["launched"] is True
     assert launched["follows_new_pr"] is True
     assert "example.test/agent" in launched["note"]
+
+
+def test_staging_fix_review_keeps_important_and_skips_minor():
+    important = staging_fix_review(
+        "### Blockers\nNone.\n\n### Important\n- Guest checkout returns 500.\n\n"
+        "### Minor\n- Rename a local.\n"
+    )
+    assert "Guest checkout returns 500." in important
+    assert "Rename a local" not in important
+    assert review_is_ready_to_merge(important) is False
+
+    minor_only = staging_fix_review(
+        "### Blockers\nNone.\n\n### Important\nNone.\n\n### Minor\n- Rename a local.\n"
+    )
+    assert "Rename a local" not in minor_only
+    assert review_is_ready_to_merge(minor_only) is True

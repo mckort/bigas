@@ -322,7 +322,8 @@ def review_candidate(
     """Review the candidate branch against production. Returns shas and whether it may proceed.
 
     The first pass is a release gate. After an autofix merges, pass phase=\"post_autofix\"
-    and the previous review so the next pass only checks those blockers.
+    and the previous review so the next pass only checks those blockers and
+    important findings.
     """
     from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
     from bigas.resources.cto.pr_review.chunks import review_compare_diff
@@ -362,7 +363,7 @@ def review_candidate(
             previous_review=prior if review_phase == "prepare_staging_post" else None,
         ).text,
     ).strip()
-    ready = review_is_ready_to_merge(blockers_only_review(body))
+    ready = review_is_ready_to_merge(staging_fix_review(body))
     pr = client.find_open_pull_request(
         owner, name, head=env.candidate_branch, base=env.production_branch
     )
@@ -387,8 +388,8 @@ def _review_excerpt(body: str) -> str:
     return text[:_REVIEW_EXCERPT_MAX] + "\n\n... (review truncated for the fix agent)\n"
 
 
-def blockers_only_review(body: str) -> str:
-    """Keep Blockers. Prepare staging does not autofix Important or Minor."""
+def staging_fix_review(body: str) -> str:
+    """Keep Blockers and Important. Prepare staging does not autofix Minor."""
     from bigas.resources.cto.autofix.heuristics import (
         _section_bodies,
         _section_has_findings,
@@ -397,13 +398,19 @@ def blockers_only_review(body: str) -> str:
     sections = _section_bodies(body or "")
     if not sections:
         return (body or "").strip()
-    blockers = sections.get("blockers", "")
-    if not _section_has_findings(blockers):
-        blockers = "None."
+
+    def _kept(name: str) -> str:
+        text = sections.get(name, "")
+        if not _section_has_findings(text):
+            return "None."
+        return text.strip()
+
     return (
         "### Blockers\n"
-        + blockers.strip()
-        + "\n\n### Important\nNone.\n\n### Minor\nNone."
+        + _kept("blockers")
+        + "\n\n### Important\n"
+        + _kept("important")
+        + "\n\n### Minor\nNone."
     )
 
 
@@ -411,7 +418,7 @@ def _prepare_staging_fix_instructions(env: StagingEnv) -> str:
     return (
         f"This is a release-gate review of {env.candidate_branch} against "
         f"{env.production_branch} for {env.project_key}, not a failed deploy log. "
-        "Fix only the Blockers in the excerpt. Do not fix Important or Minor, and "
+        "Fix the Blockers and Important items in the excerpt. Do not fix Minor, and "
         "do not search for extra issues.\n"
         "Do not add a second enum member that repeats an existing value "
         "(COMMITTED next to COMMITED crashes import). If an alias is needed, "
@@ -434,7 +441,7 @@ def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> Dict[str,
     """Start one autofix round. A skipped launch is not reported as started."""
     repo = env.repo
     pr_number = _safe_pr_number(result.get("pr_number"))
-    body = blockers_only_review(result.get("review") or "")
+    body = staging_fix_review(result.get("review") or "")
     if pr_number:
         from bigas.resources.cto.autofix.service import AutofixService
 

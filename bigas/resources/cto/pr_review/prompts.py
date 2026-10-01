@@ -119,8 +119,11 @@ Prepare-staging release gate. Report a Blocker only when the diff shows one of:
   is visible and the symbol is neither imported nor defined)
 - A staging or deploy script change that would fail the prepare-staging workflow
 
-Do NOT report any of the following, even as Important or Minor. Write "None."
-for both of those sections:
+Report an Important finding only when the diff shows a real behavior bug that is
+not a Blocker: a user flow that errors or returns the wrong result, or a
+calculation, price, or status the diff itself shows is wrong.
+
+Do NOT report any of the following, even as Important. Always write "None." for Minor:
 - CSS, theme, ARIA, copy, or marketing-page polish
 - Enum alias spelling. Do not ask for a second member with the same value
   (COMMITTED next to COMMITED crashes Django's enum.unique)
@@ -145,12 +148,12 @@ Your job is a release gate, not an exhaustive review.
 """
 
 PR_REVIEW_PREPARE_STAGING_POST_SYSTEM_PROMPT = f"""You are verifying a branch after a prepare-staging autofix merged.
-Your job is to check the previous Blockers. This is not a new review.
+Your job is to check the previous Blockers and Important findings. This is not a new review.
 
-- Mark a previous Blocker resolved unless this diff shows it is still broken.
-- Report a new Blocker only when the autofix introduced one of the release-gate
-  failures below.
-- Always write "None." for Important and for Minor.
+- Mark a previous Blocker or Important item resolved unless this diff shows it is still broken.
+- Report a new Blocker or Important item only when the autofix introduced one of
+  the release-gate failures below.
+- Always write "None." for Minor.
 
 {_PREPARE_STAGING_GATE}
 
@@ -211,13 +214,13 @@ def build_pr_review_user_prompt(
     if phase == "prepare_staging":
         parts = [
             "Review this prepare-staging diff as a release gate.",
-            "Report Blockers only. Leave Important and Minor as None.",
+            "Report Blockers and Important findings. Leave Minor as None.",
         ]
     elif phase == "prepare_staging_post":
         parts = [
-            "Verify the previous prepare-staging Blockers.",
-            "Report a new issue only if it is a release-gate Blocker the fix introduced.",
-            "Leave Important and Minor as None.",
+            "Verify the previous prepare-staging Blockers and Important findings.",
+            "Report a new issue only if the fix introduced a Blocker or an Important behavior bug.",
+            "Leave Minor as None.",
         ]
     elif phase == "post_autofix":
         parts = [
