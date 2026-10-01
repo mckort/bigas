@@ -254,6 +254,8 @@ def test_autofix_prompt_forbids_confirmation():
     assert "already resolved" in prompt or "local wrapper" in prompt
     assert "remove that dead code" in prompt
     assert "Do not expand into a repo-wide cleanup" in prompt
+    assert "Do not delete an import whose call site is outside the diff" in prompt
+    assert "Do not restore an HTML required attribute" in prompt
     assert "[bigas-autofix]" in prompt
     assert "[nits-only]" not in prompt
 
@@ -328,8 +330,11 @@ def test_pr_review_prompts_classify_dead_code_as_important():
         assert "Dead / unused code (classify as Important, not Minor)" in text
         assert "this PR introduced or made unused" in text
         assert "Do NOT hunt the rest of the repository" in text
+        assert "Do NOT flag an import as unused unless this diff shows its call site was" in text
+        assert "Do NOT ask to restore an HTML required attribute" in text
 
     assert "Classify as Important" in PR_REVIEW_INITIAL_SYSTEM_PROMPT
+    assert "report that deletion as a new Blocker" in PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
     assert "leftover dead/unused code" in PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
     assert "unused code this PR introduced or made unused" in PR_REVIEW_SYSTEM_PROMPT
 
