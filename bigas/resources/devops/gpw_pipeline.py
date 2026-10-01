@@ -983,10 +983,12 @@ def _start_update_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str
     if current != candidate_sha:
         _post(
             thread_id,
-            f"`{env.candidate_branch}` moved after the review (`{candidate_sha[:7]}` → `{current[:7]}`). "
-            f"Run **prepare staging {env.project_key}** again.",
+            f"`{env.candidate_branch}` moved (`{candidate_sha[:7]}` → `{current[:7]}`). "
+            "Staging stays up. Updating it to the new tip instead of copying the database again.",
         )
-        return {"status": "complete", "summary": "candidate branch moved"}
+        candidate_sha = current
+        rehearsal["candidate_sha"] = current
+        _set_rehearsal(thread_id, rehearsal)
     try:
         run = dispatch_gpw_workflow("update_staging", {"image_sha": candidate_sha}, env=env)
     except Exception as exc:
@@ -1265,6 +1267,7 @@ def _finish_success(thread_id: str, poll: Dict[str, Any]) -> None:
         _post(
             thread_id,
             "Staging is up as a copy of production, including the database. "
+            "DNS is set. The certificate can take up to 30 minutes before the site answers. "
             f"New code is not applied yet.\n\n{staging_url}",
         )
         return
