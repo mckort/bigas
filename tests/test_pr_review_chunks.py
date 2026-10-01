@@ -131,8 +131,8 @@ def test_post_autofix_slices_verify_instead_of_hunting():
     diff = _file("api/order.py")
 
     def _review(slice_diff, instructions):
-        assert "after an autofix round merged" in instructions
-        assert "Do not report new Minor nits" in instructions
+        assert "after a prepare-staging autofix merged" in instructions
+        assert "Leave Important and Minor as None" in instructions
         return """### Blockers
 None.
 
@@ -145,7 +145,7 @@ None.
 
     merged = review_compare_diff(diff, review_slice=_review, phase="post_autofix")
     assert "ready to merge" in merged.lower()
-    assert "after an autofix round merged" in POST_AUTOFIX_SLICE_INSTRUCTIONS
+    assert "after a prepare-staging autofix merged" in POST_AUTOFIX_SLICE_INSTRUCTIONS
 
 
 def test_split_parses_paths_under_top_level_b_directory():
@@ -174,14 +174,23 @@ def test_prepare_staging_autofix_receives_the_full_review(monkeypatch):
         production_url="https://example.test",
         workflows={},
     )
-    body = "### Blockers\n" + ("- A real finding that must survive the handoff.\n" * 200)
+    body = (
+        "### Blockers\n"
+        + ("- A real finding that must survive the handoff.\n" * 200)
+        + "\n### Important\n- Restyle the button.\n\n### Minor\n- Rename a local.\n"
+    )
     assert len(body) > 4000
     launched = _launch_review_autofix(env, {"review": body})
     excerpt = captured["failures"][0]["excerpt"]
     assert len(excerpt) > 4000
-    assert excerpt.endswith("handoff.")
+    assert "must survive the handoff." in excerpt
+    assert "Restyle the button" not in excerpt
+    assert "Rename a local" not in excerpt
+    assert "### Important\nNone." in excerpt
     assert "```python" not in excerpt or "handoff." in excerpt
-    assert "Fix every finding" in captured["extra_instructions"]
+    assert "Fix only the Blockers" in captured["extra_instructions"]
+    assert "not a draft" in captured["extra_instructions"]
+    assert "COMMITTED next to COMMITED" in captured["extra_instructions"]
     assert launched["launched"] is True
     assert launched["follows_new_pr"] is True
     assert "example.test/agent" in launched["note"]
