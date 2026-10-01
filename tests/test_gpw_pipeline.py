@@ -111,6 +111,50 @@ def test_update_staging_requires_prepare(monkeypatch):
     assert "prepare staging" in _texts(thread["thread_id"]).lower()
 
 
+def test_update_staging_follows_develop_when_already_ready(monkeypatch):
+    dispatched = {}
+
+    class _Client:
+        def get_ref_sha(self, owner, name, branch):
+            return "fff123456789"
+
+    monkeypatch.setattr("bigas.resources.devops.gpw_pipeline._github", lambda: _Client())
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.dispatch_gpw_workflow",
+        lambda phase, inputs=None, **_kwargs: dispatched.update(phase=phase, inputs=inputs)
+        or {
+            "workflow": "update-staging.yml",
+            "run_id": 8,
+            "html_url": "https://example.test/8",
+            "phase": phase,
+            "inputs": inputs,
+        },
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    chat.patch_thread(
+        thread["thread_id"],
+        gpw_rehearsal={
+            "project_key": "GPW-PROD",
+            "candidate_sha": "def123456789",
+            "production_sha": "abc123456789",
+            "staging_ready": True,
+            "updated_ok": False,
+            "updated_sha": "",
+        },
+    )
+    result = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="update staging",
+    )
+    assert result.get("deploy_poll_active") is True
+    assert dispatched["phase"] == "update_staging"
+    assert dispatched["inputs"]["image_sha"] == "fff123456789"
+    text = _texts(thread["thread_id"]).lower()
+    assert "copying the database again" in text
+    assert "run **prepare staging" not in text
+
+
 def test_prepare_staging_dispatches_after_clean_review(monkeypatch):
     monkeypatch.setattr(
         "bigas.resources.devops.gpw_pipeline.review_candidate",
