@@ -204,7 +204,7 @@ class PRReviewService:
             diff = diff[:max_chars] + "\n\n... (diff truncated for length)\n"
             truncated_note = f"_Review is based on the first {max_chars} characters of the diff._\n\n"
 
-        if phase not in {"initial", "post_autofix"}:
+        if phase not in {"initial", "post_autofix", "prepare_staging", "prepare_staging_post"}:
             phase = "initial"
 
         user_prompt = build_pr_review_user_prompt(

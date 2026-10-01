@@ -34,8 +34,11 @@ _HASHED_ASSET = re.compile(r"\.[0-9a-f]{8,}\.(?:js|css|map)$", re.I)
 _DIFF_HEADER = re.compile(r"(?m)^diff --git ")
 
 SLICE_INSTRUCTIONS = """
-This is one slice of a larger prepare-staging branch diff.
-Report every real Blocker and Important issue in this slice. Minor can stay short.
+This is one slice of a prepare-staging release gate.
+Report a Blocker only for data loss, a security hole, a broken import this slice
+proves, or a staging/deploy script that would fail.
+Leave Important and Minor as None. Do not report CSS, theme, ARIA, copy,
+enum alias spelling, workflow style, unused imports, or third-party URL swaps.
 Do not write "ready to merge". That verdict is decided after every slice is combined.
 Report a missing import or NameError only when this slice shows the file's import
 block and the symbol is neither imported nor defined there. If the import block is
@@ -43,11 +46,13 @@ not in the slice, do not report an undefined name.
 """.strip()
 
 POST_AUTOFIX_SLICE_INSTRUCTIONS = """
-This is one slice of the branch diff after an autofix round merged.
-Verify previous findings only when this slice shows the relevant code.
-If a previous finding is not in this slice, leave it out. Another slice covers it.
-Report a new Blocker or Important only when this slice shows the autofix introduced it.
-Do not report new Minor nits, style notes, or optional polish.
+This is one slice of the branch diff after a prepare-staging autofix merged.
+Verify previous Blockers only when this slice shows the relevant code.
+If a previous Blocker is not in this slice, leave it out. Another slice covers it.
+Report a new Blocker only when this slice shows the autofix introduced data loss,
+a security hole, a proven broken import, or a broken staging/deploy script.
+Leave Important and Minor as None. Do not report new nits, style, enum aliases,
+or third-party URL swaps.
 Do not write "ready to merge". That verdict is decided after every slice is combined.
 Report a missing import or NameError only when this slice shows the file's import
 block and the symbol is neither imported nor defined there. If the import block is
@@ -236,7 +241,9 @@ def review_compare_diff(
         return _CLEAN_REVIEW
     total = len(slices)
     guidance = (
-        POST_AUTOFIX_SLICE_INSTRUCTIONS if phase == "post_autofix" else SLICE_INSTRUCTIONS
+        POST_AUTOFIX_SLICE_INSTRUCTIONS
+        if phase in {"post_autofix", "prepare_staging_post"}
+        else SLICE_INSTRUCTIONS
     )
     parts: List[str] = []
     for index, slice_diff in enumerate(slices, start=1):

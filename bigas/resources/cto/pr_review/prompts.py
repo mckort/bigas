@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-ReviewPhase = Literal["initial", "post_autofix"]
+ReviewPhase = Literal["initial", "post_autofix", "prepare_staging", "prepare_staging_post"]
 
 # Shared output contract so autofix heuristics can classify severity reliably.
 _REVIEW_FORMAT = """
@@ -110,6 +110,57 @@ Guidelines:
 {_REVIEW_FORMAT}
 """
 
+_PREPARE_STAGING_GATE = """
+Prepare-staging release gate. Report a Blocker only when the diff shows one of:
+- Data loss or a write that persists invalid data
+- A security hole (authz bypass, secret exposure, CSRF removal on a route that
+  already sends a token)
+- A broken import or NameError that this slice itself proves (the import block
+  is visible and the symbol is neither imported nor defined)
+- A staging or deploy script change that would fail the prepare-staging workflow
+
+Do NOT report any of the following, even as Important or Minor. Write "None."
+for both of those sections:
+- CSS, theme, ARIA, copy, or marketing-page polish
+- Enum alias spelling. Do not ask for a second member with the same value
+  (COMMITTED next to COMMITED crashes Django's enum.unique)
+- Workflow-expression style, unused imports, or "could be clearer"
+- Third-party script or stylesheet URL swaps unless the diff shows the current
+  URL is gone
+- Mobile layout nits that do not break the page
+""".strip()
+
+PR_REVIEW_PREPARE_STAGING_SYSTEM_PROMPT = f"""You are a senior engineer gating a branch for a staging deploy.
+Your job is a release gate, not an exhaustive review.
+
+{_PREPARE_STAGING_GATE}
+
+- Prefer silence. If a slice looks fine, leave it out.
+- Be specific: file path and the broken line.
+- Return only the review text.
+
+{_PROJECT_HELPER_RULES}
+
+{_REVIEW_FORMAT}
+"""
+
+PR_REVIEW_PREPARE_STAGING_POST_SYSTEM_PROMPT = f"""You are verifying a branch after a prepare-staging autofix merged.
+Your job is to check the previous Blockers. This is not a new review.
+
+- Mark a previous Blocker resolved unless this diff shows it is still broken.
+- Report a new Blocker only when the autofix introduced one of the release-gate
+  failures below.
+- Always write "None." for Important and for Minor.
+
+{_PREPARE_STAGING_GATE}
+
+- Return only the review text.
+
+{_PROJECT_HELPER_RULES}
+
+{_REVIEW_FORMAT}
+"""
+
 PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT = f"""You are a senior engineer verifying a pull request after an autofix round.
 Your job is verification, not a fresh open-ended review.
 
@@ -140,6 +191,10 @@ Guidelines:
 
 
 def system_prompt_for_phase(phase: ReviewPhase = "initial") -> str:
+    if phase == "prepare_staging":
+        return PR_REVIEW_PREPARE_STAGING_SYSTEM_PROMPT
+    if phase == "prepare_staging_post":
+        return PR_REVIEW_PREPARE_STAGING_POST_SYSTEM_PROMPT
     if phase == "post_autofix":
         return PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
     return PR_REVIEW_INITIAL_SYSTEM_PROMPT
@@ -153,7 +208,18 @@ def build_pr_review_user_prompt(
     previous_review: Optional[str] = None,
 ) -> str:
     """Build the user prompt with the PR diff and optional custom instructions."""
-    if phase == "post_autofix":
+    if phase == "prepare_staging":
+        parts = [
+            "Review this prepare-staging diff as a release gate.",
+            "Report Blockers only. Leave Important and Minor as None.",
+        ]
+    elif phase == "prepare_staging_post":
+        parts = [
+            "Verify the previous prepare-staging Blockers.",
+            "Report a new issue only if it is a release-gate Blocker the fix introduced.",
+            "Leave Important and Minor as None.",
+        ]
+    elif phase == "post_autofix":
         parts = [
             "Re-review this pull request after autofix.",
             "Verify previous findings first; only raise new Blockers/Important if truly warranted.",

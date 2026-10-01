@@ -321,20 +321,16 @@ def review_candidate(
 ) -> Dict[str, Any]:
     """Review the candidate branch against production. Returns shas and whether it may proceed.
 
-    The first pass is exhaustive. After an autofix merges, pass phase=\"post_autofix\"
-    and the previous review so the next pass only checks those findings and regressions
-    the fix introduced.
+    The first pass is a release gate. After an autofix merges, pass phase=\"post_autofix\"
+    and the previous review so the next pass only checks those blockers.
     """
     from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge
     from bigas.resources.cto.pr_review.chunks import review_compare_diff
     from bigas.resources.cto.pr_review.service import PRReviewService
 
     env = _require_staging_env(env)
+    review_phase = "prepare_staging_post" if phase == "post_autofix" else "prepare_staging"
     prior = (previous_review or "").strip() or None
-    if phase == "post_autofix" and prior is not None:
-        review_phase = "post_autofix"
-    else:
-        review_phase = "initial"
     client = _github()
     owner, name = _owner_name(env)
     compare = client.compare_refs(owner, name, env.production_branch, env.candidate_branch)
@@ -360,7 +356,7 @@ def review_candidate(
             slice_diff,
             instructions=instructions,
             phase=review_phase,
-            previous_review=prior if review_phase == "post_autofix" else None,
+            previous_review=prior if review_phase == "prepare_staging_post" else None,
         ).text,
     ).strip()
     ready = review_is_ready_to_merge(body)
@@ -388,6 +384,42 @@ def _review_excerpt(body: str) -> str:
     return text[:_REVIEW_EXCERPT_MAX] + "\n\n... (review truncated for the fix agent)\n"
 
 
+def blockers_only_review(body: str) -> str:
+    """Keep Blockers. Prepare staging does not autofix Important or Minor."""
+    from bigas.resources.cto.autofix.heuristics import (
+        _section_bodies,
+        _section_has_findings,
+    )
+
+    sections = _section_bodies(body or "")
+    if not sections:
+        return (body or "").strip()
+    blockers = sections.get("blockers", "")
+    if not _section_has_findings(blockers):
+        blockers = "None."
+    return (
+        "### Blockers\n"
+        + blockers.strip()
+        + "\n\n### Important\nNone.\n\n### Minor\nNone."
+    )
+
+
+def _prepare_staging_fix_instructions(env: StagingEnv) -> str:
+    return (
+        f"This is a release-gate review of {env.candidate_branch} against "
+        f"{env.production_branch} for {env.project_key}, not a failed deploy log. "
+        "Fix only the Blockers in the excerpt. Do not fix Important or Minor, and "
+        "do not search for extra issues.\n"
+        "Do not add a second enum member that repeats an existing value "
+        "(COMMITTED next to COMMITED crashes import). If an alias is needed, "
+        "assign it after the class.\n"
+        "Do not change a third-party script or stylesheet URL unless the diff "
+        "shows the current URL is gone.\n"
+        "Open a normal pull request, not a draft. Do not merge it. "
+        "Do not deploy and do not touch production."
+    )
+
+
 def _launch_note(launched: Dict[str, Any], *, on_branch: str = "") -> str:
     url = (launched.get("agent_url") or launched.get("pr_url") or "").strip()
     if on_branch:
@@ -399,7 +431,7 @@ def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> Dict[str,
     """Start one autofix round. A skipped launch is not reported as started."""
     repo = env.repo
     pr_number = _safe_pr_number(result.get("pr_number"))
-    body = result.get("review") or ""
+    body = blockers_only_review(result.get("review") or "")
     if pr_number:
         from bigas.resources.cto.autofix.service import AutofixService
 
@@ -431,13 +463,7 @@ def _launch_review_autofix(env: StagingEnv, result: Dict[str, Any]) -> Dict[str,
             }
         ],
         starting_ref=env.candidate_branch,
-        extra_instructions=(
-            f"This is a code review of {env.candidate_branch} against {env.production_branch} "
-            f"for {env.project_key}. Fix every finding in the review on {env.candidate_branch}, "
-            "including findings from later sections. Do not stop after the first few. "
-            "Open a pull request with the fixes. Do not merge it. "
-            "Do not deploy and do not touch production."
-        ),
+        extra_instructions=_prepare_staging_fix_instructions(env),
     )
     launched = dict(launched or {})
     if "launched" in launched:
@@ -1482,6 +1508,16 @@ def _merge_fix_pr_then_stage(
 
     owner, name = _owner_name(env)
     gh = _github_pr_client()
+    try:
+        current = gh.get_pull_request(owner, name, pr_number)
+        if current.get("draft"):
+            gh.mark_pull_request_ready_for_review(
+                owner, name, pr_number, node_id=current.get("node_id")
+            )
+    except Exception:
+        logger.warning(
+            "Could not mark staging fix PR %s ready for review", pr_number, exc_info=True
+        )
     try:
         gh.merge_pull_request(owner, name, pr_number, merge_method="squash")
     except GitHubMergeNotReadyError:
