@@ -329,8 +329,11 @@ def review_candidate(
     from bigas.resources.cto.pr_review.service import PRReviewService
 
     env = _require_staging_env(env)
-    review_phase = "prepare_staging_post" if phase == "post_autofix" else "prepare_staging"
     prior = (previous_review or "").strip() or None
+    if phase in {"post_autofix", "prepare_staging_post"} and prior is not None:
+        review_phase = "prepare_staging_post"
+    else:
+        review_phase = "prepare_staging"
     client = _github()
     owner, name = _owner_name(env)
     compare = client.compare_refs(owner, name, env.production_branch, env.candidate_branch)
@@ -359,7 +362,7 @@ def review_candidate(
             previous_review=prior if review_phase == "prepare_staging_post" else None,
         ).text,
     ).strip()
-    ready = review_is_ready_to_merge(body)
+    ready = review_is_ready_to_merge(blockers_only_review(body))
     pr = client.find_open_pull_request(
         owner, name, head=env.candidate_branch, base=env.production_branch
     )
