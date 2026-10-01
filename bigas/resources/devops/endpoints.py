@@ -374,6 +374,36 @@ def self_healing_ci_job_endpoint():
     return jsonify(job)
 
 
+@devops_bp.route("/gpw_staging_status", methods=["POST"])
+def gpw_staging_status_endpoint():
+    """
+    Progress line from the GPW update-staging workflow.
+
+    Auth: X-Bigas-Webhook-Secret (same value as GITHUB_WEBHOOK_SECRET).
+    Body: {"message": "Update staging: building develop image abc1234."}
+
+    Posts to the devops Discord webhook and the Activity feed, not the devops chat thread.
+    """
+    secret = webhook_secret()
+    header_secret = extract_webhook_secret_from_headers(request.headers)
+    if not secret or not verify_webhook_secret(header_secret, secret):
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid payload"}), 400
+    message = str(data.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+    if len(message) > 500:
+        message = message[:497] + "..."
+
+    from bigas.resources.devops.gpw_pipeline import post_staging_status
+
+    post_staging_status(message)
+    return jsonify({"ok": True})
+
+
 @devops_bp.route("/check_website_health", methods=["POST"])
 def check_website_health_endpoint():
     """
