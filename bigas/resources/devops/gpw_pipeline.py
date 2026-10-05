@@ -979,15 +979,73 @@ def _same_rehearsal(rehearsal: Dict[str, Any], env: StagingEnv) -> bool:
     return env.project_key == "GPW-PROD"
 
 
+def staging_stack_answers(env: StagingEnv) -> bool:
+    """True when the staging URL is being served, including a maintenance page.
+
+    A connection failure means the stack is gone. An HTTP status, even 503,
+    means update can deploy onto it without copying the production database.
+    """
+    url = (env.staging_url or "").strip()
+    if not url:
+        return False
+    from bigas.resources.devops.service import check_website_health
+
+    try:
+        result = check_website_health(url)
+    except Exception:
+        logger.warning(
+            "Staging reachability check failed for %s", env.project_key, exc_info=True
+        )
+        return False
+    if result.get("is_healthy"):
+        return True
+    return result.get("http_status") is not None
+
+
+def _remember_live_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str, Any]:
+    """Record the live stack so this chat can update it without a new prepare."""
+    client = _github()
+    owner, name = _owner_name(env)
+    candidate = client.get_ref_sha(owner, name, env.candidate_branch)
+    try:
+        production = client.get_ref_sha(owner, name, env.production_branch)
+    except Exception:
+        logger.warning(
+            "Could not read %s while adopting live staging for %s",
+            env.production_branch,
+            env.project_key,
+            exc_info=True,
+        )
+        production = ""
+    rehearsal = {
+        "project_key": env.project_key,
+        "candidate_sha": candidate,
+        "production_sha": production,
+        "staging_ready": True,
+        "updated_ok": False,
+        "updated_sha": "",
+    }
+    _set_rehearsal(thread_id, rehearsal)
+    return rehearsal
+
+
 def _start_update_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str, Any]:
     rehearsal = _rehearsal(thread_id)
+    adopted_live = False
     if not rehearsal.get("staging_ready") or not _same_rehearsal(rehearsal, env):
-        _post(
-            thread_id,
-            f"Staging for **{env.project_key}** is not ready. Run **prepare staging {env.project_key}** "
-            "first so the environment matches production, including the database copy.",
-        )
-        return {"status": "complete", "summary": "Staging not prepared."}
+        if not staging_stack_answers(env):
+            _post(
+                thread_id,
+                f"Staging for **{env.project_key}** is not ready. Run **prepare staging {env.project_key}** "
+                "first so the environment matches production, including the database copy.",
+            )
+            return {"status": "complete", "summary": "Staging not prepared."}
+        try:
+            rehearsal = _remember_live_staging(thread_id, env)
+        except Exception as exc:
+            _post(thread_id, f"Could not read `{env.candidate_branch}`: {exc}")
+            return {"status": "complete", "summary": str(exc)}
+        adopted_live = True
     candidate_sha = rehearsal.get("candidate_sha") or ""
     try:
         client = _github()
@@ -996,7 +1054,14 @@ def _start_update_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str
     except Exception as exc:
         _post(thread_id, f"Could not read `{env.candidate_branch}`: {exc}")
         return {"status": "complete", "summary": str(exc)}
-    if current != candidate_sha:
+    if adopted_live:
+        candidate_sha = current
+        _post(
+            thread_id,
+            f"Staging is already up at {env.staging_url}. "
+            f"Updating `{current[:7]}` without copying the database again.",
+        )
+    elif current != candidate_sha:
         _post(
             thread_id,
             f"`{env.candidate_branch}` moved (`{candidate_sha[:7]}` → `{current[:7]}`). "
