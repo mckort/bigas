@@ -992,14 +992,16 @@ def staging_stack_answers(env: StagingEnv) -> bool:
 
     try:
         result = check_website_health(url)
+        if not isinstance(result, dict):
+            return False
+        if result.get("is_healthy"):
+            return True
+        return result.get("http_status") is not None
     except Exception:
         logger.warning(
             "Staging reachability check failed for %s", env.project_key, exc_info=True
         )
         return False
-    if result.get("is_healthy"):
-        return True
-    return result.get("http_status") is not None
 
 
 def _remember_live_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str, Any]:
@@ -1043,33 +1045,36 @@ def _start_update_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[str
         try:
             rehearsal = _remember_live_staging(thread_id, env)
         except Exception as exc:
-            _post(thread_id, f"Could not read `{env.candidate_branch}`: {exc}")
+            _post(
+                thread_id,
+                f"Could not adopt live staging for **{env.project_key}**: {exc}",
+            )
             return {"status": "complete", "summary": str(exc)}
         adopted_live = True
     candidate_sha = rehearsal.get("candidate_sha") or ""
-    try:
-        client = _github()
-        owner, name = _owner_name(env)
-        current = client.get_ref_sha(owner, name, env.candidate_branch)
-    except Exception as exc:
-        _post(thread_id, f"Could not read `{env.candidate_branch}`: {exc}")
-        return {"status": "complete", "summary": str(exc)}
     if adopted_live:
-        candidate_sha = current
         _post(
             thread_id,
             f"Staging is already up at {env.staging_url}. "
-            f"Updating `{current[:7]}` without copying the database again.",
+            f"Updating `{candidate_sha[:7]}` without copying the database again.",
         )
-    elif current != candidate_sha:
-        _post(
-            thread_id,
-            f"`{env.candidate_branch}` moved (`{candidate_sha[:7]}` → `{current[:7]}`). "
-            "Staging stays up. Updating it to the new tip instead of copying the database again.",
-        )
-        candidate_sha = current
-        rehearsal["candidate_sha"] = current
-        _set_rehearsal(thread_id, rehearsal)
+    else:
+        try:
+            client = _github()
+            owner, name = _owner_name(env)
+            current = client.get_ref_sha(owner, name, env.candidate_branch)
+        except Exception as exc:
+            _post(thread_id, f"Could not read `{env.candidate_branch}`: {exc}")
+            return {"status": "complete", "summary": str(exc)}
+        if current != candidate_sha:
+            _post(
+                thread_id,
+                f"`{env.candidate_branch}` moved (`{candidate_sha[:7]}` → `{current[:7]}`). "
+                "Staging stays up. Updating it to the new tip instead of copying the database again.",
+            )
+            candidate_sha = current
+            rehearsal["candidate_sha"] = current
+            _set_rehearsal(thread_id, rehearsal)
     try:
         run = dispatch_gpw_workflow("update_staging", {"image_sha": candidate_sha}, env=env)
     except Exception as exc:
