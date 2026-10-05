@@ -178,7 +178,35 @@ def test_gpw_staging_status_posts_activity_and_discord(monkeypatch):
     assert posted["kwargs"]["chat_agent_id"] == "devops"
 
 
+def test_staging_stack_answers_accepts_maintenance_status(monkeypatch):
+    from bigas.resources.devops.gpw_pipeline import StagingEnv, staging_stack_answers
+
+    env = StagingEnv(
+        project_key="GPW-PROD",
+        repo="Green-Promo-Wear-Global/GPW",
+        candidate_branch="develop",
+        production_branch="production",
+        staging_url="https://staging.greenpromowear.com",
+        production_url="https://store.greenpromowear.com",
+        workflows={},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.service.check_website_health",
+        lambda url: {"is_healthy": False, "http_status": 503, "url": url},
+    )
+    assert staging_stack_answers(env) is True
+    monkeypatch.setattr(
+        "bigas.resources.devops.service.check_website_health",
+        lambda url: {"is_healthy": False, "http_status": None, "error": "Connection timed out"},
+    )
+    assert staging_stack_answers(env) is False
+
+
 def test_update_staging_requires_prepare(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.staging_stack_answers",
+        lambda env: False,
+    )
     chat = get_chat_store()
     thread = chat.create_thread("user-1", "devops")
     result = run_chat_deploy_pipeline(
@@ -187,6 +215,50 @@ def test_update_staging_requires_prepare(monkeypatch):
     )
     assert result["status"] == "complete"
     assert "prepare staging" in _texts(thread["thread_id"]).lower()
+
+
+def test_update_staging_adopts_live_stack_without_prepare(monkeypatch):
+    dispatched = {}
+
+    class _Client:
+        def get_ref_sha(self, owner, name, branch):
+            if branch == "production":
+                return "abc123456789"
+            return "fff123456789"
+
+    monkeypatch.setattr("bigas.resources.devops.gpw_pipeline._github", lambda: _Client())
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.staging_stack_answers",
+        lambda env: True,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.dispatch_gpw_workflow",
+        lambda phase, inputs=None, **_kwargs: dispatched.update(phase=phase, inputs=inputs)
+        or {
+            "workflow": "update-staging.yml",
+            "run_id": 18,
+            "html_url": "https://example.test/18",
+            "phase": phase,
+            "inputs": inputs,
+        },
+    )
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    result = run_chat_deploy_pipeline(
+        thread_id=thread["thread_id"],
+        user_message="update staging",
+    )
+    assert result.get("deploy_poll_active") is True
+    assert dispatched["phase"] == "update_staging"
+    assert dispatched["inputs"]["image_sha"] == "fff123456789"
+    text = _texts(thread["thread_id"]).lower()
+    assert "already up" in text
+    assert "without copying the database" in text
+    assert "run **prepare staging" not in text
+    rehearsal = chat.get_thread(thread["thread_id"])["gpw_rehearsal"]
+    assert rehearsal["staging_ready"] is True
+    assert rehearsal["updated_ok"] is False
+    assert rehearsal["production_sha"] == "abc123456789"
 
 
 def test_update_staging_follows_develop_when_already_ready(monkeypatch):
