@@ -9,12 +9,12 @@ from typing import Any, Optional
 
 import requests
 
+from bigas.resources.cto.pr_review.markers import (
+    BIGAS_AUTOFIX_COOLDOWN_MARKER,
+    BIGAS_REVIEW_MARKER,
+)
+
 logger = logging.getLogger(__name__)
-
-BIGAS_REVIEW_MARKER = "<!-- bigas-ai-review-marker -->"
-BIGAS_AUTOFIX_COOLDOWN_MARKER = "<!-- bigas-autofix-cooldown-marker -->"
-
-from bigas.resources.cto.autofix.heuristics import commit_subject
 
 
 class GitHubPRCommentError(RuntimeError):
@@ -343,6 +343,8 @@ class GitHubPRCommentClient:
         marker: str = "[bigas-autofix]",
     ) -> int:
         """Count PR commits whose subject contains the autofix marker."""
+        from bigas.resources.cto.autofix.heuristics import commit_subject
+
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
         return sum(1 for m in messages if marker in commit_subject(m))
 

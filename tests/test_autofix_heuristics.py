@@ -206,6 +206,41 @@ def test_autofix_rounds_ignore_marker_in_squash_body():
     assert latest_commit_is_autofix(on_this_pr)
 
 
+def test_production_import_order_does_not_cycle():
+    """create_app loads heuristics before the GitHub client finishes importing it.
+
+    BIG-126 imported commit_subject at module level while heuristics imported
+    the review marker from the client. That cycle killed gunicorn on boot.
+    """
+    import os
+    import subprocess
+    import sys
+
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    env = os.environ.copy()
+    env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+    script = """
+from bigas.resources.cto.autofix.heuristics import BIGAS_REVIEW_MARKER, commit_subject
+from bigas.resources.cto.pr_review.github_client import (
+    BIGAS_REVIEW_MARKER as client_marker,
+)
+from bigas.resources.cto.endpoints import cto_bp
+
+assert BIGAS_REVIEW_MARKER == "<!-- bigas-ai-review-marker -->"
+assert client_marker == BIGAS_REVIEW_MARKER
+assert commit_subject("subj\\n[bigas-autofix] quoted in body") == "subj"
+assert cto_bp is not None
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_autofix_max_iterations_env(monkeypatch):
     from bigas.resources.cto.autofix.heuristics import autofix_max_iterations
 
