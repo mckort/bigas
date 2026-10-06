@@ -60,15 +60,28 @@ def leftover_nits_are_acceptable(
     return autofix_count >= max_iters or minor_autofix_count >= minor_max
 
 
+def commit_subject(message: str) -> str:
+    """First line of a commit message.
+
+    Squash-merge bodies quote earlier `[bigas-autofix]` subjects. Those lines
+    belong to feature PRs already merged, not to rounds on the current PR.
+    """
+    return (message or "").split("\n", 1)[0].strip()
+
+
 def count_autofix_rounds(messages: list[str]) -> tuple[int, int]:
-    """Return (all autofix commits, nits-only autofix commits)."""
+    """Return (all autofix commits, nits-only autofix commits).
+
+    Only the subject line counts. A release PR that squash-merges feature work
+    otherwise inherits those PRs' autofix rounds and can start at 5/5.
+    """
     autofix = 0
     minor = 0
     for raw in messages:
-        msg = raw or ""
-        if AUTOFIX_COMMIT_MARKER in msg:
+        subject = commit_subject(raw)
+        if AUTOFIX_COMMIT_MARKER in subject:
             autofix += 1
-        if AUTOFIX_MINOR_COMMIT_MARKER in msg:
+        if AUTOFIX_MINOR_COMMIT_MARKER in subject:
             minor += 1
     return autofix, minor
 
@@ -331,7 +344,7 @@ def review_needs_autofix(
 
 
 def latest_commit_is_autofix(message: str) -> bool:
-    return AUTOFIX_COMMIT_MARKER in (message or "")
+    return AUTOFIX_COMMIT_MARKER in commit_subject(message)
 
 
 def pr_has_merge_conflicts(pr: dict) -> bool:

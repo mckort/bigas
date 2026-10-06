@@ -340,9 +340,11 @@ class GitHubPRCommentClient:
         *,
         marker: str = "[bigas-autofix]",
     ) -> int:
-        """Count PR commits whose message contains the autofix marker."""
+        """Count PR commits whose subject contains the autofix marker."""
+        from bigas.resources.cto.autofix.heuristics import commit_subject
+
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
-        return sum(1 for m in messages if marker in m)
+        return sum(1 for m in messages if marker in commit_subject(m))
 
     def count_autofix_rounds(self, owner: str, repo: str, pr_number: int) -> tuple[int, int]:
         """Return (all autofix commits, nits-only autofix commits)."""

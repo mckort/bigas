@@ -185,6 +185,27 @@ def test_autofix_commit_marker():
     ) == (2, 1)
 
 
+def test_autofix_rounds_ignore_marker_in_squash_body():
+    """Release PRs squash feature history; body lines are not rounds on this PR."""
+    from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
+
+    squash = (
+        "VFA-172: Share ready board preps with founders (#387)\n\n"
+        "* VFA-172: [bigas-autofix] Harden board prep write routes\n"
+        "* VFA-173: [bigas-autofix] [nits-only] Clarify landing USD hint\n"
+    )
+    assert count_autofix_rounds([squash, squash, squash, squash]) == (0, 0)
+    assert not latest_commit_is_autofix(squash)
+
+    on_this_pr = (
+        "STAGING-0: [bigas-autofix] Restrict cap table writes\n\n"
+        "Co-authored-by: Cursor Agent <cursoragent@cursor.com>\n"
+    )
+    nits = "VFA-173: [bigas-autofix] [nits-only] Clarify comment\n\nbody"
+    assert count_autofix_rounds([squash, on_this_pr, nits]) == (2, 1)
+    assert latest_commit_is_autofix(on_this_pr)
+
+
 def test_autofix_max_iterations_env(monkeypatch):
     from bigas.resources.cto.autofix.heuristics import autofix_max_iterations
 
