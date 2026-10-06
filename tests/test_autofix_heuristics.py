@@ -42,7 +42,7 @@ def test_select_autofix_model_escalates_only_after_a_blocker_round(monkeypatch):
     )
     assert (
         select_autofix_model(next_round=2, review_body=_BLOCKERS, configured_model="composer-2.5")
-        == "claude-opus-5-thinking-high"
+        == "gemini-3.1-pro"
     )
     assert (
         select_autofix_model(
@@ -50,10 +50,10 @@ def test_select_autofix_model_escalates_only_after_a_blocker_round(monkeypatch):
         )
         == "composer-2.5"
     )
-    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_ESCALATION_MODEL", "claude-sonnet-5-5-high")
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_ESCALATION_MODEL", "gemini-2.5-pro")
     assert (
         select_autofix_model(next_round=2, review_body=_BLOCKERS, configured_model="composer-2.5")
-        == "claude-sonnet-5-5-high"
+        == "gemini-2.5-pro"
     )
 
 
@@ -64,7 +64,7 @@ def test_implement_model_does_not_inherit_autofix_model(monkeypatch):
     from bigas.resources.product.jira_automation.implement import ImplementHandler
 
     handler = ImplementHandler(jira=object())  # type: ignore[arg-type]
-    assert handler._cursor_model == "claude-4.6-sonnet-thinking"
+    assert handler._cursor_model == "gemini-3.1-pro"
     monkeypatch.setenv("BIGAS_JIRA_IMPLEMENT_MODEL", "composer-2.5")
     overridden = ImplementHandler(jira=object())  # type: ignore[arg-type]
     assert overridden._cursor_model == "composer-2.5"

@@ -110,11 +110,11 @@ def estimate_cursor_cost_usd(model: str, usage: CursorTokenUsage) -> Optional[fl
     return round(cost, 6)
 
 
-# Cursor cloud-agent variant ids (GET /v1/models). Composer writes the cheap
-# first autofix pass. Sonnet writes the implementation. Opus takes a later
-# autofix round only when a Blocker is still open.
-DEFAULT_IMPLEMENT_MODEL = "claude-4.6-sonnet-thinking"
-DEFAULT_AUTOFIX_ESCALATION_MODEL = "claude-opus-5-thinking-high"
+# Cursor cloud-agent model ids (GET /v1/models). Composer writes the cheap
+# first autofix pass. Gemini 3.1 Pro writes the implementation and takes a
+# later autofix round only when a Blocker is still open.
+DEFAULT_IMPLEMENT_MODEL = "gemini-3.1-pro"
+DEFAULT_AUTOFIX_ESCALATION_MODEL = "gemini-3.1-pro"
 
 
 def default_autofix_model() -> str:
