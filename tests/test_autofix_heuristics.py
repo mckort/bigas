@@ -4,6 +4,7 @@ from bigas.resources.cto.autofix.heuristics import (
     leftover_nits_are_acceptable,
     latest_commit_is_autofix,
     pr_has_merge_conflicts,
+    review_has_blockers,
     review_is_nits_only,
     review_is_ready_to_merge,
     review_needs_autofix,
@@ -12,7 +13,61 @@ from bigas.resources.cto.autofix.service import (
     _build_prompt,
     _issue_key_from_pr,
     autofix_looks_like_confirmation_stop,
+    select_autofix_model,
 )
+
+
+_BLOCKERS = (
+    "### Blockers\n- Missing import crashes startup.\n\n"
+    "### Important\nNone.\n\n### Minor\nNone.\n"
+)
+_IMPORTANT_ONLY = (
+    "### Blockers\nNone.\n\n"
+    "### Important\n- Validate the payload.\n\n### Minor\nNone.\n"
+)
+
+
+def test_review_has_blockers_ignores_important_only():
+    assert review_has_blockers(_BLOCKERS) is True
+    assert review_has_blockers(_IMPORTANT_ONLY) is False
+    assert review_has_blockers(_CLEAN_STRUCTURED) is False
+
+
+def test_select_autofix_model_escalates_only_after_a_blocker_round(monkeypatch):
+    monkeypatch.delenv("BIGAS_CTO_AUTOFIX_ESCALATION_MODEL", raising=False)
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_MODEL", "composer-2.5")
+    assert (
+        select_autofix_model(next_round=1, review_body=_BLOCKERS, configured_model="composer-2.5")
+        == "composer-2.5"
+    )
+    assert (
+        select_autofix_model(next_round=2, review_body=_BLOCKERS, configured_model="composer-2.5")
+        == "claude-opus-5-thinking-high"
+    )
+    assert (
+        select_autofix_model(
+            next_round=3, review_body=_IMPORTANT_ONLY, configured_model="composer-2.5"
+        )
+        == "composer-2.5"
+    )
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_ESCALATION_MODEL", "claude-sonnet-5-5-high")
+    assert (
+        select_autofix_model(next_round=2, review_body=_BLOCKERS, configured_model="composer-2.5")
+        == "claude-sonnet-5-5-high"
+    )
+
+
+def test_implement_model_does_not_inherit_autofix_model(monkeypatch):
+    monkeypatch.delenv("BIGAS_JIRA_IMPLEMENT_MODEL", raising=False)
+    monkeypatch.setenv("BIGAS_CTO_AUTOFIX_MODEL", "composer-2.5")
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    from bigas.resources.product.jira_automation.implement import ImplementHandler
+
+    handler = ImplementHandler(jira=object())  # type: ignore[arg-type]
+    assert handler._cursor_model == "claude-4.6-sonnet-thinking"
+    monkeypatch.setenv("BIGAS_JIRA_IMPLEMENT_MODEL", "composer-2.5")
+    overridden = ImplementHandler(jira=object())  # type: ignore[arg-type]
+    assert overridden._cursor_model == "composer-2.5"
 
 
 def test_lgtm_with_leftover_nits_runs_autofix():
@@ -309,6 +364,8 @@ def test_autofix_prompt_forbids_confirmation():
     assert "Fix all Blockers and Important" in prompt
     assert "already resolved" in prompt or "local wrapper" in prompt
     assert "remove that dead code" in prompt
+    assert "Do not leave that dead code in the branch" in prompt
+    assert "run this repository's typecheck and test command" in prompt
     assert "Do not expand into a repo-wide cleanup" in prompt
     assert "Do not delete an import whose call site is outside the diff" in prompt
     assert "Do not restore an HTML required attribute" in prompt

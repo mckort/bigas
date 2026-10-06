@@ -110,10 +110,35 @@ def estimate_cursor_cost_usd(model: str, usage: CursorTokenUsage) -> Optional[fl
     return round(cost, 6)
 
 
+# Cursor cloud-agent variant ids (GET /v1/models). Composer writes the cheap
+# first autofix pass. Sonnet writes the implementation. Opus takes a later
+# autofix round only when a Blocker is still open.
+DEFAULT_IMPLEMENT_MODEL = "claude-4.6-sonnet-thinking"
+DEFAULT_AUTOFIX_ESCALATION_MODEL = "claude-opus-5-thinking-high"
+
+
 def default_autofix_model() -> str:
     import os
 
     return (
         (os.environ.get("BIGAS_CTO_AUTOFIX_MODEL") or "").strip()
         or "composer-2.5"
+    )
+
+
+def default_implement_model() -> str:
+    import os
+
+    return (
+        (os.environ.get("BIGAS_JIRA_IMPLEMENT_MODEL") or "").strip()
+        or DEFAULT_IMPLEMENT_MODEL
+    )
+
+
+def default_autofix_escalation_model() -> str:
+    import os
+
+    return (
+        (os.environ.get("BIGAS_CTO_AUTOFIX_ESCALATION_MODEL") or "").strip()
+        or DEFAULT_AUTOFIX_ESCALATION_MODEL
     )

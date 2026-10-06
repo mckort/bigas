@@ -1259,9 +1259,11 @@ def autofix_pr():
                 exc_info=True,
             )
 
+    model_id = (result.get("model_id") or "").strip()
+    model_line = f"\nModel: {model_id}" if model_id else ""
     _post_cto_status(
         f"**CTO autofix launched** ({round_n}/{max_n})\n"
-        f"{pr_ref}\nAgent: {agent_url or agent_id}"
+        f"{pr_ref}\nAgent: {agent_url or agent_id}{model_line}"
     )
     return _json_summary({"success": True, **result}, summarize_autofix_result)
 

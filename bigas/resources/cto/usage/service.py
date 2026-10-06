@@ -15,7 +15,9 @@ from bigas.resources.cto.autofix.cursor_client import (
 )
 from bigas.resources.cto.usage.pricing import (
     CursorTokenUsage,
+    default_autofix_escalation_model,
     default_autofix_model,
+    default_implement_model,
     estimate_cursor_cost_usd,
 )
 
@@ -608,7 +610,9 @@ def _configured_stack_blurb() -> str:
     lines = [
         f"- Bigas default LLM: {chat or 'gemini-3.1-pro-preview'}",
         f"- Bigas PR review: {review or '(same as default)'}",
-        f"- Cursor autofix: {autofix or 'composer-2.5'}",
+        f"- Cursor implement: {default_implement_model()}",
+        f"- Cursor autofix: {autofix or default_autofix_model()}",
+        f"- Cursor autofix when a Blocker remains: {default_autofix_escalation_model()}",
         f"- Bigas marketing: {marketing or '(same as default)'}",
         "- VCFA living-analysis judgment: gemini-3.1-pro-preview (thinking on)",
         "- VCFA living-analysis helper + Bigas Flash paths: gemini-2.5-flash",

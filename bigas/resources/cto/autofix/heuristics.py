@@ -265,6 +265,19 @@ def review_findings_by_section(review_body: str) -> dict[str, str]:
     return found
 
 
+def review_has_blockers(review_body: str) -> bool:
+    """True when the review still has a Blocker (not merely Important or Minor)."""
+    sections = _section_bodies(review_body or "")
+    if "blockers" in sections:
+        return _section_has_findings(sections.get("blockers", ""))
+    body = (review_body or "").strip()
+    if not body or "<!-- bigas-autofix-skip -->" in body:
+        return False
+    return bool(
+        re.search(r"(?i)\b(must[- ]fix|(?<!non-)blocking|do not merge)\b", body)
+    )
+
+
 def review_is_nits_only(review_body: str) -> bool:
     """True when leftover findings are Minor / nits only (no Blockers or Important)."""
     body = (review_body or "").strip()

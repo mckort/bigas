@@ -16,6 +16,7 @@ from bigas.resources.cto.autofix.cursor_client import (
     CursorCloudAgentClient,
     CursorCloudAgentError,
 )
+from bigas.resources.cto.usage.pricing import default_implement_model
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
     JiraError,
@@ -501,12 +502,7 @@ class ImplementHandler:
         if not key:
             raise ImplementHandlerError("CURSOR_API_KEY is required for implement")
         self._cursor = CursorCloudAgentClient(api_key=key)
-        self._cursor_model = (
-            (cursor_model or "").strip()
-            or (os.environ.get("BIGAS_JIRA_IMPLEMENT_MODEL") or "").strip()
-            or (os.environ.get("BIGAS_CTO_AUTOFIX_MODEL") or "").strip()
-            or None
-        )
+        self._cursor_model = (cursor_model or "").strip() or default_implement_model()
 
     def run(
         self,
