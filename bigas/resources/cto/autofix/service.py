@@ -20,8 +20,13 @@ from bigas.resources.cto.autofix.heuristics import (
     latest_commit_is_autofix,
     leftover_nits_are_acceptable,
     pr_has_merge_conflicts,
+    review_has_blockers,
     review_is_nits_only,
     review_needs_autofix,
+)
+from bigas.resources.cto.usage.pricing import (
+    default_autofix_escalation_model,
+    default_autofix_model,
 )
 from bigas.resources.cto.pr_review.github_client import (
     BIGAS_REVIEW_MARKER,
@@ -156,9 +161,22 @@ Pull request: {pr_url}
 7. If after inspecting the code there is nothing safe to fix, make no commits and explain why.
 8. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — apply the fixes and push commits immediately. Do not stop after a proposal.
 9. If the review claims a helper/import is wrong (e.g. deleteField vs FieldValue.delete) but the repo already provides that helper via a local wrapper imported in the same file, treat the finding as already resolved — do not churn the code just to silence the review.
-10. Before you finish: if your fixes left unused imports, functions, helpers, files, or replaced call sites, remove that dead code only after you have read the whole file and confirmed the name is unused. Do not expand into a repo-wide cleanup.
+10. Before you finish: run this repository's typecheck and test command. If they fail, fix them in this same push. If your fixes left unused imports, functions, helpers, files, or replaced call sites, remove that dead code after you have read the whole file and confirmed the name is unused. If typecheck or the linter reports an unused name in a file you edited, delete it. Do not leave that dead code in the branch. Do not expand into a repo-wide cleanup.
 11. Do not delete an import whose call site is outside the diff. Do not restore an HTML required attribute, or any other line, that this PR removed.
 """
+
+
+def select_autofix_model(
+    *,
+    next_round: int,
+    review_body: str,
+    configured_model: Optional[str] = None,
+) -> str:
+    """Round 1 stays on the cheap autofix model. A later round with a Blocker escalates."""
+    base = (configured_model or "").strip() or default_autofix_model()
+    if next_round >= 2 and review_has_blockers(review_body):
+        return default_autofix_escalation_model()
+    return base
 
 
 def autofix_looks_like_confirmation_stop(result_text: str) -> bool:
@@ -458,6 +476,11 @@ class AutofixService:
             merge_conflict=merge_conflicted,
             base_branch=base_branch,
         )
+        model_id = select_autofix_model(
+            next_round=next_round,
+            review_body=body,
+            configured_model=self._cursor_model,
+        )
         client = CursorCloudAgentClient(api_key=self._cursor_key)
         try:
             launched = client.launch_pr_autofix(
@@ -465,7 +488,7 @@ class AutofixService:
                 pr_url=pr_url,
                 prompt_text=prompt,
                 name=f"Bigas autofix {repo}#{pr_number} ({next_round}/{max_iters})",
-                model_id=self._cursor_model,
+                model_id=model_id,
             )
         except CursorCloudAgentError as e:
             raise AutofixError(str(e)) from e
@@ -481,6 +504,7 @@ class AutofixService:
             "autofix_count": autofix_count,
             "minor_autofix_count": minor_autofix_count,
             "autofix_round": next_round,
+            "model_id": model_id,
             "max_iterations": max_iters,
             "head_sha": head_sha,
             "head_was_autofix": latest_commit_is_autofix(head_message or ""),

@@ -1206,7 +1206,13 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "Jira: VFA-14" in prompt
     assert "simple ticket that skipped those steps" in prompt
     assert "dead/unused code created by THIS implementation" in prompt
+    assert "Do not leave that dead code in the PR" in prompt
     assert "Do not do a repo-wide unused-code cleanup" in prompt
+    assert "run this repository's typecheck and its test command" in prompt
+    assert "An external grant is not a workspace member" in prompt
+    assert "must not mark the job ready" in prompt
+    assert "gpw_ci.sh" in prompt
+    assert "omitted count of 0" in prompt
     assert "Required PR base is `main`" in prompt
 
     staging_prompt = build_implement_prompt(
@@ -1517,7 +1523,9 @@ def test_resolve_workstream_defaults_to_product():
     assert "responsive design" in marketing_impl
     assert "Do NOT ask for confirmation" in marketing_impl
     assert "dead/unused code created by THIS implementation" in marketing_impl
+    assert "Do not leave that dead code in the PR" in marketing_impl
     assert "Do not do a repo-wide unused-code cleanup" in marketing_impl
+    assert "run this repository's typecheck and its test command" in marketing_impl
     assert "Required PR base is `main`" in marketing_impl
 
 

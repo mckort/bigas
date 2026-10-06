@@ -301,6 +301,15 @@ Write the plan body with these sections:
 """
 
 
+_IMPLEMENT_DONE_CHECKS = """
+16. Before you open the PR, run this repository's typecheck and its test command (the same commands CI runs). Do not open the PR if either fails. Fix the failures first.
+17. When you add a route or query that reads company, workspace, or user data, call the same authorization helper the neighboring route uses. An external grant is not a workspace member.
+18. When you add or change a background job, a failure must not mark the job ready, must not keep a consumed credit or quota, must delete files uploaded for that attempt, and must not leave the status stuck.
+19. When you edit a shell script, especially `terraform/scripts/gpw_ci.sh`, the script's exit status must survive `if`, pipes, and `tee`. Do not read `$?` after `if ! cmd; then`. Do not assume GNU-only tools on Alpine or macOS.
+20. When a prompt tells a model to omit rows, update the response schema and the stored count of omitted rows in the same change. Do not persist an omitted count of 0 when the prompt truncated the list. Do not treat a missing total as the sum of the rows you kept.
+""".strip()
+
+
 def build_implement_prompt_product(
     *,
     issue_key: str,
@@ -343,13 +352,14 @@ Summary: {summary}
 6. Update the repository README when the change affects how people install, configure, run, or understand the project. Skip README edits for purely internal refactors with no user-facing or ops impact.
 7. Update in-app support/help content (end-user help articles / support pages) when the change affects what users see or how they use the product. Skip when there is no user-facing behavior change, or when the repo has no in-app help.
 8. All UI changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
-9. Before you open the PR or say you are done: look for dead/unused code created by THIS implementation (unused imports, functions, helpers, files, and call sites you replaced). Remove it. Do not do a repo-wide unused-code cleanup.
+9. Before you open the PR or say you are done: remove dead/unused code created by THIS implementation (unused imports, functions, helpers, files, and call sites you replaced). Run typecheck or the linter on the files you edited and delete every unused name it reports there. Do not leave that dead code in the PR. Do not do a repo-wide unused-code cleanup.
 10. Open a pull request when done (autoCreatePR is enabled). Cursor often opens that PR against the repo default branch (`main`). Required PR base is `{base_branch}`. If the opened PR base is not `{base_branch}`, immediately run `gh pr edit --base {base_branch}`.
 11. Never leave a feature PR targeting `main` when `{base_branch}` is a `staging-*` (or other non-main) branch. `main` is allowed only when `{base_branch}` is `main`, or the ticket is a labeled hotfix, or the user explicitly asked for a release merge onto `main`.
 12. PR title MUST start with `{issue_key}:` followed by a short summary.
 13. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
 14. Do not merge the PR.
 15. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+{_IMPLEMENT_DONE_CHECKS}
 """
 
 
@@ -395,13 +405,14 @@ Summary: {summary}
 6. Include sensible SEO basics when relevant (title/description/headings/slug) using the project's existing conventions.
 7. Update the repository README (or equivalent site docs) when the change affects how content, routes, SEO setup, or contributor workflows are documented. Skip when nothing user- or ops-facing changed.
 8. All UI/page changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
-9. Before you open the PR or say you are done: look for dead/unused code created by THIS implementation (unused imports, functions, helpers, files, and call sites you replaced). Remove it. Do not do a repo-wide unused-code cleanup.
+9. Before you open the PR or say you are done: remove dead/unused code created by THIS implementation (unused imports, functions, helpers, files, and call sites you replaced). Run typecheck or the linter on the files you edited and delete every unused name it reports there. Do not leave that dead code in the PR. Do not do a repo-wide unused-code cleanup.
 10. Open a pull request when done (autoCreatePR is enabled). Cursor often opens that PR against the repo default branch (`main`). Required PR base is `{base_branch}`. If the opened PR base is not `{base_branch}`, immediately run `gh pr edit --base {base_branch}`.
 11. Never leave a feature PR targeting `main` when `{base_branch}` is a `staging-*` (or other non-main) branch. `main` is allowed only when `{base_branch}` is `main`, or the ticket is a labeled hotfix, or the user explicitly asked for a release merge onto `main`.
 12. PR title MUST start with `{issue_key}:` followed by a short summary.
 13. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
 14. Do not merge the PR.
 15. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+{_IMPLEMENT_DONE_CHECKS}
 """
 
 
