@@ -17,6 +17,7 @@ from bigas.resources.cto.autofix.heuristics import (
     autofix_max_iterations,
     count_autofix_rounds,
     format_loop_protection_message,
+    latest_commit_is_autofix,
     leftover_nits_are_acceptable,
     pr_has_merge_conflicts,
     review_is_nits_only,
@@ -340,7 +341,7 @@ class AutofixService:
         #
         # The stale review check applies regardless of cooldown setting; only the
         # cooldown wait is gated by cooldown > 0.
-        if not force and AUTOFIX_COMMIT_MARKER in (head_message or ""):
+        if not force and latest_commit_is_autofix(head_message or ""):
             age = _age_seconds_since(committed_at)
             review_age_after_head = None
             if review_updated_at and committed_at:
@@ -482,7 +483,7 @@ class AutofixService:
             "autofix_round": next_round,
             "max_iterations": max_iters,
             "head_sha": head_sha,
-            "head_was_autofix": AUTOFIX_COMMIT_MARKER in (head_message or ""),
+            "head_was_autofix": latest_commit_is_autofix(head_message or ""),
             "merge_conflict": merge_conflicted,
         }
 

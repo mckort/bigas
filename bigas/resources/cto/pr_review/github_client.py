@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 BIGAS_REVIEW_MARKER = "<!-- bigas-ai-review-marker -->"
 BIGAS_AUTOFIX_COOLDOWN_MARKER = "<!-- bigas-autofix-cooldown-marker -->"
 
+from bigas.resources.cto.autofix.heuristics import commit_subject
+
 
 class GitHubPRCommentError(RuntimeError):
     """Raised when GitHub API calls fail (auth, rate limit, not found, etc.)."""
@@ -340,9 +342,9 @@ class GitHubPRCommentClient:
         *,
         marker: str = "[bigas-autofix]",
     ) -> int:
-        """Count PR commits whose message contains the autofix marker."""
+        """Count PR commits whose subject contains the autofix marker."""
         messages = self.list_pr_commit_messages(owner, repo, pr_number)
-        return sum(1 for m in messages if marker in m)
+        return sum(1 for m in messages if marker in commit_subject(m))
 
     def count_autofix_rounds(self, owner: str, repo: str, pr_number: int) -> tuple[int, int]:
         """Return (all autofix commits, nits-only autofix commits)."""
