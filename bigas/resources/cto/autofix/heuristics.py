@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Tuple
 
-from bigas.resources.cto.pr_review.github_client import BIGAS_REVIEW_MARKER
+from bigas.resources.cto.pr_review.markers import BIGAS_REVIEW_MARKER
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
 # Must contain AUTOFIX_COMMIT_MARKER so loop protection and the Actions
