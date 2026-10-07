@@ -8,6 +8,7 @@ from bigas.resources.cto.autofix.heuristics import (
     review_is_nits_only,
     review_is_ready_to_merge,
     review_needs_autofix,
+    strip_leaked_review_preamble,
 )
 from bigas.resources.cto.autofix.service import (
     _build_prompt,
@@ -25,6 +26,22 @@ _IMPORTANT_ONLY = (
     "### Blockers\nNone.\n\n"
     "### Important\n- Validate the payload.\n\n### Minor\nNone.\n"
 )
+
+
+def test_strip_leaked_review_preamble_keeps_the_final_sections():
+    leaked = (
+        "Wait, is this ready to merge? The first pass looked clean.\n"
+        "### Blockers\nNone.\n\n### Important\nNone.\n\nReady to merge.\n\n"
+        "### Blockers\nNone.\n\n"
+        "### Important\n- Single-token shareholder match is a false positive.\n\n"
+        "### Minor\nNone.\n"
+    )
+    stripped = strip_leaked_review_preamble(leaked)
+    assert stripped.startswith("### Blockers")
+    assert "false positive" in stripped
+    assert review_is_ready_to_merge(stripped) is False
+    needs, _reason = review_needs_autofix(stripped)
+    assert needs is True
 
 
 def test_review_has_blockers_ignores_important_only():

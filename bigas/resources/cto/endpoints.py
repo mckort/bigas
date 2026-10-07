@@ -802,7 +802,7 @@ def review_and_comment_pr():
                 "success": True,
                 "skipped": True,
                 "reason": "pr_already_merged",
-                "ready_to_merge": True,
+                "ready_to_merge": False,
                 "review_posted": False,
                 "phase": phase,
                 "pr_url": pr_url,
@@ -884,6 +884,46 @@ def review_and_comment_pr():
         logger.warning("PR review failed: %s", e)
         _post_cto_status(f"**CTO PR review done**\nNo comment posted.\nReason: {sanitize_error_message(str(e))}")
         return _json_summary({"error": sanitize_error_message(str(e))}, summarize_review_result, 500)
+
+    reviewed_sha = str(data.get("head_sha") or "").strip()
+    if reviewed_sha:
+        fresh = _fetch_pull_request(
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            github_token=github_token,
+        )
+        current_sha = ""
+        head = fresh.get("head") if isinstance(fresh, dict) else None
+        if isinstance(head, dict):
+            current_sha = str(head.get("sha") or "").strip()
+        elif reviewed_sha:
+            logger.warning(
+                "Could not read PR head SHA while checking for stale review on %s/%s#%s",
+                owner,
+                repo_name,
+                pr_number,
+            )
+        if current_sha and current_sha != reviewed_sha:
+            _post_cto_status(
+                f"**CTO PR review skipped**\n"
+                f"Head moved during review ({reviewed_sha[:7]} → {current_sha[:7]}). "
+                f"Not posting a stale comment.\n{pr_ref}"
+            )
+            return _json_summary(
+                {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "stale_head",
+                    "ready_to_merge": False,
+                    "review_posted": False,
+                    "phase": phase,
+                    "pr_url": pr_url,
+                    "reviewed_sha": reviewed_sha,
+                    "head_sha": current_sha,
+                },
+                summarize_review_result,
+            )
 
     if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
         logger.warning(
@@ -1367,7 +1407,7 @@ def autofix_followup():
                 "finalized": True,
                 "skipped": True,
                 "reason": "pr_already_merged",
-                "ready_to_merge": True,
+                "ready_to_merge": False,
                 "fixes_pushed": False,
                 "rereviewed": False,
                 "jira_final_approval": jira_final,

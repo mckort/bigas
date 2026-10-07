@@ -69,6 +69,20 @@ def test_pr_merged_summary_moved_ticket():
     assert "Final approval" in text
 
 
+def test_review_summary_stale_head_is_not_ready():
+    text = summarize_review_result(
+        {
+            "success": True,
+            "skipped": True,
+            "reason": "stale_head",
+            "ready_to_merge": False,
+            "pr_url": "https://github.com/mckort/vcfieldassistant/pull/407",
+        }
+    )
+    assert "head moved" in text.lower()
+    assert "ready to merge" not in text.lower()
+
+
 def test_review_summary_already_merged_beats_ready_flag():
     text = summarize_review_result(
         {

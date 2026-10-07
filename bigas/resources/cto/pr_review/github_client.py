@@ -434,6 +434,60 @@ class GitHubPRCommentClient:
             )
         return data
 
+    def pull_request_review_workflow_running(
+        self, owner: str, repo: str, pr_number: int
+    ) -> bool:
+        """True when a Bigas PR review Actions run is queued or running on this PR's branch."""
+        try:
+            pr = self.get_pull_request(owner, repo, pr_number)
+        except GitHubPRCommentError:
+            logger.warning(
+                "Could not load PR %s/%s#%s before checking review runs",
+                owner,
+                repo,
+                pr_number,
+                exc_info=True,
+            )
+            return False
+        head = pr.get("head") if isinstance(pr, dict) else None
+        branch = ""
+        if isinstance(head, dict):
+            branch = str(head.get("ref") or "").strip()
+        if not branch:
+            return False
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs"
+        for status in ("queued", "in_progress"):
+            resp = requests.get(
+                url,
+                headers=self._headers,
+                params={
+                    "event": "pull_request",
+                    "status": status,
+                    "branch": branch,
+                    "per_page": 20,
+                },
+                timeout=30,
+            )
+            if resp.status_code >= 400:
+                logger.warning(
+                    "Could not list %s review runs for %s/%s (%s)",
+                    status,
+                    owner,
+                    repo,
+                    resp.status_code,
+                )
+                continue
+            payload = resp.json() if resp.text else {}
+            runs = payload.get("workflow_runs") if isinstance(payload, dict) else None
+            if not isinstance(runs, list):
+                continue
+            for run in runs:
+                if not isinstance(run, dict):
+                    continue
+                if (run.get("name") or "") == "Bigas PR review":
+                    return True
+        return False
+
     def get_pull_request(self, owner: str, repo: str, pr_number: int) -> dict[str, Any]:
         """Return the pull request JSON (includes node_id for GraphQL)."""
         url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"

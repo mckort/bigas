@@ -8,7 +8,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from bigas.portfolio import brand_name, jira_project_keys, normalize_project_key, resolve_project
-from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge, review_needs_autofix
+from bigas.resources.cto.autofix.heuristics import (
+    review_is_ready_to_merge,
+    review_needs_autofix,
+    strip_leaked_review_preamble,
+)
 from bigas.resources.cto.pr_review.github_client import GitHubPRCommentError
 from bigas.resources.devops.service import DevOpsError, check_deployment_risk, list_shipping_commits
 from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
@@ -29,6 +33,82 @@ _POLL_TIMEOUT_SEC = 45 * 60
 # After a nits-only inline review, GitHub Actions may re-run review_and_comment_pr
 # and overwrite the marked comment moments later.
 _ACTIONS_REVIEW_WAIT_SEC = 90
+
+
+def _marked_review_body(
+    gh: Any, *, owner: str, repo_name: str, pr_number: int
+) -> str:
+    from bigas.resources.cto.pr_review.github_client import BIGAS_REVIEW_MARKER
+
+    getter = getattr(gh, "get_marked_comment_body", None)
+    if not callable(getter):
+        return ""
+    try:
+        body = getter(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            marker=BIGAS_REVIEW_MARKER,
+        )
+    except Exception:
+        logger.warning(
+            "Could not read the Bigas review comment before merge", exc_info=True
+        )
+        return ""
+    if not isinstance(body, str):
+        return ""
+    return strip_leaked_review_preamble(body.strip())
+
+
+def _defer_until_review_workflow_finishes(
+    *,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    thread_id: Optional[str],
+    project_key: str,
+    version: str,
+    cut_keys: Optional[List[str]],
+    review_phase: str,
+) -> Dict[str, Any]:
+    _post(
+        thread_id,
+        "⏳ A Bigas review is still running. I will not merge until it finishes.",
+        role="system",
+        status="in_progress",
+    )
+    _thread_set(
+        thread_id,
+        pending_prepare_poll={
+            "phase": "wait_review_workflow",
+            "repo": repo,
+            "pr_number": pr_number,
+            "pr_url": pr_url,
+            "project_key": project_key,
+            "version": version,
+            "cut_keys": list(cut_keys or []),
+            "review_phase": review_phase,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
+
+
+def _review_workflow_running(gh: Any, owner: str, repo_name: str, pr_number: int) -> bool:
+    checker = getattr(gh, "pull_request_review_workflow_running", None)
+    if not callable(checker):
+        return False
+    try:
+        return bool(checker(owner, repo_name, pr_number))
+    except Exception:
+        logger.warning(
+            "Could not check for an in-flight Bigas review on %s/%s#%s",
+            owner,
+            repo_name,
+            pr_number,
+            exc_info=True,
+        )
+        return False
 
 
 def is_prepare_start(text: str) -> bool:
@@ -955,6 +1035,8 @@ def review_and_merge_release_pr(
     gh = GitHubPRCommentClient(token=token)
     pr = gh.get_pull_request(owner, repo_name, pr_number)
     pr_url = (pr.get("html_url") or f"https://github.com/{repo}/pull/{pr_number}").strip()
+    reviewed_head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+    reviewed_sha = str((reviewed_head or {}).get("sha") or "").strip()
 
     if pr.get("merged"):
         _post(thread_id, f"✅ Release PR already merged: {pr_url}")
@@ -973,6 +1055,18 @@ def review_and_merge_release_pr(
             gh.mark_pull_request_ready_for_review(owner, repo_name, pr_number)
         except GitHubPRCommentError as exc:
             logger.warning("Could not mark release PR ready: %s", exc)
+
+    if _review_workflow_running(gh, owner, repo_name, pr_number):
+        return _defer_until_review_workflow_finishes(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            thread_id=thread_id,
+            project_key=project_key,
+            version=version,
+            cut_keys=cut_keys,
+            review_phase=phase,
+        )
 
     _post(
         thread_id,
@@ -996,6 +1090,23 @@ def review_and_merge_release_pr(
         _post(thread_id, f"Release PR review failed: {exc}")
         return {"status": "failed", "summary": str(exc), "pr_url": pr_url}
 
+    fresh = gh.get_pull_request(owner, repo_name, pr_number)
+    fresh_head = fresh.get("head") if isinstance(fresh.get("head"), dict) else {}
+    fresh_sha = str((fresh_head or {}).get("sha") or "").strip()
+    if reviewed_sha and fresh_sha and reviewed_sha != fresh_sha:
+        _complete_pipeline_progress(thread_id)
+        _post(
+            thread_id,
+            "The release PR head moved during review "
+            f"({reviewed_sha[:7]} → {fresh_sha[:7]}). "
+            f"I will not merge that review: {pr_url}",
+        )
+        return {
+            "status": "failed",
+            "summary": "Review is stale because the PR head moved.",
+            "pr_url": pr_url,
+        }
+
     autofix_count, minor_autofix_count = _pr_autofix_round_counts(
         gh, owner=owner, repo_name=repo_name, pr_number=pr_number
     )
@@ -1015,6 +1126,7 @@ def review_and_merge_release_pr(
             project_key=project_key,
             version=version,
             cut_keys=cut_keys,
+            review_phase=phase,
         )
 
     needs, reason = review_needs_autofix(
@@ -1084,11 +1196,53 @@ def _merge_or_wait(
     project_key: str,
     version: str,
     cut_keys: Optional[List[str]] = None,
+    review_phase: str = "initial",
 ) -> Dict[str, Any]:
     from bigas.resources.cto.pr_review.github_client import (
         GitHubMergeNotReadyError,
         GitHubPRCommentError,
     )
+
+    if _review_workflow_running(gh, owner, repo_name, pr_number):
+        return _defer_until_review_workflow_finishes(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            thread_id=thread_id,
+            project_key=project_key,
+            version=version,
+            cut_keys=cut_keys,
+            review_phase=review_phase,
+        )
+
+    posted = _marked_review_body(
+        gh, owner=owner, repo_name=repo_name, pr_number=pr_number
+    )
+    if posted and not review_is_ready_to_merge(posted):
+        needs, reason = review_needs_autofix(posted)
+        if needs:
+            return _launch_autofix_and_poll(
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=pr_url,
+                review_body=posted,
+                thread_id=thread_id,
+                project_key=project_key,
+                version=version,
+                reason=reason,
+                cut_keys=cut_keys,
+            )
+        _complete_pipeline_progress(thread_id)
+        _post(
+            thread_id,
+            "Release PR review is not ready to merge "
+            f"({reason}). Remaining comments need a human: {pr_url}",
+        )
+        return {
+            "status": "failed",
+            "summary": f"Release review not ready ({reason}).",
+            "pr_url": pr_url,
+        }
 
     try:
         gh.merge_pull_request(
@@ -1173,10 +1327,30 @@ def _launch_autofix_and_poll(
         _post(thread_id, f"Could not launch autofix: {exc}")
         return {"status": "failed", "summary": str(exc), "pr_url": pr_url}
 
-    if launched.get("skipped") and (
-        launched.get("review_clean")
-        or launched.get("reason") == "pr_already_merged"
-    ):
+    if launched.get("skipped") and launched.get("reason") == "pr_already_merged":
+        needs, finding_reason = review_needs_autofix(review_body)
+        if needs:
+            _complete_pipeline_progress(thread_id)
+            _post(
+                thread_id,
+                "The release PR was merged before autofix could run "
+                f"({finding_reason}). I will not treat that as a clean review: {pr_url}",
+            )
+            return {
+                "status": "failed",
+                "summary": "Merged before review findings were fixed.",
+                "pr_url": pr_url,
+            }
+        return review_and_merge_release_pr(
+            repo=repo,
+            pr_number=pr_number,
+            thread_id=thread_id,
+            project_key=project_key,
+            version=version,
+            phase="post_autofix",
+            cut_keys=cut_keys,
+        )
+    if launched.get("skipped") and launched.get("review_clean"):
         return review_and_merge_release_pr(
             repo=repo,
             pr_number=pr_number,
@@ -1265,6 +1439,35 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
         )
 
     phase = poll.get("phase") or "autofix"
+    if phase == "wait_review_workflow":
+        if _review_workflow_running(gh, owner, repo_name, pr_number):
+            if datetime.now(timezone.utc) >= started_dt + timedelta(
+                seconds=_POLL_TIMEOUT_SEC
+            ):
+                _thread_set(thread_id, pending_prepare_poll=None)
+                _complete_pipeline_progress(thread_id)
+                _post(
+                    thread_id,
+                    "⏳ Timed out waiting for the Bigas review workflow on the release PR. "
+                    "Ask me to prepare deploy again, or merge the PR by hand.",
+                )
+                return {"status": "complete", "active": False}
+            return {"status": "in_progress", "active": True}
+        _thread_set(thread_id, pending_prepare_poll=None)
+        resume_phase = (poll.get("review_phase") or "initial").strip() or "initial"
+        result = review_and_merge_release_pr(
+            repo=repo,
+            pr_number=pr_number,
+            thread_id=thread_id,
+            project_key=poll.get("project_key") or "",
+            version=poll.get("version") or "",
+            phase=resume_phase,
+            cut_keys=list(poll.get("cut_keys") or []),
+        )
+        result.setdefault("project_key", poll.get("project_key") or "")
+        result.setdefault("version", poll.get("version") or "")
+        return _prepare_result_to_poll(thread_id, result)
+
     if phase == "wait_actions_review":
         from bigas.resources.cto.pr_review.github_client import BIGAS_REVIEW_MARKER
 

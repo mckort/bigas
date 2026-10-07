@@ -130,6 +130,20 @@ _CLEAN = re.compile(
 _SECTION_HEADER = re.compile(
     r"(?im)^\s{0,3}#{1,6}\s*(Blockers|Important|Minor)\s*$"
 )
+_BLOCKERS_HEADER = re.compile(r"(?im)^\s{0,3}#{1,6}\s*Blockers\s*$")
+
+
+def strip_leaked_review_preamble(review_body: str) -> str:
+    """Drop model thinking that leaked before the structured review.
+
+    Keeps the text from the last ``### Blockers`` header so an earlier draft
+    inside the thinking trace does not replace the final sections.
+    """
+    body = review_body or ""
+    matches = list(_BLOCKERS_HEADER.finditer(body))
+    if not matches:
+        return body.strip()
+    return body[matches[-1].start() :].strip()
 # Note: (?<!non-) avoids matching the "blocking" inside "non-blocking".
 _ACTIONABLE = re.compile(
     r"(?i)\b(must[- ]fix|(?<!non-)blocking|critical|important|security|vulnerability|bug\b|"
