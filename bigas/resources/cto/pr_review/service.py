@@ -14,6 +14,7 @@ from bigas.llm.completion import LLMCompletion
 from bigas.llm.factory import get_llm_client
 from bigas.llm.usage import TokenUsage, estimate_cost_usd
 
+from bigas.resources.cto.autofix.heuristics import strip_leaked_review_preamble
 from bigas.resources.cto.pr_review.prompts import (
     ReviewPhase,
     build_pr_review_user_prompt,
@@ -287,7 +288,7 @@ class PRReviewService:
             logger.error("PR review LLM call failed", exc_info=True)
             raise PRReviewError(f"LLM request failed: {e}") from e
 
-        content = "\n".join(chunks).strip()
+        content = strip_leaked_review_preamble("\n".join(chunks))
         if truncated_note:
             content = truncated_note + content
 

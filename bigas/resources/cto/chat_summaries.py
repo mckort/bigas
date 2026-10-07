@@ -59,6 +59,13 @@ def summarize_review_result(payload: dict) -> str:
         suffix = f" {pr_url}" if pr_url else ""
         return f"PR is already merged. Nothing to review.{suffix}".strip()
 
+    if payload.get("skipped") and reason == "stale_head":
+        suffix = f" {pr_url}" if pr_url else ""
+        return (
+            "Review was not posted because the PR head moved while it was running."
+            f"{suffix}"
+        ).strip()
+
     merge_bit = _auto_merge_clause(payload.get("auto_merge"))
     board = payload.get("board_ticket")
     ticket_bit = ""
