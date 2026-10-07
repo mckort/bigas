@@ -8,7 +8,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from bigas.portfolio import brand_name, jira_project_keys, normalize_project_key, resolve_project
-from bigas.resources.cto.autofix.heuristics import review_is_ready_to_merge, review_needs_autofix
+from bigas.resources.cto.autofix.heuristics import (
+    review_is_ready_to_merge,
+    review_needs_autofix,
+    strip_leaked_review_preamble,
+)
 from bigas.resources.cto.pr_review.github_client import GitHubPRCommentError
 from bigas.resources.devops.service import DevOpsError, check_deployment_risk, list_shipping_commits
 from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
@@ -51,7 +55,43 @@ def _marked_review_body(
             "Could not read the Bigas review comment before merge", exc_info=True
         )
         return ""
-    return body.strip() if isinstance(body, str) else ""
+    if not isinstance(body, str):
+        return ""
+    return strip_leaked_review_preamble(body.strip())
+
+
+def _defer_until_review_workflow_finishes(
+    *,
+    repo: str,
+    pr_number: int,
+    pr_url: str,
+    thread_id: Optional[str],
+    project_key: str,
+    version: str,
+    cut_keys: Optional[List[str]],
+    review_phase: str,
+) -> Dict[str, Any]:
+    _post(
+        thread_id,
+        "⏳ A Bigas review is still running. I will not merge until it finishes.",
+        role="system",
+        status="in_progress",
+    )
+    _thread_set(
+        thread_id,
+        pending_prepare_poll={
+            "phase": "wait_review_workflow",
+            "repo": repo,
+            "pr_number": pr_number,
+            "pr_url": pr_url,
+            "project_key": project_key,
+            "version": version,
+            "cut_keys": list(cut_keys or []),
+            "review_phase": review_phase,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
 
 
 def _review_workflow_running(gh: Any, owner: str, repo_name: str, pr_number: int) -> bool:
@@ -1016,6 +1056,18 @@ def review_and_merge_release_pr(
         except GitHubPRCommentError as exc:
             logger.warning("Could not mark release PR ready: %s", exc)
 
+    if _review_workflow_running(gh, owner, repo_name, pr_number):
+        return _defer_until_review_workflow_finishes(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            thread_id=thread_id,
+            project_key=project_key,
+            version=version,
+            cut_keys=cut_keys,
+            review_phase=phase,
+        )
+
     _post(
         thread_id,
         "🔎 **Review:** running CTO review on the release PR…",
@@ -1074,6 +1126,7 @@ def review_and_merge_release_pr(
             project_key=project_key,
             version=version,
             cut_keys=cut_keys,
+            review_phase=phase,
         )
 
     needs, reason = review_needs_autofix(
@@ -1143,6 +1196,7 @@ def _merge_or_wait(
     project_key: str,
     version: str,
     cut_keys: Optional[List[str]] = None,
+    review_phase: str = "initial",
 ) -> Dict[str, Any]:
     from bigas.resources.cto.pr_review.github_client import (
         GitHubMergeNotReadyError,
@@ -1150,26 +1204,16 @@ def _merge_or_wait(
     )
 
     if _review_workflow_running(gh, owner, repo_name, pr_number):
-        _post(
-            thread_id,
-            "⏳ A Bigas review is still running. I will not merge until it finishes.",
-            role="system",
-            status="in_progress",
+        return _defer_until_review_workflow_finishes(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            thread_id=thread_id,
+            project_key=project_key,
+            version=version,
+            cut_keys=cut_keys,
+            review_phase=review_phase,
         )
-        _thread_set(
-            thread_id,
-            pending_prepare_poll={
-                "phase": "wait_review_workflow",
-                "repo": repo,
-                "pr_number": pr_number,
-                "pr_url": pr_url,
-                "project_key": project_key,
-                "version": version,
-                "cut_keys": list(cut_keys or []),
-                "started_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-        return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
 
     posted = _marked_review_body(
         gh, owner=owner, repo_name=repo_name, pr_number=pr_number
@@ -1397,15 +1441,27 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
     phase = poll.get("phase") or "autofix"
     if phase == "wait_review_workflow":
         if _review_workflow_running(gh, owner, repo_name, pr_number):
+            if datetime.now(timezone.utc) >= started_dt + timedelta(
+                seconds=_POLL_TIMEOUT_SEC
+            ):
+                _thread_set(thread_id, pending_prepare_poll=None)
+                _complete_pipeline_progress(thread_id)
+                _post(
+                    thread_id,
+                    "⏳ Timed out waiting for the Bigas review workflow on the release PR. "
+                    "Ask me to prepare deploy again, or merge the PR by hand.",
+                )
+                return {"status": "complete", "active": False}
             return {"status": "in_progress", "active": True}
         _thread_set(thread_id, pending_prepare_poll=None)
+        resume_phase = (poll.get("review_phase") or "initial").strip() or "initial"
         result = review_and_merge_release_pr(
             repo=repo,
             pr_number=pr_number,
             thread_id=thread_id,
             project_key=poll.get("project_key") or "",
             version=poll.get("version") or "",
-            phase="post_autofix",
+            phase=resume_phase,
             cut_keys=list(poll.get("cut_keys") or []),
         )
         result.setdefault("project_key", poll.get("project_key") or "")

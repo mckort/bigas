@@ -897,6 +897,13 @@ def review_and_comment_pr():
         head = fresh.get("head") if isinstance(fresh, dict) else None
         if isinstance(head, dict):
             current_sha = str(head.get("sha") or "").strip()
+        elif reviewed_sha:
+            logger.warning(
+                "Could not read PR head SHA while checking for stale review on %s/%s#%s",
+                owner,
+                repo_name,
+                pr_number,
+            )
         if current_sha and current_sha != reviewed_sha:
             _post_cto_status(
                 f"**CTO PR review skipped**\n"
