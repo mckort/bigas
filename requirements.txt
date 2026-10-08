@@ -10,7 +10,7 @@ google-generativeai>=0.8.0
 python-dotenv==1.0.0
 requests==2.31.0
 werkzeug==2.2.3
-google-auth==2.23.0
+google-auth==2.26.2
 httpx==0.25.0
 starlette==0.27.0
 uvicorn==0.24.0
