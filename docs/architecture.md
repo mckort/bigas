@@ -230,7 +230,15 @@ Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_r
 4. **AI marketing analysis**: Executive summary and structured recommendations (e.g. 7 questions) via the configured LLM.
 5. **Discord**: Structured reports with summaries and recommendations.
 6. **Metadata**: Timestamps and report structure stored for organization and cleanup.
-7. **Cleanup**: Old reports can be removed via `cleanup_old_reports` to manage cost. The same job also deletes expired X drafts under `x_drafts/`.
+7. **Cleanup**: `POST /mcp/tools/cleanup_old_reports` removes stale data to manage storage costs. The job cleans up:
+   - Weekly analytics reports (`weekly_reports/`, default 30 days)
+   - Raw ads API data (`raw_ads/`, default 30 days)
+   - X post drafts (`x_drafts/`, default 48 hours TTL)
+   - QA proposal drafts (`qa_drafts/`, default 72 hours TTL)
+   - Eval reports (`eval/`, default 90 days)
+   - Ticket attachments (`ticket_attachments/`, default 90 days)
+   - Chat attachments (`chat_attachments/`, default 90 days)
+   - Old chat messages (Firestore `messages`, default 180 days)
 
 ## Secret Manager (optional)
 

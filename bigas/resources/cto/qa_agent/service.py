@@ -540,6 +540,16 @@ class QAAgentService:
         post_to_discord(webhook, msg, chat_agent_id="cto")
         return {"ok": True, "declined": True, "proposal_id": proposal_id}
 
+    def cleanup_expired_drafts(self, *, max_to_delete: int = 50) -> int:
+        """Delete expired QA proposal drafts from storage."""
+        return int(
+            self._store_or_default().cleanup_expired(
+                ttl_hours=_ttl_hours(),
+                max_to_delete=max_to_delete,
+            )
+            or 0
+        )
+
 
 def format_cto_discord_message(payload: Dict[str, Any], *, review_url: str) -> str:
     lines = [

@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 
 DEFAULT_ACTIVITY_KEEP_DAYS = 7
 DEFAULT_ACTIVITY_MAX_DELETE = 500
+DEFAULT_MESSAGE_KEEP_DAYS = 180
+DEFAULT_MESSAGE_MAX_DELETE = 500
 
 DEFAULT_AGENTS = [
     {
@@ -385,6 +387,29 @@ class MemoryChatStore:
             self._activity = [e for e in self._activity if e.get("id") not in to_delete_ids]
             return len(to_delete_ids)
 
+    def delete_old_messages(
+        self,
+        *,
+        keep_days: int = DEFAULT_MESSAGE_KEEP_DAYS,
+        max_to_delete: int = DEFAULT_MESSAGE_MAX_DELETE,
+    ) -> int:
+        """Delete chat messages older than keep_days. Returns count deleted."""
+        cutoff = _activity_cutoff_iso(keep_days)
+        deleted = 0
+        with self._lock:
+            for thread_id, messages in list(self._messages.items()):
+                stale = [m for m in messages if m.get("created_at", "") < cutoff]
+                stale.sort(key=lambda m: m.get("created_at", ""))
+                to_delete_ids = {m.get("message_id") for m in stale[: max_to_delete - deleted]}
+                if to_delete_ids:
+                    self._messages[thread_id] = [
+                        m for m in messages if m.get("message_id") not in to_delete_ids
+                    ]
+                    deleted += len(to_delete_ids)
+                if deleted >= max_to_delete:
+                    break
+        return deleted
+
 
 class FirestoreChatStore:
     """Firestore-backed chat store for production."""
@@ -697,6 +722,28 @@ class FirestoreChatStore:
         cutoff = _activity_cutoff_iso(keep_days)
         docs = list(
             self._activity.where("created_at", "<", cutoff)
+            .order_by("created_at")
+            .limit(max_to_delete)
+            .stream()
+        )
+        if not docs:
+            return 0
+        batch = self._db.batch()
+        for doc in docs:
+            batch.delete(doc.reference)
+        batch.commit()
+        return len(docs)
+
+    def delete_old_messages(
+        self,
+        *,
+        keep_days: int = DEFAULT_MESSAGE_KEEP_DAYS,
+        max_to_delete: int = DEFAULT_MESSAGE_MAX_DELETE,
+    ) -> int:
+        """Delete chat messages older than keep_days. Returns count deleted."""
+        cutoff = _activity_cutoff_iso(keep_days)
+        docs = list(
+            self._messages.where("created_at", "<", cutoff)
             .order_by("created_at")
             .limit(max_to_delete)
             .stream()

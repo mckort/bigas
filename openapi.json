@@ -362,25 +362,63 @@
     },
     "/mcp/tools/cleanup_old_reports": {
       "post": {
-        "summary": "Clean up old weekly reports.",
-        "description": "Cleans up old weekly analytics reports to manage storage costs.",
+        "summary": "Clean up old storage artifacts.",
+        "description": "Deletes old weekly reports, raw ads data, X drafts, QA drafts, eval reports, attachments, and chat messages to manage storage costs. Intended for a weekly Cloud Scheduler job.",
         "requestBody": {
           "required": false,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "keep_days": {
+                    "type": "integer",
+                    "description": "Days to keep weekly reports (default 30)."
+                  },
+                  "keep_days_raw_ads": {
+                    "type": "integer",
+                    "description": "Days to keep raw ads API data (default 30)."
+                  },
+                  "keep_days_eval": {
+                    "type": "integer",
+                    "description": "Days to keep eval reports (default 90)."
+                  },
+                  "keep_days_attachments": {
+                    "type": "integer",
+                    "description": "Days to keep ticket/chat attachments (default 90)."
+                  },
+                  "keep_days_messages": {
+                    "type": "integer",
+                    "description": "Days to keep chat messages (default 180)."
+                  },
+                  "max_reports_to_delete": {
+                    "type": "integer",
+                    "description": "Max items to delete per category (default 50)."
+                  }
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Cleanup result.",
+            "description": "Cleanup result with counts per category.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "deleted_reports": { "type": "integer" },
+                    "deleted_raw_ads": { "type": "integer" },
+                    "deleted_x_drafts": { "type": "integer" },
+                    "deleted_qa_drafts": { "type": "integer" },
+                    "deleted_eval_reports": { "type": "integer" },
+                    "deleted_ticket_attachments": { "type": "integer" },
+                    "deleted_chat_attachments": { "type": "integer" },
+                    "deleted_old_messages": { "type": "integer" },
+                    "total_deleted": { "type": "integer" }
+                  }
                 }
               }
             }
