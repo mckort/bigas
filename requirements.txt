@@ -16,7 +16,7 @@ starlette==0.27.0
 uvicorn==0.24.0
 
 # Google Cloud Storage for report storage
-google-cloud-storage>=3.7.0
+google-cloud-storage==3.7.0
 
 # Google Secret Manager (optional: when SECRET_MANAGER=true in standalone)
 google-cloud-secret-manager==2.16.0
