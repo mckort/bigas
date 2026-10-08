@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ class EvalStorage:
                 if len(parts) >= 3 and parts[0] == "eval":
                     runs.append({
                         "use_case": parts[1],
-                        "run_id": parts[2] if len(parts) > 2 else "",
+                        "run_id": parts[2],
                         "blob_name": blob.name,
                         "size": blob.size,
                         "updated": blob.updated,
@@ -111,7 +111,7 @@ class EvalStorage:
             int: Number of blobs deleted
         """
         try:
-            cutoff = datetime.now() - timedelta(days=keep_days)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days)
             blobs = list(self.bucket.list_blobs(prefix="eval/"))
             deleted_count = 0
 
@@ -120,16 +120,21 @@ class EvalStorage:
                 updated = getattr(blob, "updated", None) or getattr(blob, "time_created", None)
                 if updated is None:
                     continue
-                if updated.replace(tzinfo=None) < cutoff:
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                if updated < cutoff:
                     old_blobs.append((blob, updated))
 
             old_blobs.sort(key=lambda x: x[1])
             blobs_to_delete = old_blobs[:max_to_delete]
 
             for blob, updated in blobs_to_delete:
-                blob.delete()
-                deleted_count += 1
-                logger.info("Deleted old eval artifact: %s", blob.name)
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                    logger.info("Deleted old eval artifact: %s", blob.name)
+                except Exception as exc:
+                    logger.warning("Failed to delete old eval artifact %s: %s", blob.name, exc)
 
             logger.info(
                 "Deleted %d old eval artifacts (limited to %d)", deleted_count, max_to_delete

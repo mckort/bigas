@@ -398,9 +398,13 @@ class MemoryChatStore:
         deleted = 0
         with self._lock:
             for thread_id, messages in list(self._messages.items()):
-                stale = [m for m in messages if m.get("created_at", "") < cutoff]
-                stale.sort(key=lambda m: m.get("created_at", ""))
-                to_delete_ids = {m.get("message_id") for m in stale[: max_to_delete - deleted]}
+                stale = [m for m in messages if (m.get("created_at") or "") < cutoff]
+                stale.sort(key=lambda m: m.get("created_at") or "")
+                to_delete_ids = {
+                    m.get("message_id")
+                    for m in stale[: max_to_delete - deleted]
+                    if m.get("message_id")
+                }
                 if to_delete_ids:
                     self._messages[thread_id] = [
                         m for m in messages if m.get("message_id") not in to_delete_ids
@@ -728,11 +732,7 @@ class FirestoreChatStore:
         )
         if not docs:
             return 0
-        batch = self._db.batch()
-        for doc in docs:
-            batch.delete(doc.reference)
-        batch.commit()
-        return len(docs)
+        return self._batch_delete_docs(docs)
 
     def delete_old_messages(
         self,
@@ -742,19 +742,27 @@ class FirestoreChatStore:
     ) -> int:
         """Delete chat messages older than keep_days. Returns count deleted."""
         cutoff = _activity_cutoff_iso(keep_days)
+        limit = min(max(1, int(max_to_delete)), 500)
         docs = list(
             self._messages.where("created_at", "<", cutoff)
             .order_by("created_at")
-            .limit(max_to_delete)
+            .limit(limit)
             .stream()
         )
         if not docs:
             return 0
-        batch = self._db.batch()
-        for doc in docs:
-            batch.delete(doc.reference)
-        batch.commit()
-        return len(docs)
+        return self._batch_delete_docs(docs)
+
+    def _batch_delete_docs(self, docs: List[Any]) -> int:
+        deleted = 0
+        for i in range(0, len(docs), 500):
+            chunk = docs[i : i + 500]
+            batch = self._db.batch()
+            for doc in chunk:
+                batch.delete(doc.reference)
+            batch.commit()
+            deleted += len(chunk)
+        return deleted
 
 
 _store: Optional[Any] = None

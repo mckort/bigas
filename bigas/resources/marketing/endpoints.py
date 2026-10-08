@@ -6472,16 +6472,28 @@ def analyze_underperforming_pages():
         logger.error(f"Error analyzing underperforming pages: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
+def _cleanup_positive_int(value, default: int, *, upper: Optional[int] = None) -> int:
+    try:
+        n = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        n = default
+    n = max(1, n)
+    if upper is not None:
+        n = min(n, upper)
+    return n
+
+
 @marketing_bp.route('/mcp/tools/cleanup_old_reports', methods=['POST'])
 def cleanup_old_reports():
     """Clean up old weekly reports and other storage artifacts to manage costs."""
     data = request.json or {}
-    keep_days = data.get('keep_days', 30)
-    keep_days_raw_ads = data.get('keep_days_raw_ads', 30)
-    keep_days_eval = data.get('keep_days_eval', 90)
-    keep_days_attachments = data.get('keep_days_attachments', 90)
-    keep_days_messages = data.get('keep_days_messages', 180)
-    max_to_delete = data.get('max_reports_to_delete', 50)
+    keep_days = _cleanup_positive_int(data.get('keep_days'), 30)
+    keep_days_raw_ads = _cleanup_positive_int(data.get('keep_days_raw_ads'), 30)
+    keep_days_eval = _cleanup_positive_int(data.get('keep_days_eval'), 90)
+    keep_days_attachments = _cleanup_positive_int(data.get('keep_days_attachments'), 90)
+    keep_days_messages = _cleanup_positive_int(data.get('keep_days_messages'), 180)
+    max_raw = data.get('max_reports_to_delete', data.get('max_to_delete', 50))
+    max_to_delete = _cleanup_positive_int(max_raw, 50, upper=500)
 
     results = {
         "deleted_reports": 0,
@@ -6493,22 +6505,25 @@ def cleanup_old_reports():
         "deleted_chat_attachments": 0,
         "deleted_old_messages": 0,
     }
+    errors: List[str] = []
+
+    service = MarketingAnalyticsService(OPENAI_API_KEY)
 
     try:
-        service = MarketingAnalyticsService(OPENAI_API_KEY)
         results["deleted_reports"] = service.storage_service.delete_old_reports(
             keep_days, max_to_delete
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to clean old weekly reports", exc_info=True)
+        errors.append(f"weekly_reports: {exc}")
 
     try:
-        service = MarketingAnalyticsService(OPENAI_API_KEY)
         results["deleted_raw_ads"] = service.storage_service.delete_old_raw_ads(
             keep_days_raw_ads, max_to_delete
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to clean old raw ads", exc_info=True)
+        errors.append(f"raw_ads: {exc}")
 
     try:
         from bigas.resources.product.x_posts.service import XPostsService
@@ -6516,8 +6531,9 @@ def cleanup_old_reports():
         results["deleted_x_drafts"] = XPostsService().cleanup_expired_drafts(
             max_to_delete=max_to_delete
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to clean expired X drafts", exc_info=True)
+        errors.append(f"x_drafts: {exc}")
 
     try:
         from bigas.resources.cto.qa_agent.service import QAAgentService
@@ -6525,8 +6541,9 @@ def cleanup_old_reports():
         results["deleted_qa_drafts"] = QAAgentService().cleanup_expired_drafts(
             max_to_delete=max_to_delete
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to clean expired QA drafts", exc_info=True)
+        errors.append(f"qa_drafts: {exc}")
 
     try:
         from bigas.eval.storage import EvalStorage
@@ -6534,24 +6551,25 @@ def cleanup_old_reports():
         results["deleted_eval_reports"] = EvalStorage().delete_old_eval_reports(
             keep_days_eval, max_to_delete
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to clean old eval reports", exc_info=True)
+        errors.append(f"eval_reports: {exc}")
 
     try:
-        service = MarketingAnalyticsService(OPENAI_API_KEY)
         results["deleted_ticket_attachments"] = service.storage_service.delete_old_attachments(
             "ticket_attachments/", keep_days_attachments, max_to_delete
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to clean old ticket attachments", exc_info=True)
+        errors.append(f"ticket_attachments: {exc}")
 
     try:
-        service = MarketingAnalyticsService(OPENAI_API_KEY)
         results["deleted_chat_attachments"] = service.storage_service.delete_old_attachments(
             "chat_attachments/", keep_days_attachments, max_to_delete
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to clean old chat attachments", exc_info=True)
+        errors.append(f"chat_attachments: {exc}")
 
     try:
         from bigas.chat.db import get_chat_store
@@ -6561,22 +6579,38 @@ def cleanup_old_reports():
             results["deleted_old_messages"] = store.delete_old_messages(
                 keep_days=keep_days_messages, max_to_delete=max_to_delete
             )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to clean old chat messages", exc_info=True)
+        errors.append(f"chat_messages: {exc}")
 
     total = sum(results.values())
+    if errors and total == 0:
+        status = "failed"
+        http_status = 500
+    elif errors:
+        status = "partial_success"
+        http_status = 207
+    else:
+        status = "success"
+        http_status = 200
+
+    message = f"Cleanup complete. Deleted {total} items total."
+    if errors:
+        message = f"{message} {len(errors)} cleanup step(s) reported errors."
+
     return jsonify({
-        "status": "success",
+        "status": status,
         **results,
         "total_deleted": total,
+        "errors": errors,
         "keep_days": keep_days,
         "keep_days_raw_ads": keep_days_raw_ads,
         "keep_days_eval": keep_days_eval,
         "keep_days_attachments": keep_days_attachments,
         "keep_days_messages": keep_days_messages,
         "max_to_delete": max_to_delete,
-        "message": f"Cleanup complete. Deleted {total} items total.",
-    })
+        "message": message,
+    }), http_status
 
 
 def _get_discord_webhook_url() -> str | None:

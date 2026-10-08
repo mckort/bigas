@@ -10,7 +10,7 @@ This service provides functionality to:
 import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
@@ -421,9 +421,14 @@ class StorageService:
             blobs_to_delete = old_blobs[:max_reports_to_delete]
             
             for blob, report_date in blobs_to_delete:
-                blob.delete()
-                deleted_count += 1
-                logger.info(f"Deleted old report: {blob.name} (from {report_date.strftime('%Y-%m-%d')})")
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                    logger.info(
+                        f"Deleted old report: {blob.name} (from {report_date.strftime('%Y-%m-%d')})"
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to delete old report %s: %s", blob.name, exc)
             
             logger.info(f"Deleted {deleted_count} old reports (limited to {max_reports_to_delete})")
             return deleted_count
@@ -468,9 +473,14 @@ class StorageService:
             blobs_to_delete = old_blobs[:max_to_delete]
 
             for blob, report_date in blobs_to_delete:
-                blob.delete()
-                deleted_count += 1
-                logger.info(f"Deleted old raw ads blob: {blob.name} (from {report_date.strftime('%Y-%m-%d')})")
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                    logger.info(
+                        f"Deleted old raw ads blob: {blob.name} (from {report_date.strftime('%Y-%m-%d')})"
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to delete old raw ads blob %s: %s", blob.name, exc)
 
             logger.info(f"Deleted {deleted_count} old raw ads blobs (limited to {max_to_delete})")
             return deleted_count
@@ -496,7 +506,7 @@ class StorageService:
             int: Number of blobs deleted
         """
         try:
-            cutoff = datetime.now() - timedelta(days=keep_days)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days)
             blobs = list(self.bucket.list_blobs(prefix=prefix))
             deleted_count = 0
 
@@ -505,16 +515,21 @@ class StorageService:
                 created = getattr(blob, "time_created", None) or getattr(blob, "updated", None)
                 if created is None:
                     continue
-                if created.replace(tzinfo=None) < cutoff:
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if created < cutoff:
                     old_blobs.append((blob, created))
 
             old_blobs.sort(key=lambda x: x[1])
             blobs_to_delete = old_blobs[:max_to_delete]
 
             for blob, created in blobs_to_delete:
-                blob.delete()
-                deleted_count += 1
-                logger.info(f"Deleted old attachment: {blob.name}")
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                    logger.info(f"Deleted old attachment: {blob.name}")
+                except Exception as exc:
+                    logger.warning("Failed to delete old attachment %s: %s", blob.name, exc)
 
             logger.info(f"Deleted {deleted_count} old attachments under {prefix} (limited to {max_to_delete})")
             return deleted_count
