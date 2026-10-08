@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -63,3 +64,83 @@ class EvalStorage:
 
     def gcs_uri(self, blob_name: str) -> str:
         return f"gs://{self.bucket_name}/{blob_name}"
+
+    def list_eval_runs(self, use_case: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List eval run artifacts stored in GCS.
+
+        Args:
+            use_case: Optional use case filter. If None, lists all use cases.
+
+        Returns:
+            List of dicts with use_case, run_id, and blob metadata.
+        """
+        prefix = f"eval/{use_case}/" if use_case else "eval/"
+        try:
+            blobs = list(self.bucket.list_blobs(prefix=prefix))
+            runs = []
+            for blob in blobs:
+                parts = blob.name.split("/")
+                if len(parts) >= 3 and parts[0] == "eval":
+                    runs.append({
+                        "use_case": parts[1],
+                        "run_id": parts[2],
+                        "blob_name": blob.name,
+                        "size": blob.size,
+                        "updated": blob.updated,
+                    })
+            return runs
+        except Exception as exc:
+            logger.warning("Failed to list eval runs: %s", exc)
+            return []
+
+    def delete_old_eval_reports(
+        self, keep_days: int = 90, max_to_delete: int = 100
+    ) -> int:
+        """
+        Delete eval report artifacts older than the specified number of days.
+
+        Eval reports are stored under eval/{use_case}/{run_id}/ and can
+        accumulate storage costs over time.
+
+        Args:
+            keep_days: Number of days to keep eval reports (default: 90)
+            max_to_delete: Maximum number of blobs to delete in one operation (default: 100)
+
+        Returns:
+            int: Number of blobs deleted
+        """
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days)
+            blobs = list(self.bucket.list_blobs(prefix="eval/"))
+            deleted_count = 0
+
+            old_blobs = []
+            for blob in blobs:
+                updated = getattr(blob, "updated", None) or getattr(blob, "time_created", None)
+                if updated is None:
+                    continue
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                if updated < cutoff:
+                    old_blobs.append((blob, updated))
+
+            old_blobs.sort(key=lambda x: x[1])
+            blobs_to_delete = old_blobs[:max_to_delete]
+
+            for blob, updated in blobs_to_delete:
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                    logger.info("Deleted old eval artifact: %s", blob.name)
+                except Exception as exc:
+                    logger.warning("Failed to delete old eval artifact %s: %s", blob.name, exc)
+
+            logger.info(
+                "Deleted %d old eval artifacts (limited to %d)", deleted_count, max_to_delete
+            )
+            return deleted_count
+
+        except Exception as exc:
+            logger.error("Error deleting old eval reports: %s", exc)
+            return 0

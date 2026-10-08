@@ -10,7 +10,7 @@ This service provides functionality to:
 import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
@@ -421,15 +421,121 @@ class StorageService:
             blobs_to_delete = old_blobs[:max_reports_to_delete]
             
             for blob, report_date in blobs_to_delete:
-                blob.delete()
-                deleted_count += 1
-                logger.info(f"Deleted old report: {blob.name} (from {report_date.strftime('%Y-%m-%d')})")
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                    logger.info(
+                        f"Deleted old report: {blob.name} (from {report_date.strftime('%Y-%m-%d')})"
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to delete old report %s: %s", blob.name, exc)
             
             logger.info(f"Deleted {deleted_count} old reports (limited to {max_reports_to_delete})")
             return deleted_count
             
         except Exception as e:
             logger.error(f"Error deleting old reports: {e}")
+            return 0
+
+    def delete_old_raw_ads(self, keep_days: int = 30, max_to_delete: int = 100) -> int:
+        """
+        Delete raw ads API reports older than the specified number of days.
+
+        Raw ads data is stored under raw_ads/{platform}/{YYYY-MM-DD}/ and can
+        accumulate significant storage costs if not cleaned up periodically.
+
+        Args:
+            keep_days: Number of days to keep raw ads data (default: 30)
+            max_to_delete: Maximum number of blobs to delete in one operation (default: 100)
+
+        Returns:
+            int: Number of blobs deleted
+        """
+        try:
+            cutoff_date = datetime.now() - timedelta(days=keep_days)
+            blobs = list(self.bucket.list_blobs(prefix="raw_ads/"))
+            deleted_count = 0
+
+            old_blobs = []
+            for blob in blobs:
+                parts = blob.name.split("/")
+                if len(parts) < 3:
+                    continue
+                date_part = parts[2]
+                try:
+                    report_date = datetime.strptime(date_part, "%Y-%m-%d")
+                    if report_date < cutoff_date:
+                        old_blobs.append((blob, report_date))
+                except ValueError:
+                    continue
+
+            old_blobs.sort(key=lambda x: x[1])
+            blobs_to_delete = old_blobs[:max_to_delete]
+
+            for blob, report_date in blobs_to_delete:
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                    logger.info(
+                        f"Deleted old raw ads blob: {blob.name} (from {report_date.strftime('%Y-%m-%d')})"
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to delete old raw ads blob %s: %s", blob.name, exc)
+
+            logger.info(f"Deleted {deleted_count} old raw ads blobs (limited to {max_to_delete})")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"Error deleting old raw ads: {e}")
+            return 0
+
+    def delete_old_attachments(
+        self, prefix: str, keep_days: int = 90, max_to_delete: int = 100
+    ) -> int:
+        """
+        Delete attachment blobs older than the specified number of days.
+
+        Handles ticket_attachments/ and chat_attachments/ prefixes.
+
+        Args:
+            prefix: Blob prefix (e.g. "ticket_attachments/" or "chat_attachments/")
+            keep_days: Number of days to keep attachments (default: 90)
+            max_to_delete: Maximum number of blobs to delete in one operation (default: 100)
+
+        Returns:
+            int: Number of blobs deleted
+        """
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days)
+            blobs = list(self.bucket.list_blobs(prefix=prefix))
+            deleted_count = 0
+
+            old_blobs = []
+            for blob in blobs:
+                created = getattr(blob, "time_created", None) or getattr(blob, "updated", None)
+                if created is None:
+                    continue
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if created < cutoff:
+                    old_blobs.append((blob, created))
+
+            old_blobs.sort(key=lambda x: x[1])
+            blobs_to_delete = old_blobs[:max_to_delete]
+
+            for blob, created in blobs_to_delete:
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                    logger.info(f"Deleted old attachment: {blob.name}")
+                except Exception as exc:
+                    logger.warning("Failed to delete old attachment %s: %s", blob.name, exc)
+
+            logger.info(f"Deleted {deleted_count} old attachments under {prefix} (limited to {max_to_delete})")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"Error deleting old attachments under {prefix}: {e}")
             return 0
     
     def get_report_summary(self, report_data: Dict[str, Any]) -> Dict[str, Any]:
