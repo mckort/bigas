@@ -321,6 +321,12 @@ gcloud run deploy mcp-marketing \
     --timeout=900 \
     --env-vars-file="$ENV_VARS_FILE"
 
+# A pinned revision keeps new deploys at 0% traffic. Always follow the revision just created.
+gcloud run services update-traffic mcp-marketing \
+    --project="$GOOGLE_PROJECT_ID" \
+    --region=europe-north1 \
+    --to-latest
+
 echo "✅ Deployment completed successfully!"
 
 if [ -x "$(dirname "$0")/scripts/record-prod-version.sh" ]; then
