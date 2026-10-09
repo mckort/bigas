@@ -6,6 +6,7 @@ Writes are refused here even if the key could stage them.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
@@ -337,6 +338,72 @@ def _format_tool_result(result: Dict[str, Any]) -> str:
     if len(text) > MAX_TOOL_TEXT:
         text = text[:MAX_TOOL_TEXT] + "\n…(truncated)"
     return text
+
+
+_SUPPLIER_QUESTION = re.compile(
+    r"betalar|betalt|kostar|abonnemang|leverantör|supplier",
+    re.IGNORECASE,
+)
+_FOR_NAME = re.compile(r"\bför\s+([A-Za-zÅÄÖåäö0-9][\w.&-]{2,})", re.IGNORECASE)
+_NAME_SKIP = frozenset(
+    {"att", "mina", "våra", "vara", "den", "det", "ett", "en", "alla", "året", "aret", "oss", "mig"}
+)
+
+
+def supplier_name_from_question(message: str) -> str:
+    """Name after 'för' in a supplier-cost question, such as Speedledger."""
+    match = _FOR_NAME.search(message or "")
+    if not match:
+        return ""
+    name = match.group(1).strip(".,")
+    if name.casefold() in _NAME_SKIP:
+        return ""
+    return name[:80]
+
+
+def bookkeeping_prefetch(message: str) -> str:
+    """Read supplier invoices and journal lines before the CFO model answers.
+
+    The model has answered these questions from public price lists instead of calling a tool.
+    """
+    text = message or ""
+    if not _SUPPLIER_QUESTION.search(text):
+        return ""
+    name = supplier_name_from_question(text)
+    if not name:
+        return ""
+    if not _api_key():
+        return NOT_CONFIGURED
+    today = dt.date.today()
+    start = today.replace(year=today.year - 1, month=1, day=1).isoformat()
+    end = today.isoformat()
+    invoices = dispatch_accounted_tool(
+        "accounted_list_supplier_invoices",
+        {
+            "supplier_name": name,
+            "status": "all",
+            "date_from": start,
+            "date_to": end,
+            "limit": 50,
+        },
+    )
+    journal = dispatch_accounted_tool(
+        "accounted_query_journal",
+        {
+            "text": name,
+            "status": "posted",
+            "date_from": start,
+            "date_to": end,
+            "limit": 50,
+        },
+    )
+    body = (
+        f"Supplier invoices for {name}:\n{invoices}\n\n"
+        f"Journal lines for {name}:\n{journal}"
+    )
+    if len(body) > MAX_TOOL_TEXT:
+        return body[:MAX_TOOL_TEXT] + "\n…(truncated)"
+    return body
 
 
 def dispatch_accounted_tool(name: str, arguments: Optional[Dict[str, Any]] = None) -> str:

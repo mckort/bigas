@@ -43,6 +43,7 @@ from bigas.resources.devops.pipeline import (
 )
 from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
 from bigas.utils.accounted_client import (
+    bookkeeping_prefetch,
     cfo_accounted_tools,
     dispatch_accounted_tool,
     is_accounted_tool,
@@ -134,6 +135,7 @@ Cost and bookkeeping briefs:
 - You are a CFO. Numbers first, then a recommendation — never a generic savings list.
 - AI and infrastructure spend: call fetch_ai_usage (or the matching cost tool) before advising. Read totals by app, model tier, and feature.
 - Bookkeeping (result, balance, VAT, invoices, uncategorised bank rows, ledger): call the accounted_* read tools, such as accounted_get_vat_report, before advising. Do not invent figures.
+- If Accounted figures are already in the message, answer from those. A public price list is not what the company pays.
 - If a tool says bookkeeping is not connected, say that and stop. If a report says the figures are preliminary, or that completeness could not be checked, say so.
 - Do not categorise, book, approve, send, or lock a period from chat. Those Accounted tools are refused.
 - Structure: current numbers vs the question, the drivers, 3–5 concrete moves with estimated impact, what not to cut.
@@ -485,6 +487,22 @@ def _mcp_client() -> MCPClient:
 def _filter_tools_for_agent(tools: List[Dict[str, Any]], agent_id: str) -> List[Dict[str, Any]]:
     """Return all tools for the agent - no longer filters by domain."""
     return _dedupe_tools(tools)
+
+
+def _with_bookkeeping_figures(agent_id: str, message: str) -> str:
+    """Attach an Accounted supplier lookup so the CFO cannot skip the books."""
+    if (agent_id or "").strip().lower() != "cfo":
+        return message
+    extra = bookkeeping_prefetch(message)
+    if not extra:
+        return message
+    return (
+        f"{message}\n\n"
+        "Accounted figures already fetched for this question. Answer from them. "
+        "Do not quote a public price list. Do not say invoices are unavailable "
+        "when these figures contain rows.\n\n"
+        f"{extra}"
+    )
 
 
 def _with_accounted_tools(agent_id: str, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1317,6 +1335,7 @@ def run_specialist_task(
                     )
                 return summary
         client = _mcp_client()
+        asked = _with_bookkeeping_figures(agent_id, task)
         tools = _with_accounted_tools(
             agent_id, _filter_tools_for_agent(client.list_tools(), agent_id)
         )
@@ -1341,7 +1360,7 @@ def run_specialist_task(
             return llm.complete(
                 [
                     {"role": "system", "content": system},
-                    {"role": "user", "content": task},
+                    {"role": "user", "content": asked},
                 ],
                 **_chat_generation_kwargs(agent_id, model),
             )
@@ -1349,7 +1368,7 @@ def run_specialist_task(
         result = _run_agent_with_tools(
             agent_id=agent_id,
             agent_config=agent_config,
-            user_message=task,
+            user_message=asked,
             tools=tools,
             history=[],
             run_tool=_run_specialist_tool,
@@ -1517,6 +1536,7 @@ def handle_chat_message(
             assistant = next((m for m in reversed(last) if m.get("role") == "assistant"), None)
             return {"status": "complete", "message": assistant, "messages": all_msgs}
 
+    llm_user_message = _with_bookkeeping_figures(agent_id, llm_user_message)
     client = _mcp_client()
     tools = _with_accounted_tools(
         agent_id, _filter_tools_for_agent(client.list_tools(), agent_id)
