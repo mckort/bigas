@@ -950,6 +950,15 @@ function latestThreadByAgent(threads) {
   return byAgent
 }
 
+const CHAT_DEFAULT_DOCUMENT_TITLE = 'Bigas — Virtual HQ for Solo Founders'
+
+function resolveChatDocumentTitle(threads, threadId) {
+  const thread = (threads || []).find((t) => t.thread_id === threadId)
+  const titled = thread?.title?.trim()
+  if (titled) return titled
+  return CHAT_DEFAULT_DOCUMENT_TITLE
+}
+
 function unreadAgentIdSet(threads, lastOpened, activeAgentId) {
   const ids = new Set()
   const byAgent = latestThreadByAgent(threads)
@@ -1345,6 +1354,20 @@ export default function ChatLayout({
 
   const showTyping = sending || waitingForReply || lastMessageIsInProgress(messages)
 
+  const chatDocumentTitle = useMemo(
+    () => resolveChatDocumentTitle(threads, threadId),
+    [threads, threadId],
+  )
+
+  useEffect(() => {
+    if (showTyping) {
+      document.title = `${activeAgent?.name || 'Agent'} is working…`
+      return undefined
+    }
+    document.title = chatDocumentTitle
+    return undefined
+  }, [showTyping, activeAgent?.name, chatDocumentTitle])
+
   useEffect(() => {
     if (!stickToBottomRef.current) return
     scrollMessagesToBottom()
@@ -1591,7 +1614,7 @@ export default function ChatLayout({
             </div>
             <div className="min-w-0">
               <h1 className="font-semibold truncate text-base">{activeAgent.name}</h1>
-              <p className="text-xs text-muted truncate">
+              <p className={`text-xs truncate ${showTyping ? 'text-accent font-medium' : 'text-muted'}`}>
                 {showTyping ? (
                   <span>
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent mr-1.5 align-middle" />
@@ -1674,14 +1697,16 @@ export default function ChatLayout({
                 threadId={threadId}
               />
             ))}
-            {showTyping && (
-              <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />
-            )}
             <div ref={bottomRef} />
           </div>
         </div>
 
         <div className="composer-anchor flex-shrink-0 border-t border-border bg-elevated/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
+          {showTyping && (
+            <div className="max-w-3xl mx-auto mb-2">
+              <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />
+            </div>
+          )}
           <form
             onSubmit={handleSend}
             className="max-w-3xl mx-auto"
