@@ -173,6 +173,45 @@ def test_cfo_lists_accounted_tools_and_other_agents_do_not(monkeypatch):
     assert "CFO" in handed_off
 
 
+def test_supplier_question_prefetches_invoices_and_journal(monkeypatch):
+    from bigas.utils.accounted_client import bookkeeping_prefetch, supplier_name_from_question
+
+    assert supplier_name_from_question("hur mycket betalar jag för speedledger varje år?") == "speedledger"
+    assert bookkeeping_prefetch("what is the weather") == ""
+
+    monkeypatch.setenv("ACCOUNTED_API_KEY", "gnubok_sk_test_example")
+    calls = []
+
+    def fake_post(_url, _headers, payload, timeout):
+        calls.append(payload)
+        body = {
+            "jsonrpc": "2.0",
+            "id": payload["id"],
+            "result": {"content": [{"type": "text", "text": "12 000 kr"}], "isError": False},
+        }
+        return 200, json.dumps(body)
+
+    monkeypatch.setattr("bigas.utils.accounted_client._post_json", fake_post)
+    text = bookkeeping_prefetch("hur mycket betalar jag för speedledger per år?")
+    names = [item["params"]["name"] for item in calls]
+    assert names == ["accounted_list_supplier_invoices", "accounted_query_journal"]
+    assert calls[0]["params"]["arguments"]["supplier_name"] == "speedledger"
+    assert "12 000 kr" in text
+    assert "public" not in text.lower()
+
+
+def test_supplier_prefetch_without_key_does_not_call_accounted(monkeypatch):
+    from bigas.utils.accounted_client import NOT_CONFIGURED, bookkeeping_prefetch
+
+    monkeypatch.delenv("ACCOUNTED_API_KEY", raising=False)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("Accounted should not be called")
+
+    monkeypatch.setattr("bigas.utils.accounted_client._post_json", boom)
+    assert bookkeeping_prefetch("hur mycket betalar jag för speedledger per år?") == NOT_CONFIGURED
+
+
 def test_cfo_playbook_mentions_books_and_ai_spend():
     from bigas.agents.chief_of_staff import _specialist_native_extra
 
