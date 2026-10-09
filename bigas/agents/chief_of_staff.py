@@ -48,6 +48,7 @@ from bigas.utils.accounted_client import (
     cfo_accounted_tools,
     dispatch_accounted_tool,
     is_accounted_tool,
+    is_bookkeeping_question,
 )
 from bigas.utils.mcp_client import MCPClient, MCPClientError
 
@@ -522,6 +523,17 @@ def _execute_listed_tool(
     user_message: str,
     user_id: Optional[str] = None,
 ) -> str:
+    if (agent_id or "").strip().lower() == "cfo" and is_bookkeeping_question(user_message):
+        if (tool_name or "").strip().lower() in {
+            "search_tickets",
+            "lookup_ticket",
+            "lookup_jira",
+            "search_jira",
+        }:
+            return (
+                "This question is about the books. Answer from the Accounted figures "
+                "already in the message. Do not search the board."
+            )
     if is_accounted_tool(tool_name):
         if (agent_id or "").strip().lower() != "cfo":
             return "Bookkeeping reads belong to the CFO."
