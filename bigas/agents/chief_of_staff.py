@@ -42,6 +42,11 @@ from bigas.resources.devops.pipeline import (
     should_run_deploy_pipeline,
 )
 from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
+from bigas.utils.accounted_client import (
+    cfo_accounted_tools,
+    dispatch_accounted_tool,
+    is_accounted_tool,
+)
 from bigas.utils.mcp_client import MCPClient, MCPClientError
 
 MAX_AGENT_TOOL_ROUNDS = 10
@@ -125,10 +130,13 @@ Technical judgment briefs:
 """.strip()
 
 CFO_PLAYBOOK = """
-Cost briefs:
+Cost and bookkeeping briefs:
 - You are a CFO. Numbers first, then a recommendation — never a generic savings list.
-- Always call fetch_ai_usage (or the matching cost tool) before advising. Read totals by app, model tier, and feature.
-- Structure: current spend vs the question, the drivers, 3–5 concrete moves with estimated impact, what not to cut.
+- AI and infrastructure spend: call fetch_ai_usage (or the matching cost tool) before advising. Read totals by app, model tier, and feature.
+- Bookkeeping (result, balance, VAT, invoices, uncategorised bank rows, ledger): call the accounted_* read tools, such as accounted_get_vat_report, before advising. Do not invent figures.
+- If a tool says bookkeeping is not connected, say that and stop. If a report says the figures are preliminary, or that completeness could not be checked, say so.
+- Do not categorise, book, approve, send, or lock a period from chat. Those Accounted tools are refused.
+- Structure: current numbers vs the question, the drivers, 3–5 concrete moves with estimated impact, what not to cut.
 - Do not move judgment work to a cheaper model without saying quality must not get worse.
 - File a ticket only after the recommendation, for tracked cost work.
 """.strip()
@@ -194,7 +202,7 @@ CONSULT_SPECIALIST_TOOL = {
             "- marketing: GA4, ads, and organic growth/SEO/content strategy grounded in data\n"
             "- product: Product planning, Jira workflows, stakeholder communication\n"
             "- cto: Code review, architecture, deployment debugging\n"
-            "- cfo: AI/infrastructure costs, usage analysis\n"
+            "- cfo: AI/infrastructure costs, and bookkeeping (result, balance, VAT, invoices, bank)\n"
             "- devops: Deployments, site health, incident response"
         ),
         "parameters": {
@@ -238,10 +246,11 @@ SPECIALIST_CAPABILITIES = (
     "growth/SEO/content strategy grounded in that data.\n"
     "- product: Expertise in product planning, Jira workflows, release notes, and stakeholder communication.\n"
     "- cto: Technical expertise in code review, architecture, QA, deployment debugging, and engineering operations.\n"
-    "- cfo: Expertise in AI/infrastructure costs, usage analysis, and efficiency optimization.\n"
+    "- cfo: AI/infrastructure costs, and Accounted bookkeeping "
+    "(result, balance, VAT, invoices, uncategorised bank rows, ledger).\n"
     "- devops: Expertise in deployments (GitHub Actions), site health, incident response, and CI/CD.\n\n"
-    "All agents can use any tool. Choose to involve a specialist based on whether their expertise "
-    "would genuinely help, not based on rigid ownership rules.\n"
+    "Bookkeeping figures belong to the CFO. Involve the CFO for result, VAT, invoices, or bank questions. "
+    "AI spend also belongs to the CFO. Other tools are shared; involve a specialist when their expertise helps.\n"
 )
 
 # DEPRECATED: In the reasoning-based approach, the model decides when to involve
@@ -476,6 +485,39 @@ def _mcp_client() -> MCPClient:
 def _filter_tools_for_agent(tools: List[Dict[str, Any]], agent_id: str) -> List[Dict[str, Any]]:
     """Return all tools for the agent - no longer filters by domain."""
     return _dedupe_tools(tools)
+
+
+def _with_accounted_tools(agent_id: str, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Bookkeeping reads are listed only for the CFO."""
+    if (agent_id or "").strip().lower() != "cfo":
+        return tools
+    return _dedupe_tools([*tools, *cfo_accounted_tools()])
+
+
+def _execute_listed_tool(
+    client: MCPClient,
+    tool_name: str,
+    tool_args: Optional[Dict[str, Any]],
+    *,
+    agent_id: str,
+    user_message: str,
+    user_id: Optional[str] = None,
+) -> str:
+    if is_accounted_tool(tool_name):
+        if (agent_id or "").strip().lower() != "cfo":
+            return "Bookkeeping reads belong to the CFO."
+        return dispatch_accounted_tool(tool_name, tool_args or {})
+    return _run_tool_call(
+        client,
+        tool_name,
+        _enrich_tool_args(
+            tool_name,
+            tool_args or {},
+            user_message,
+            caller_agent_id=agent_id,
+            user_id=user_id,
+        ),
+    )
 
 
 def _tools_summary(tools: List[Dict[str, Any]], limit: int = 80) -> str:
@@ -1275,21 +1317,20 @@ def run_specialist_task(
                     )
                 return summary
         client = _mcp_client()
-        tools = _filter_tools_for_agent(client.list_tools(), agent_id)
+        tools = _with_accounted_tools(
+            agent_id, _filter_tools_for_agent(client.list_tools(), agent_id)
+        )
 
         def _run_specialist_tool(tool_name: str, tool_args: Dict[str, Any]) -> str:
             if tool_name.startswith("__delegate__"):
                 return "Specialist agents cannot delegate further."
-            return _run_tool_call(
+            return _execute_listed_tool(
                 client,
                 tool_name,
-                _enrich_tool_args(
-                    tool_name,
-                    tool_args or {},
-                    task,
-                    caller_agent_id=agent_id,
-                    user_id=chat_user_id,
-                ),
+                tool_args,
+                agent_id=agent_id,
+                user_message=task,
+                user_id=chat_user_id,
             )
 
         def _fallback_complete() -> str:
@@ -1477,7 +1518,9 @@ def handle_chat_message(
             return {"status": "complete", "message": assistant, "messages": all_msgs}
 
     client = _mcp_client()
-    tools = _filter_tools_for_agent(client.list_tools(), agent_id)
+    tools = _with_accounted_tools(
+        agent_id, _filter_tools_for_agent(client.list_tools(), agent_id)
+    )
     response_text = _run_agent_with_tools(
         agent_id=agent_id,
         agent_config=agent_config,
@@ -1485,16 +1528,13 @@ def handle_chat_message(
         tools=tools,
         history=history,
         user_id=user_id,
-        run_tool=lambda name, args: _run_tool_call(
+        run_tool=lambda name, args: _execute_listed_tool(
             client,
             name,
-            _enrich_tool_args(
-                name,
-                args or {},
-                llm_user_message,
-                caller_agent_id=agent_id,
-                user_id=user_id,
-            ),
+            args,
+            agent_id=agent_id,
+            user_message=llm_user_message,
+            user_id=user_id,
         ),
     )
 
