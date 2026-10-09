@@ -485,17 +485,20 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
 
 function TypingIndicator({ agentName, agentIcon }) {
   return (
-    <div className="flex gap-3 items-end" aria-live="polite" aria-label={`${agentName} is typing`}>
+    <div className="flex gap-3 items-end" aria-live="polite" aria-label={`${agentName} is working`}>
       <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-elevated border border-border flex items-center justify-center shadow-soft">
         <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : 'text-lg'}>
           {agentIcon}
         </span>
       </div>
       <div className="bg-elevated border border-border rounded-xl px-4 py-3 shadow-soft">
-        <div className="flex items-center gap-1.5 h-5">
-          <span className="typing-dot" />
-          <span className="typing-dot" />
-          <span className="typing-dot" />
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 h-5" aria-hidden="true">
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+          </div>
+          <span className="text-sm text-muted">{agentName} is working…</span>
         </div>
       </div>
     </div>
@@ -1005,6 +1008,8 @@ export default function ChatLayout({
   const [attachError, setAttachError] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [sending, setSending] = useState(false)
+  const sendingRef = useRef(false)
+  sendingRef.current = sending
   const fileInputRef = useRef(null)
   const [waitingForReply, setWaitingForReply] = useState(false)
   const [deployPollActive, setDeployPollActive] = useState(false)
@@ -1348,13 +1353,17 @@ export default function ChatLayout({
           setDeployPollActive(false)
         }
         if (!res.messages?.length) {
-          if (!res.deploy_poll_active) setWaitingForReply(false)
+          if (!res.deploy_poll_active && !sendingRef.current) setWaitingForReply(false)
           return
         }
         setMessages((prev) => mergePolledMessages(prev, res.messages))
         const latest = res.messages[res.messages.length - 1]
         if (latest?.created_at) lastMsgTs.current = latest.created_at
-        if (!res.deploy_poll_active && latest?.metadata?.status !== 'in_progress') {
+        if (
+          !sendingRef.current &&
+          !res.deploy_poll_active &&
+          latest?.metadata?.status !== 'in_progress'
+        ) {
           setWaitingForReply(false)
         }
       } catch {
@@ -1571,7 +1580,7 @@ export default function ChatLayout({
                 {showTyping ? (
                   <span>
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent mr-1.5 align-middle" />
-                    Typing…
+                    Working…
                   </span>
                 ) : (
                   user?.email
