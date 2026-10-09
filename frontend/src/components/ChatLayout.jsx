@@ -1021,6 +1021,7 @@ export default function ChatLayout({
   const [attachError, setAttachError] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [sending, setSending] = useState(false)
+  const sendingRef = useRef(false)
   const fileInputRef = useRef(null)
   const [waitingForReply, setWaitingForReply] = useState(false)
   const [deployPollActive, setDeployPollActive] = useState(false)
@@ -1342,7 +1343,7 @@ export default function ChatLayout({
     stickToBottomRef.current = true
   }, [threadId])
 
-  const showTyping = waitingForReply || lastMessageIsInProgress(messages)
+  const showTyping = sending || waitingForReply || lastMessageIsInProgress(messages)
 
   useEffect(() => {
     if (!stickToBottomRef.current) return
@@ -1373,7 +1374,11 @@ export default function ChatLayout({
           return merged
         })
         if (mergedLatest?.created_at) lastMsgTs.current = mergedLatest.created_at
-        if (!res.deploy_poll_active && isSettledAgentMessage(mergedLatest)) {
+        if (
+          !sendingRef.current &&
+          !res.deploy_poll_active &&
+          isSettledAgentMessage(mergedLatest)
+        ) {
           setWaitingForReply(false)
         }
       } catch {
@@ -1477,6 +1482,7 @@ export default function ChatLayout({
     const files = messageText ? [] : pendingFiles
     if ((!text && !files.length) || !threadId || sending) return
     stickToBottomRef.current = true
+    sendingRef.current = true
     setSending(true)
     setWaitingForReply(true)
     const clientId = createClientMessageId()
@@ -1542,6 +1548,7 @@ export default function ChatLayout({
         }
       }
     } finally {
+      sendingRef.current = false
       setSending(false)
     }
   }

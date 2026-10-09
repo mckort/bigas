@@ -194,10 +194,55 @@ def test_supplier_question_prefetches_invoices_and_journal(monkeypatch):
     monkeypatch.setattr("bigas.utils.accounted_client._post_json", fake_post)
     text = bookkeeping_prefetch("hur mycket betalar jag för speedledger per år?")
     names = [item["params"]["name"] for item in calls]
-    assert names == ["accounted_list_supplier_invoices", "accounted_query_journal"]
-    assert calls[0]["params"]["arguments"]["supplier_name"] == "speedledger"
+    assert names == [
+        "accounted_get_agent_briefing",
+        "accounted_list_supplier_invoices",
+        "accounted_query_journal",
+    ]
+    assert calls[1]["params"]["arguments"]["supplier_name"] == "speedl"
     assert "12 000 kr" in text
     assert "public" not in text.lower()
+
+
+def test_year_cost_and_accounted_prompt_both_prefetch(monkeypatch):
+    from bigas.utils.accounted_client import bookkeeping_prefetch
+
+    monkeypatch.setenv("ACCOUNTED_API_KEY", "gnubok_sk_test_example")
+    calls = []
+
+    def fake_post(_url, _headers, payload, timeout):
+        calls.append((payload.get("params") or {}).get("name"))
+        body = {
+            "jsonrpc": "2.0",
+            "id": payload["id"],
+            "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+        }
+        return 200, json.dumps(body)
+
+    monkeypatch.setattr("bigas.utils.accounted_client._post_json", fake_post)
+    bookkeeping_prefetch("årskostnad för speedleger?")
+    assert "accounted_query_journal" in calls
+    calls.clear()
+    bookkeeping_prefetch("kolla i accounted")
+    assert calls[0] == "accounted_get_agent_briefing"
+    assert "accounted_list_supplier_invoices" in calls
+
+
+def test_cfo_bookkeeping_question_does_not_search_the_board():
+    from bigas.agents.chief_of_staff import _execute_listed_tool
+
+    class FakeClient:
+        def call_tool(self, name, arguments):
+            raise AssertionError(f"Bigas MCP should not run {name}")
+
+    out = _execute_listed_tool(
+        FakeClient(),
+        "search_tickets",
+        {"jql": 'text ~ "accounted"'},
+        agent_id="cfo",
+        user_message="kolla i accounted",
+    )
+    assert "books" in out.lower()
 
 
 def test_supplier_prefetch_without_key_does_not_call_accounted(monkeypatch):

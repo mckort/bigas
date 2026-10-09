@@ -340,8 +340,9 @@ def _format_tool_result(result: Dict[str, Any]) -> str:
     return text
 
 
-_SUPPLIER_QUESTION = re.compile(
-    r"betalar|betalt|kostar|abonnemang|leverantör|supplier",
+_BOOKS_QUESTION = re.compile(
+    r"accounted|bokf|verifikat|faktura|moms|resultat|balans|kostnad|års|"
+    r"betalar|betalt|abonnemang|leverantör|supplier",
     re.IGNORECASE,
 )
 _FOR_NAME = re.compile(r"\bför\s+([A-Za-zÅÄÖåäö0-9][\w.&-]{2,})", re.IGNORECASE)
@@ -366,6 +367,18 @@ _NAME_SKIP = frozenset(
 )
 
 
+def is_bookkeeping_question(message: str) -> bool:
+    return bool(_BOOKS_QUESTION.search(message or ""))
+
+
+def supplier_search_token(name: str) -> str:
+    """Shorten a long name so a typo still matches the booked supplier."""
+    token = (name or "").strip()
+    if len(token) > 8:
+        return token[:6]
+    return token
+
+
 def supplier_name_from_question(message: str) -> str:
     """Name after 'för' in a supplier-cost question, such as Speedledger."""
     for match in _FOR_NAME.finditer(message or ""):
@@ -382,40 +395,55 @@ def bookkeeping_prefetch(message: str) -> str:
     The model has answered these questions from public price lists instead of calling a tool.
     """
     text = message or ""
-    if not _SUPPLIER_QUESTION.search(text):
-        return ""
-    name = supplier_name_from_question(text)
-    if not name:
+    if not is_bookkeeping_question(text):
         return ""
     if not _api_key():
         return NOT_CONFIGURED
+    name = supplier_name_from_question(text)
+    token = supplier_search_token(name)
     today = dt.date.today()
     start = today.replace(year=today.year - 1, month=1, day=1).isoformat()
     end = today.isoformat()
-    invoices = dispatch_accounted_tool(
-        "accounted_list_supplier_invoices",
-        {
-            "supplier_name": name,
-            "status": "all",
-            "date_from": start,
-            "date_to": end,
-            "limit": 50,
-        },
-    )
-    journal = dispatch_accounted_tool(
-        "accounted_query_journal",
-        {
-            "text": name,
-            "status": "posted",
-            "date_from": start,
-            "date_to": end,
-            "limit": 50,
-        },
-    )
-    body = (
-        f"Supplier invoices for {name}:\n{invoices}\n\n"
-        f"Journal lines for {name}:\n{journal}"
-    )
+    chunks = [
+        "Company briefing:\n"
+        + dispatch_accounted_tool("accounted_get_agent_briefing", {})
+    ]
+    if token:
+        chunks.append(
+            f"Supplier invoices matching {token}:\n"
+            + dispatch_accounted_tool(
+                "accounted_list_supplier_invoices",
+                {
+                    "supplier_name": token,
+                    "status": "all",
+                    "date_from": start,
+                    "date_to": end,
+                    "limit": 50,
+                },
+            )
+        )
+        chunks.append(
+            f"Journal lines matching {token}:\n"
+            + dispatch_accounted_tool(
+                "accounted_query_journal",
+                {
+                    "text": token,
+                    "status": "posted",
+                    "date_from": start,
+                    "date_to": end,
+                    "limit": 50,
+                },
+            )
+        )
+    else:
+        chunks.append(
+            "Recent supplier invoices:\n"
+            + dispatch_accounted_tool(
+                "accounted_list_supplier_invoices",
+                {"status": "all", "date_from": start, "date_to": end, "limit": 20},
+            )
+        )
+    body = "\n\n".join(chunks)
     if len(body) > MAX_TOOL_TEXT:
         return body[:MAX_TOOL_TEXT] + "\n…(truncated)"
     return body

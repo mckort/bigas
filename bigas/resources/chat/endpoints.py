@@ -439,7 +439,9 @@ def serve_frontend_root():
                 "message": "Chat API is available at /api/*. Build frontend with `cd frontend && npm run build`.",
             }
         )
-    return send_from_directory(FRONTEND_DIST, "index.html")
+    response = send_from_directory(FRONTEND_DIST, "index.html")
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
 
 
 @chat_bp.route("/robots.txt")
@@ -501,4 +503,6 @@ def serve_frontend_static(path: str):
     if file_path.is_file():
         return send_from_directory(FRONTEND_DIST, path)
     # Fallback for SPA client-side routing (e.g. /thread/123)
-    return send_from_directory(FRONTEND_DIST, "index.html")
+    response = send_from_directory(FRONTEND_DIST, "index.html")
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
