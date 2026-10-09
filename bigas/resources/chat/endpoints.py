@@ -440,7 +440,7 @@ def serve_frontend_root():
             }
         )
     response = send_from_directory(FRONTEND_DIST, "index.html")
-    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
 
 
@@ -504,5 +504,5 @@ def serve_frontend_static(path: str):
         return send_from_directory(FRONTEND_DIST, path)
     # Fallback for SPA client-side routing (e.g. /thread/123)
     response = send_from_directory(FRONTEND_DIST, "index.html")
-    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
