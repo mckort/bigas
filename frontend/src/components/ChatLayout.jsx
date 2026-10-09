@@ -950,6 +950,15 @@ function latestThreadByAgent(threads) {
   return byAgent
 }
 
+const CHAT_DEFAULT_DOCUMENT_TITLE = 'Bigas — Virtual HQ for Solo Founders'
+
+function resolveChatDocumentTitle(threads, threadId) {
+  const thread = (threads || []).find((t) => t.thread_id === threadId)
+  const titled = thread?.title?.trim()
+  if (titled) return titled
+  return CHAT_DEFAULT_DOCUMENT_TITLE
+}
+
 function unreadAgentIdSet(threads, lastOpened, activeAgentId) {
   const ids = new Set()
   const byAgent = latestThreadByAgent(threads)
@@ -1345,14 +1354,19 @@ export default function ChatLayout({
 
   const showTyping = sending || waitingForReply || lastMessageIsInProgress(messages)
 
+  const chatDocumentTitle = useMemo(
+    () => resolveChatDocumentTitle(threads, threadId),
+    [threads, threadId],
+  )
+
   useEffect(() => {
-    if (!showTyping) return undefined
-    const previous = document.title
-    document.title = `${activeAgent.name || 'Agent'} is working…`
-    return () => {
-      document.title = previous
+    if (showTyping) {
+      document.title = `${activeAgent?.name || 'Agent'} is working…`
+      return undefined
     }
-  }, [showTyping, activeAgent.name])
+    document.title = chatDocumentTitle
+    return undefined
+  }, [showTyping, activeAgent?.name, chatDocumentTitle])
 
   useEffect(() => {
     if (!stickToBottomRef.current) return

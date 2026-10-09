@@ -503,7 +503,7 @@ def serve_frontend_static(path: str):
     if file_path.is_file():
         response = send_from_directory(FRONTEND_DIST, path)
         if path == "sw.js":
-            response.headers["Cache-Control"] = "no-cache"
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
     # Fallback for SPA client-side routing (e.g. /thread/123)
     response = send_from_directory(FRONTEND_DIST, "index.html")
