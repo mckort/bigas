@@ -203,6 +203,8 @@ def test_supplier_question_prefetches_invoices_and_journal(monkeypatch):
 def test_supplier_prefetch_without_key_does_not_call_accounted(monkeypatch):
     from bigas.utils.accounted_client import NOT_CONFIGURED, bookkeeping_prefetch
 
+    monkeypatch.delenv("ACCOUNTED_API_KEY", raising=False)
+
     def boom(*_args, **_kwargs):
         raise AssertionError("Accounted should not be called")
 

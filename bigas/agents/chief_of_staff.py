@@ -43,6 +43,7 @@ from bigas.resources.devops.pipeline import (
 )
 from bigas.resources.product.create_jira_issue.lookup import parse_issue_keys
 from bigas.utils.accounted_client import (
+    NOT_CONFIGURED,
     bookkeeping_prefetch,
     cfo_accounted_tools,
     dispatch_accounted_tool,
@@ -494,7 +495,7 @@ def _with_bookkeeping_figures(agent_id: str, message: str) -> str:
     if (agent_id or "").strip().lower() != "cfo":
         return message
     extra = bookkeeping_prefetch(message)
-    if not extra:
+    if not extra or extra == NOT_CONFIGURED:
         return message
     return (
         f"{message}\n\n"

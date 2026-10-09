@@ -346,19 +346,34 @@ _SUPPLIER_QUESTION = re.compile(
 )
 _FOR_NAME = re.compile(r"\bför\s+([A-Za-zÅÄÖåäö0-9][\w.&-]{2,})", re.IGNORECASE)
 _NAME_SKIP = frozenset(
-    {"att", "mina", "våra", "vara", "den", "det", "ett", "en", "alla", "året", "aret", "oss", "mig"}
+    {
+        "att",
+        "mina",
+        "våra",
+        "vara",
+        "den",
+        "det",
+        "ett",
+        "en",
+        "alla",
+        "året",
+        "aret",
+        "oss",
+        "mig",
+        "mycket",
+        "lite",
+    }
 )
 
 
 def supplier_name_from_question(message: str) -> str:
     """Name after 'för' in a supplier-cost question, such as Speedledger."""
-    match = _FOR_NAME.search(message or "")
-    if not match:
-        return ""
-    name = match.group(1).strip(".,")
-    if name.casefold() in _NAME_SKIP:
-        return ""
-    return name[:80]
+    for match in _FOR_NAME.finditer(message or ""):
+        name = match.group(1).strip(".,")
+        if name.casefold() in _NAME_SKIP:
+            continue
+        return name[:80]
+    return ""
 
 
 def bookkeeping_prefetch(message: str) -> str:
