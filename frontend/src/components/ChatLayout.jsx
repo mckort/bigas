@@ -484,21 +484,22 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
 }
 
 function TypingIndicator({ agentName, agentIcon }) {
+  const labelName = agentName || 'Agent'
   return (
-    <div className="flex gap-3 items-end" aria-live="polite" aria-label={`${agentName} is working`}>
+    <div className="flex gap-3 items-end" aria-live="polite">
       <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-elevated border border-border flex items-center justify-center shadow-soft">
         <span className={(agentIcon || '').includes('<') ? 'font-mono text-[11px] font-semibold tracking-tight' : 'text-lg'}>
           {agentIcon}
         </span>
       </div>
-      <div className="bg-elevated border border-border rounded-xl px-4 py-3 shadow-soft">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 h-5" aria-hidden="true">
+      <div className="bg-elevated border border-border rounded-xl px-4 py-3 shadow-soft min-w-0 max-w-[85%] sm:max-w-[75%]">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 h-5 flex-shrink-0" aria-hidden="true">
             <span className="typing-dot" />
             <span className="typing-dot" />
             <span className="typing-dot" />
           </div>
-          <span className="text-sm text-muted">{agentName} is working…</span>
+          <span className="text-sm text-muted truncate">{labelName} is working…</span>
         </div>
       </div>
     </div>
@@ -511,6 +512,14 @@ function lastMessageIsInProgress(messages) {
   return last.metadata?.status === 'in_progress'
 }
 
+function isSettledAgentMessage(message) {
+  if (!message || message.role === 'user') return false
+  if (message.role === 'assistant' || message.role === 'system') {
+    return message.metadata?.status !== 'in_progress'
+  }
+  return false
+}
+
 const DEPLOY_POLL_INTERVAL_MS = 20000
 
 function applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, res) {
@@ -521,7 +530,11 @@ function applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForRe
     setWaitingForReply(true)
   } else {
     setDeployPollActive(false)
-    setWaitingForReply(lastMessageIsInProgress(next))
+    if (lastMessageIsInProgress(next)) {
+      setWaitingForReply(true)
+    } else if (isSettledAgentMessage(next[next.length - 1])) {
+      setWaitingForReply(false)
+    }
   }
   return next
 }
@@ -1008,8 +1021,6 @@ export default function ChatLayout({
   const [attachError, setAttachError] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [sending, setSending] = useState(false)
-  const sendingRef = useRef(false)
-  sendingRef.current = sending
   const fileInputRef = useRef(null)
   const [waitingForReply, setWaitingForReply] = useState(false)
   const [deployPollActive, setDeployPollActive] = useState(false)
@@ -1353,17 +1364,16 @@ export default function ChatLayout({
           setDeployPollActive(false)
         }
         if (!res.messages?.length) {
-          if (!res.deploy_poll_active && !sendingRef.current) setWaitingForReply(false)
           return
         }
-        setMessages((prev) => mergePolledMessages(prev, res.messages))
-        const latest = res.messages[res.messages.length - 1]
-        if (latest?.created_at) lastMsgTs.current = latest.created_at
-        if (
-          !sendingRef.current &&
-          !res.deploy_poll_active &&
-          latest?.metadata?.status !== 'in_progress'
-        ) {
+        let mergedLatest = null
+        setMessages((prev) => {
+          const merged = mergePolledMessages(prev, res.messages)
+          mergedLatest = merged[merged.length - 1]
+          return merged
+        })
+        if (mergedLatest?.created_at) lastMsgTs.current = mergedLatest.created_at
+        if (!res.deploy_poll_active && isSettledAgentMessage(mergedLatest)) {
           setWaitingForReply(false)
         }
       } catch {
@@ -1494,13 +1504,11 @@ export default function ChatLayout({
       if (next.length) {
         lastMsgTs.current = next[next.length - 1].created_at
       }
-      if (result.deploy_poll_active) {
-        setDeployPollActive(true)
+      if (result.deploy_poll_active || result.status === 'in_progress' || res.deploy_poll_active) {
+        setDeployPollActive(Boolean(result.deploy_poll_active || res.deploy_poll_active))
         setWaitingForReply(true)
-      } else {
-        const done =
-          result.status !== 'in_progress' && !lastMessageIsInProgress(next) && !res.deploy_poll_active
-        if (done) setWaitingForReply(false)
+      } else if (isSettledAgentMessage(next[next.length - 1])) {
+        setWaitingForReply(false)
       }
     } catch (err) {
       if (!sendSucceeded) {
