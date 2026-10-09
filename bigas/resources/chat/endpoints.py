@@ -501,7 +501,10 @@ def serve_frontend_static(path: str):
         return jsonify({"error": "Not found"}), 404
     file_path = FRONTEND_DIST / path
     if file_path.is_file():
-        return send_from_directory(FRONTEND_DIST, path)
+        response = send_from_directory(FRONTEND_DIST, path)
+        if path == "sw.js":
+            response.headers["Cache-Control"] = "no-cache"
+        return response
     # Fallback for SPA client-side routing (e.g. /thread/123)
     response = send_from_directory(FRONTEND_DIST, "index.html")
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"

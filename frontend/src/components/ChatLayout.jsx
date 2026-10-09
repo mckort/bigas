@@ -1346,6 +1346,15 @@ export default function ChatLayout({
   const showTyping = sending || waitingForReply || lastMessageIsInProgress(messages)
 
   useEffect(() => {
+    if (!showTyping) return undefined
+    const previous = document.title
+    document.title = `${activeAgent.name || 'Agent'} is working…`
+    return () => {
+      document.title = previous
+    }
+  }, [showTyping, activeAgent.name])
+
+  useEffect(() => {
     if (!stickToBottomRef.current) return
     scrollMessagesToBottom()
   }, [messages, showTyping])
@@ -1591,7 +1600,7 @@ export default function ChatLayout({
             </div>
             <div className="min-w-0">
               <h1 className="font-semibold truncate text-base">{activeAgent.name}</h1>
-              <p className="text-xs text-muted truncate">
+              <p className={`text-xs truncate ${showTyping ? 'text-accent font-medium' : 'text-muted'}`}>
                 {showTyping ? (
                   <span>
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent mr-1.5 align-middle" />
@@ -1674,14 +1683,16 @@ export default function ChatLayout({
                 threadId={threadId}
               />
             ))}
-            {showTyping && (
-              <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />
-            )}
             <div ref={bottomRef} />
           </div>
         </div>
 
         <div className="composer-anchor flex-shrink-0 border-t border-border bg-elevated/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
+          {showTyping && (
+            <div className="max-w-3xl mx-auto mb-2">
+              <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />
+            </div>
+          )}
           <form
             onSubmit={handleSend}
             className="max-w-3xl mx-auto"

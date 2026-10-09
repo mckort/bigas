@@ -1,4 +1,4 @@
-const CACHE = 'bigas-shell-v1'
+const CACHE = 'bigas-shell-v2'
 const SHELL = ['/', '/index.html', '/manifest.json', '/favicon.png', '/bigas-logo.png']
 
 function assetPathsFromHtml(html) {
