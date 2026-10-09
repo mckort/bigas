@@ -6,6 +6,7 @@ import json
 import pytest
 
 from bigas.utils.accounted_client import (
+    AccountedError,
     NOT_CONFIGURED,
     WRITE_REFUSED,
     clear_live_tool_cache,
@@ -70,6 +71,24 @@ def test_read_tool_returns_text(monkeypatch):
     assert seen["auth"] == "Bearer gnubok_sk_test_example"
     assert "tool_namespace=accounted" in seen["url"]
     assert "gnubok_sk" not in seen["url"]
+
+
+def test_tools_list_failure_is_negative_cached(monkeypatch):
+    monkeypatch.setenv("ACCOUNTED_API_KEY", "gnubok_sk_test_example")
+    calls = {"n": 0}
+
+    def fail_list(_url, _headers, payload, timeout):
+        if payload["method"] == "tools/list":
+            calls["n"] += 1
+            assert timeout == 10
+            raise AccountedError("Accounted unreachable")
+        raise AssertionError("unexpected RPC")
+
+    monkeypatch.setattr("bigas.utils.accounted_client._post_json", fail_list)
+    first = cfo_accounted_tools()
+    second = cfo_accounted_tools()
+    assert calls["n"] == 1
+    assert [tool["name"] for tool in first] == [tool["name"] for tool in second]
 
 
 def test_tools_list_keeps_only_the_read_allowlist(monkeypatch):

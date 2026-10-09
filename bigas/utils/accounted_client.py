@@ -25,6 +25,8 @@ DEFAULT_MCP_URL = (
 )
 MAX_TOOL_TEXT = 12_000
 _LIVE_TOOLS_TTL_S = 600
+_LIVE_TOOLS_FAIL_TTL_S = 60
+_TOOLS_LIST_TIMEOUT_S = 10
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -214,7 +216,7 @@ def _next_id() -> int:
         return _rpc_id
 
 
-def _rpc(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def _rpc(method: str, params: Dict[str, Any], *, timeout: int = 60) -> Dict[str, Any]:
     key = _api_key()
     if not key:
         raise AccountedError(NOT_CONFIGURED)
@@ -224,7 +226,7 @@ def _rpc(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
         "method": method,
         "params": params,
     }
-    status, text = _post_json(_endpoint(), _headers(key), payload, timeout=60)
+    status, text = _post_json(_endpoint(), _headers(key), payload, timeout=timeout)
     body = _parse_body(status, text)
     result = body.get("result")
     if not isinstance(result, dict):
@@ -262,28 +264,42 @@ def _fetch_live_tools() -> List[Dict[str, Any]]:
     now = time.monotonic()
     with _cache_lock:
         cached = _live_cache.get("entry")
-        if (
-            isinstance(cached, dict)
-            and cached.get("key") == key
-            and now - float(cached.get("at") or 0) < _LIVE_TOOLS_TTL_S
-        ):
-            return list(cached.get("tools") or [])
+        if isinstance(cached, dict) and cached.get("key") == key:
+            age = now - float(cached.get("at") or 0)
+            ttl = _LIVE_TOOLS_FAIL_TTL_S if cached.get("failed") else _LIVE_TOOLS_TTL_S
+            if age < ttl:
+                return list(cached.get("tools") or [])
 
     tools: List[Dict[str, Any]] = []
-    cursor: Optional[str] = None
-    for _ in range(5):
-        params: Dict[str, Any] = {}
-        if cursor:
-            params["cursor"] = cursor
-        result = _rpc("tools/list", params)
-        batch = result.get("tools") or []
-        if isinstance(batch, list):
-            tools.extend(item for item in batch if isinstance(item, dict))
-        cursor = result.get("nextCursor") or None
-        if not cursor:
-            break
+    try:
+        cursor: Optional[str] = None
+        for _ in range(5):
+            params: Dict[str, Any] = {}
+            if cursor:
+                params["cursor"] = cursor
+            result = _rpc("tools/list", params, timeout=_TOOLS_LIST_TIMEOUT_S)
+            batch = result.get("tools") or []
+            if isinstance(batch, list):
+                tools.extend(item for item in batch if isinstance(item, dict))
+            cursor = result.get("nextCursor") or None
+            if not cursor:
+                break
+    except AccountedError:
+        with _cache_lock:
+            _live_cache["entry"] = {
+                "key": key,
+                "at": time.monotonic(),
+                "tools": [],
+                "failed": True,
+            }
+        raise
     with _cache_lock:
-        _live_cache["entry"] = {"key": key, "at": time.monotonic(), "tools": tools}
+        _live_cache["entry"] = {
+            "key": key,
+            "at": time.monotonic(),
+            "tools": tools,
+            "failed": False,
+        }
     return tools
 
 
