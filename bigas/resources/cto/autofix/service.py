@@ -172,7 +172,7 @@ def select_autofix_model(
     review_body: str,
     configured_model: Optional[str] = None,
 ) -> str:
-    """Round 1 stays on the cheap autofix model. A later round with a Blocker escalates."""
+    """Use the configured autofix model. A later round with a Blocker uses the escalation model."""
     base = (configured_model or "").strip() or default_autofix_model()
     if next_round >= 2 and review_has_blockers(review_body):
         return default_autofix_escalation_model()

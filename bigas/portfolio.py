@@ -26,6 +26,7 @@ DEFAULT_PROJECT_ALIASES: Dict[str, List[str]] = {
         "friman-investments",
         "friman investments board",
     ],
+    "AURA": ["auralearn", "aura learn"],
 }
 
 DEFAULT_BRAND_NAMES: Dict[str, str] = {
@@ -38,6 +39,7 @@ DEFAULT_BRAND_NAMES: Dict[str, str] = {
     "FYDA": "Fulfill Your Dream Adventure",
     "MYL": "My Life's Deed",
     "FRI": "Friman investments",
+    "AURA": "AuraLearn",
 }
 
 # Retired internal board titles → migrate to ``board_name_for_project`` on /api/boards load.
@@ -56,6 +58,7 @@ DEFAULT_PROJECT_REPOS: Dict[str, str] = {
     "FYDA": "mckort/fulfillyourdreamadventure",
     "MYL": "mckort/mylifesdeed",
     "FRI": "mckort/frimaninvestments",
+    "AURA": "mckort/auralearn",
 }
 
 # owner/repo → default branch for Cursor implement / deploy refs
@@ -69,6 +72,7 @@ DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
     "mckort/fulfillyourdreamadventure": "master",
     "mckort/mylifesdeed": "main",
     "mckort/frimaninvestments": "main",
+    "mckort/auralearn": "master",
 }
 
 DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {

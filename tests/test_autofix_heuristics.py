@@ -59,7 +59,7 @@ def test_select_autofix_model_escalates_only_after_a_blocker_round(monkeypatch):
     )
     assert (
         select_autofix_model(next_round=2, review_body=_BLOCKERS, configured_model="composer-2.5")
-        == "claude-opus-5-thinking-high"
+        == "grok-4.7"
     )
     assert (
         select_autofix_model(

@@ -63,6 +63,8 @@ _CURSOR_PRICE_USD_PER_MTOK: Tuple[Tuple[str, float, float, float, float], ...] =
     ("claude-4.6-sonnet", 3.00, 15.00, 3.75, 0.30),
     ("claude-4.5-sonnet", 3.00, 15.00, 3.75, 0.30),
     ("claude-4-sonnet", 3.00, 15.00, 3.75, 0.30),
+    ("grok-4.7", 2.00, 6.00, 0.00, 0.50),
+    ("claude-opus-5-5", 4.00, 20.00, 5.00, 0.20),
     ("claude-4.6-opus", 5.00, 25.00, 6.25, 0.50),
     ("claude-4.5-opus", 5.00, 25.00, 6.25, 0.50),
     ("gemini-3.1-pro", 2.00, 12.00, 2.00, 0.20),
@@ -110,11 +112,13 @@ def estimate_cursor_cost_usd(model: str, usage: CursorTokenUsage) -> Optional[fl
     return round(cost, 6)
 
 
-# Cursor cloud-agent variant ids (GET /v1/models). Composer writes the cheap
-# first autofix pass. Sonnet writes the implementation. Opus takes a later
-# autofix round only when a Blocker is still open.
+# Cursor cloud-agent variant ids (GET /v1/models). Grok 4.7 writes every
+# autofix round. Opus slugs such as claude-opus-5-thinking-high and
+# claude-opus-5-5-medium are rejected by the Cursor cloud-agent API.
+# Sonnet still writes board implementation.
 DEFAULT_IMPLEMENT_MODEL = "claude-4.6-sonnet-thinking"
-DEFAULT_AUTOFIX_ESCALATION_MODEL = "claude-opus-5-thinking-high"
+DEFAULT_AUTOFIX_MODEL = "grok-4.7"
+DEFAULT_AUTOFIX_ESCALATION_MODEL = "grok-4.7"
 
 
 def default_autofix_model() -> str:
@@ -122,7 +126,7 @@ def default_autofix_model() -> str:
 
     return (
         (os.environ.get("BIGAS_CTO_AUTOFIX_MODEL") or "").strip()
-        or "composer-2.5"
+        or DEFAULT_AUTOFIX_MODEL
     )
 
 
