@@ -37,7 +37,7 @@ Optional: `BIGAS_USAGE_PROVIDERS` — comma-separated names to enable (`cursor,l
 `BIGAS_GCP_BILLING_DATASET` — BigQuery dataset for billing export (default `gcp_billing`).
 `BIGAS_TAVILY_USAGE_PROJECT` — Firestore project for Tavily rollups (default `vcfieldassistant`).
 
-List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `claude-opus-5-5-medium`) when the agent payload has no model id.
+List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `grok-4.7`) when the agent payload has no model id.
 
 ## Tools
 
