@@ -42,7 +42,7 @@ After each autofix round finalizes, Discord includes Cursor token usage + a list
 
 Optional:
 
-- `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Prefer `composer-2.5` (standard tier; much cheaper than `composer-2.5-fast`). Omit to use Cursor’s default (often fast).
+- `BIGAS_CTO_AUTOFIX_MODEL` (Cursor model id). Default `claude-opus-5-5-medium` for every project. Do not set `claude-opus-5-thinking-high`; the Cursor cloud-agent API rejects that id.
 - `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default `5`) — max `[bigas-autofix]` commits per PR before loop protection (leftover Minor at this cap is accepted).
 - `BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS` (default `2`) — max nits-only `[bigas-autofix] [nits-only]` rounds before leftover Minor is accepted.
 - `BIGAS_CTO_AUTOFIX_COOLDOWN_SECONDS` (default `120`) — skip launching another autofix while the PR head is still a fresh `[bigas-autofix]` commit (reduces overlapping agents). Cooldown is **skipped** when a newer Bigas review comment already exists after that head commit (typical after an autofix push cancels/restarts Actions). The Actions loop waits/retries in short slices until the window expires instead of stopping early. Bigas also posts/updates a visible PR comment (`<!-- bigas-autofix-cooldown-marker -->`) so cooldown is not mistaken for a hang.
