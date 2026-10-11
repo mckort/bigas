@@ -92,6 +92,8 @@ DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
     "www.bigas.me": "BIG",
     "frimaninvestments.com": "FRI",
     "www.frimaninvestments.com": "FRI",
+    "auralearn.co.ke": "AURA",
+    "www.auralearn.co.ke": "AURA",
 }
 
 
