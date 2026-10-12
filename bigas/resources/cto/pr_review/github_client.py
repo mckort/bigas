@@ -296,13 +296,37 @@ class GitHubPRCommentClient:
         if not safe_path or not (ref or "").strip():
             return None
         url = f"https://api.github.com/repos/{owner}/{repo}/contents/{safe_path}"
-        resp = requests.get(
-            url,
-            headers=self._headers,
-            params={"ref": ref},
-            timeout=30,
-        )
+        try:
+            resp = requests.get(
+                url,
+                headers=self._headers,
+                params={"ref": ref},
+                timeout=30,
+            )
+        except requests.RequestException:
+            logger.warning(
+                "GitHub contents request failed for %s/%s/%s",
+                owner,
+                repo,
+                path,
+                exc_info=True,
+            )
+            return None
         if resp.status_code != 200:
+            if resp.status_code in (403, 429):
+                logger.warning(
+                    "GitHub contents API rate limited or forbidden for %s (HTTP %s): %s",
+                    path,
+                    resp.status_code,
+                    _github_error_detail(resp, limit=200),
+                )
+            elif resp.status_code >= 500:
+                logger.warning(
+                    "GitHub contents API server error for %s (HTTP %s): %s",
+                    path,
+                    resp.status_code,
+                    _github_error_detail(resp, limit=200),
+                )
             return None
         data = resp.json() if resp.text else {}
         if not isinstance(data, dict):
@@ -318,6 +342,12 @@ class GitHubPRCommentClient:
         try:
             raw = base64.b64decode(data["content"])
         except Exception:
+            logger.debug(
+                "Could not base64-decode %s at %s",
+                path,
+                ref,
+                exc_info=True,
+            )
             return None
         if b"\0" in raw:
             return None

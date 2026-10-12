@@ -83,6 +83,20 @@ new file mode 100644
     assert calls == []
 
 
+def test_expand_review_diff_skips_prepend_when_head_shorter_than_hunk():
+    diff = """diff --git a/web/src/x.ts b/web/src/x.ts
+--- a/web/src/x.ts
++++ b/web/src/x.ts
+@@ -10,2 +10,3 @@
+ context
++added
+"""
+    source = "only\nthree\nlines\n"
+    expanded = expand_review_diff(diff, lambda _path: source, before=25)
+    assert "+added" in expanded
+    assert "@@ -10,2 +10,3 @@" in expanded
+
+
 def test_expand_pr_diff_keeps_original_when_head_lookup_fails():
     class Broken:
         def get_pull_request(self, owner, repo, pr_number):

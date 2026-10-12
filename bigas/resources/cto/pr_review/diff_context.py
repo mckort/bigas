@@ -15,7 +15,7 @@ from bigas.resources.cto.pr_review.chunks import is_noise_path, split_unified_di
 logger = logging.getLogger(__name__)
 
 DEFAULT_BEFORE = 25
-MAX_FILES = 40
+MAX_FILES = 15
 MAX_FILE_CHARS = 200_000
 
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
@@ -134,11 +134,17 @@ def _expand_file_chunk(chunk: str, lines: list[str], *, before: int) -> str:
         if prepend_start < earliest:
             prepend_start = earliest
         count = new_start - prepend_start
-        end_index = prepend_start - 1 + count
-        if count <= 0 or end_index > len(lines):
+        slice_start = prepend_start - 1
+        slice_end = new_start - 1
+        if (
+            count <= 0
+            or slice_start < 0
+            or slice_start >= len(lines)
+            or slice_end > len(lines)
+        ):
             rendered.extend(hunk)
         else:
-            extra = lines[prepend_start - 1 : new_start - 1]
+            extra = lines[slice_start:slice_end]
             rendered.append(
                 f"@@ -{old_start - count},{old_len + count} "
                 f"+{new_start - count},{new_len + count} @@{tail}"
