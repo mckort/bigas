@@ -184,6 +184,28 @@ def _resolve_pr_diff_text(
         pr_number=pr_number,
     )
 
+
+def _with_nearby_declarations(
+    diff: str,
+    *,
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    github_token: str,
+) -> str:
+    """Include lines just above each hunk so a nearby prop is not reported missing."""
+    from bigas.resources.cto.pr_review.diff_context import expand_pr_diff
+
+    if not (diff or "").strip() or not github_token:
+        return diff or ""
+    return expand_pr_diff(
+        GitHubPRCommentClient(token=github_token),
+        owner,
+        repo_name,
+        pr_number,
+        diff,
+    )
+
 # The official limit is 65,536 bytes, so 60k chars is a safe buffer.
 MAX_GITHUB_COMMENT_CHARS = 60_000
 
@@ -874,7 +896,13 @@ def review_and_comment_pr():
     try:
         review_service = PRReviewService(openai_model=llm_model)
         review_result = review_service.review(
-            diff=diff,
+            diff=_with_nearby_declarations(
+                diff,
+                owner=owner,
+                repo_name=repo_name,
+                pr_number=pr_number,
+                github_token=github_token,
+            ),
             instructions=instructions,
             phase=phase,  # type: ignore[arg-type]
             previous_review=previous_review,
@@ -1524,7 +1552,13 @@ def autofix_followup():
     try:
         review_service = PRReviewService()
         review_result = review_service.review(
-            diff=diff,
+            diff=_with_nearby_declarations(
+                diff,
+                owner=owner,
+                repo_name=repo_name,
+                pr_number=pr_number,
+                github_token=gh_token,
+            ),
             phase="post_autofix",
             previous_review=previous_review,
         )

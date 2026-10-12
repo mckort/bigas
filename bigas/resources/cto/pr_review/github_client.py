@@ -287,6 +287,42 @@ class GitHubPRCommentClient:
             )
         return resp.text or ""
 
+    def get_text_file(self, owner: str, repo: str, path: str, ref: str) -> Optional[str]:
+        """Return a UTF-8 file at ref, or None when it is missing, binary, or too large."""
+        import base64
+        from urllib.parse import quote
+
+        safe_path = quote((path or "").lstrip("/"), safe="/")
+        if not safe_path or not (ref or "").strip():
+            return None
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{safe_path}"
+        resp = requests.get(
+            url,
+            headers=self._headers,
+            params={"ref": ref},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            return None
+        if data.get("encoding") != "base64" or not data.get("content"):
+            return None
+        try:
+            size = int(data.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if size > 200_000:
+            return None
+        try:
+            raw = base64.b64decode(data["content"])
+        except Exception:
+            return None
+        if b"\0" in raw:
+            return None
+        return raw.decode("utf-8", errors="replace")
+
     def list_pr_commit_messages(
         self,
         owner: str,

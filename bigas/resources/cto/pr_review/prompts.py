@@ -45,6 +45,14 @@ Project helpers / imports (avoid false blockers):
 - When re-checking a previous finding about helpers/imports, look at imports in
   the same file in the diff. If the helper is imported from the project wrapper,
   treat the finding as resolved — do not repeat it.
+- Do NOT report a missing prop, type field, parameter, or export unless the
+  declaration in the shown diff lists its members and that name is absent.
+  A member a few lines above the hunk is not proof it is missing, and it is
+  not a compile error. Do not claim tsc, a type error, or a build failure
+  unless the diff shows the broken declaration.
+- When re-checking a previous finding that a prop, type field, or parameter is
+  missing, mark it resolved unless this diff shows the declaration without
+  that member. Do not repeat it.
 """.strip()
 
 _DEAD_CODE_RULES = """
