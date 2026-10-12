@@ -440,6 +440,8 @@ def test_pr_review_prompts_respect_project_helpers():
         assert "deleteField()" in text
         assert "Project helpers" in text
         assert "If the import block is not in the diff, do not report an undefined name" in text
+        assert "Do NOT report a missing prop, type field, parameter, or export" in text
+        assert "mark it resolved unless this diff shows the declaration without" in text
 
     assert "mobile/responsive" in PR_REVIEW_INITIAL_SYSTEM_PROMPT
     assert "small mobile screens" in PR_REVIEW_SYSTEM_PROMPT

@@ -1541,6 +1541,9 @@ def _review_fix_pull_request(
             "pr_url": pr_url,
         }
     diff = gh.get_pr_diff(owner, name, pr_number)
+    from bigas.resources.cto.pr_review.diff_context import expand_pr_diff
+
+    diff = expand_pr_diff(gh, owner, name, pr_number, diff)
     body = PRReviewService().review(diff=diff, phase=phase).text
     autofix_count, minor_count = _autofix_counts(env.repo, pr_number)
     ready = review_is_ready_to_merge(

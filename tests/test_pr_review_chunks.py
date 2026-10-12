@@ -127,6 +127,7 @@ None.
     assert "Slice 1 of 2" in seen[0][1]
     assert "Slice 2 of 2" in seen[1][1]
     assert "do not report an undefined name" in SLICE_INSTRUCTIONS
+    assert "missing prop, type field, or parameter" in SLICE_INSTRUCTIONS
     assert "Cancel is wrong" in merged
     assert "### Important\nNone." in merged
     assert all("yarn.lock" not in slice_diff for slice_diff, _instructions in seen)

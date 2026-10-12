@@ -44,6 +44,9 @@ Do not write "ready to merge". That verdict is decided after every slice is comb
 Report a missing import or NameError only when this slice shows the file's import
 block and the symbol is neither imported nor defined there. If the import block is
 not in the slice, do not report an undefined name.
+Do not report a missing prop, type field, or parameter unless this slice shows
+the declaration and that name is absent. Do not claim a compile error from a
+member that is outside the hunk.
 """.strip()
 
 POST_AUTOFIX_SLICE_INSTRUCTIONS = """
@@ -59,6 +62,8 @@ Do not write "ready to merge". That verdict is decided after every slice is comb
 Report a missing import or NameError only when this slice shows the file's import
 block and the symbol is neither imported nor defined there. If the import block is
 not in the slice, do not report an undefined name.
+If a previous finding says a prop or type field is missing, mark it resolved
+unless this slice shows the declaration without that member.
 """.strip()
 
 _CLEAN_REVIEW = """### Blockers

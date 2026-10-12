@@ -1076,6 +1076,9 @@ def review_and_merge_release_pr(
     )
     try:
         diff = gh.get_pr_diff(owner, repo_name, pr_number)
+        from bigas.resources.cto.pr_review.diff_context import expand_pr_diff
+
+        diff = expand_pr_diff(gh, owner, repo_name, pr_number, diff)
         review = PRReviewService().review(diff=diff, phase=phase)
         review_body = review.text
         gh.post_or_update_pr_comment(

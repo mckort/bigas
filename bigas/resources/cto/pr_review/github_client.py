@@ -287,6 +287,72 @@ class GitHubPRCommentClient:
             )
         return resp.text or ""
 
+    def get_text_file(self, owner: str, repo: str, path: str, ref: str) -> Optional[str]:
+        """Return a UTF-8 file at ref, or None when it is missing, binary, or too large."""
+        import base64
+        from urllib.parse import quote
+
+        safe_path = quote((path or "").lstrip("/"), safe="/")
+        if not safe_path or not (ref or "").strip():
+            return None
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{safe_path}"
+        try:
+            resp = requests.get(
+                url,
+                headers=self._headers,
+                params={"ref": ref},
+                timeout=30,
+            )
+        except requests.RequestException:
+            logger.warning(
+                "GitHub contents request failed for %s/%s/%s",
+                owner,
+                repo,
+                path,
+                exc_info=True,
+            )
+            return None
+        if resp.status_code != 200:
+            if resp.status_code in (403, 429):
+                logger.warning(
+                    "GitHub contents API rate limited or forbidden for %s (HTTP %s): %s",
+                    path,
+                    resp.status_code,
+                    _github_error_detail(resp, limit=200),
+                )
+            elif resp.status_code >= 500:
+                logger.warning(
+                    "GitHub contents API server error for %s (HTTP %s): %s",
+                    path,
+                    resp.status_code,
+                    _github_error_detail(resp, limit=200),
+                )
+            return None
+        data = resp.json() if resp.text else {}
+        if not isinstance(data, dict):
+            return None
+        if data.get("encoding") != "base64" or not data.get("content"):
+            return None
+        try:
+            size = int(data.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if size > 200_000:
+            return None
+        try:
+            raw = base64.b64decode(data["content"])
+        except Exception:
+            logger.debug(
+                "Could not base64-decode %s at %s",
+                path,
+                ref,
+                exc_info=True,
+            )
+            return None
+        if b"\0" in raw:
+            return None
+        return raw.decode("utf-8", errors="replace")
+
     def list_pr_commit_messages(
         self,
         owner: str,
