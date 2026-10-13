@@ -158,6 +158,51 @@ def test_maybe_auto_merge_blocks_vfa_pr_still_on_main(
 
 @patch("bigas.resources.cto.endpoints._post_to_discord_cto")
 @patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_allows_vfa_release_pr_onto_main(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    title = "Release 0.71.0: merge staging-0.71.0 into main (VFA-199, VFA-200)"
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "node_id": "PR_x",
+        "title": title,
+        "head": {"ref": "staging-0.71.0"},
+        "base": {"ref": "main"},
+        "labels": [],
+    }
+    client.merge_pull_request.return_value = {
+        "merged": True,
+        "sha": "abc123def",
+        "message": "Pull Request successfully merged",
+    }
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="mckort/vcfieldassistant",
+        pr_number=880,
+        pr_url="https://github.com/mckort/vcfieldassistant/pull/880",
+        github_token="tok",
+    )
+
+    assert result.get("ok") is True
+    assert result.get("merged") is True
+    client.merge_pull_request.assert_called_once_with(
+        owner="mckort",
+        repo="vcfieldassistant",
+        pr_number=880,
+        merge_method="squash",
+        commit_title=f"{title} (#880)",
+    )
+    posted = mock_discord.call_args[0][0]
+    assert "auto-merge blocked" not in posted.lower()
+    assert "staging-0`" not in posted
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
 def test_maybe_auto_merge_includes_jira_label(
     mock_client_cls, mock_discord, monkeypatch
 ):
