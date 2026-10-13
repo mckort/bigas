@@ -536,6 +536,43 @@ def test_versioned_staging_merge_allows_versioned_base(monkeypatch):
     )
 
 
+def test_versioned_staging_merge_allows_release_pr_onto_main(monkeypatch):
+    from bigas.resources.product.jira_automation import final_approval as fa
+
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    release = {
+        "title": "Release 0.71.0: merge staging-0.71.0 into main (VFA-199, VFA-200)",
+        "head": {"ref": "staging-0.71.0"},
+        "base": {"ref": "main"},
+        "labels": [],
+    }
+    assert fa.versioned_staging_merge_blocked(release, "mckort/vcfieldassistant") is None
+    assert (
+        fa.versioned_staging_merge_blocked(
+            {
+                "title": "Ship the cut",
+                "head": {"ref": "staging-0.71.0"},
+                "base": {"ref": "main"},
+                "labels": [],
+            },
+            "mckort/vcfieldassistant",
+        )
+        is None
+    )
+    assert (
+        fa.versioned_staging_merge_blocked(
+            {
+                "title": "Resolve conflicts: staging-0.71.0 onto main",
+                "head": {"ref": "bigas-rebase/staging-0.71.0"},
+                "base": {"ref": "main"},
+                "labels": [],
+            },
+            "mckort/vcfieldassistant",
+        )
+        is None
+    )
+
+
 def test_ensure_board_ticket_retargets_stale_versioned_base_to_default(monkeypatch):
     from bigas.resources.product.jira_automation import final_approval as fa
     from bigas.tickets import store as ticket_store_module
@@ -946,6 +983,13 @@ def test_extract_jira_issue_key_from_pr_texts():
     assert extract_jira_issue_key("VFA-14: Brand reports", "") == "VFA-14"
     assert extract_jira_issue_key("title", "Jira: WAYW-3\nmore") == "WAYW-3"
     assert extract_jira_issue_key("no key here") is None
+    assert extract_jira_issue_key("staging-0.71.0") is None
+    assert (
+        extract_jira_issue_key(
+            "Release 0.71.0: merge staging-0.71.0 into main (VFA-199, VFA-200)"
+        )
+        == "VFA-199"
+    )
     assert (
         extract_pr_ticket_key(
             {

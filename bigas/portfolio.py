@@ -107,7 +107,8 @@ def normalize_project_key(value: Optional[object]) -> str:
 HYPHENATED_PROJECT_KEYS: Tuple[str, ...] = ("GPW-PROD",)
 
 # ``GPW-PROD`` is listed first so ``GPW-PROD-12`` is one key, not ``PROD-12``.
-ISSUE_KEY_PATTERN = r"(?:GPW-PROD|[A-Z][A-Z0-9]+)-\d+"
+# ``(?!\.\d)`` keeps ``staging-0.71.0`` from matching as ticket ``staging-0``.
+ISSUE_KEY_PATTERN = r"(?:GPW-PROD|[A-Z][A-Z0-9]+)-\d+(?!\.\d)"
 ISSUE_KEY_RE = re.compile(rf"^{ISSUE_KEY_PATTERN}$")
 ISSUE_KEY_SEARCH_RE = re.compile(rf"\b({ISSUE_KEY_PATTERN})\b", re.IGNORECASE)
 

@@ -90,6 +90,38 @@ def squash_commit_title(title: str, pr_number: int) -> str:
     return f"{raw} (#{number})"
 
 
+def is_release_merge_pr(
+    pr: Dict[str, Any],
+    *,
+    repo: str,
+    project_key: str,
+    cfg: Optional[JiraAutomationConfig] = None,
+) -> bool:
+    """True when this PR is a cut onto production, not a feature PR.
+
+    Prepare deploy uses a ``Release …`` title and head ``staging-x.y.z`` into
+    ``main``. Conflict rebases use ``bigas-rebase/`` or a resolve-conflicts title.
+    """
+    if not isinstance(pr, dict):
+        return False
+    title = (pr.get("title") or "").strip()
+    head = (((pr.get("head") or {}).get("ref") or "")).strip()
+    base = (((pr.get("base") or {}).get("ref") or "")).strip()
+    if _RELEASE_TITLE_RE.match(title):
+        return True
+    if head.startswith("bigas-rebase/"):
+        return True
+    resolved = cfg or JiraAutomationConfig.from_env()
+    feature = (resolved.automerge_branch_for_project(project_key, repo) or "").strip()
+    production = (resolved.base_branch_for_repo(repo) or "").strip()
+    if feature and production and feature != production:
+        if head == feature and base == production:
+            return True
+        if is_versioned_feature_head(head, feature) and base == production:
+            return True
+    return False
+
+
 def should_skip_auto_ticket(
     pr: Dict[str, Any],
     *,
@@ -100,22 +132,11 @@ def should_skip_auto_ticket(
     """Return a skip reason when this PR must not create a board ticket."""
     user = (((pr.get("user") or {}).get("login") or "")).strip().lower()
     head = (((pr.get("head") or {}).get("ref") or "")).strip()
-    base = (((pr.get("base") or {}).get("ref") or "")).strip()
-    title = (pr.get("title") or "").strip()
     if "dependabot" in user or head.startswith("dependabot/"):
         return "dependabot"
-    if _RELEASE_TITLE_RE.match(title):
-        return "release_pr"
-    if head.startswith("bigas-rebase/"):
-        return "release_pr"
     resolved = cfg or JiraAutomationConfig.from_env()
-    feature = (resolved.automerge_branch_for_project(project_key, repo) or "").strip()
-    production = (resolved.base_branch_for_repo(repo) or "").strip()
-    if feature and production and feature != production:
-        if head == feature and base == production:
-            return "release_pr"
-        if is_versioned_feature_head(head, feature) and base == production:
-            return "release_pr"
+    if is_release_merge_pr(pr, repo=repo, project_key=project_key, cfg=resolved):
+        return "release_pr"
     return None
 
 
@@ -157,12 +178,9 @@ def _align_pr_base_to_board_release(
     current = (((pr.get("base") or {}).get("ref") or "")).strip()
     if not current:
         return None
-    title = (pr.get("title") or "").strip()
-    if _RELEASE_TITLE_RE.match(title):
+    if is_release_merge_pr(pr, repo=repo, project_key=project_key):
         return None
     head = (((pr.get("head") or {}).get("ref") or "")).strip()
-    if head.startswith("bigas-rebase/"):
-        return None
     if labels_include_hotfix(_pr_label_names(pr)):
         return None
 
@@ -249,6 +267,8 @@ def versioned_staging_merge_blocked(pr: Dict[str, Any], repo: str) -> Optional[s
     if not uses_versioned_feature_branches(prefix, production):
         return None
     if labels_include_hotfix(_pr_label_names(pr)):
+        return None
+    if is_release_merge_pr(pr, repo=repo, project_key=project_key):
         return None
     if current not in {production, prefix, "main", "master"}:
         return None
