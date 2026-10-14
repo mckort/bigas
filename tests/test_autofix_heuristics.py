@@ -243,30 +243,18 @@ def test_soft_consider_only_runs_autofix():
 
 
 def test_autofix_commit_marker():
-    from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
-
     assert latest_commit_is_autofix("fix: auth [bigas-autofix]")
     assert latest_commit_is_autofix("BIG-89: [bigas-autofix] [nits-only] polish")
     assert not latest_commit_is_autofix("fix: auth")
-    assert count_autofix_rounds(
-        [
-            "feat: start",
-            "BIG-1: [bigas-autofix] fix auth",
-            "BIG-1: [bigas-autofix] [nits-only] polish",
-        ]
-    ) == (2, 1)
 
 
 def test_autofix_rounds_ignore_marker_in_squash_body():
-    """Release PRs squash feature history; body lines are not rounds on this PR."""
-    from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
-
+    """Release PRs squash feature history; body lines are not the head subject."""
     squash = (
         "VFA-172: Share ready board preps with founders (#387)\n\n"
         "* VFA-172: [bigas-autofix] Harden board prep write routes\n"
         "* VFA-173: [bigas-autofix] [nits-only] Clarify landing USD hint\n"
     )
-    assert count_autofix_rounds([squash, squash, squash, squash]) == (0, 0)
     assert not latest_commit_is_autofix(squash)
 
     on_this_pr = (
@@ -274,8 +262,8 @@ def test_autofix_rounds_ignore_marker_in_squash_body():
         "Co-authored-by: Cursor Agent <cursoragent@cursor.com>\n"
     )
     nits = "VFA-173: [bigas-autofix] [nits-only] Clarify comment\n\nbody"
-    assert count_autofix_rounds([squash, on_this_pr, nits]) == (2, 1)
     assert latest_commit_is_autofix(on_this_pr)
+    assert latest_commit_is_autofix(nits)
 
 
 def test_logged_rounds_count_agents_not_commits():

@@ -505,7 +505,8 @@ class AutofixService:
             )
         except GitHubPRCommentError:
             logger.warning(
-                "Could not record autofix round on %s#%s",
+                "Autofix round persistence failed on %s#%s; "
+                "loop protection will recount from GitHub comments",
                 repo,
                 pr_number,
                 exc_info=True,

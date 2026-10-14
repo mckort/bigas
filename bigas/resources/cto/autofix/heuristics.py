@@ -70,26 +70,8 @@ def commit_subject(message: str) -> str:
     return (message or "").split("\n", 1)[0].strip()
 
 
-def count_autofix_rounds(messages: list[str]) -> tuple[int, int]:
-    """Return (autofix commit subjects, nits-only commit subjects).
-
-    This is not the loop-protection budget. One agent may push several
-    commits before the next review, and those commits are one round.
-    Use ``count_logged_autofix_rounds`` for the cap.
-    """
-    autofix = 0
-    minor = 0
-    for raw in messages:
-        subject = commit_subject(raw)
-        if AUTOFIX_COMMIT_MARKER in subject:
-            autofix += 1
-        if AUTOFIX_MINOR_COMMIT_MARKER in subject:
-            minor += 1
-    return autofix, minor
-
-
 _ROUND_LINE = re.compile(
-    r'<!--\s*bigas-autofix-round\s+agent="([^"]+)"\s+nits="([01])"\s*-->'
+    r'<!-- bigas-autofix-round agent="([^"]+)" nits="([01])" -->'
 )
 _AGENT_ID = re.compile(r"^[A-Za-z0-9._:-]+$")
 
