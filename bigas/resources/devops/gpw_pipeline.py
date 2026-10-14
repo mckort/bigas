@@ -697,7 +697,7 @@ def _autofix_counts(repo: str, pr_number: Optional[Any]) -> tuple:
         return client.count_autofix_rounds(owner, name, pr_number)
     except Exception:
         logger.warning(
-            "Could not count autofix commits for %s#%s",
+            "Could not count autofix rounds for %s#%s",
             repo,
             pr_number,
             exc_info=True,
@@ -713,7 +713,7 @@ def _review_allows_staging(
 ) -> bool:
     """Clean review, or leftover nits after the same autofix budget prepare deploy uses.
 
-    Branch compares often have no open pull request, so the commit counter stays
+    Branch compares often have no open pull request, so the agent-start log stays
     at zero. rounds_started is the prepare-staging round counter and counts
     toward that same budget.
     """

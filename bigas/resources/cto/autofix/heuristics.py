@@ -7,8 +7,9 @@ from typing import Tuple
 from bigas.resources.cto.pr_review.markers import BIGAS_REVIEW_MARKER
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
-# Must contain AUTOFIX_COMMIT_MARKER so loop protection and the Actions
-# skip-on-autofix-head gate still treat nits-only commits as autofix.
+# Must contain AUTOFIX_COMMIT_MARKER so the Actions skip-on-autofix-head
+# gate still treats nits-only commits as autofix. The round cap counts
+# agent starts, not these commits.
 AUTOFIX_MINOR_COMMIT_MARKER = "[bigas-autofix] [nits-only]"
 DEFAULT_AUTOFIX_MAX_ITERATIONS = 5
 DEFAULT_MINOR_AUTOFIX_ITERATIONS = 2
@@ -70,10 +71,11 @@ def commit_subject(message: str) -> str:
 
 
 def count_autofix_rounds(messages: list[str]) -> tuple[int, int]:
-    """Return (all autofix commits, nits-only autofix commits).
+    """Return (autofix commit subjects, nits-only commit subjects).
 
-    Only the subject line counts. A release PR that squash-merges feature work
-    otherwise inherits those PRs' autofix rounds and can start at 5/5.
+    This is not the loop-protection budget. One agent may push several
+    commits before the next review, and those commits are one round.
+    Use ``count_logged_autofix_rounds`` for the cap.
     """
     autofix = 0
     minor = 0
@@ -84,6 +86,84 @@ def count_autofix_rounds(messages: list[str]) -> tuple[int, int]:
         if AUTOFIX_MINOR_COMMIT_MARKER in subject:
             minor += 1
     return autofix, minor
+
+
+_ROUND_LINE = re.compile(
+    r'<!--\s*bigas-autofix-round\s+agent="([^"]+)"\s+nits="([01])"\s*-->'
+)
+_AGENT_ID = re.compile(r"^[A-Za-z0-9._:-]+$")
+
+
+def normalize_autofix_agent_id(agent_id: str) -> str:
+    """Cursor agent id, accepting a bare id or a cursor.com/agents URL."""
+    raw = (agent_id or "").strip()
+    if "/agents/" in raw:
+        raw = raw.rstrip("/").rsplit("/agents/", 1)[-1]
+    raw = raw.strip().strip('"').strip("'")
+    if not raw or not _AGENT_ID.fullmatch(raw):
+        return ""
+    return raw
+
+
+def parse_autofix_round_log(body: str | None) -> list[tuple[str, bool]]:
+    """Agent starts recorded on this PR, in order. ``(agent_id, nits_only)``.
+
+    The same agent id is one round even if the line is repeated.
+    """
+    seen: set[str] = set()
+    rounds: list[tuple[str, bool]] = []
+    for match in _ROUND_LINE.finditer(body or ""):
+        agent_id = normalize_autofix_agent_id(match.group(1))
+        if not agent_id or agent_id in seen:
+            continue
+        seen.add(agent_id)
+        rounds.append((agent_id, match.group(2) == "1"))
+    return rounds
+
+
+def count_logged_autofix_rounds(body: str | None) -> tuple[int, int]:
+    """Return (agent starts on this PR, nits-only agent starts)."""
+    rounds = parse_autofix_round_log(body)
+    minor = sum(1 for _agent_id, nits_only in rounds if nits_only)
+    return len(rounds), minor
+
+
+def format_autofix_round_log(rounds: list[tuple[str, bool]]) -> str:
+    """Visible round list plus the hidden lines the counter parses."""
+    lines = ["### Autofix rounds", ""]
+    if not rounds:
+        lines.append("No autofix agents started on this PR yet.")
+    else:
+        lines.append(
+            "One line is one agent started after a review. "
+            "Commits from that agent are the same round."
+        )
+        lines.append("")
+        for index, (agent_id, nits_only) in enumerate(rounds, start=1):
+            suffix = " (nits only)" if nits_only else ""
+            lines.append(f"{index}. https://cursor.com/agents/{agent_id}{suffix}")
+    lines.append("")
+    for agent_id, nits_only in rounds:
+        flag = "1" if nits_only else "0"
+        lines.append(
+            f'<!-- bigas-autofix-round agent="{agent_id}" nits="{flag}" -->'
+        )
+    return "\n".join(lines).strip()
+
+
+def append_autofix_round(
+    body: str | None, *, agent_id: str, nits_only: bool
+) -> tuple[str, tuple[int, int]]:
+    """Add one agent start. Repeating the same id does not add a round."""
+    agent = normalize_autofix_agent_id(agent_id)
+    rounds = parse_autofix_round_log(body)
+    if not agent:
+        text = format_autofix_round_log(rounds)
+        return text, count_logged_autofix_rounds(text)
+    if all(existing != agent for existing, _nits in rounds):
+        rounds.append((agent, bool(nits_only)))
+    text = format_autofix_round_log(rounds)
+    return text, count_logged_autofix_rounds(text)
 
 
 def autofix_cooldown_seconds() -> int:
@@ -118,7 +198,7 @@ def format_loop_protection_message(*, autofix_count: int, max_iterations: int) -
     """Human-readable loop-protection copy for Discord / Jira / API reason."""
     return (
         f"Exceeded autofix limit of {max_iterations} "
-        f"(found {autofix_count} `[bigas-autofix]` commits on this PR). "
+        f"({autofix_count} autofix agent(s) already started on this PR). "
         f"Remaining review comments need manual handling."
     )
 

@@ -350,7 +350,7 @@ def _pr_autofix_round_counts(
         )
     except Exception:
         logger.warning(
-            "Could not count autofix commits for %s/%s#%s",
+            "Could not count autofix rounds for %s/%s#%s",
             owner,
             repo_name,
             pr_number,
@@ -1610,7 +1610,7 @@ def autofix_followup():
             repo=repo, pr_number=pr_number
         )
     except AutofixError:
-        logger.warning("Could not count autofix commits after re-review", exc_info=True)
+        logger.warning("Could not count autofix rounds after re-review", exc_info=True)
 
     ready = review_is_ready_to_merge(
         review_body,
@@ -1671,14 +1671,14 @@ def autofix_followup():
             github_token=gh_token,
         )
     else:
-        # autofix_count = number of `[bigas-autofix]` commits on the PR after this push.
-        # That is the completed round index (1-based), not "attempts that did nothing".
+        # autofix_count = agents started on this PR. Several commits from one
+        # agent are still that one completed round.
         completed_round = autofix_count
         _post_cto_status(
             f"**CTO autofix follow-up**\n"
             f"PR still has findings after autofix round "
             f"{completed_round}/{max_iters} "
-            f"({autofix_count} `[bigas-autofix]` commit(s) on the PR).\n"
+            f"({autofix_count} autofix agent(s) started on this PR).\n"
             f"Actions may launch another round if under the limit.\n"
             f"{pr_ref}"
         )

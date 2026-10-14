@@ -946,11 +946,8 @@ def test_release_review_merges_leftover_nits_after_two_minor_autofix_rounds(monk
         def post_or_update_pr_comment(self, **kwargs):
             return {"html_url": "https://github.com/mckort/vcfieldassistant/pull/212#issuecomment-1"}
 
-        def list_pr_commit_messages(self, owner, repo, pr_number):
-            return [
-                "VFA-1: [bigas-autofix] [nits-only] polish one",
-                "VFA-1: [bigas-autofix] [nits-only] polish two",
-            ]
+        def count_autofix_rounds(self, owner, repo, pr_number):
+            return 2, 2
 
         def merge_pull_request(self, *args, **kwargs):
             merged["called"] = True

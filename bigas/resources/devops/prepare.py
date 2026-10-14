@@ -878,19 +878,13 @@ def _strip_bigas_review_marker(body: str, *, marker: str) -> str:
 def _pr_autofix_round_counts(
     gh: Any, *, owner: str, repo_name: str, pr_number: int
 ) -> Tuple[int, int]:
-    """Best-effort (autofix_count, minor_autofix_count); (0, 0) if GitHub is unavailable."""
+    """Best-effort (agent starts, nits-only starts); (0, 0) if GitHub is unavailable."""
     try:
         if hasattr(gh, "count_autofix_rounds"):
             return gh.count_autofix_rounds(owner, repo_name, pr_number)
-        if hasattr(gh, "list_pr_commit_messages"):
-            from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
-
-            return count_autofix_rounds(
-                gh.list_pr_commit_messages(owner, repo_name, pr_number)
-            )
     except Exception:
         logger.warning(
-            "Could not count autofix commits for %s/%s#%s",
+            "Could not count autofix rounds for %s/%s#%s",
             owner,
             repo_name,
             pr_number,
