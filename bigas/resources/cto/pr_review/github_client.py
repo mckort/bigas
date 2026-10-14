@@ -11,6 +11,7 @@ import requests
 
 from bigas.resources.cto.pr_review.markers import (
     BIGAS_AUTOFIX_COOLDOWN_MARKER,
+    BIGAS_AUTOFIX_ROUNDS_MARKER,
     BIGAS_REVIEW_MARKER,
 )
 
@@ -415,10 +416,56 @@ class GitHubPRCommentClient:
         return sum(1 for m in messages if marker in commit_subject(m))
 
     def count_autofix_rounds(self, owner: str, repo: str, pr_number: int) -> tuple[int, int]:
-        """Return (all autofix commits, nits-only autofix commits)."""
-        from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
+        """Return (agent starts on this PR, nits-only agent starts).
 
-        return count_autofix_rounds(self.list_pr_commit_messages(owner, repo, pr_number))
+        A round is one Cursor agent started after a review. Several
+        ``[bigas-autofix]`` commits from that agent are still one round.
+        """
+        from bigas.resources.cto.autofix.heuristics import count_logged_autofix_rounds
+
+        body = self.get_marked_comment_body(
+            owner, repo, pr_number, marker=BIGAS_AUTOFIX_ROUNDS_MARKER
+        )
+        return count_logged_autofix_rounds(body)
+
+    def record_autofix_round(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        *,
+        agent_id: str,
+        nits_only: bool = False,
+    ) -> tuple[int, int]:
+        """Append one agent start and return the new (rounds, nits-only rounds).
+
+        The same agent id is not counted twice. Raises GitHubPRCommentError
+        when the id is missing, so a launch is not stored as zero rounds.
+        """
+        from bigas.resources.cto.autofix.heuristics import (
+            append_autofix_round,
+            normalize_autofix_agent_id,
+        )
+
+        if not normalize_autofix_agent_id(agent_id):
+            raise GitHubPRCommentError("autofix agent id is missing")
+        existing = (
+            self.get_marked_comment_body(
+                owner, repo, pr_number, marker=BIGAS_AUTOFIX_ROUNDS_MARKER
+            )
+            or ""
+        )
+        body, counts = append_autofix_round(
+            existing, agent_id=agent_id, nits_only=nits_only
+        )
+        self.post_or_update_pr_comment(
+            owner=owner,
+            repo=repo,
+            pr_number=pr_number,
+            body=body,
+            marker=BIGAS_AUTOFIX_ROUNDS_MARKER,
+        )
+        return counts
 
     def merge_pull_request(
         self,

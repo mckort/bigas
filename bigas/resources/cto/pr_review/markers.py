@@ -7,3 +7,5 @@ them crashes the process on boot.
 
 BIGAS_REVIEW_MARKER = "<!-- bigas-ai-review-marker -->"
 BIGAS_AUTOFIX_COOLDOWN_MARKER = "<!-- bigas-autofix-cooldown-marker -->"
+# One hidden comment per PR listing Cursor agents started after a review.
+BIGAS_AUTOFIX_ROUNDS_MARKER = "<!-- bigas-autofix-rounds-marker -->"

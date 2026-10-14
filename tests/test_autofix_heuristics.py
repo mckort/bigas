@@ -243,30 +243,18 @@ def test_soft_consider_only_runs_autofix():
 
 
 def test_autofix_commit_marker():
-    from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
-
     assert latest_commit_is_autofix("fix: auth [bigas-autofix]")
     assert latest_commit_is_autofix("BIG-89: [bigas-autofix] [nits-only] polish")
     assert not latest_commit_is_autofix("fix: auth")
-    assert count_autofix_rounds(
-        [
-            "feat: start",
-            "BIG-1: [bigas-autofix] fix auth",
-            "BIG-1: [bigas-autofix] [nits-only] polish",
-        ]
-    ) == (2, 1)
 
 
 def test_autofix_rounds_ignore_marker_in_squash_body():
-    """Release PRs squash feature history; body lines are not rounds on this PR."""
-    from bigas.resources.cto.autofix.heuristics import count_autofix_rounds
-
+    """Release PRs squash feature history; body lines are not the head subject."""
     squash = (
         "VFA-172: Share ready board preps with founders (#387)\n\n"
         "* VFA-172: [bigas-autofix] Harden board prep write routes\n"
         "* VFA-173: [bigas-autofix] [nits-only] Clarify landing USD hint\n"
     )
-    assert count_autofix_rounds([squash, squash, squash, squash]) == (0, 0)
     assert not latest_commit_is_autofix(squash)
 
     on_this_pr = (
@@ -274,8 +262,37 @@ def test_autofix_rounds_ignore_marker_in_squash_body():
         "Co-authored-by: Cursor Agent <cursoragent@cursor.com>\n"
     )
     nits = "VFA-173: [bigas-autofix] [nits-only] Clarify comment\n\nbody"
-    assert count_autofix_rounds([squash, on_this_pr, nits]) == (2, 1)
     assert latest_commit_is_autofix(on_this_pr)
+    assert latest_commit_is_autofix(nits)
+
+
+def test_logged_rounds_count_agents_not_commits():
+    from bigas.resources.cto.autofix.heuristics import (
+        append_autofix_round,
+        count_logged_autofix_rounds,
+        parse_autofix_round_log,
+    )
+
+    body, counts = append_autofix_round(
+        "",
+        agent_id="https://cursor.com/agents/bc-2dc8b44c",
+        nits_only=False,
+    )
+    assert counts == (1, 0)
+    assert parse_autofix_round_log(body) == [("bc-2dc8b44c", False)]
+    assert "https://cursor.com/agents/bc-2dc8b44c" in body
+
+    again, counts = append_autofix_round(body, agent_id="bc-2dc8b44c", nits_only=False)
+    assert counts == (1, 0)
+    assert again.count('agent="bc-2dc8b44c"') == 1
+
+    with_nits, counts = append_autofix_round(again, agent_id="bc-nits", nits_only=True)
+    assert counts == (2, 1)
+    assert count_logged_autofix_rounds(with_nits) == (2, 1)
+
+    unchanged, counts = append_autofix_round(with_nits, agent_id="not an id", nits_only=False)
+    assert counts == (2, 1)
+    assert "not an id" not in unchanged
 
 
 def test_production_import_order_does_not_cycle():
@@ -340,7 +357,7 @@ def test_format_loop_protection_message_is_clear():
 
     msg = format_loop_protection_message(autofix_count=9, max_iterations=5)
     assert "limit of 5" in msg
-    assert "found 9" in msg
+    assert "9 autofix agent(s) already started" in msg
     assert "manual handling" in msg
 
 
@@ -580,6 +597,12 @@ def test_autofix_launches_for_merge_conflicts_when_review_clean(monkeypatch):
         def list_pr_commit_messages(self, *args, **kwargs):
             return []
 
+        def count_autofix_rounds(self, *args, **kwargs):
+            return 0, 0
+
+        def record_autofix_round(self, *args, **kwargs):
+            return 1, 0
+
         def get_marked_comment(self, **kwargs):
             return {"body": _CLEAN_STRUCTURED, "updated_at": "2026-09-17T17:10:00Z"}
 
@@ -630,9 +653,11 @@ def test_autofix_skips_already_merged_pr(monkeypatch):
 
 
 class _NitsFakeGH:
-    def __init__(self, messages, body=_MINOR_LEFTOVER):
-        self.messages = messages
+    def __init__(self, messages=None, body=_MINOR_LEFTOVER, rounds=None):
+        self.messages = list(messages or [])
         self.body = body
+        self.rounds = list(rounds or [])
+        self.recorded = []
 
     def get_pull_request(self, *args, **kwargs):
         return {"merged": False, "title": "BIG-89: Lock staging", "body": "", "head": {"ref": "feat/x"}}
@@ -642,6 +667,17 @@ class _NitsFakeGH:
 
     def list_pr_commit_messages(self, *args, **kwargs):
         return list(self.messages)
+
+    def count_autofix_rounds(self, *args, **kwargs):
+        minor = sum(1 for _agent, nits in self.rounds if nits)
+        return len(self.rounds), minor
+
+    def record_autofix_round(self, *args, agent_id="", nits_only=False, **kwargs):
+        self.recorded.append((agent_id, nits_only))
+        if not any(existing == agent_id for existing, _nits in self.rounds):
+            self.rounds.append((agent_id, bool(nits_only)))
+        minor = sum(1 for _agent, nits in self.rounds if nits)
+        return len(self.rounds), minor
 
     def get_marked_comment(self, **kwargs):
         return {"body": self.body, "updated_at": "2026-09-17T17:10:00Z"}
@@ -681,10 +717,7 @@ def test_autofix_accepts_leftover_nits_after_two_minor_rounds(monkeypatch):
     monkeypatch.setattr(
         "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
         lambda token: _NitsFakeGH(
-            [
-                "BIG-89: [bigas-autofix] [nits-only] tweak button",
-                "BIG-89: [bigas-autofix] [nits-only] tweak again",
-            ]
+            rounds=[("bc-1", True), ("bc-2", True)],
         ),
     )
     result = AutofixService(cursor_api_key="c", github_token="t").run(
@@ -702,7 +735,7 @@ def test_autofix_accepts_leftover_nits_at_max_iterations(monkeypatch):
     monkeypatch.setattr(
         "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
         lambda token: _NitsFakeGH(
-            [f"BIG-89: [bigas-autofix] fix {i}" for i in range(5)]
+            rounds=[(f"bc-{i}", False) for i in range(5)],
         ),
     )
     result = AutofixService(cursor_api_key="c", github_token="t").run(
@@ -721,7 +754,7 @@ def test_autofix_loop_protection_at_max_iterations_with_blocking_review(monkeypa
     monkeypatch.setattr(
         "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
         lambda token: _NitsFakeGH(
-            [f"BIG-93: [bigas-autofix] fix {i}" for i in range(5)],
+            rounds=[(f"bc-{i}", False) for i in range(5)],
             body=blocking_review,
         ),
     )
@@ -733,3 +766,42 @@ def test_autofix_loop_protection_at_max_iterations_with_blocking_review(monkeypa
     assert result["reason"] == format_loop_protection_message(
         autofix_count=5, max_iterations=5
     )
+
+
+def test_one_agent_with_many_commits_is_one_round(monkeypatch):
+    from bigas.resources.cto.autofix.service import AutofixService
+
+    blocking_review = "## Blocking\nMust fix the broken auth check before merge."
+    gh = _NitsFakeGH(
+        messages=[f"BIG-93: [bigas-autofix] fix {i}" for i in range(6)],
+        body=blocking_review,
+        rounds=[("bc-already", False)],
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
+        lambda token: gh,
+    )
+
+    class FakeCursor:
+        def __init__(self, api_key):
+            pass
+
+        def launch_pr_autofix(self, **kwargs):
+            return {
+                "agent_id": "bc-next",
+                "agent_url": "https://cursor.com/agents/bc-next",
+                "run_id": "run-next",
+            }
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.CursorCloudAgentClient",
+        FakeCursor,
+    )
+    result = AutofixService(cursor_api_key="c", github_token="t").run(
+        repo="owner/repo", pr_number=9
+    )
+    assert result.get("launched") is True
+    assert result.get("loop_protection") is not True
+    assert result["autofix_round"] == 2
+    assert gh.recorded == [("bc-next", False)]
+    assert result["autofix_count"] == 2

@@ -15,7 +15,6 @@ from bigas.resources.cto.autofix.heuristics import (
     AUTOFIX_MINOR_COMMIT_MARKER,
     autofix_cooldown_seconds,
     autofix_max_iterations,
-    count_autofix_rounds,
     format_loop_protection_message,
     latest_commit_is_autofix,
     leftover_nits_are_acceptable,
@@ -262,8 +261,9 @@ class AutofixService:
             head_sha, head_message, committed_at = gh.get_pr_head_commit_meta(
                 owner, repo_name, pr_number
             )
-            messages = gh.list_pr_commit_messages(owner, repo_name, pr_number)
-            autofix_count, minor_autofix_count = count_autofix_rounds(messages)
+            autofix_count, minor_autofix_count = gh.count_autofix_rounds(
+                owner, repo_name, pr_number
+            )
         except GitHubPRCommentError as e:
             raise AutofixError(str(e)) from e
 
@@ -493,6 +493,28 @@ class AutofixService:
         except CursorCloudAgentError as e:
             raise AutofixError(str(e)) from e
 
+        nits_flag = bool(nits_only and not merge_conflicted)
+        recorded_id = (launched.get("agent_id") or launched.get("run_id") or "").strip()
+        try:
+            autofix_count, minor_autofix_count = gh.record_autofix_round(
+                owner,
+                repo_name,
+                pr_number,
+                agent_id=recorded_id,
+                nits_only=nits_flag,
+            )
+        except GitHubPRCommentError:
+            logger.warning(
+                "Autofix round persistence failed on %s#%s; "
+                "loop protection will recount from GitHub comments",
+                repo,
+                pr_number,
+                exc_info=True,
+            )
+            autofix_count = int(autofix_count) + 1
+            if nits_flag:
+                minor_autofix_count = int(minor_autofix_count) + 1
+
         return {
             "skipped": False,
             "launched": True,
@@ -536,6 +558,7 @@ class AutofixService:
             raise AutofixError(str(e)) from e
 
     def count_autofix_commits(self, *, repo: str, pr_number: int) -> int:
+        """Agent starts on this PR. Several commits from one agent count once."""
         autofix_count, _minor = self.count_autofix_rounds(
             repo=repo, pr_number=pr_number
         )
@@ -545,10 +568,9 @@ class AutofixService:
         owner, repo_name = repo.split("/", 1)
         gh = GitHubPRCommentClient(token=self._github_token)
         try:
-            messages = gh.list_pr_commit_messages(owner, repo_name, pr_number)
+            return gh.count_autofix_rounds(owner, repo_name, pr_number)
         except GitHubPRCommentError as e:
             raise AutofixError(str(e)) from e
-        return count_autofix_rounds(messages)
 
     def fetch_pr_diff(self, *, repo: str, pr_number: int) -> str:
         owner, repo_name = repo.split("/", 1)
