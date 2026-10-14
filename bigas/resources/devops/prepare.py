@@ -588,17 +588,20 @@ def reconcile_release_with_git(
 
 
 def _commits_for_release_keys(project_key: str, version: str) -> List[Dict[str, Any]]:
-    """Commits on main and this version's branch, so a squash onto main does not hide keys."""
+    """Commits on the production branch and this version's branch, so a squash does not hide keys."""
+    repo = ""
     heads = ["main"]
     try:
         repo = _project_repo(project_key)
-        feature, _production = _branch_pair(project_key, repo, version)
+        feature, production = _branch_pair(project_key, repo, version)
         feature = (feature or "").strip()
+        prod_branch = (production or "").strip() or "main"
+        heads = [prod_branch]
         if feature and feature not in heads:
             heads.append(feature)
     except Exception:
         logger.warning(
-            "Could not resolve the feature branch for %s %s",
+            "Could not resolve release branches for %s %s",
             project_key,
             version,
             exc_info=True,
@@ -606,7 +609,7 @@ def _commits_for_release_keys(project_key: str, version: str) -> List[Dict[str, 
 
     commits: List[Dict[str, Any]] = []
     seen = set()
-    repo_name = ""
+    repo_name = repo or ""
     for head in heads:
         try:
             shipping = list_shipping_commits(project_key=project_key, head_ref=head)
@@ -669,8 +672,9 @@ def promote_open_tickets_present_in_git(project_key: str, version: str) -> List[
     present = set()
     for commit in commits:
         for item in _keys_for_shipping_commit(key, commit, by_key):
-            if item in by_key:
-                present.add(item)
+            canonical = (item or "").strip().upper()
+            if canonical in by_key:
+                present.add(canonical)
     if not present:
         return []
 
@@ -681,7 +685,11 @@ def promote_open_tickets_present_in_git(project_key: str, version: str) -> List[
         ticket_id = ticket.get("ticket_id")
         if not ticket_id:
             continue
-        updated = store.update_ticket(ticket_id, status="Final approval (manual)")
+        try:
+            updated = store.update_ticket(ticket_id, status="Final approval (manual)")
+        except Exception:
+            logger.warning("Could not promote %s to Final approval", item, exc_info=True)
+            continue
         if not updated:
             continue
         try:
@@ -1736,7 +1744,11 @@ def continue_after_main_ready(
             f"Cut is on `main`, but I could not lock {key} {ver} for new PRs.",
         )
 
-    promoted = promote_open_tickets_present_in_git(key, ver)
+    try:
+        promoted = promote_open_tickets_present_in_git(key, ver)
+    except Exception:
+        logger.exception("Could not promote shipped tickets on %s %s", key, ver)
+        promoted = []
     if promoted:
         labels = ", ".join(
             f"**{ticket.get('key')}**" for ticket in promoted if ticket.get("key")
