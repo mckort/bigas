@@ -41,9 +41,9 @@ Report an Important finding only for a real behavior bug this slice proves.
 Leave Minor as None. Do not report CSS, theme, ARIA, copy,
 enum alias spelling, workflow style, unused imports, or third-party URL swaps.
 Do not write "ready to merge". That verdict is decided after every slice is combined.
-Report a missing import or NameError only when this slice shows the file's import
-block and the symbol is neither imported nor defined there. If the import block is
-not in the slice, do not report an undefined name.
+Report a missing import or NameError only when this slice adds a new file that
+neither imports nor defines the symbol, or deletes the import or definition a
+remaining call still uses. If the name is merely absent from the hunks, do not report an undefined name.
 Do not report a missing prop, type field, or parameter unless this slice shows
 the declaration and that name is absent. Do not claim a compile error from a
 member that is outside the hunk.
@@ -59,9 +59,11 @@ staging/deploy script, or a real behavior bug.
 Leave Minor as None. Do not report new nits, style, enum aliases,
 or third-party URL swaps.
 Do not write "ready to merge". That verdict is decided after every slice is combined.
-Report a missing import or NameError only when this slice shows the file's import
-block and the symbol is neither imported nor defined there. If the import block is
-not in the slice, do not report an undefined name.
+Report a missing import or NameError only when this slice adds a new file that
+neither imports nor defines the symbol, or deletes the import or definition a
+remaining call still uses. If the name is merely absent from the hunks, do not report an undefined name.
+If a previous finding says a helper is undefined, mark it resolved unless this
+slice deletes that helper or its import.
 If a previous finding says a prop or type field is missing, mark it resolved
 unless this slice shows the declaration without that member.
 """.strip()

@@ -36,15 +36,19 @@ Project helpers / imports (avoid false blockers):
 - Do NOT flag `deleteField()` (or similar helpers) as missing/wrong solely because
   the call site does not import `FieldValue` from `firebase-admin`, if the same
   file imports the helper from a local module (e.g. `from '../firebase'`).
-- Report a missing import or NameError only when the file's import block is
-  visible in the shown diff and the symbol is neither imported nor defined there.
-  If the import block is not in the diff, do not report an undefined name: the
-  import may already exist above the hunk.
+- Do not report an undefined name, missing import, or NameError for a call in a
+  modified file. An unchanged helper or import sits outside the hunks and will
+  not appear in the diff. A visible import hunk is not the whole import block.
+- Report a missing import or NameError only when the diff adds a new file whose
+  full contents neither import nor define the symbol, or when the diff itself
+  deletes the import or definition that a remaining call still uses.
 - Only report a wrong SDK API when the call is used without a project wrapper
   that the shown diff already imports.
-- When re-checking a previous finding about helpers/imports, look at imports in
-  the same file in the diff. If the helper is imported from the project wrapper,
-  treat the finding as resolved — do not repeat it.
+- When re-checking a previous finding that a helper is undefined or not imported,
+  mark it resolved unless this diff deletes that helper or its import. Absence
+  from the diff is not proof the symbol is missing. If the helper is imported
+  from a project wrapper in the shown diff, treat the finding as resolved — do
+  not repeat it.
 - Do NOT report a missing prop, type field, parameter, or export unless the
   declaration in the shown diff lists its members and that name is absent.
   A member a few lines above the hunk is not proof it is missing, and it is
@@ -128,8 +132,9 @@ Prepare-staging release gate. Report a Blocker only when the diff shows one of:
 - Data loss or a write that persists invalid data
 - A security hole (authz bypass, secret exposure, CSRF removal on a route that
   already sends a token)
-- A broken import or NameError that this slice itself proves (the import block
-  is visible and the symbol is neither imported nor defined)
+- A broken import or NameError that this slice itself proves (a new file that
+  neither imports nor defines the symbol, or a deleted import or definition that
+  a remaining call still uses)
 - A staging or deploy script change that would fail the prepare-staging workflow
 
 Report an Important finding only when the diff shows a real behavior bug that is
@@ -194,6 +199,9 @@ Guidelines:
 - If a previous blocker was about a missing/wrong helper (e.g. deleteField vs
   FieldValue.delete) and the file imports a project wrapper that provides that
   helper, mark it resolved — do not keep re-reporting it.
+- If a previous finding says a helper or local function is undefined, mark it
+  resolved unless this diff deletes that helper or its import.
+  An unchanged function outside the hunks is not missing.
 - If a previous unused-file/asset finding remains but the file is still referenced
   (including outside this diff) or the autofix explained it is still used, mark it
   resolved — do not keep it as Important.
