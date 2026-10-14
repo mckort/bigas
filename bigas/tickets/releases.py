@@ -491,6 +491,18 @@ def close_release(
     if gh_release:
         tag_name = gh_release.get("tag_name") or tag_name
 
+    try:
+        from bigas.resources.devops.prepare import promote_open_tickets_present_in_git
+
+        promote_open_tickets_present_in_git(proj, name)
+    except Exception:
+        logger.warning(
+            "Could not keep shipped tickets on %s %s",
+            proj,
+            name,
+            exc_info=True,
+        )
+
     if create_next_if_missing:
         next_version = _ensure_next_minor(proj, name)
         moved = _move_open_tickets(proj, name, next_version)
