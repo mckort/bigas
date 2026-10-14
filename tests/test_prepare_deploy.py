@@ -402,6 +402,63 @@ def test_prepare_asks_when_open_tickets_even_if_low_risk(monkeypatch):
     assert "yes" in blob.lower()
 
 
+def test_prepare_promotes_open_ticket_already_in_git(monkeypatch):
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    shipped = store.create_ticket(
+        board["board_id"],
+        title="Keep a dismissed forecast alert",
+        user_id="dev-user",
+        key="VFA-211",
+        fix_version="0.1.0",
+        status="To Do",
+    )
+    create_release("VFA", name="0.1.0")
+
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.check_deployment_risk", _low_risk)
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "repo": "mckort/vcfieldassistant",
+            "commits": [
+                {
+                    "sha": "abc1234deadbeef",
+                    "message": "VFA-211: Keep a dismissed forecast alert until the variance changes",
+                    "subject": "VFA-211: Keep a dismissed forecast alert until the variance changes",
+                }
+            ],
+            "compared": ["deploy-backend-old → main"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.trigger_deployment",
+        lambda **kwargs: {},
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.1.0",
+    )
+    assert result["status"] == "complete"
+    updated = store.get_ticket(shipped["ticket_id"])
+    assert updated["status"] == "Final approval (manual)"
+    assert updated["fix_version"] == "0.1.0"
+    pending = chat.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert pending.get("open_ticket_keys") == []
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "Moved **VFA-211** to Final approval" in blob
+    assert "would be left out" not in blob
+
+
 def test_prepare_asks_on_medium_risk(monkeypatch):
     create_release("VFA", name="0.1.0")
     chat = get_chat_store()

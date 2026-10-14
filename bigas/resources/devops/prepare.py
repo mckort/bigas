@@ -587,6 +587,118 @@ def reconcile_release_with_git(
     return report
 
 
+def _commits_for_release_keys(project_key: str, version: str) -> List[Dict[str, Any]]:
+    """Commits on main and this version's branch, so a squash onto main does not hide keys."""
+    heads = ["main"]
+    try:
+        repo = _project_repo(project_key)
+        feature, _production = _branch_pair(project_key, repo, version)
+        feature = (feature or "").strip()
+        if feature and feature not in heads:
+            heads.append(feature)
+    except Exception:
+        logger.warning(
+            "Could not resolve the feature branch for %s %s",
+            project_key,
+            version,
+            exc_info=True,
+        )
+
+    commits: List[Dict[str, Any]] = []
+    seen = set()
+    repo_name = ""
+    for head in heads:
+        try:
+            shipping = list_shipping_commits(project_key=project_key, head_ref=head)
+        except Exception:
+            logger.warning(
+                "Could not list commits on %s for %s %s",
+                head,
+                project_key,
+                version,
+                exc_info=True,
+            )
+            continue
+        repo_name = repo_name or str(shipping.get("repo") or "")
+        rows = list(shipping.get("commits") or [])
+        if repo_name:
+            try:
+                rows = _enrich_commits_with_pr_keys(
+                    project_key=project_key,
+                    repo=repo_name,
+                    commits=rows,
+                )
+            except Exception:
+                logger.warning("Could not attach PR keys for %s %s", project_key, version, exc_info=True)
+        for row in rows:
+            sha = (row.get("sha") or "").strip()
+            if sha:
+                if sha in seen:
+                    continue
+                seen.add(sha)
+            commits.append(row)
+    return commits
+
+
+def promote_open_tickets_present_in_git(project_key: str, version: str) -> List[Dict[str, Any]]:
+    """Move version tickets to Final approval when their key is already in git.
+
+    A merged feature PR can leave the card in To Do. That ticket still shipped
+    and must stay on this version instead of being carried to the next one.
+    """
+    key = normalize_project_key(project_key)
+    try:
+        ver = normalize_version_name(version)
+    except SemverError:
+        ver = (version or "").strip()
+    open_tickets = [
+        ticket
+        for ticket in tickets_on_version(key, ver)
+        if not is_in_release_cut(ticket.get("status") or "", project_key=key)
+    ]
+    if not open_tickets:
+        return []
+    commits = _commits_for_release_keys(key, ver)
+    if not commits:
+        return []
+    by_key = {
+        (ticket.get("key") or "").strip().upper(): ticket
+        for ticket in open_tickets
+        if (ticket.get("key") or "").strip()
+    }
+    present = set()
+    for commit in commits:
+        for item in _keys_for_shipping_commit(key, commit, by_key):
+            if item in by_key:
+                present.add(item)
+    if not present:
+        return []
+
+    store = get_ticket_store()
+    promoted: List[Dict[str, Any]] = []
+    for item in sorted(present):
+        ticket = by_key[item]
+        ticket_id = ticket.get("ticket_id")
+        if not ticket_id:
+            continue
+        updated = store.update_ticket(ticket_id, status="Final approval (manual)")
+        if not updated:
+            continue
+        try:
+            store.add_comment(
+                ticket_id,
+                (
+                    f"Moved to Final approval because {item} is already in the "
+                    f"{ver} git history."
+                ),
+                author_name="Bigas",
+            )
+        except Exception:
+            logger.warning("Could not comment on %s after promotion", item, exc_info=True)
+        promoted.append(updated)
+    return promoted
+
+
 def _github_client():
     from bigas.resources.devops.github_actions import GitHubActionsClient, GitHubActionsError
 
@@ -1622,6 +1734,17 @@ def continue_after_main_ready(
         _post(
             thread_id,
             f"Cut is on `main`, but I could not lock {key} {ver} for new PRs.",
+        )
+
+    promoted = promote_open_tickets_present_in_git(key, ver)
+    if promoted:
+        labels = ", ".join(
+            f"**{ticket.get('key')}**" for ticket in promoted if ticket.get("key")
+        )
+        _post(
+            thread_id,
+            f"Moved {labels} to Final approval. "
+            f"Their commits are already in **{ver}**, so they stay in this release.",
         )
 
     report, in_cut, open_tickets = format_version_ticket_report(key, ver)
