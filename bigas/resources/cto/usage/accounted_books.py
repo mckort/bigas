@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,7 +19,16 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ACCOUNTED_API_BASE = "https://app.gnubok.se/api/v1"
+_DEFAULT_API_BASE = "https://app.gnubok.se/api/v1"
+_MAX_COMPANY_WORKERS = 4
+
+
+def _api_base() -> str:
+    """REST base for weekly books. CFO chat MCP uses ACCOUNTED_MCP_URL."""
+    raw = (os.environ.get("ACCOUNTED_API_BASE") or _DEFAULT_API_BASE).strip()
+    return raw.rstrip("/")
+
+
 _MONTHS_SV = (
     "januari",
     "februari",
@@ -68,29 +78,51 @@ def format_accounted_books_section(
     if not key:
         return _heading(day) + "\nACCOUNTED_API_KEY saknas."
     blocks = [_heading(day)]
-    for label, company_id in companies:
-        try:
-            snap = fetch_company_books(company_id, api_key=key, today=day)
-            blocks.append(format_company_books(label, snap))
-        except requests.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else 0
-            logger.warning("Accounted books failed for %s (%s)", label, status)
-            if status in (403, 404):
-                blocks.append(f"**{label}**\nAPI-nyckeln når inte det här bolaget.")
-            else:
-                blocks.append(f"**{label}**\nKunde inte läsa bokföringen.")
-        except Exception:
-            logger.warning("Accounted books failed for %s", label, exc_info=True)
-            blocks.append(f"**{label}**\nKunde inte läsa bokföringen.")
+    blocks.extend(_company_blocks(companies, api_key=key, today=day))
     return "\n\n".join(blocks)
+
+
+def _company_blocks(
+    companies: List[Tuple[str, str]],
+    *,
+    api_key: str,
+    today: date,
+) -> List[str]:
+    """Fetch companies together so several books do not stack request latency."""
+    if len(companies) == 1:
+        label, company_id = companies[0]
+        return [_company_block(label, company_id, api_key=api_key, today=today)]
+
+    def one(item: Tuple[str, str]) -> str:
+        return _company_block(item[0], item[1], api_key=api_key, today=today)
+
+    workers = min(_MAX_COMPANY_WORKERS, len(companies))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(one, companies))
+
+
+def _company_block(label: str, company_id: str, *, api_key: str, today: date) -> str:
+    try:
+        snap = fetch_company_books(company_id, api_key=api_key, today=today)
+        return format_company_books(label, snap)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        logger.warning("Accounted books failed for %s (%s)", label, status)
+        if status in (403, 404):
+            return f"**{label}**\nAPI-nyckeln når inte det här bolaget."
+        return f"**{label}**\nKunde inte läsa bokföringen."
+    except Exception:
+        logger.warning("Accounted books failed for %s", label, exc_info=True)
+        return f"**{label}**\nKunde inte läsa bokföringen."
 
 
 def fetch_company_books(company_id: str, *, api_key: str, today: date) -> Dict[str, Any]:
     """Read one company's month-to-date books. Raises on transport failure."""
     month_start, month_end, prev_start, prev_end = _windows(today)
     client = _Client(api_key)
-    periods = client.get(f"/companies/{company_id}/fiscal-periods").get("fiscal_periods") or []
-    current_bounds = _period_bounds(periods, today)
+    periods_data = client.get(f"/companies/{company_id}/fiscal-periods")
+    periods = periods_data.get("fiscal_periods") or periods_data.get("items") or []
+    current_bounds = _period_bounds(periods, month_end)
     current_period = current_bounds[0] if current_bounds else None
     year_start = current_bounds[1] if current_bounds else None
     previous_period = _period_id(periods, prev_start)
@@ -193,7 +225,7 @@ class _Client:
 
     def get(self, path: str, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         response = requests.get(
-            ACCOUNTED_API_BASE + path,
+            _api_base() + path,
             params={k: v for k, v in (params or {}).items() if v},
             headers=self._headers,
             timeout=30,
@@ -264,7 +296,7 @@ def _bank_cash(
             number = str(row.get("account_number") or "")
             if number.startswith("19"):
                 found = True
-                total += float(row.get("amount") or 0)
+                total += _num(row.get("amount")) or 0.0
     return round(total, 2) if found else None
 
 
@@ -285,7 +317,7 @@ def _count_list(
                 query["cursor"] = cursor
             page = client.get(path, query)
             if list_key:
-                rows = page.get(list_key) or []
+                rows = page.get(list_key) or page.get("items") or []
             else:
                 rows = page.get("items") or []
             total += len(rows)
@@ -307,27 +339,38 @@ def _period_bounds(periods: List[Dict[str, Any]], day: date) -> Optional[Tuple[s
     """Return (id, period_start, period_end) for the fiscal period that contains day."""
     stamp = day.isoformat()
     for period in periods:
-        start_s = str(period.get("period_start") or "")
-        end_s = str(period.get("period_end") or "")
+        start_s = str(period.get("period_start") or "")[:10]
+        end_s = str(period.get("period_end") or "")[:10]
         if not (start_s and end_s and start_s <= stamp <= end_s):
             continue
         period_id = str(period.get("id") or "") or None
         if not period_id:
-            return None
+            continue
         try:
-            start = date.fromisoformat(start_s[:10])
-            end = date.fromisoformat(end_s[:10])
+            start = date.fromisoformat(start_s)
+            end = date.fromisoformat(end_s)
         except ValueError:
-            return None
+            continue
         return period_id, start, end
     return None
 
 
+def _reporting_day(today: date) -> date:
+    """On the 1st, report the completed prior month.
+
+    A one-day month-to-date window would be compared with the full previous month.
+    """
+    if today.day == 1:
+        return today - timedelta(days=1)
+    return today
+
+
 def _windows(today: date) -> Tuple[date, date, date, date]:
-    month_start = today.replace(day=1)
+    reported = _reporting_day(today)
+    month_start = reported.replace(day=1)
     prev_end = month_start - timedelta(days=1)
     prev_start = prev_end.replace(day=1)
-    return month_start, today, prev_start, prev_end
+    return month_start, reported, prev_start, prev_end
 
 
 def _payables(payload: Optional[Dict[str, Any]]) -> Optional[float]:
@@ -342,7 +385,7 @@ def _payables(payload: Optional[Dict[str, Any]]) -> Optional[float]:
 def _top_costs(sections: List[Dict[str, Any]]) -> List[Tuple[str, str, float]]:
     rows: List[Tuple[str, str, float]] = []
     for section in sections:
-        subtotal = float(section.get("subtotal") or 0)
+        subtotal = _num(section.get("subtotal")) or 0.0
         # A section that nets to zero is a contra pair (import VAT base and
         # its offset account), not money spent.
         if abs(subtotal) < 0.5:
@@ -407,10 +450,11 @@ def _year_heading(snap: Dict[str, Any]) -> str:
 
 
 def _heading(today: date) -> str:
-    start = today.replace(day=1)
+    reported = _reporting_day(today)
+    start = reported.replace(day=1)
     return (
-        f"**Bokföring (Accounted), {start.day}–{today.day} "
-        f"{_month_name(today)} {today.year}**"
+        f"**Bokföring (Accounted), {start.day}–{reported.day} "
+        f"{_month_name(reported)} {reported.year}**"
     )
 
 
