@@ -738,10 +738,16 @@ def build_weekly_cfo_ai_report(
         "**CFO: AI + cloud usage",
         1,
     )
+    parts = [numbers]
+    from bigas.resources.cto.usage.accounted_books import format_accounted_books_section
+
+    books = format_accounted_books_section()
+    if books:
+        parts.append(books)
     analysis = analyze_weekly_ai_spend(enriched)
-    if not analysis:
-        return numbers
-    return f"{numbers}\n\n**CFO analysis**\n{analysis}"
+    if analysis:
+        parts.append(f"**CFO analysis**\n{analysis}")
+    return "\n\n".join(parts)
 
 
 def publish_weekly_cfo_ai_report(message: str) -> None:
