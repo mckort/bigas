@@ -107,8 +107,6 @@ def parse_issue_keys(*values: Any, max_keys: int = MAX_LOOKUP_KEYS) -> List[str]
             _add(key)
         for key in range_keys:
             _add(key)
-        for match in _ISSUE_KEY_SEARCH_RE.finditer(text):
-            _add(match.group(1))
     return found
 
 
