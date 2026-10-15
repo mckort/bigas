@@ -39,6 +39,10 @@ Optional: `BIGAS_USAGE_PROVIDERS` — comma-separated names to enable (`cursor,l
 
 List-price for Cursor uses `BIGAS_CTO_AUTOFIX_MODEL` (default `grok-4.7`) when the agent payload has no model id.
 
+## Accounted books
+
+The weekly CFO message appends a bookkeeping block when `ACCOUNTED_CFO_COMPANIES` is set (one `Name:<company uuid>` per line) and `ACCOUNTED_API_KEY` is present. Figures come from the Accounted REST API at `ACCOUNTED_API_BASE` (default `https://app.gnubok.se/api/v1`). That base is separate from `ACCOUNTED_MCP_URL`, which only overrides CFO chat MCP. On the 1st of a month the block covers the completed prior month, so a one-day window is not compared with a full month. Configured companies are fetched concurrently; list pages stay capped at five.
+
 ## Tools
 
 ### `POST /mcp/tools/fetch_ai_usage`
