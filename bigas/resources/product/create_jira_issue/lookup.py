@@ -57,7 +57,13 @@ def _flatten_key_values(*values: Any) -> List[str]:
 
 
 def parse_issue_keys(*values: Any, max_keys: int = MAX_LOOKUP_KEYS) -> List[str]:
-    """Extract Jira keys from strings/lists, expanding ranges like BIG-15 to BIG-18."""
+    """Extract Jira keys from strings/lists, expanding ranges like BIG-15 to BIG-18.
+
+    A range wider than ``max_keys`` is skipped. Deploy tags such as
+    ``deploy-app-20261014-123106`` look like huge ticket ranges; expanding them
+    used to fill the budget and drop real keys later in the same text.
+    Literal keys that are not part of a kept range are recorded first.
+    """
     found: List[str] = []
     seen = set()
 
@@ -69,6 +75,7 @@ def parse_issue_keys(*values: Any, max_keys: int = MAX_LOOKUP_KEYS) -> List[str]
         found.append(normalized)
 
     for text in _flatten_key_values(*values):
+        range_keys: List[str] = []
         for match in _RANGE_RE.finditer(text):
             project_a = match.group(1)
             start = int(match.group(2))
@@ -78,9 +85,28 @@ def parse_issue_keys(*values: Any, max_keys: int = MAX_LOOKUP_KEYS) -> List[str]
                 continue
             lo, hi = (start, end) if start <= end else (end, start)
             if hi - lo + 1 > max_keys:
-                hi = lo + max_keys - 1
+                continue
             for number in range(lo, hi + 1):
-                _add(f"{project_a}-{number}")
+                range_keys.append(f"{project_a}-{number}")
+
+        range_seen = set()
+        for key in range_keys:
+            normalized = normalize_issue_key(key)
+            if normalized:
+                range_seen.add(normalized)
+        extra_literals: List[str] = []
+        extra_seen = set()
+        for match in _ISSUE_KEY_SEARCH_RE.finditer(text):
+            normalized = normalize_issue_key(match.group(1))
+            if not normalized or normalized in range_seen or normalized in extra_seen:
+                continue
+            extra_seen.add(normalized)
+            extra_literals.append(normalized)
+
+        for key in extra_literals:
+            _add(key)
+        for key in range_keys:
+            _add(key)
         for match in _ISSUE_KEY_SEARCH_RE.finditer(text):
             _add(match.group(1))
     return found
