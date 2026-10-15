@@ -335,7 +335,12 @@ def _enrich_commits_with_pr_keys(
     commits: List[Dict[str, Any]],
     max_lookups: int = 20,
 ) -> List[Dict[str, Any]]:
-    """Attach every linked PR ticket key, even when the commit message already has one."""
+    """Attach every linked PR ticket key, even when the commit message already has one.
+
+    Commits whose messages lack a project ticket key are looked up first, so a
+    long release cannot spend the whole lookup budget on commits that already
+    name their tickets. Repeated SHAs reuse the first pull-request response.
+    """
     repo = (repo or "").strip()
     if not repo or "/" not in repo or not commits:
         return commits
@@ -346,22 +351,35 @@ def _enrich_commits_with_pr_keys(
         logger.warning("Could not create GitHub client to attach PR keys", exc_info=True)
         return commits
     owner, name = repo.split("/", 1)
-    lookups = 0
+    missing_keys: List[Dict[str, Any]] = []
+    has_keys: List[Dict[str, Any]] = []
     for commit in commits:
-        if lookups >= max_lookups:
-            break
+        text = commit.get("message") or commit.get("subject") or ""
+        if _ticket_keys_for_project(key, text):
+            has_keys.append(commit)
+        else:
+            missing_keys.append(commit)
+    lookups = 0
+    pulls_by_sha: Dict[str, List[Dict[str, Any]]] = {}
+    for commit in missing_keys + has_keys:
         sha = (commit.get("sha") or "").strip()
         if not sha:
             continue
-        lookups += 1
-        try:
-            pulls = client.list_pulls_for_commit(owner, name, sha)
-        except Exception:
-            logger.warning("list_pulls_for_commit failed for %s@%s", repo, sha[:7], exc_info=True)
-            continue
+        if sha not in pulls_by_sha:
+            if lookups >= max_lookups:
+                continue
+            lookups += 1
+            try:
+                pulls_by_sha[sha] = client.list_pulls_for_commit(owner, name, sha)
+            except Exception:
+                logger.warning(
+                    "list_pulls_for_commit failed for %s@%s", repo, sha[:7], exc_info=True
+                )
+                pulls_by_sha[sha] = []
+                continue
         pr_keys: List[str] = []
         seen = set()
-        for pull in pulls:
+        for pull in pulls_by_sha[sha]:
             for found in _pr_project_keys(key, pull):
                 if found in seen:
                     continue

@@ -316,6 +316,79 @@ def test_enrich_commits_keeps_every_pr_key(monkeypatch):
     assert enriched[0]["pr_keys"] == ["VFA-215", "VFA-216"]
 
 
+def test_enrich_commits_looks_up_keyless_messages_first(monkeypatch):
+    seen = []
+
+    class FakeClient:
+        def list_pulls_for_commit(self, owner, repo, sha):
+            seen.append(sha)
+            body = "Fixes VFA-99" if sha == "keyless-late" else ""
+            return [{"title": "pull", "body": body, "head": {"ref": "main"}}]
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._github_client",
+        lambda: FakeClient(),
+    )
+    keyed = [
+        {
+            "sha": f"keyed{index:02d}",
+            "message": "VFA-1: already named",
+            "subject": "VFA-1: already named",
+        }
+        for index in range(20)
+    ]
+    keyless = {
+        "sha": "keyless-late",
+        "message": "[bigas-autofix] no ticket in the message",
+        "subject": "[bigas-autofix] no ticket in the message",
+    }
+    original = keyed + [keyless]
+    enriched = _enrich_commits_with_pr_keys(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        commits=original,
+        max_lookups=20,
+    )
+    assert seen[0] == "keyless-late"
+    assert len(seen) == 20
+    assert [row["sha"] for row in enriched] == [row["sha"] for row in original]
+    assert enriched[-1]["pr_keys"] == ["VFA-99"]
+
+
+def test_enrich_commits_reuses_pulls_for_duplicate_sha(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def list_pulls_for_commit(self, owner, repo, sha):
+            calls.append(sha)
+            return [
+                {
+                    "title": "VFA-53: Fix headline",
+                    "body": "",
+                    "head": {"ref": "fix/vfa-53"},
+                }
+            ]
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._github_client",
+        lambda: FakeClient(),
+    )
+    commit = {
+        "sha": "abc123def456",
+        "message": "[bigas-autofix] no key",
+        "subject": "[bigas-autofix] no key",
+    }
+    enriched = _enrich_commits_with_pr_keys(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        commits=[dict(commit), dict(commit)],
+        max_lookups=1,
+    )
+    assert calls == ["abc123def456"]
+    assert enriched[0]["pr_keys"] == ["VFA-53"]
+    assert enriched[1]["pr_keys"] == ["VFA-53"]
+
+
 def test_git_reconcile_matches_both_keys_beside_deploy_tag():
     store = get_ticket_store()
     board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
