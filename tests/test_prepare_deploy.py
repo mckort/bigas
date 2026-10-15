@@ -284,7 +284,150 @@ def test_enrich_commits_attaches_pr_keys(monkeypatch):
         commits=commits,
     )
     assert enriched[0]["pr_keys"] == ["VFA-53"]
-    assert "pr_keys" not in enriched[1]
+    assert enriched[1]["pr_keys"] == ["VFA-53"]
+
+
+def test_enrich_commits_keeps_every_pr_key(monkeypatch):
+    class FakeClient:
+        def list_pulls_for_commit(self, owner, repo, sha):
+            return [
+                {
+                    "title": "Release 0.75.0: merge staging-0.75.0 into main (VFA-215, VFA-216)",
+                    "body": "Cut tickets: VFA-215 and VFA-216.",
+                    "head": {"ref": "staging-0.75.0"},
+                }
+            ]
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._github_client",
+        lambda: FakeClient(),
+    )
+    enriched = _enrich_commits_with_pr_keys(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        commits=[
+            {
+                "sha": "73f074b178e7c5c88512673196903696248ff15a",
+                "message": "Release 0.75.0: merge staging-0.75.0 into main (VFA-215)",
+                "subject": "Release 0.75.0: merge staging-0.75.0 into main (VFA-215)",
+            }
+        ],
+    )
+    assert enriched[0]["pr_keys"] == ["VFA-215", "VFA-216"]
+
+
+def test_enrich_commits_looks_up_keyless_messages_first(monkeypatch):
+    seen = []
+
+    class FakeClient:
+        def list_pulls_for_commit(self, owner, repo, sha):
+            seen.append(sha)
+            body = "Fixes VFA-99" if sha == "keyless-late" else ""
+            return [{"title": "pull", "body": body, "head": {"ref": "main"}}]
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._github_client",
+        lambda: FakeClient(),
+    )
+    keyed = [
+        {
+            "sha": f"keyed{index:02d}",
+            "message": "VFA-1: already named",
+            "subject": "VFA-1: already named",
+        }
+        for index in range(20)
+    ]
+    keyless = {
+        "sha": "keyless-late",
+        "message": "[bigas-autofix] no ticket in the message",
+        "subject": "[bigas-autofix] no ticket in the message",
+    }
+    original = keyed + [keyless]
+    enriched = _enrich_commits_with_pr_keys(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        commits=original,
+        max_lookups=20,
+    )
+    assert seen[0] == "keyless-late"
+    assert len(seen) == 20
+    assert [row["sha"] for row in enriched] == [row["sha"] for row in original]
+    assert enriched[-1]["pr_keys"] == ["VFA-99"]
+
+
+def test_enrich_commits_reuses_pulls_for_duplicate_sha(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def list_pulls_for_commit(self, owner, repo, sha):
+            calls.append(sha)
+            return [
+                {
+                    "title": "VFA-53: Fix headline",
+                    "body": "",
+                    "head": {"ref": "fix/vfa-53"},
+                }
+            ]
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare._github_client",
+        lambda: FakeClient(),
+    )
+    commit = {
+        "sha": "abc123def456",
+        "message": "[bigas-autofix] no key",
+        "subject": "[bigas-autofix] no key",
+    }
+    enriched = _enrich_commits_with_pr_keys(
+        project_key="VFA",
+        repo="mckort/vcfieldassistant",
+        commits=[dict(commit), dict(commit)],
+        max_lookups=1,
+    )
+    assert calls == ["abc123def456"]
+    assert enriched[0]["pr_keys"] == ["VFA-53"]
+    assert enriched[1]["pr_keys"] == ["VFA-53"]
+
+
+def test_git_reconcile_matches_both_keys_beside_deploy_tag():
+    store = get_ticket_store()
+    board = store.create_board("dev-user", name="VFA Board", project_key="VFA")
+    first = store.create_ticket(
+        board["board_id"],
+        title="Move the board card when a pull request merges",
+        user_id="dev-user",
+        key="VFA-215",
+        fix_version="0.75.0",
+        status="Final approval (manual)",
+    )
+    second = store.create_ticket(
+        board["board_id"],
+        title="Keep living analysis progress visible",
+        user_id="dev-user",
+        key="VFA-216",
+        fix_version="0.75.0",
+        status="Final approval (manual)",
+    )
+    message = (
+        "Release 0.75.0: merge staging-0.75.0 into main (VFA-215, VFA-216)\n\n"
+        "Record that the reusable workflow SHA is mckort/bigas tag "
+        "deploy-app-20261014-123106-8fcab1a."
+    )
+    report = format_git_reconcile_report(
+        project_key="VFA",
+        version="0.75.0",
+        in_cut=[first, second],
+        compared=["deploy-backend-abc → main"],
+        commits=[
+            {
+                "sha": "73f074b178e7c5c88512673196903696248ff15a",
+                "message": message,
+                "subject": message.split("\n", 1)[0],
+            }
+        ],
+    )
+    assert [row["key"] for row in report["matched"]] == ["VFA-215", "VFA-216"]
+    assert report["missing_from_git"] == []
 
 
 def test_git_reconcile_flags_cut_ticket_missing_from_git():

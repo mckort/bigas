@@ -312,6 +312,22 @@ def _keys_for_shipping_commit(
     return found
 
 
+def _pr_project_keys(project_key: str, pull: Dict[str, Any]) -> List[str]:
+    """Every project ticket key on a pull request, not only the first."""
+    if not isinstance(pull, dict):
+        return []
+    prefix = f"{normalize_project_key(project_key)}-"
+    head = pull.get("head") if isinstance(pull.get("head"), dict) else {}
+    text = "\n".join(
+        [
+            str(pull.get("title") or ""),
+            str(pull.get("body") or ""),
+            str((head or {}).get("ref") or ""),
+        ]
+    )
+    return [item for item in parse_issue_keys(text, max_keys=200) if item.startswith(prefix)]
+
+
 def _enrich_commits_with_pr_keys(
     *,
     project_key: str,
@@ -319,58 +335,56 @@ def _enrich_commits_with_pr_keys(
     commits: List[Dict[str, Any]],
     max_lookups: int = 20,
 ) -> List[Dict[str, Any]]:
-    """Attach PR ticket keys to commits whose messages have none (autofix, direct push)."""
+    """Attach every linked PR ticket key, even when the commit message already has one.
+
+    Commits whose messages lack a project ticket key are looked up first, so a
+    long release cannot spend the whole lookup budget on commits that already
+    name their tickets. Repeated SHAs reuse the first pull-request response.
+    """
     repo = (repo or "").strip()
     if not repo or "/" not in repo or not commits:
         return commits
     key = normalize_project_key(project_key)
-    from bigas.resources.product.jira_automation.final_approval import (
-        extract_jira_issue_key,
-    )
-
-    need = [
-        commit
-        for commit in commits
-        if not _ticket_keys_for_project(key, commit.get("message") or commit.get("subject") or "")
-    ]
-    if not need:
-        return commits
     try:
         client = _github_client()
     except Exception:
         logger.warning("Could not create GitHub client to attach PR keys", exc_info=True)
         return commits
     owner, name = repo.split("/", 1)
+    missing_keys: List[Dict[str, Any]] = []
+    has_keys: List[Dict[str, Any]] = []
+    for commit in commits:
+        text = commit.get("message") or commit.get("subject") or ""
+        if _ticket_keys_for_project(key, text):
+            has_keys.append(commit)
+        else:
+            missing_keys.append(commit)
     lookups = 0
-    for commit in need:
-        if lookups >= max_lookups:
-            break
+    pulls_by_sha: Dict[str, List[Dict[str, Any]]] = {}
+    for commit in missing_keys + has_keys:
         sha = (commit.get("sha") or "").strip()
         if not sha:
             continue
-        lookups += 1
-        try:
-            pulls = client.list_pulls_for_commit(owner, name, sha)
-        except Exception:
-            logger.warning("list_pulls_for_commit failed for %s@%s", repo, sha[:7], exc_info=True)
-            continue
+        if sha not in pulls_by_sha:
+            if lookups >= max_lookups:
+                continue
+            lookups += 1
+            try:
+                pulls_by_sha[sha] = client.list_pulls_for_commit(owner, name, sha)
+            except Exception:
+                logger.warning(
+                    "list_pulls_for_commit failed for %s@%s", repo, sha[:7], exc_info=True
+                )
+                pulls_by_sha[sha] = []
+                continue
         pr_keys: List[str] = []
         seen = set()
-        for pull in pulls:
-            if not isinstance(pull, dict):
-                continue
-            found = extract_jira_issue_key(
-                (pull.get("title") or ""),
-                (pull.get("body") or ""),
-                (((pull.get("head") or {}).get("ref") or "")),
-            )
-            if not found:
-                continue
-            found = found.upper()
-            if not found.startswith(f"{key}-") or found in seen:
-                continue
-            seen.add(found)
-            pr_keys.append(found)
+        for pull in pulls_by_sha[sha]:
+            for found in _pr_project_keys(key, pull):
+                if found in seen:
+                    continue
+                seen.add(found)
+                pr_keys.append(found)
         if pr_keys:
             commit["pr_keys"] = pr_keys
     return commits

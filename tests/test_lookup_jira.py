@@ -92,6 +92,22 @@ def test_parse_issue_keys_expands_range_and_lists():
     assert parse_issue_keys("no tickets here") == []
 
 
+def test_parse_issue_keys_skips_deploy_tag_range():
+    text = (
+        "Release 0.75.0: merge staging-0.75.0 into main (VFA-215, VFA-216)\n"
+        "Record that the reusable workflow SHA is mckort/bigas tag "
+        "deploy-app-20261014-123106-8fcab1a."
+    )
+    keys = parse_issue_keys(text, max_keys=200)
+    assert "VFA-215" in keys
+    assert "VFA-216" in keys
+    assert len(keys) < 10
+
+
+def test_parse_issue_keys_skips_range_wider_than_budget():
+    assert parse_issue_keys("BIG-1 to BIG-100", max_keys=40) == ["BIG-1", "BIG-100"]
+
+
 def test_lookup_jira_requires_issue_or_project():
     with pytest.raises(LookupJiraError, match="issue_key or project_key"):
         LookupJiraService().lookup()
