@@ -1113,7 +1113,7 @@ flowchart TB
 
 ### Plug in a usage source
 
-The weekly CFO report (`fetch_ai_usage` / `weekly_cto_ai_report`) is optional. It only includes sources named in `BIGAS_USAGE_PROVIDERS` (comma-separated). Unset that variable and the job still runs, with no cost lines.
+The weekly CFO report (`fetch_ai_usage` / `weekly_cto_ai_report`) is optional. It only includes sources named in `BIGAS_USAGE_PROVIDERS` (comma-separated). Unset that variable and the job still runs, with no cost lines. When `ACCOUNTED_CFO_COMPANIES` is set, the same message appends Accounted books from `ACCOUNTED_API_BASE` (default `https://app.gnubok.se/api/v1`). CFO chat MCP stays on `ACCOUNTED_MCP_URL`. On the 1st, the books block covers the completed prior month.
 
 Built-in names: `cursor` (needs `CURSOR_API_KEY`), `llm_logs` (Cloud Logging `event: llm_usage`), `gcp_billing` (BigQuery billing export), `tavily` (VCFA Firestore). Credentials for a source are still required; listing a name without them skips it.
 
