@@ -52,7 +52,10 @@ _DATED_SUFFIX = re.compile(r"-\d{4}-\d{2}-\d{2}$")
 _ID_PATTERNS: Dict[str, re.Pattern[str]] = {
     "openai": re.compile(r"\b((?:gpt|o\d)(?:-[a-z0-9.]+)+)\b", re.I),
     "anthropic": re.compile(r"\b(claude-(?:fable|opus|sonnet)(?:-[a-z0-9.]+)+)\b", re.I),
-    "gemini": re.compile(r"\b(gemini-(?:[a-z0-9.]+-)*pro(?:-[a-z0-9.]+)*)\b", re.I),
+    "gemini": re.compile(
+        r"\b(gemini-(?:[a-z0-9.]+-)*(?:pro|argon)(?:-[a-z0-9.]+)*)\b",
+        re.I,
+    ),
 }
 
 

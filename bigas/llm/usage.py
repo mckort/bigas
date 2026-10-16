@@ -7,6 +7,7 @@ not a substitute for Cloud Billing invoices.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
+from datetime import date
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 
@@ -65,12 +66,27 @@ _MODEL_PRICE_USD_PER_MTOK: Tuple[Tuple[str, float, float], ...] = (
     ("gpt-4o", 2.50, 10.00),
 )
 
+# Gemini 4 Argon list price steps up on this date (USD / 1M tokens).
+_GEMINI_4_ARGON_PRICE_CHANGE = date(2026, 12, 1)
+
+
+def _gemini_4_argon_price(today: Optional[date] = None) -> Tuple[float, float]:
+    """Intro rate through 30 Nov 2026, then the standard list rate."""
+    stamp = today or date.today()
+    if stamp < _GEMINI_4_ARGON_PRICE_CHANGE:
+        return 2.00, 10.00
+    return 4.00, 20.00
+
 
 def resolve_model_price_usd_per_mtok(model: str) -> Optional[Tuple[float, float]]:
     """Return (input, output) USD per 1M tokens, or None if unknown."""
     name = (model or "").strip().lower()
     if not name:
         return None
+    if name == "gemini-4-argon" or (
+        name.startswith("gemini-4-argon-") and "cyber" not in name
+    ):
+        return _gemini_4_argon_price()
     for prefix, inp, out in _MODEL_PRICE_USD_PER_MTOK:
         if name == prefix or name.startswith(prefix):
             return inp, out

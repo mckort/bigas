@@ -11,6 +11,10 @@ name: VC Field Assistant living analysis
 source: https://github.com/mckort/vcfieldassistant
 # Always compared, even if discovery would skip it. Override with EVAL_BASELINE_MODEL.
 baseline_model: gemini:gemini-3.1-pro-preview
+# Pinned challenger for this pack only. Not a VC Field Assistant product model.
+# Retested every run, including after a loss, so it stays next to the baseline and Claude.
+extra_models:
+  - gemini:gemini-4-argon
 fixture:
   company: VC Field Assistant
   url: https://vcfieldassistant.com

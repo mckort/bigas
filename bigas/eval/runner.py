@@ -37,6 +37,14 @@ def _pack_baseline_model(evaluator: Any) -> str:
     return baseline.strip() if isinstance(baseline, str) else ""
 
 
+def _pack_extra_models(evaluator: Any) -> List[str]:
+    pack = getattr(evaluator, "pack", None)
+    extras = getattr(pack, "extra_models", None) or ()
+    if isinstance(extras, str):
+        extras = [extras]
+    return [str(item).strip() for item in extras if str(item).strip()]
+
+
 def _budget_cap_usd() -> float:
     raw = (os.environ.get("MODEL_EVAL_BUDGET_USD") or "15").strip()
     try:
@@ -182,6 +190,7 @@ class EvalRunner:
             explicit_models=models,
             baseline_model=pack_baseline,
             include_baseline=include_baseline,
+            extra_models=_pack_extra_models(evaluator),
         )
         judge_models = [str(item) for item in (getattr(self.judge, "models", []) or []) if isinstance(item, str)]
         rubric_raw = evaluator.get_judge_rubric()

@@ -23,6 +23,7 @@ DEFAULT_PRO_MODELS: Tuple[Tuple[str, str], ...] = (
     ("anthropic", "claude-fable-5-1"),
     ("anthropic", "claude-opus-5"),
     ("gemini", "gemini-3.1-pro-preview"),
+    ("gemini", "gemini-4-argon"),
 )
 
 # Anthropic list prices (USD / 1M tokens) — input, output.
@@ -213,6 +214,18 @@ def resolve_baseline_model(pack_baseline: Optional[str] = None) -> Optional[Mode
     return parse_model_ref(env or (pack_baseline or ""))
 
 
+def _pinned_models(raw_models: Optional[List[str]]) -> List[ModelCandidate]:
+    pinned: List[ModelCandidate] = []
+    seen: Set[str] = set()
+    for raw in raw_models or []:
+        model = parse_model_ref(raw)
+        if not model or model.key in seen:
+            continue
+        seen.add(model.key)
+        pinned.append(model)
+    return pinned
+
+
 def get_candidate_models(
     use_case: str,
     *,
@@ -220,13 +233,15 @@ def get_candidate_models(
     explicit_models: Optional[List[str]] = None,
     baseline_model: Optional[str] = None,
     include_baseline: bool = True,
+    extra_models: Optional[List[str]] = None,
 ) -> List[ModelCandidate]:
     """
-    Return models to benchmark: production baseline + reigning champion +
-    newly discovered pro models. Skips previously eliminated models, except
-    the current production baseline which is always re-tested.
+    Return models to benchmark: production baseline + pack extras + reigning
+    champion + newly discovered pro models. Skips previously eliminated models,
+    except the production baseline and pack extras, which are always re-tested.
     """
     baseline = resolve_baseline_model(baseline_model) if include_baseline else None
+    pinned = _pinned_models(extra_models)
 
     if explicit_models:
         out: List[ModelCandidate] = []
@@ -239,6 +254,11 @@ def get_candidate_models(
             out.append(model)
         if baseline and baseline.key not in seen:
             out.insert(0, baseline)
+            seen.add(baseline.key)
+        for model in pinned:
+            if model.key not in seen:
+                out.append(model)
+                seen.add(model.key)
         return out
 
     state = load_eval_state(storage)
@@ -267,6 +287,10 @@ def get_candidate_models(
         _add(baseline, force=True)
         already.add(baseline.key)
 
+    for model in pinned:
+        _add(model, force=True)
+        already.add(model.key)
+
     if champion:
         if ":" not in champion and champion in by_id:
             champion_model = by_id[champion]
@@ -276,7 +300,12 @@ def get_candidate_models(
             _add(champion_model)
 
     new_models = [model for model in discovered if model.key not in already]
-    skipped = [model.key for model in discovered if model.key in eliminated]
+    pinned_keys = {model.key for model in pinned}
+    skipped = [
+        model.key
+        for model in discovered
+        if model.key in eliminated and model.key not in pinned_keys
+    ]
     if skipped:
         logger.info("Eval skipping already-run models: %s", ", ".join(skipped))
     if new_models:
