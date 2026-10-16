@@ -59,6 +59,8 @@ def uses_max_completion_tokens(model: str) -> bool:
 def supports_temperature(model: str) -> bool:
     """True when the provider accepts a custom ``temperature`` for this model id."""
     name = (model or "").strip().lower()
+    # Generative AI SDK ids are sometimes ``models/<id>``.
+    name = name.removeprefix("models/")
     if not name:
         return True
     if name.startswith(("o1", "o3", "o4", "gpt-5", "gpt-6")):

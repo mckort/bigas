@@ -56,11 +56,19 @@ class TokenUsageTests(unittest.TestCase):
 
     def test_pro_latest_price(self):
         self.assertEqual(resolve_model_price_usd_per_mtok("gemini-pro-latest"), (2.00, 12.00))
+        self.assertEqual(
+            resolve_model_price_usd_per_mtok("models/gemini-pro-latest"),
+            (2.00, 12.00),
+        )
 
     def test_gemini_4_argon_intro_price_until_dec_2026(self):
         with patch("bigas.llm.usage.date") as mock_date:
             mock_date.today.return_value = date(2026, 10, 16)
             self.assertEqual(resolve_model_price_usd_per_mtok("gemini-4-argon"), (2.00, 10.00))
+            self.assertEqual(
+                resolve_model_price_usd_per_mtok("models/gemini-4-argon"),
+                (2.00, 10.00),
+            )
 
     def test_gemini_4_argon_list_price_from_dec_2026(self):
         with patch("bigas.llm.usage.date") as mock_date:

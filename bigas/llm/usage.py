@@ -81,6 +81,8 @@ def _gemini_4_argon_price(today: Optional[date] = None) -> Tuple[float, float]:
 def resolve_model_price_usd_per_mtok(model: str) -> Optional[Tuple[float, float]]:
     """Return (input, output) USD per 1M tokens, or None if unknown."""
     name = (model or "").strip().lower()
+    # Generative AI SDK ids are sometimes ``models/<id>``.
+    name = name.removeprefix("models/")
     if not name:
         return None
     if name == "gemini-4-argon" or (
