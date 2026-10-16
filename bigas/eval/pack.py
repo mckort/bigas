@@ -92,6 +92,7 @@ class EvalPack:
     steps: List[PackStep] = field(default_factory=list)
     rubric: str = ""
     baseline_model: str = ""
+    extra_models: Tuple[str, ...] = ()
     path: Optional[Path] = None
 
 
@@ -174,8 +175,28 @@ def pack_from_mapping(raw: Mapping[str, Any], *, path: Optional[Path] = None) ->
         steps=steps,
         rubric=str(rubric).strip(),
         baseline_model=str(raw.get("baseline_model") or "").strip(),
+        extra_models=_parse_extra_models(raw.get("extra_models")),
         path=path,
     )
+
+
+def _parse_extra_models(raw: Any) -> Tuple[str, ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raise ValueError("Eval pack extra_models must be a list of model refs")
+    models: List[str] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Eval pack extra_models entry {index} must be a model ref string"
+            )
+        text = item.strip()
+        if text:
+            models.append(text)
+    return tuple(models)
 
 
 def _parse_step(raw: Any, index: int) -> PackStep:

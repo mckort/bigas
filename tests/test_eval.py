@@ -209,6 +209,36 @@ class RegistryTests(unittest.TestCase):
     def test_fallback_excludes_retired_gemini_25_pro(self):
         self.assertNotIn(("gemini", "gemini-2.5-pro"), DEFAULT_PRO_MODELS)
         self.assertIn(("gemini", "gemini-3.1-pro-preview"), DEFAULT_PRO_MODELS)
+        self.assertIn(("gemini", "gemini-4-argon"), DEFAULT_PRO_MODELS)
+
+    @patch.dict("os.environ", {"EVAL_BASELINE_MODEL": ""}, clear=False)
+    def test_pack_extra_survives_elimination(self):
+        storage = MagicMock()
+        storage.get_json.return_value = {
+            "use_cases": {
+                "vfa-living-analysis": {
+                    "champion": "anthropic:claude-fable-5-1",
+                    "eliminated": ["gemini:gemini-4-argon"],
+                }
+            }
+        }
+        with patch("bigas.eval.registry.discover_pro_models") as discover:
+            discover.return_value = [
+                ModelCandidate("anthropic", "claude-fable-5-1"),
+                ModelCandidate("anthropic", "claude-opus-5"),
+                ModelCandidate("gemini", "gemini-3.1-pro-preview"),
+            ]
+            models = get_candidate_models(
+                "vfa-living-analysis",
+                storage=storage,
+                baseline_model="gemini:gemini-3.1-pro-preview",
+                extra_models=["gemini:gemini-4-argon"],
+            )
+        keys = [m.key for m in models]
+        self.assertEqual(keys[0], "gemini:gemini-3.1-pro-preview")
+        self.assertIn("gemini:gemini-4-argon", keys)
+        self.assertIn("anthropic:claude-fable-5-1", keys)
+        self.assertIn("anthropic:claude-opus-5", keys)
 
 
 class DiscoverTests(unittest.TestCase):
@@ -253,6 +283,16 @@ class DiscoverTests(unittest.TestCase):
             "Latest gemini-3-flash and gemini-3.1-pro-preview plus gemini-2.5-pro",
         )
         self.assertEqual(ids, ["gemini-3.1-pro-preview", "gemini-2.5-pro"])
+
+    def test_extract_gemini_argon_alongside_pro(self):
+        ids = extract_ids_from_text(
+            "gemini",
+            "Flagship gemini-4-argon and gemini-3.1-pro-preview. Skip gemini-3-flash "
+            "and gemini-4-argon-cyber-permissive.",
+        )
+        self.assertEqual(ids, ["gemini-4-argon", "gemini-3.1-pro-preview"])
+        self.assertTrue(is_not_reasoning("gemini-4-argon-cyber-permissive"))
+        self.assertFalse(is_not_reasoning("gemini-4-argon"))
 
     def test_caps_at_two_per_provider(self):
         models = discover_flagship_models(
@@ -766,6 +806,7 @@ class VFAPackEvaluatorTests(unittest.TestCase):
     def test_pack_exposes_baseline_model(self):
         pack = load_pack("vfa-living-analysis")
         self.assertEqual(pack.baseline_model, "gemini:gemini-3.1-pro-preview")
+        self.assertEqual(pack.extra_models, ("gemini:gemini-4-argon",))
         self.assertEqual(len(pack.fixtures), 2)
         self.assertEqual(pack.fixtures[1].get("company") or pack.fixtures[1].get("company_name"), "Stripe")
 

@@ -50,6 +50,10 @@ class ModelOutputTokenLimitTests(unittest.TestCase):
         self.assertFalse(supports_temperature("gpt-5.6-sol"))
         self.assertFalse(supports_temperature("claude-fable-5-1"))
         self.assertFalse(supports_temperature("claude-opus-5"))
+        self.assertFalse(supports_temperature("gemini-4-argon"))
+        self.assertFalse(supports_temperature("models/gemini-4-argon"))
+        self.assertTrue(supports_temperature("gemini-3.1-pro-preview"))
+        self.assertTrue(supports_temperature("models/gemini-3.1-pro-preview"))
         self.assertTrue(supports_temperature("gpt-4o"))
         self.assertTrue(supports_temperature("claude-sonnet-4-20250514"))
 

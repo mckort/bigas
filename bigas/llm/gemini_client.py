@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from bigas.llm.client import LLMClient
 from bigas.llm.completion import LLMCompletion, ToolCall
+from bigas.llm.limits import supports_temperature
 from bigas.llm.usage import TokenUsage, usage_from_mapping
 
 logger = logging.getLogger(__name__)
@@ -358,7 +359,7 @@ class GeminiLLMClient(LLMClient):
         generation_config: Dict[str, Any] = {}
         if max_tokens is not None:
             generation_config["max_output_tokens"] = max_tokens
-        if temperature is not None:
+        if temperature is not None and supports_temperature(self._model_name):
             generation_config["temperature"] = temperature
         # Cap thinking so long reviews keep budget for visible text. Gemini thinking
         # models share max_output_tokens between thinking + answer.

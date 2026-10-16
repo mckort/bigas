@@ -59,11 +59,16 @@ def uses_max_completion_tokens(model: str) -> bool:
 def supports_temperature(model: str) -> bool:
     """True when the provider accepts a custom ``temperature`` for this model id."""
     name = (model or "").strip().lower()
+    # Generative AI SDK ids are sometimes ``models/<id>``.
+    name = name.removeprefix("models/")
     if not name:
         return True
     if name.startswith(("o1", "o3", "o4", "gpt-5", "gpt-6")):
         return False
     if name.startswith(("claude-fable-5", "claude-opus-5", "claude-sonnet-5")):
+        return False
+    # Gemini 4 Argon rejects temperature, top_p, and top_k.
+    if name == "gemini-4-argon" or name.startswith("gemini-4-argon-"):
         return False
     return True
 
