@@ -188,8 +188,12 @@ def _parse_extra_models(raw: Any) -> Tuple[str, ...]:
     if not isinstance(raw, list):
         raise ValueError("Eval pack extra_models must be a list of model refs")
     models: List[str] = []
-    for item in raw:
-        text = str(item or "").strip()
+    for index, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Eval pack extra_models entry {index} must be a model ref string"
+            )
+        text = item.strip()
         if text:
             models.append(text)
     return tuple(models)

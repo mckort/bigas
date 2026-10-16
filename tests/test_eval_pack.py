@@ -70,6 +70,27 @@ class PackSchemaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pack_from_mapping({"id": "demo", "steps": [{"id": "one"}]})
 
+    def test_extra_models_rejects_nested_entries(self):
+        with self.assertRaises(ValueError) as ctx:
+            pack_from_mapping(
+                {
+                    "id": "demo",
+                    "steps": [{"id": "one", "prompt": "Hi"}],
+                    "extra_models": [{"model": "gemini-4-argon"}],
+                }
+            )
+        self.assertIn("extra_models entry 0 must be a model ref string", str(ctx.exception))
+
+    def test_extra_models_accepts_string_refs(self):
+        pack = pack_from_mapping(
+            {
+                "id": "demo",
+                "steps": [{"id": "one", "prompt": "Hi"}],
+                "extra_models": ["gemini:gemini-4-argon", "  openai:gpt-4o  "],
+            }
+        )
+        self.assertEqual(pack.extra_models, ("gemini:gemini-4-argon", "openai:gpt-4o"))
+
     def test_load_pack_file_inline_prompt(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "demo.pack.yaml"
