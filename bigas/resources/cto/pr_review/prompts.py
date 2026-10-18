@@ -57,6 +57,16 @@ Project helpers / imports (avoid false blockers):
 - When re-checking a previous finding that a prop, type field, or parameter is
   missing, mark it resolved unless this diff shows the declaration without
   that member. Do not repeat it.
+
+Invite and shared-company false blockers (do not report these):
+- Do not say `listSharedCompanies()` is skipped for external viewers unless that
+  call itself is inside the guard. A guard around the workspace portfolio fetch
+  does not cover a later `listSharedCompanies()` call.
+- Do not treat `PENDING_WORKSPACE_INVITES` as a lockout with no accept UI when
+  `LoginPage` renders `PendingWorkspaceInvitesPanel` for that code. That screen
+  is how an invited workspace member accepts the organization.
+- When re-checking either finding, mark it resolved if the diff matches the
+  case above. Do not repeat it.
 """.strip()
 
 _DEAD_CODE_RULES = """
@@ -205,6 +215,10 @@ Guidelines:
 - If a previous unused-file/asset finding remains but the file is still referenced
   (including outside this diff) or the autofix explained it is still used, mark it
   resolved — do not keep it as Important.
+- If a previous finding says `listSharedCompanies()` is skipped, or that
+  `PENDING_WORKSPACE_INVITES` leaves the user with no accept UI, mark it
+  resolved when the shared-company call is outside the portfolio guard and
+  `LoginPage` still renders `PendingWorkspaceInvitesPanel` for that code.
 - If the autofix deleted an import and this diff does not show that the call
   site is gone, report that deletion as a new Blocker. Do not treat the
   unused-import finding as resolved.

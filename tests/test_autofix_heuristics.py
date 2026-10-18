@@ -460,6 +460,9 @@ def test_pr_review_prompts_respect_project_helpers():
         assert "deletes the import or definition that a remaining call still uses" in text
         assert "Do NOT report a missing prop, type field, parameter, or export" in text
         assert "mark it resolved unless this diff shows the declaration without" in text
+        assert "listSharedCompanies()" in text
+        assert "PENDING_WORKSPACE_INVITES" in text
+        assert "PendingWorkspaceInvitesPanel" in text
 
     assert "An unchanged function outside the hunks is not missing" in PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
 
