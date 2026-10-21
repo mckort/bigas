@@ -21,6 +21,7 @@ from bigas.resources.cto.autofix.heuristics import (
     auto_merge_enabled,
     autofix_max_iterations,
     autofix_pushed_new_commit,
+    classify_ci_checks,
     format_loop_protection_message,
     minor_autofix_max_iterations,
     review_is_ready_to_merge,
@@ -365,6 +366,28 @@ def _pr_autofix_round_counts(
         return 0, 0
 
 
+def _ci_gate_for_pr(client: GitHubPRCommentClient, owner: str, repo_name: str, pr: dict) -> dict:
+    """Classify test checks on the PR head. Missing SHA or API errors do not block."""
+    head = pr.get("head") if isinstance(pr, dict) else None
+    sha = (head.get("sha") or "").strip() if isinstance(head, dict) else ""
+    if not sha:
+        return {"state": "none", "failed": [], "pending": [], "passed": 0}
+    try:
+        runs = client.list_check_runs(owner, repo_name, sha)
+    except GitHubPRCommentError:
+        logger.warning(
+            "Could not read check runs for %s/%s@%s",
+            owner,
+            repo_name,
+            sha[:8],
+            exc_info=True,
+        )
+        return {"state": "none", "failed": [], "pending": [], "passed": 0}
+    if not isinstance(runs, list):
+        return {"state": "none", "failed": [], "pending": [], "passed": 0}
+    return classify_ci_checks(runs)
+
+
 def _pr_already_merged(
     *,
     owner: str,
@@ -518,6 +541,29 @@ def _maybe_auto_merge_pr(
     draft_line = (
         "\nMarked draft as ready for review." if converted_draft else ""
     )
+
+    gate = _ci_gate_for_pr(client, owner, repo_name, pr)
+    if gate["state"] == "failed":
+        names = ", ".join(item.get("name") or "check" for item in gate["failed"]) or "checks"
+        _post_cto_status(
+            f"**PR auto-merge blocked**{issue_bit}\n{pr_ref}\n"
+            f"Tests failed ({names}). Autofix will run instead of merging."
+        )
+        return {
+            "ok": False,
+            "merged": False,
+            "reason": "checks_failed",
+            "failed_checks": gate["failed"],
+            "draft_converted": converted_draft,
+        }
+    if gate["state"] == "pending":
+        return {
+            "ok": True,
+            "merged": False,
+            "reason": "checks_pending",
+            "pending_checks": gate["pending"],
+            "draft_converted": converted_draft,
+        }
 
     try:
         result = client.merge_pull_request(
@@ -828,6 +874,80 @@ def review_and_comment_pr():
                 "review_posted": False,
                 "phase": phase,
                 "pr_url": pr_url,
+                "jira_final_approval": jira_final,
+            },
+            summarize_review_result,
+        )
+
+    if _request_flag(data.get("merge_when_ready")):
+        if not allow_auto_merge:
+            return _json_summary(
+                {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "auto_merge_not_requested",
+                    "ready_to_merge": False,
+                    "review_posted": False,
+                    "pr_url": pr_url,
+                    "auto_merge": {"skipped": True, "reason": "auto_merge_not_requested"},
+                },
+                summarize_review_result,
+            )
+        comment_body = ""
+        try:
+            comment_body = (
+                GitHubPRCommentClient(token=github_token).get_marked_comment_body(
+                    owner, repo_name, pr_number
+                )
+                or ""
+            )
+        except GitHubPRCommentError:
+            logger.warning(
+                "Could not read review comment before merge retry on %s#%s",
+                repo,
+                pr_number,
+                exc_info=True,
+            )
+        autofix_count, minor_autofix_count = _pr_autofix_round_counts(
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            github_token=github_token,
+        )
+        ready = review_is_ready_to_merge(
+            comment_body,
+            autofix_count=autofix_count,
+            minor_autofix_count=minor_autofix_count,
+        )
+        if not ready:
+            auto_merge = {"skipped": True, "reason": "not_ready"}
+        else:
+            issue_key, issue_summary = _jira_issue_context_from_pr(pr)
+            auto_merge = _maybe_auto_merge_pr(
+                repo=repo,
+                pr_number=pr_number,
+                pr_url=pr_url,
+                github_token=github_token,
+                issue_key=issue_key,
+                issue_summary=issue_summary,
+            )
+        jira_final = _final_approval_after_merge(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            github_token=github_token,
+            merged=bool(auto_merge.get("merged")),
+        )
+        return _json_summary(
+            {
+                "success": True,
+                "skipped": not bool(auto_merge.get("merged")),
+                "reason": auto_merge.get("reason") or "merge_when_ready",
+                "ready_to_merge": ready,
+                "review_posted": False,
+                "phase": phase,
+                "pr_url": pr_url,
+                "auto_merge": auto_merge,
                 "jira_final_approval": jira_final,
             },
             summarize_review_result,

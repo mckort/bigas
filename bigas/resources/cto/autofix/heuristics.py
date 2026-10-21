@@ -436,6 +436,59 @@ def latest_commit_is_autofix(message: str) -> bool:
     return AUTOFIX_COMMIT_MARKER in commit_subject(message)
 
 
+_CI_PENDING = {"queued", "in_progress", "waiting", "pending", "requested"}
+_CI_FAILED = {"failure", "timed_out", "cancelled", "startup_failure", "action_required"}
+
+
+def classify_ci_checks(check_runs: list) -> dict:
+    """
+    Decide whether non-Bigas checks allow a merge.
+
+    Bigas review jobs are ignored. They are still running while merge is decided.
+    ``passed`` means every relevant check succeeded. ``none`` means no test check
+    was reported (path filters skipped them). ``pending`` and ``failed`` block merge.
+    """
+    failed: list[dict] = []
+    pending: list[dict] = []
+    passed = 0
+    for run in check_runs or []:
+        if not isinstance(run, dict):
+            continue
+        name = (run.get("name") or "").strip() or "check"
+        if name.lower().startswith("bigas /") or name.lower() == "bigas":
+            continue
+        status = (run.get("status") or "").strip().lower()
+        conclusion = (run.get("conclusion") or "").strip().lower()
+        if conclusion in {"none", "null"}:
+            conclusion = ""
+        item = {
+            "name": name,
+            "status": status,
+            "conclusion": conclusion or status,
+            "details_url": (run.get("details_url") or run.get("html_url") or "").strip(),
+            "id": run.get("id"),
+        }
+        if status in _CI_PENDING or (status != "completed" and not conclusion):
+            pending.append(item)
+            continue
+        if conclusion in _CI_FAILED:
+            failed.append(item)
+            continue
+        if conclusion == "success":
+            passed += 1
+            continue
+        # skipped / neutral / stale do not block
+    if failed:
+        state = "failed"
+    elif pending:
+        state = "pending"
+    elif passed:
+        state = "passed"
+    else:
+        state = "none"
+    return {"state": state, "failed": failed, "pending": pending, "passed": passed}
+
+
 def pr_has_merge_conflicts(pr: dict) -> bool:
     """
     True when GitHub reports the PR cannot merge due to conflicts.
