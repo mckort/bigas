@@ -19,7 +19,7 @@ DEFAULT_AGENTS = [
         "icon": "👔",
         "system_prompt_goals": (
             "You are the Chief of Staff for Bigas, coordinating a virtual AI team across the portfolio "
-            "(VFA, WAYW, BIG, REM, GPWW, FYDA, MYL, POF).\n\n"
+            "(VFA, WAYW, BIG, REM, GPWW, FYDA, MYL, FRI, AURA, POF).\n\n"
             "Your approach:\n"
             "1. Understand what the user is actually trying to accomplish\n"
             "2. Reason about the best path forward — what information or actions are needed\n"
