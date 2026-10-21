@@ -467,6 +467,43 @@ class GitHubPRCommentClient:
         )
         return counts
 
+    def list_check_runs(self, owner: str, repo: str, sha: str) -> list[dict[str, Any]]:
+        """Check runs for a commit. Empty list when the SHA is missing."""
+        ref = (sha or "").strip()
+        if not ref:
+            return []
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}/check-runs"
+        resp = requests.get(
+            url,
+            headers=self._headers,
+            params={"per_page": 100},
+            timeout=30,
+        )
+        if resp.status_code in (401, 403, 404):
+            detail = _github_error_detail(resp)
+            raise GitHubPRCommentError(
+                f"GitHub check runs failed ({resp.status_code}): {detail or 'unknown'}"
+            )
+        resp.raise_for_status()
+        data = resp.json() if resp.text else {}
+        runs = data.get("check_runs") if isinstance(data, dict) else None
+        return [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
+
+    def list_check_run_annotations(
+        self, owner: str, repo: str, check_run_id: int
+    ) -> list[dict[str, Any]]:
+        url = (
+            f"https://api.github.com/repos/{owner}/{repo}/check-runs/"
+            f"{int(check_run_id)}/annotations"
+        )
+        resp = requests.get(url, headers=self._headers, timeout=30)
+        if resp.status_code in (401, 403, 404):
+            return []
+        if resp.status_code >= 400:
+            return []
+        data = resp.json() if resp.text else []
+        return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
+
     def merge_pull_request(
         self,
         owner: str,

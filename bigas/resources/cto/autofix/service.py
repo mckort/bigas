@@ -99,6 +99,74 @@ def _ensure_issue_key_for_autofix(
     return (ensured.get("issue_key") or "").strip()
 
 
+def _ci_failure_block(failures: list[dict]) -> str:
+    if not failures:
+        return ""
+    lines = [
+        "## Failing checks",
+        "These GitHub checks failed on the current head. Fix them. "
+        "The pull request must not merge until they are green.",
+    ]
+    for item in failures:
+        name = item.get("name") or "check"
+        url = item.get("details_url") or ""
+        lines.append(f"- {name}" + (f" ({url})" if url else ""))
+        for note in item.get("annotations") or []:
+            lines.append(f"  - {note}")
+    return "\n".join(lines) + "\n\n"
+
+
+def _failed_ci_checks(token: str, owner: str, repo_name: str, pr: dict) -> list[dict]:
+    head = pr.get("head") if isinstance(pr, dict) else None
+    sha = (head.get("sha") or "").strip() if isinstance(head, dict) else ""
+    if not sha:
+        return []
+    gh = GitHubPRCommentClient(token=token)
+    lister = getattr(gh, "list_check_runs", None)
+    if not callable(lister):
+        return []
+    try:
+        runs = lister(owner, repo_name, sha)
+    except GitHubPRCommentError:
+        logger.warning(
+            "Could not read check runs for autofix on %s/%s@%s",
+            owner,
+            repo_name,
+            sha[:8],
+            exc_info=True,
+        )
+        return []
+    from bigas.resources.cto.autofix.heuristics import classify_ci_checks
+
+    gate = classify_ci_checks(runs if isinstance(runs, list) else [])
+    failed = list(gate.get("failed") or [])
+    annotator = getattr(gh, "list_check_run_annotations", None)
+    if not callable(annotator):
+        return failed
+    for item in failed:
+        check_id = item.get("id")
+        if not isinstance(check_id, int):
+            continue
+        try:
+            notes = annotator(owner, repo_name, check_id)
+        except Exception:
+            notes = []
+        messages = []
+        for note in (notes or [])[:8]:
+            if not isinstance(note, dict):
+                continue
+            path = (note.get("path") or "").strip()
+            line = note.get("start_line")
+            message = (note.get("message") or "").strip()
+            if not message:
+                continue
+            where = f"{path}:{line}" if path else ""
+            messages.append(f"{where} {message}".strip())
+        if messages:
+            item["annotations"] = messages
+    return failed
+
+
 def _build_prompt(
     *,
     repo: str,
@@ -109,6 +177,7 @@ def _build_prompt(
     nits_only: bool = False,
     merge_conflict: bool = False,
     base_branch: str = "",
+    ci_failures: Optional[list] = None,
 ) -> str:
     conflict_block = ""
     if merge_conflict:
@@ -126,6 +195,7 @@ def _build_prompt(
             "resolve every conflict, and remove all conflict markers. "
             "Keep both the incoming base-branch changes and this PR's intended work.\n\n"
         )
+    ci_block = _ci_failure_block(list(ci_failures or []))
     if nits_only:
         focus = (
             "1. This review has only Minor / non-blocking items. Fix those leftover nits "
@@ -136,6 +206,11 @@ def _build_prompt(
             "1. Resolve the merge conflicts described above first so the PR becomes mergeable.\n"
             "2. Fix all Blockers and Important items called out in the review.\n"
             "3. Also fix Minor items listed in the same review when present."
+        )
+    elif ci_failures:
+        focus = (
+            "1. CI failed on this pull request. Fix the failing checks listed above.\n"
+            "2. Also fix Blockers and Important items in the review when they are still open."
         )
     else:
         focus = (
@@ -148,7 +223,7 @@ def _build_prompt(
 Repository: {repo}
 Pull request: {pr_url}
 
-{conflict_block}## Bigas review comment
+{conflict_block}{ci_block}## Bigas review comment
 {review_body}
 
 ## Instructions
@@ -312,6 +387,12 @@ class AutofixService:
             }
 
         merge_conflicted = pr_has_merge_conflicts(pr if isinstance(pr, dict) else {})
+        ci_failures = _failed_ci_checks(
+            self._github_token,
+            owner,
+            repo_name,
+            pr if isinstance(pr, dict) else {},
+        )
         base_branch = ""
         if isinstance(pr, dict):
             base = pr.get("base")
@@ -432,7 +513,7 @@ class AutofixService:
                 minor_autofix_count=minor_autofix_count,
                 max_iterations=max_iters,
             )
-            if not should and not merge_conflicted:
+            if not should and not merge_conflicted and not ci_failures:
                 return {
                     "skipped": True,
                     "reason": reason,
@@ -472,9 +553,10 @@ class AutofixService:
             pr_url=pr_url,
             review_body=body,
             issue_key=issue_key,
-            nits_only=nits_only and not merge_conflicted,
+            nits_only=nits_only and not merge_conflicted and not ci_failures,
             merge_conflict=merge_conflicted,
             base_branch=base_branch,
+            ci_failures=ci_failures,
         )
         model_id = select_autofix_model(
             next_round=next_round,
