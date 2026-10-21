@@ -31,11 +31,13 @@ DEFAULT_WORKFLOW_MAP: Dict[str, List[str]] = {
     "VFA": ["deploy-backend.yml", "deploy-web.yml"],
     "BIG": ["deploy.yml"],
     "FRI": ["deploy.yml"],
+    "POF": ["deploy.yml"],
 }
 
 # VM portfolio sites dispatch deploy.yml on the shared infra repo (override via BIGAS_DEPLOY_REPO_MAP).
 DEFAULT_DEPLOY_REPO_MAP: Dict[str, str] = {
     "FRI": "mckort/gcp-single-vm-webstack",
+    "POF": "mckort/gcp-single-vm-webstack",
 }
 
 

@@ -211,6 +211,31 @@ def test_resolve_deploy_target_fri_default_workflow(monkeypatch):
     assert from_site.project_key == "FRI"
 
 
+def test_resolve_deploy_target_pof_default_workflow(monkeypatch):
+    monkeypatch.delenv("BIGAS_DEPLOY_WORKFLOW_MAP", raising=False)
+    monkeypatch.delenv("BIGAS_JIRA_PROJECT_REPO_MAP", raising=False)
+    monkeypatch.delenv("BIGAS_DEPLOY_REPO_MAP", raising=False)
+    target = resolve_deploy_target(project_key="POF")
+    assert target is not None
+    assert target.repo == "mckort/pass-or-fund"
+    assert target.dispatch_repo == "mckort/gcp-single-vm-webstack"
+    assert target.workflow_inputs == {"site": "pass-or-fund"}
+    assert target.workflows == ["deploy.yml"]
+    assert any("passorfund.com" in u for u in target.site_urls)
+
+    from_text = resolve_deploy_target(site_or_text="deploy POF")
+    assert from_text is not None
+    assert from_text.project_key == "POF"
+
+    from_name = resolve_deploy_target(site_or_text="deploy pass or fund")
+    assert from_name is not None
+    assert from_name.project_key == "POF"
+
+    from_site = resolve_deploy_target(site_or_text="deploy passorfund.com")
+    assert from_site is not None
+    assert from_site.project_key == "POF"
+
+
 def test_resolve_deploy_target_bigas_keeps_default_when_map_omits_it(monkeypatch):
     monkeypatch.setenv(
         "BIGAS_JIRA_PROJECT_REPO_MAP",
