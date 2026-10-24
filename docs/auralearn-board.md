@@ -24,7 +24,7 @@ BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS=VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,F
 # BIGAS_JIRA_REPO_BASE_BRANCH_MAP=...,mckort/auralearn:master
 # BIGAS_DEPLOY_WORKFLOW_MAP=...|AURA:deploy.yml
 # Do not add AURA to BIGAS_DEPLOY_REPO_MAP. Dispatch stays on mckort/auralearn.
-# BIGAS_PROJECT_LOCAL_PATH_MAP=AURA:/Users/marcusfriman/Documents/Code/auralearn
+# BIGAS_PROJECT_LOCAL_PATH_MAP=AURA:/path/to/auralearn
 ```
 
 With `SECRET_MANAGER=true`, sync `BIGAS_DEPLOY_WORKFLOW_MAP` and restart. Code defaults still resolve `AURA` → `deploy.yml` on `mckort/auralearn` when the env map omits the key, after this Bigas revision is deployed.
