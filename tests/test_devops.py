@@ -211,6 +211,22 @@ def test_resolve_deploy_target_fri_default_workflow(monkeypatch):
     assert from_site.project_key == "FRI"
 
 
+def test_resolve_deploy_target_aura_cloud_run(monkeypatch):
+    monkeypatch.delenv("BIGAS_DEPLOY_WORKFLOW_MAP", raising=False)
+    monkeypatch.delenv("BIGAS_JIRA_PROJECT_REPO_MAP", raising=False)
+    monkeypatch.delenv("BIGAS_DEPLOY_REPO_MAP", raising=False)
+    target = resolve_deploy_target(project_key="AURA")
+    assert target is not None
+    assert target.repo == "mckort/auralearn"
+    assert target.dispatch_repo == "mckort/auralearn"
+    assert target.workflows == ["deploy.yml"]
+    assert target.workflow_inputs is None
+
+    from_text = resolve_deploy_target(site_or_text="deploy auralearn")
+    assert from_text is not None
+    assert from_text.project_key == "AURA"
+
+
 def test_resolve_deploy_target_pof_default_workflow(monkeypatch):
     monkeypatch.delenv("BIGAS_DEPLOY_WORKFLOW_MAP", raising=False)
     monkeypatch.delenv("BIGAS_JIRA_PROJECT_REPO_MAP", raising=False)
