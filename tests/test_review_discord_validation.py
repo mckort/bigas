@@ -246,9 +246,10 @@ def test_autofix_followup_rereviews_when_no_new_commit(
     svc.fetch_pr_diff.return_value = "diff --git a/x b/x"
     svc.count_autofix_commits.return_value = 1
     svc.count_autofix_rounds.return_value = (1, 0)
-    mock_gh.return_value.get_marked_comment_body.return_value = (
-        "### Important\n- unused logo"
-    )
+    mock_gh.return_value.get_marked_comment.return_value = {
+        "body": "### Important\n- unused logo",
+        "html_url": "https://github.com/acme/app/pull/1#issuecomment-1",
+    }
     mock_gh.return_value.post_or_update_pr_comment.return_value = {
         "html_url": "https://github.com/acme/app/pull/1#issuecomment-1"
     }
@@ -448,3 +449,48 @@ def test_actions_review_may_auto_merge(
     assert body.get("ready_to_merge") is True
     assert (body.get("auto_merge") or {}).get("merged") is True
     mock_merge.assert_called_once()
+
+
+_HEAD = "a" * 40
+
+
+@patch("bigas.resources.cto.endpoints._resolve_pr_diff_text")
+@patch("bigas.resources.cto.endpoints.PRReviewService")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+@patch(
+    "bigas.resources.cto.endpoints._fetch_pull_request",
+    return_value={"title": "BIG-77: Stop accidental merge", "merged": False, "head": {"sha": _HEAD}},
+)
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto_chunks")
+def test_review_skips_when_head_sha_already_reviewed(
+    _chunks,
+    mock_discord,
+    _pr,
+    mock_gh,
+    mock_review,
+    mock_diff,
+):
+    mock_gh.return_value.get_marked_comment.return_value = {
+        "html_url": "https://github.com/acme/app/pull/1#issuecomment-9",
+        "body": (
+            "### Blockers\nNone.\n\n"
+            "<!-- bigas-ai-review-marker -->\n"
+            f"<!-- bigas-reviewed-sha: {_HEAD} -->"
+        ),
+    }
+
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/review_and_comment_pr",
+        json={"repo": "acme/app", "pr_number": 1, "github_token": "tok", "diff": "x"},
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    assert body.get("skipped") is True
+    assert body.get("reason") == "already_reviewed"
+    assert "already has a Bigas review" in (body.get("summary") or "")
+    mock_review.return_value.review.assert_not_called()
+    mock_diff.assert_not_called()
+    mock_discord.assert_not_called()
+    _chunks.assert_not_called()

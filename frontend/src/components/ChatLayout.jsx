@@ -578,6 +578,8 @@ function mergePolledMessages(prev, incoming) {
 const LAST_OPENED_KEY = 'bigas_chat_last_opened'
 const UNREAD_CHANNEL = 'bigas-chat-unread'
 const THREAD_POLL_MS = 20000
+const MESSAGE_POLL_MS = 10000
+const MESSAGE_POLL_ACTIVE_MS = 1000
 
 const STARTER_PROMPTS = [
   {
@@ -1518,8 +1520,10 @@ export default function ChatLayout({
   useEffect(() => {
     if (!threadId) return
     let cancelled = false
+    let timer = 0
 
     async function poll() {
+      if (document.hidden) return
       try {
         const res = await fetchMessages(threadId, lastMsgTs.current || undefined)
         if (cancelled) return
@@ -1551,11 +1555,32 @@ export default function ChatLayout({
       }
     }
 
-    poll()
-    const id = setInterval(poll, showTyping ? 1000 : 3000)
+    function stop() {
+      if (timer) window.clearInterval(timer)
+      timer = 0
+    }
+
+    function start() {
+      stop()
+      poll()
+      const interval = showTyping ? MESSAGE_POLL_ACTIVE_MS : MESSAGE_POLL_MS
+      timer = window.setInterval(poll, interval)
+    }
+
+    function onVisibility() {
+      if (document.hidden) {
+        stop()
+        return
+      }
+      start()
+    }
+
+    start()
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
       cancelled = true
-      clearInterval(id)
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [threadId, showTyping])
 

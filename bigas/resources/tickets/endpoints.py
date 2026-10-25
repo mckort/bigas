@@ -16,6 +16,7 @@ from bigas.tickets.service import (
     run_ticket_status_automation,
     ticket_to_api,
 )
+from bigas.tickets.store import normalize_updated_since
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +83,14 @@ def board_tickets(board_id: str):
     user_id = g.chat_user["uid"]
     service = TicketService()
     if request.method == "GET":
-        tickets = service.list_tickets(board_id, user_id=user_id)
-        return jsonify({"tickets": tickets})
+        updated_since = normalize_updated_since(request.args.get("updated_since"))
+        tickets = service.list_tickets(
+            board_id, user_id=user_id, updated_since=updated_since
+        )
+        payload: dict = {"tickets": tickets}
+        if updated_since:
+            payload["incremental"] = True
+        return jsonify(payload)
 
     body = request.get_json(silent=True) or {}
     title = (body.get("title") or body.get("summary") or "").strip()
