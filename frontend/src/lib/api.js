@@ -61,7 +61,14 @@ export async function fetchThreads() {
 }
 
 export async function fetchMessages(threadId, since) {
-  const qs = since ? `?since=${encodeURIComponent(since)}` : ''
+  const params = new URLSearchParams()
+  if (since && typeof since === 'object') {
+    if (since.since) params.set('since', since.since)
+    if (since.latest) params.set('latest', String(since.latest))
+  } else if (since) {
+    params.set('since', since)
+  }
+  const qs = params.toString() ? `?${params}` : ''
   return apiFetch(`/api/chat/threads/${threadId}/messages${qs}`)
 }
 
@@ -111,8 +118,12 @@ export async function fetchChatAttachmentBlob(threadId, attachmentId) {
   return res.blob()
 }
 
-export async function pollDeployPostcheck(threadId) {
-  return apiFetch(`/api/chat/threads/${threadId}/deploy-poll`, { method: 'POST' })
+export async function pollDeployPostcheck(threadId, since) {
+  const body = since ? { since } : {}
+  return apiFetch(`/api/chat/threads/${threadId}/deploy-poll`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 export async function fetchFeed(since) {

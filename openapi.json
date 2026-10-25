@@ -389,7 +389,7 @@
                   },
                   "keep_days_messages": {
                     "type": "integer",
-                    "description": "Days to keep chat messages (default 180)."
+                    "description": "Days to keep chat messages (default 7)."
                   },
                   "max_reports_to_delete": {
                     "type": "integer",

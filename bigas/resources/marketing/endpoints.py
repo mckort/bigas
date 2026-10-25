@@ -6491,7 +6491,7 @@ def cleanup_old_reports():
     keep_days_raw_ads = _cleanup_positive_int(data.get('keep_days_raw_ads'), 30)
     keep_days_eval = _cleanup_positive_int(data.get('keep_days_eval'), 90)
     keep_days_attachments = _cleanup_positive_int(data.get('keep_days_attachments'), 90)
-    keep_days_messages = _cleanup_positive_int(data.get('keep_days_messages'), 180)
+    keep_days_messages = _cleanup_positive_int(data.get('keep_days_messages'), 7)
     max_raw = data.get('max_reports_to_delete', data.get('max_to_delete', 50))
     max_to_delete = _cleanup_positive_int(max_raw, 50, upper=500)
 
@@ -6572,13 +6572,19 @@ def cleanup_old_reports():
         errors.append(f"chat_attachments: {exc}")
 
     try:
-        from bigas.chat.db import get_chat_store
+        from bigas.chat.db import MAX_CLEANUP_DELETE_BATCHES, get_chat_store
 
         store = get_chat_store()
         if hasattr(store, "delete_old_messages"):
-            results["deleted_old_messages"] = store.delete_old_messages(
-                keep_days=keep_days_messages, max_to_delete=max_to_delete
-            )
+            deleted_messages = 0
+            for _ in range(MAX_CLEANUP_DELETE_BATCHES):
+                batch = store.delete_old_messages(
+                    keep_days=keep_days_messages, max_to_delete=max_to_delete
+                )
+                deleted_messages += batch
+                if batch < max_to_delete:
+                    break
+            results["deleted_old_messages"] = deleted_messages
     except Exception as exc:
         logger.warning("Failed to clean old chat messages", exc_info=True)
         errors.append(f"chat_messages: {exc}")

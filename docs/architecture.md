@@ -238,7 +238,7 @@ Reports are cached in GCS by a SHA-256 hash of request parameters. Use `"force_r
    - Eval reports (`eval/`, default 90 days)
    - Ticket attachments (`ticket_attachments/`, default 90 days)
    - Chat attachments (`chat_attachments/`, default 90 days)
-   - Old chat messages (Firestore `messages`, default 180 days)
+   - Old chat messages (Firestore `messages`, default 7 days, at most 20 batches per run; the next scheduled run deletes any remainder)
 
 ## Secret Manager (optional)
 
@@ -275,9 +275,9 @@ The chat UI is a React SPA (`frontend/`) served from `frontend/dist` at `/`. Fla
 - **Async callbacks**: sub-agents (or background jobs) POST to `/api/chat/callback` with `thread_id` to append results; the UI polls `GET /api/chat/threads/<id>/messages`.
 - **Unread indicators**: the SPA polls `GET /api/chat/threads` every ~20s. Threads store `last_message_role` and `last_incoming_at` (set only for non-user messages). The UI compares that to a per-agent `lastOpenedAt` in `localStorage` (synced across tabs via `BroadcastChannel`) and shows a dot until the agent is opened. User messages do not set `last_incoming_at`, so typing in one tab does not mark another tab unread.
 - **Discord → chat**: `post_to_discord` / `post_long_to_discord` in `discord_webhook.py` mirror each notification to the matching specialist thread (and the activity feed) via `mirror_discord_message`. Mapping is by `chat_agent_id` or webhook env (`_PRODUCT` → Product Manager, `_CTO`/`_QA` → CTO, `_MARKETING` → Marketing Analyst, `_DEVOPS` → DevOps, `_CHIEF` → Chief of Staff). Long Discord posts become one chat message (not one per chunk). Discord “on its way…” pings are not mirrored to chat. `mirror_thread=False` keeps the activity-feed card without posting into the specialist thread (used for CTO PR review, autofix, Ready to merge, Final approval, and auto-merge cards). `CHAT_ENABLED=false` skips thread posts.
-- **Storage**: `bigas/chat/db.py` — `MemoryChatStore` when `CHAT_STORAGE_MODE=memory`; `FirestoreChatStore` when Firestore is configured. In-memory activity is capped at 500 events; Firestore `activity_feed` is pruned weekly by `POST /mcp/tools/cleanup_old_activity` (keep last 7 days).
+- **Storage**: `bigas/chat/db.py` — `MemoryChatStore` when `CHAT_STORAGE_MODE=memory`; `FirestoreChatStore` when Firestore is configured. The chat screen loads the last hour. `GET ?latest=5` loads the five newest messages when that hour is empty. The model still receives the last 10 turns. In-memory activity is capped at 500 events. The weekly `POST /mcp/tools/cleanup_old_activity` job deletes activity events and chat messages older than 7 days (every agent), at most 20 batches per collection per run. Deploy the composite indexes in `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, both directions) so those reads stay bounded.
 - **Auth**: `bigas/chat/auth.py` — Firebase JWT verification or dev token (`CHAT_AUTH_MODE=dev`). Chat access in Firebase mode is limited to `CHAT_ALLOWED_EMAILS` (set `*` for open chat; otherwise falls back to `CHAT_ADMIN_EMAILS` when unset). Agent config updates require an email listed in `CHAT_ADMIN_EMAILS`.
-- **Starter prompts (BIG-14)**: when a thread has no messages, the chat UI shows clickable example prompts (e.g. summarize PRs, draft a tweet, GA4 traffic). Clicking one sends the message immediately — a Grok-style empty-state onboarding pattern in `frontend/src/components/ChatLayout.jsx`.
+- **Starter prompts (BIG-14)**: when the last hour of a thread is empty, the chat UI shows clickable example prompts (e.g. summarize PRs, draft a tweet, GA4 traffic). If older messages still exist, that empty state also offers “Get 5 latest messages”. Clicking a prompt sends it immediately.
 
 ## Email ingest (BIG-9)
 

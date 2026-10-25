@@ -1,16 +1,25 @@
 """Chat persistence: Firestore in production, in-memory fallback for local dev/tests."""
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_ACTIVITY_KEEP_DAYS = 7
 DEFAULT_ACTIVITY_MAX_DELETE = 500
-DEFAULT_MESSAGE_KEEP_DAYS = 180
+DEFAULT_MESSAGE_KEEP_DAYS = 7
 DEFAULT_MESSAGE_MAX_DELETE = 500
+# Bound a single HTTP cleanup so a large backlog cannot hit the request timeout.
+# Later weekly scheduler runs delete anything that remains.
+MAX_CLEANUP_DELETE_BATCHES = 20
+CHAT_VISIBLE_HISTORY_HOURS = 1
+CHAT_LATEST_FALLBACK_LIMIT = 5
+CHAT_LLM_HISTORY_LIMIT = 10
 
 DEFAULT_AGENTS = [
     {
@@ -125,6 +134,51 @@ def _utcnow_iso() -> str:
 
 def _activity_cutoff_iso(keep_days: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=keep_days)).isoformat()
+
+
+def visible_history_cutoff_iso(hours: int = CHAT_VISIBLE_HISTORY_HOURS) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+
+def _message_attachments(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    meta = message.get("metadata") or {}
+    items = meta.get("attachments") if isinstance(meta, dict) else None
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _delete_message_blobs(messages: List[Dict[str, Any]]) -> None:
+    attachments: List[Dict[str, Any]] = []
+    for message in messages:
+        attachments.extend(_message_attachments(message))
+    if not attachments:
+        return
+    try:
+        from bigas.tickets.attachments import delete_attachment_blobs
+
+        delete_attachment_blobs(attachments)
+    except Exception:
+        logger.warning("Failed to delete chat attachment blobs", exc_info=True)
+
+
+def _needs_firestore_index(exc: BaseException) -> bool:
+    return "requires an index" in str(exc).lower()
+
+
+def _apply_message_window(
+    messages: List[Dict[str, Any]],
+    *,
+    since: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    ordered = sorted(messages, key=lambda m: m.get("created_at") or "")
+    if since:
+        ordered = [m for m in ordered if (m.get("created_at") or "") > since]
+    if limit is not None:
+        count = max(0, int(limit))
+        ordered = ordered[-count:] if count else []
+    return ordered
 
 
 class MemoryChatStore:
@@ -268,12 +322,25 @@ class MemoryChatStore:
                     thread["last_incoming_at"] = message["created_at"]
         return dict(message)
 
-    def list_messages(self, thread_id: str, *, since: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_messages(
+        self,
+        thread_id: str,
+        *,
+        since: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         with self._lock:
             messages = list(self._messages.get(thread_id, []))
-        if since:
-            messages = [m for m in messages if m.get("created_at", "") > since]
-        return messages
+        return _apply_message_window(messages, since=since, limit=limit)
+
+    def has_messages_before(self, thread_id: str, before: str) -> bool:
+        if not before:
+            return False
+        with self._lock:
+            return any(
+                (m.get("created_at") or "") < before
+                for m in self._messages.get(thread_id, [])
+            )
 
     def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -393,26 +460,31 @@ class MemoryChatStore:
         keep_days: int = DEFAULT_MESSAGE_KEEP_DAYS,
         max_to_delete: int = DEFAULT_MESSAGE_MAX_DELETE,
     ) -> int:
-        """Delete chat messages older than keep_days. Returns count deleted."""
+        """Delete chat messages older than keep_days, across every thread."""
         cutoff = _activity_cutoff_iso(keep_days)
-        deleted = 0
+        removed: List[Dict[str, Any]] = []
         with self._lock:
             for thread_id, messages in list(self._messages.items()):
+                room = max_to_delete - len(removed)
+                if room <= 0:
+                    break
                 stale = [m for m in messages if (m.get("created_at") or "") < cutoff]
                 stale.sort(key=lambda m: m.get("created_at") or "")
-                to_delete_ids = {
-                    m.get("message_id")
-                    for m in stale[: max_to_delete - deleted]
-                    if m.get("message_id")
-                }
-                if to_delete_ids:
-                    self._messages[thread_id] = [
-                        m for m in messages if m.get("message_id") not in to_delete_ids
-                    ]
-                    deleted += len(to_delete_ids)
-                if deleted >= max_to_delete:
-                    break
-        return deleted
+                chosen = [m for m in stale[:room] if m.get("message_id")]
+                if not chosen:
+                    continue
+                ids = {m.get("message_id") for m in chosen}
+                self._messages[thread_id] = [
+                    m for m in messages if m.get("message_id") not in ids
+                ]
+                thread = self._threads.get(thread_id)
+                if thread is not None:
+                    thread["message_count"] = max(
+                        0, int(thread.get("message_count") or 0) - len(ids)
+                    )
+                removed.extend(chosen)
+        _delete_message_blobs(removed)
+        return len(removed)
 
 
 class FirestoreChatStore:
@@ -568,15 +640,89 @@ class FirestoreChatStore:
         batch.commit()
         return message
 
-    def list_messages(self, thread_id: str, *, since: Optional[str] = None) -> List[Dict[str, Any]]:
-        messages = [
-            doc.to_dict()
-            for doc in self._messages.where("thread_id", "==", thread_id).stream()
-            if doc.exists
-        ]
+    def list_messages(
+        self,
+        thread_id: str,
+        *,
+        since: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        if limit is not None and not since:
+            try:
+                return self._list_latest_messages(thread_id, int(limit))
+            except Exception as exc:
+                if not _needs_firestore_index(exc):
+                    raise
+                logger.warning(
+                    "Chat message index missing; falling back to a thread scan for the latest %s",
+                    limit,
+                )
+                week_ago = _activity_cutoff_iso(DEFAULT_MESSAGE_KEEP_DAYS)
+                recent = self.list_messages(thread_id, since=week_ago)
+                if recent or not self.has_messages_before(thread_id, week_ago):
+                    return _apply_message_window(recent, limit=limit)
+                return _apply_message_window(self._scan_thread_messages(thread_id), limit=limit)
         if since:
-            messages = [m for m in messages if m.get("created_at", "") > since]
-        return sorted(messages, key=lambda m: m.get("created_at", ""))
+            try:
+                messages = self._query_message_docs(
+                    self._messages.where("thread_id", "==", thread_id)
+                    .where("created_at", ">", since)
+                    .order_by("created_at")
+                )
+            except Exception as exc:
+                if not _needs_firestore_index(exc):
+                    raise
+                logger.warning(
+                    "Chat message index missing; scanning thread %s for messages since %s",
+                    thread_id,
+                    since,
+                )
+                messages = self._scan_thread_messages(thread_id)
+            return _apply_message_window(messages, since=since, limit=limit)
+        messages = self._scan_thread_messages(thread_id)
+        return _apply_message_window(messages, limit=limit)
+
+    def _list_latest_messages(self, thread_id: str, limit: int) -> List[Dict[str, Any]]:
+        from google.cloud import firestore
+
+        count = max(1, int(limit))
+        messages = self._query_message_docs(
+            self._messages.where("thread_id", "==", thread_id)
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(count)
+        )
+        messages.reverse()
+        return messages
+
+    def _query_message_docs(self, query: Any) -> List[Dict[str, Any]]:
+        return [doc.to_dict() for doc in query.stream() if doc.exists and doc.to_dict()]
+
+    def _scan_thread_messages(self, thread_id: str) -> List[Dict[str, Any]]:
+        return self._query_message_docs(self._messages.where("thread_id", "==", thread_id))
+
+    def has_messages_before(self, thread_id: str, before: str) -> bool:
+        if not before:
+            return False
+        try:
+            docs = (
+                self._messages.where("thread_id", "==", thread_id)
+                .where("created_at", "<", before)
+                .order_by("created_at")
+                .limit(1)
+                .stream()
+            )
+            return any(doc.exists for doc in docs)
+        except Exception as exc:
+            if not _needs_firestore_index(exc):
+                raise
+            logger.warning(
+                "Chat message index missing; scanning thread %s for older messages",
+                thread_id,
+            )
+            return any(
+                (m.get("created_at") or "") < before
+                for m in self._scan_thread_messages(thread_id)
+            )
 
     def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
         snap = self._messages.document(message_id).get()
@@ -751,7 +897,43 @@ class FirestoreChatStore:
         )
         if not docs:
             return 0
-        return self._batch_delete_docs(docs)
+        messages = [doc.to_dict() or {} for doc in docs]
+        deleted = self._batch_delete_docs(docs)
+        self._decrement_message_counts(messages)
+        _delete_message_blobs(messages)
+        return deleted
+
+    def _decrement_message_counts(self, messages: List[Dict[str, Any]]) -> None:
+        counts: Dict[str, int] = {}
+        for message in messages:
+            thread_id = message.get("thread_id") or ""
+            if thread_id:
+                counts[thread_id] = counts.get(thread_id, 0) + 1
+        for thread_id, count in counts.items():
+            try:
+                self._decrement_thread_message_count(thread_id, count)
+            except Exception:
+                logger.warning(
+                    "Failed to decrement message_count for thread %s",
+                    thread_id,
+                    exc_info=True,
+                )
+
+    def _decrement_thread_message_count(self, thread_id: str, count: int) -> None:
+        """Subtract count from message_count, never below zero."""
+        from google.cloud import firestore
+
+        ref = self._threads.document(thread_id)
+
+        @firestore.transactional
+        def _apply(transaction):
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return
+            current = int((snap.to_dict() or {}).get("message_count") or 0)
+            transaction.update(ref, {"message_count": max(0, current - int(count))})
+
+        _apply(self._db.transaction())
 
     def _batch_delete_docs(self, docs: List[Any]) -> int:
         deleted = 0
