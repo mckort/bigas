@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import AgentSidebar, { UnreadDot } from './AgentSidebar'
@@ -121,7 +121,7 @@ const chatMarkdownComponents = {
   },
 }
 
-function ChatMarkdown({ content }) {
+const ChatMarkdown = memo(function ChatMarkdown({ content }) {
   return (
     <ReactMarkdown
       remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
@@ -130,7 +130,7 @@ function ChatMarkdown({ content }) {
       {humanizeChatContent(content)}
     </ReactMarkdown>
   )
-}
+})
 
 function ActionProposalCard({ message, onResolved }) {
   const [resolving, setResolving] = useState(false)
@@ -419,7 +419,7 @@ function formatMessageTime(iso) {
   })
 }
 
-function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
+const MessageBubble = memo(function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
   const meta = message.metadata || {}
@@ -481,7 +481,7 @@ function MessageBubble({ message, agentIcon, onProposalResolved, threadId }) {
       </div>
     </div>
   )
-}
+})
 
 function TypingIndicator({ agentName, agentIcon }) {
   const labelName = agentName || 'Agent'
@@ -1011,6 +1011,210 @@ function MobileAgentTabs({ agents, activeAgentId, onSelectAgent, unreadAgentIds 
   )
 }
 
+const ChatComposer = memo(function ChatComposer({
+  agentName,
+  agentIcon,
+  threadId,
+  sending,
+  showTyping,
+  prefill,
+  onSend,
+}) {
+  const [input, setInput] = useState('')
+  const [pendingFiles, setPendingFiles] = useState([])
+  const [attachError, setAttachError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef(null)
+  const submittingRef = useRef(false)
+
+  const addPendingFiles = useCallback((files) => {
+    const incoming = Array.from(files || []).filter(Boolean)
+    if (!incoming.length) return
+    setPendingFiles((prev) => {
+      const existingKeys = new Set(prev.map(pendingFileKey))
+      const next = [...prev]
+      let overflow = false
+      for (const file of incoming) {
+        const key = pendingFileKey(file)
+        if (existingKeys.has(key)) continue
+        if (next.length >= MAX_CHAT_ATTACHMENTS) {
+          overflow = true
+          break
+        }
+        existingKeys.add(key)
+        next.push(file)
+      }
+      setAttachError(overflow ? `At most ${MAX_CHAT_ATTACHMENTS} attachments per message` : '')
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!prefill?.prefix) return
+    setInput((prev) => {
+      if (prev.startsWith(prefill.prefix)) return prev
+      return prev.trim() ? `${prefill.prefix}${prev}` : prefill.prefix
+    })
+  }, [prefill])
+
+  useEffect(() => {
+    setPendingFiles([])
+    setAttachError('')
+  }, [threadId])
+
+  async function submit(event, messageText) {
+    event?.preventDefault?.()
+    const text = (messageText ?? input).trim()
+    const files = messageText ? [] : pendingFiles
+    if ((!text && !files.length) || !threadId || sending || submittingRef.current) return
+    const previousInput = input
+    const previousFiles = pendingFiles
+    submittingRef.current = true
+    if (!messageText) {
+      setInput('')
+      setPendingFiles([])
+      setAttachError('')
+    }
+    let sent = false
+    try {
+      sent = await onSend(text, files)
+    } catch {
+      sent = false
+    } finally {
+      submittingRef.current = false
+    }
+    if (!sent && !messageText) {
+      setInput(previousInput)
+      setPendingFiles(previousFiles)
+    }
+  }
+
+  return (
+    <div className="composer-anchor flex-shrink-0 border-t border-border bg-elevated/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
+      {showTyping && (
+        <div className="max-w-3xl mx-auto mb-2">
+          <TypingIndicator agentName={agentName} agentIcon={agentIcon} />
+        </div>
+      )}
+      <form
+        onSubmit={submit}
+        className="max-w-3xl mx-auto"
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragOver(true)
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragOver(false)
+          addPendingFiles(e.dataTransfer.files)
+        }}
+      >
+        {pendingFiles.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {pendingFiles.map((file) => (
+              <div
+                key={pendingFileKey(file)}
+                className="flex items-center gap-2 rounded-lg border border-border bg-surface px-2 py-1.5 max-w-[220px]"
+              >
+                <div className="min-w-0">
+                  <p className="text-xs font-medium truncate">{file.name}</p>
+                  <p className="text-[10px] text-muted">{formatAttachmentSize(file.size)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPendingFiles((prev) =>
+                      prev.filter((item) => pendingFileKey(item) !== pendingFileKey(file)),
+                    )
+                  }
+                  className="text-muted hover:text-text text-sm px-1"
+                  aria-label={`Remove ${file.name}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {attachError && <p className="text-xs text-red-600 mb-2">{attachError}</p>}
+        <PrepareDeployShortcut
+          disabled={sending || !threadId}
+          onSubmit={(prompt) => submit(null, prompt)}
+        />
+        <div className={`composer-shell ${dragOver ? 'border-accent' : ''}`}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={CHAT_ATTACHMENT_ACCEPT}
+            className="sr-only"
+            onChange={(e) => {
+              addPendingFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending || !threadId}
+            className="text-muted hover:text-text w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-surface disabled:opacity-30"
+            aria-label="Attach file"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 01-7.78-7.78l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.49 8.49a1.5 1.5 0 01-2.12-2.12l7.78-7.78"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              const images = Array.from(e.clipboardData?.items || [])
+                .filter((item) => item.type.startsWith('image/'))
+                .map((item) => item.getAsFile())
+                .filter(Boolean)
+              if (!images.length) return
+              const pastedText = (e.clipboardData?.getData('text/plain') || '').trim()
+              if (pastedText) {
+                addPendingFiles(images)
+                return
+              }
+              e.preventDefault()
+              addPendingFiles(images)
+            }}
+            placeholder={`Message ${agentName}…`}
+            className="flex-1 bg-transparent border-0 px-1 py-2 text-sm sm:text-base min-w-0 focus:outline-none placeholder:text-muted"
+            aria-label={`Message ${agentName}`}
+          />
+          <button
+            type="submit"
+            disabled={sending || (!input.trim() && !pendingFiles.length)}
+            className="btn-primary rounded-lg w-11 h-11 sm:w-12 sm:h-12 disabled:opacity-30 flex-shrink-0 flex items-center justify-center p-0"
+            aria-label="Send message"
+          >
+            {sending ? (
+              <span className="text-lg">…</span>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
+        </div>
+        <p className="text-[11px] text-muted text-center mt-2 hidden sm:block">
+          Attach screenshots or files — they are interpreted for the AI in this conversation.
+        </p>
+      </form>
+    </div>
+  )
+})
+
 export default function ChatLayout({
   user,
   onLogout,
@@ -1025,13 +1229,9 @@ export default function ChatLayout({
   const [activeAgentId, setActiveAgentId] = useState('chief')
   const [threadId, setThreadId] = useState(null)
   const [messages, setMessages] = useState([])
-  const [input, setInput] = useState('')
-  const [pendingFiles, setPendingFiles] = useState([])
-  const [attachError, setAttachError] = useState('')
-  const [dragOver, setDragOver] = useState(false)
+  const [composerPrefill, setComposerPrefill] = useState(null)
   const [sending, setSending] = useState(false)
   const sendingRef = useRef(false)
-  const fileInputRef = useRef(null)
   const [waitingForReply, setWaitingForReply] = useState(false)
   const [deployPollActive, setDeployPollActive] = useState(false)
   const [events, setEvents] = useState([])
@@ -1065,28 +1265,6 @@ export default function ChatLayout({
     }
     bottomRef.current?.scrollIntoView({ block: 'end' })
   }
-
-  const addPendingFiles = useCallback((files) => {
-    const incoming = Array.from(files || []).filter(Boolean)
-    if (!incoming.length) return
-    setPendingFiles((prev) => {
-      const existingKeys = new Set(prev.map(pendingFileKey))
-      const next = [...prev]
-      let overflow = false
-      for (const file of incoming) {
-        const key = pendingFileKey(file)
-        if (existingKeys.has(key)) continue
-        if (next.length >= MAX_CHAT_ATTACHMENTS) {
-          overflow = true
-          break
-        }
-        existingKeys.add(key)
-        next.push(file)
-      }
-      setAttachError(overflow ? `At most ${MAX_CHAT_ATTACHMENTS} attachments per message` : '')
-      return next
-    })
-  }, [])
 
   const activeAgent = agents.find((a) => a.agent_id === activeAgentId) || { icon: '🤖', name: 'Agent' }
   const unreadAgentIds = useMemo(
@@ -1238,10 +1416,7 @@ export default function ChatLayout({
   useEffect(() => {
     if (!discussContext) return
     const prefix = `Let's discuss ticket ${discussContext.key}: ${discussContext.title}\n\n`
-    setInput((prev) => {
-      if (prev.startsWith(prefix)) return prev
-      return prev.trim() ? `${prefix}${prev}` : prefix
-    })
+    setComposerPrefill({ prefix, nonce: Date.now() })
     setActiveAgentId('chief')
     onClearDiscussContext?.()
   }, [discussContext, onClearDiscussContext])
@@ -1347,8 +1522,6 @@ export default function ChatLayout({
   }, [activeAgentId, openAgentThread])
 
   useEffect(() => {
-    setPendingFiles([])
-    setAttachError('')
     stickToBottomRef.current = true
   }, [threadId])
 
@@ -1487,7 +1660,7 @@ export default function ChatLayout({
     }
   }, [])
 
-  async function refreshMessages() {
+  const refreshMessages = useCallback(async () => {
     if (!threadId) return
     try {
       const res = await fetchMessages(threadId)
@@ -1497,13 +1670,12 @@ export default function ChatLayout({
     } catch {
       /* ignore */
     }
-  }
+  }, [threadId])
 
-  async function handleSend(e, messageText) {
-    e?.preventDefault?.()
-    const text = (messageText ?? input).trim()
-    const files = messageText ? [] : pendingFiles
-    if ((!text && !files.length) || !threadId || sending) return
+  const handleSend = useCallback(async (text, files = []) => {
+    const trimmed = (text || '').trim()
+    const attached = Array.from(files || []).filter(Boolean)
+    if ((!trimmed && !attached.length) || !threadId || sendingRef.current) return false
     stickToBottomRef.current = true
     sendingRef.current = true
     setSending(true)
@@ -1512,20 +1684,15 @@ export default function ChatLayout({
     const optimistic = {
       message_id: `local-${clientId}`,
       role: 'user',
-      content: text,
+      content: trimmed,
       created_at: new Date().toISOString(),
-      metadata: { client_id: clientId, local_files: files },
+      metadata: { client_id: clientId, local_files: attached },
     }
     setMessages((prev) => [...prev, optimistic])
-    if (!messageText) {
-      setInput('')
-      setPendingFiles([])
-      setAttachError('')
-    }
     let sendSucceeded = false
     let result
     try {
-      result = await sendMessage(threadId, text, clientId, files)
+      result = await sendMessage(threadId, trimmed, clientId, attached)
       sendSucceeded = true
       trackWeeklyActiveFounder('chat')
       const res = await fetchMessages(threadId)
@@ -1539,12 +1706,9 @@ export default function ChatLayout({
       } else if (isSettledAgentMessage(next[next.length - 1])) {
         setWaitingForReply(false)
       }
+      return true
     } catch (err) {
       if (!sendSucceeded) {
-        if (!messageText) {
-          setInput(text)
-          setPendingFiles(files)
-        }
         setWaitingForReply(false)
         setMessages((prev) => [
           ...prev.filter((m) => m.message_id !== optimistic.message_id),
@@ -1555,26 +1719,27 @@ export default function ChatLayout({
             created_at: new Date().toISOString(),
           },
         ])
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            message_id: `err-${Date.now()}`,
-            role: 'assistant',
-            content: `Message sent, but failed to refresh: ${err.message}`,
-            created_at: new Date().toISOString(),
-          },
-        ])
-        if (result?.deploy_poll_active) {
-          setDeployPollActive(true)
-          setWaitingForReply(true)
-        }
+        return false
       }
+      setMessages((prev) => [
+        ...prev,
+        {
+          message_id: `err-${Date.now()}`,
+          role: 'assistant',
+          content: `Message sent, but failed to refresh: ${err.message}`,
+          created_at: new Date().toISOString(),
+        },
+      ])
+      if (result?.deploy_poll_active) {
+        setDeployPollActive(true)
+        setWaitingForReply(true)
+      }
+      return true
     } finally {
       sendingRef.current = false
       setSending(false)
     }
-  }
+  }, [threadId])
 
   function handleLogout() {
     logout()
@@ -1684,7 +1849,7 @@ export default function ChatLayout({
                 </p>
                 <StarterPrompts
                   disabled={sending || !threadId}
-                  onSelect={(prompt) => handleSend({ preventDefault: () => {} }, prompt)}
+                  onSelect={(prompt) => handleSend(prompt)}
                 />
               </div>
             )}
@@ -1701,130 +1866,15 @@ export default function ChatLayout({
           </div>
         </div>
 
-        <div className="composer-anchor flex-shrink-0 border-t border-border bg-elevated/95 backdrop-blur-sm px-3 sm:px-4 py-3 sm:py-4">
-          {showTyping && (
-            <div className="max-w-3xl mx-auto mb-2">
-              <TypingIndicator agentName={activeAgent.name} agentIcon={activeAgent.icon} />
-            </div>
-          )}
-          <form
-            onSubmit={handleSend}
-            className="max-w-3xl mx-auto"
-            onDragOver={(e) => {
-              e.preventDefault()
-              setDragOver(true)
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault()
-              setDragOver(false)
-              addPendingFiles(e.dataTransfer.files)
-            }}
-          >
-            {pendingFiles.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {pendingFiles.map((file) => (
-                  <div
-                    key={pendingFileKey(file)}
-                    className="flex items-center gap-2 rounded-lg border border-border bg-surface px-2 py-1.5 max-w-[220px]"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{file.name}</p>
-                      <p className="text-[10px] text-muted">{formatAttachmentSize(file.size)}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPendingFiles((prev) =>
-                          prev.filter((item) => pendingFileKey(item) !== pendingFileKey(file)),
-                        )
-                      }
-                      className="text-muted hover:text-text text-sm px-1"
-                      aria-label={`Remove ${file.name}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {attachError && <p className="text-xs text-red-600 mb-2">{attachError}</p>}
-            <PrepareDeployShortcut
-              disabled={sending || !threadId}
-              onSubmit={(prompt) => handleSend(null, prompt)}
-            />
-            <div
-              className={`composer-shell ${dragOver ? 'border-accent' : ''}`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept={CHAT_ATTACHMENT_ACCEPT}
-                className="sr-only"
-                onChange={(e) => {
-                  addPendingFiles(e.target.files)
-                  e.target.value = ''
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={sending || !threadId}
-                className="text-muted hover:text-text w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-surface disabled:opacity-30"
-                aria-label="Attach file"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path
-                    d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 01-7.78-7.78l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.49 8.49a1.5 1.5 0 01-2.12-2.12l7.78-7.78"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onPaste={(e) => {
-                  const images = Array.from(e.clipboardData?.items || [])
-                    .filter((item) => item.type.startsWith('image/'))
-                    .map((item) => item.getAsFile())
-                    .filter(Boolean)
-                  if (!images.length) return
-                  const pastedText = (e.clipboardData?.getData('text/plain') || '').trim()
-                  if (pastedText) {
-                    addPendingFiles(images)
-                    return
-                  }
-                  e.preventDefault()
-                  addPendingFiles(images)
-                }}
-                placeholder={`Message ${activeAgent.name}…`}
-                className="flex-1 bg-transparent border-0 px-1 py-2 text-sm sm:text-base min-w-0 focus:outline-none placeholder:text-muted"
-                aria-label={`Message ${activeAgent.name}`}
-              />
-              <button
-                type="submit"
-                disabled={sending || (!input.trim() && !pendingFiles.length)}
-                className="btn-primary rounded-lg w-11 h-11 sm:w-12 sm:h-12 disabled:opacity-30 flex-shrink-0 flex items-center justify-center p-0"
-                aria-label="Send message"
-              >
-                {sending ? (
-                  <span className="text-lg">…</span>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                )}
-              </button>
-            </div>
-            <p className="text-[11px] text-muted text-center mt-2 hidden sm:block">
-              Attach screenshots or files — they are interpreted for the AI in this conversation.
-            </p>
-          </form>
-        </div>
+        <ChatComposer
+          agentName={activeAgent.name}
+          agentIcon={activeAgent.icon}
+          threadId={threadId}
+          sending={sending}
+          showTyping={showTyping}
+          prefill={composerPrefill}
+          onSend={handleSend}
+        />
       </main>
 
       <ActivityFeed
