@@ -12,9 +12,13 @@ from bigas.agents.chief_of_staff import handle_chat_message, post_agent_callback
 from bigas.agents.proactive_engine import ProactiveGoalEngineError, run_evaluation_loop
 from bigas.chat.auth import is_chat_admin, require_chat_auth, verify_callback_secret
 from bigas.chat.db import (
+    CHAT_LATEST_FALLBACK_LIMIT,
+    CHAT_LLM_HISTORY_LIMIT,
     DEFAULT_ACTIVITY_KEEP_DAYS,
     DEFAULT_ACTIVITY_MAX_DELETE,
+    DEFAULT_MESSAGE_KEEP_DAYS,
     get_chat_store,
+    visible_history_cutoff_iso,
 )
 from bigas.resources.devops.pipeline import poll_deploy_postcheck
 
@@ -127,17 +131,24 @@ def thread_messages(thread_id: str):
         return jsonify({"error": "Thread not found"}), 404
 
     if request.method == "GET":
-        since = request.args.get("since")
+        since = (request.args.get("since") or "").strip() or None
+        latest = _parse_latest(request.args.get("latest"))
         from bigas.resources.devops.pipeline import schedule_expire_stale_deploy_poll
 
         schedule_expire_stale_deploy_poll(thread_id)
-        messages = store.list_messages(thread_id, since=since)
+        messages, has_older = _visible_thread_messages(
+            store, thread_id, since=since, latest=latest
+        )
         thread_data = store.get_thread(thread_id) or {}
         deploy_poll_active = bool(
             thread_data.get("pending_deploy_poll")
             or thread_data.get("pending_prepare_poll")
         )
-        return jsonify({"messages": messages, "deploy_poll_active": deploy_poll_active})
+        return jsonify({
+            "messages": messages,
+            "deploy_poll_active": deploy_poll_active,
+            "has_older": has_older,
+        })
 
     from bigas.tickets.attachments import (
         AttachmentError,
@@ -157,12 +168,7 @@ def thread_messages(thread_id: str):
     except AttachmentError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    history_msgs = store.list_messages(thread_id)
-    history = [
-        {"role": m["role"], "content": message_text_for_llm(m)}
-        for m in history_msgs
-        if m.get("role") in ("user", "assistant")
-    ]
+    history = _llm_history(store, thread_id, message_text_for_llm)
 
     try:
         result = handle_chat_message(
@@ -177,6 +183,46 @@ def thread_messages(thread_id: str):
     except Exception as e:
         logger.exception("Chat message handling failed")
         return jsonify({"error": str(e)}), 500
+
+
+def _parse_latest(raw: str | None) -> int | None:
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return CHAT_LATEST_FALLBACK_LIMIT
+    return max(1, min(value, 20))
+
+
+def _visible_thread_messages(store, thread_id: str, *, since: str | None, latest: int | None):
+    """What the chat screen should show.
+
+    A plain load is the last hour. `since` is the incremental poll cursor and is
+    not clipped to that hour. `latest` is the explicit "Get 5 latest messages" load.
+    """
+    if latest is not None:
+        messages = store.list_messages(thread_id, limit=latest)
+        oldest = (messages[0].get("created_at") or "") if messages else ""
+        has_older = store.has_messages_before(thread_id, oldest or "9999")
+        return messages, has_older
+    if since:
+        return store.list_messages(thread_id, since=since), False
+    cutoff = visible_history_cutoff_iso()
+    messages = store.list_messages(thread_id, since=cutoff)
+    has_older = False if messages else store.has_messages_before(thread_id, cutoff)
+    return messages, has_older
+
+
+def _llm_history(store, thread_id: str, message_text_for_llm) -> list:
+    """Last few conversational turns, without reading the whole thread into the model."""
+    pool = store.list_messages(thread_id, limit=CHAT_LLM_HISTORY_LIMIT * 4)
+    history = [
+        {"role": m["role"], "content": message_text_for_llm(m)}
+        for m in pool
+        if m.get("role") in ("user", "assistant")
+    ]
+    return history[-CHAT_LLM_HISTORY_LIMIT:]
 
 
 def _parse_chat_message_request():
@@ -261,7 +307,14 @@ def deploy_poll(thread_id: str):
         return jsonify({"error": "Thread not found"}), 404
     try:
         result = poll_deploy_postcheck(thread_id)
-        messages = store.list_messages(thread_id)
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            body = {}
+        since = (body.get("since") or "").strip()
+        if since:
+            messages = store.list_messages(thread_id, since=since)
+        else:
+            messages = store.list_messages(thread_id, since=visible_history_cutoff_iso())
         return jsonify({**result, "messages": messages})
     except Exception as e:
         logger.exception("Deploy post-check poll failed")
@@ -357,7 +410,7 @@ def _int_param(data: dict, name: str, default: int, *, minimum: int, maximum: in
 @chat_bp.route("/mcp/tools/cleanup_old_activity", methods=["POST"])
 @require_bigas_access_key
 def cleanup_old_activity():
-    """Delete chat activity-feed events older than keep_days (default 7)."""
+    """Delete activity events older than keep_days and chat messages older than 7 days."""
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         data = {}
@@ -375,14 +428,26 @@ def cleanup_old_activity():
             total_deleted += deleted
             if deleted < max_to_delete:
                 break
+        messages_deleted = 0
+        while True:
+            deleted_messages = store.delete_old_messages(
+                keep_days=DEFAULT_MESSAGE_KEEP_DAYS,
+                max_to_delete=max_to_delete,
+            )
+            messages_deleted += deleted_messages
+            if deleted_messages < max_to_delete:
+                break
         return jsonify(
             {
                 "status": "success",
                 "deleted": total_deleted,
+                "messages_deleted": messages_deleted,
                 "keep_days": keep_days,
+                "message_keep_days": DEFAULT_MESSAGE_KEEP_DAYS,
                 "max_to_delete": max_to_delete,
                 "message": (
-                    f"Deleted {total_deleted} activity events older than {keep_days} days"
+                    f"Deleted {total_deleted} activity events older than {keep_days} days "
+                    f"and {messages_deleted} chat messages older than {DEFAULT_MESSAGE_KEEP_DAYS} days"
                 ),
             }
         )
@@ -395,12 +460,13 @@ def get_manifest():
     """Return chat housekeeping tools for the combined MCP manifest."""
     return {
         "name": "Chat Tools",
-        "description": "Housekeeping for the Bigas chat activity feed.",
+        "description": "Housekeeping for the Bigas chat activity feed and chat messages.",
         "tools": [
             {
                 "name": "cleanup_old_activity",
                 "description": (
-                    "Delete chat activity-feed events older than keep_days (default 7). "
+                    "Delete chat activity-feed events older than keep_days (default 7) "
+                    "and chat messages older than 7 days, for every agent. "
                     "Intended for a weekly Cloud Scheduler job."
                 ),
                 "path": "/mcp/tools/cleanup_old_activity",

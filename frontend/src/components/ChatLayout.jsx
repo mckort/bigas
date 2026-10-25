@@ -1229,6 +1229,8 @@ export default function ChatLayout({
   const [activeAgentId, setActiveAgentId] = useState('chief')
   const [threadId, setThreadId] = useState(null)
   const [messages, setMessages] = useState([])
+  const [hasOlder, setHasOlder] = useState(false)
+  const [loadingLatest, setLoadingLatest] = useState(false)
   const [composerPrefill, setComposerPrefill] = useState(null)
   const [sending, setSending] = useState(false)
   const sendingRef = useRef(false)
@@ -1303,48 +1305,31 @@ export default function ChatLayout({
     messagesThreadIdRef.current = null
     setThreadId(null)
     setMessages([])
+    setHasOlder(false)
     setWaitingForReply(false)
     setDeployPollActive(false)
     lastMsgTs.current = ''
 
     let thread = null
-    let loaded = []
-    let resumeDeployPoll = false
-    const probedMessages = new Map()
+    let initialMessages = null
     try {
       const listed = await fetchThreads()
       if (cancelled?.()) return
       setThreads(listed.threads || [])
       const candidates = (listed.threads || []).filter((t) => t.agent_id === agentId)
       const resumable = candidates.filter((t) => (t.message_count ?? 1) > 0)
-      const toProbe = resumable.slice(0, 15)
-      const probeResults = await Promise.all(
-        toProbe.map(async (candidate) => {
-          try {
-            const msgRes = await fetchMessages(candidate.thread_id)
-            return {
-              candidate,
-              msgs: msgRes.messages || [],
-              deployPollActive: Boolean(msgRes.deploy_poll_active),
-              ok: true,
-            }
-          } catch {
-            return { candidate, msgs: null, deployPollActive: false, ok: false }
+      for (const candidate of resumable.slice(0, 15)) {
+        try {
+          const msgRes = await fetchMessages(candidate.thread_id)
+          if (cancelled?.()) return
+          const msgs = msgRes.messages || []
+          if (msgs.length || msgRes.has_older) {
+            thread = candidate
+            initialMessages = msgRes
+            break
           }
-        })
-      )
-      if (cancelled?.()) return
-      for (const { candidate, msgs, deployPollActive, ok } of probeResults) {
-        if (ok) probedMessages.set(candidate.thread_id, { msgs, deployPollActive })
-      }
-      for (const candidate of toProbe) {
-        const probed = probedMessages.get(candidate.thread_id)
-        if (probed === undefined) continue
-        if (probed.msgs.length) {
-          thread = candidate
-          loaded = probed.msgs
-          resumeDeployPoll = probed.deployPollActive
-          break
+        } catch {
+          /* try the next thread */
         }
       }
       if (!thread) thread = candidates[0] || null
@@ -1366,42 +1351,26 @@ export default function ChatLayout({
     setThreadId(thread.thread_id)
     messagesThreadIdRef.current = thread.thread_id
 
-    if (loaded.length) {
-      setMessages(loaded)
-      lastMsgTs.current = loaded[loaded.length - 1].created_at
-      if (resumeDeployPoll) {
-        setDeployPollActive(true)
-        setWaitingForReply(true)
-      } else {
-        setWaitingForReply(lastMessageIsInProgress(loaded))
+    if (!initialMessages) {
+      try {
+        initialMessages = await fetchMessages(thread.thread_id)
+      } catch {
+        if (!cancelled?.()) {
+          setMessages([])
+          setHasOlder(false)
+        }
+        return
       }
-      return
     }
-
-    if (probedMessages.has(thread.thread_id)) {
-      const cached = probedMessages.get(thread.thread_id)
-      setMessages(cached.msgs)
-      if (cached.msgs.length) lastMsgTs.current = cached.msgs[cached.msgs.length - 1].created_at
-      if (cached.deployPollActive) {
-        setDeployPollActive(true)
-        setWaitingForReply(true)
-      } else {
-        setWaitingForReply(lastMessageIsInProgress(cached.msgs))
-      }
-      return
-    }
-
-    try {
-      const msgRes = await fetchMessages(thread.thread_id)
-      if (cancelled?.()) return
-      const next = applyMessagesResponse(setMessages, setDeployPollActive, setWaitingForReply, msgRes)
-      if (next.length) lastMsgTs.current = next[next.length - 1].created_at
-      if (!msgRes.deploy_poll_active) {
-        setWaitingForReply(lastMessageIsInProgress(next))
-      }
-    } catch {
-      if (!cancelled?.()) setMessages([])
-    }
+    if (cancelled?.()) return
+    const next = applyMessagesResponse(
+      setMessages,
+      setDeployPollActive,
+      setWaitingForReply,
+      initialMessages,
+    )
+    setHasOlder(next.length === 0 && Boolean(initialMessages.has_older))
+    if (next.length) lastMsgTs.current = next[next.length - 1].created_at
   }, [])
 
   useEffect(() => {
@@ -1596,7 +1565,7 @@ export default function ChatLayout({
 
     async function pollDeploy() {
       try {
-        const result = await pollDeployPostcheck(threadId)
+        const result = await pollDeployPostcheck(threadId, lastMsgTs.current || undefined)
         if (cancelled) return
         if (result.messages?.length) {
           setMessages((prev) => mergePolledMessages(prev, result.messages))
@@ -1660,12 +1629,30 @@ export default function ChatLayout({
     }
   }, [])
 
+  const loadLatestMessages = useCallback(async () => {
+    if (!threadId || loadingLatest) return
+    setLoadingLatest(true)
+    try {
+      const res = await fetchMessages(threadId, { latest: 5 })
+      const next = res.messages || []
+      setMessages(next)
+      setHasOlder(next.length === 0 && Boolean(res.has_older))
+      if (next.length) lastMsgTs.current = next[next.length - 1].created_at
+      stickToBottomRef.current = true
+    } catch {
+      /* keep the empty state so the button can be tried again */
+    } finally {
+      setLoadingLatest(false)
+    }
+  }, [loadingLatest, threadId])
+
   const refreshMessages = useCallback(async () => {
     if (!threadId) return
     try {
       const res = await fetchMessages(threadId)
       const next = res.messages || []
       setMessages(next)
+      setHasOlder(next.length === 0 && Boolean(res.has_older))
       if (next.length) lastMsgTs.current = next[next.length - 1].created_at
     } catch {
       /* ignore */
@@ -1847,6 +1834,16 @@ export default function ChatLayout({
                 <p className="text-sm text-muted max-w-md mx-auto leading-relaxed">
                   Ask questions, request reports, or delegate tasks across your AI team.
                 </p>
+                {hasOlder && (
+                  <button
+                    type="button"
+                    disabled={loadingLatest || !threadId}
+                    onClick={loadLatestMessages}
+                    className="mt-6 text-sm btn-primary min-h-[44px] px-4 disabled:opacity-50"
+                  >
+                    Get 5 latest messages
+                  </button>
+                )}
                 <StarterPrompts
                   disabled={sending || !threadId}
                   onSelect={(prompt) => handleSend(prompt)}

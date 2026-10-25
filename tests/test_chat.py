@@ -418,6 +418,181 @@ def test_manifest_includes_cleanup_old_activity():
 
     names = {t["name"] for t in get_manifest()["tools"]}
     assert "cleanup_old_activity" in names
+    description = next(
+        t["description"] for t in get_manifest()["tools"] if t["name"] == "cleanup_old_activity"
+    )
+    assert "chat messages" in description
+
+
+def test_get_messages_shows_last_hour_and_can_load_latest(client):
+    from datetime import datetime, timedelta, timezone
+
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    thread_id = client.post(
+        "/api/chat/threads",
+        headers=_auth_headers(),
+        data=json.dumps({"agent_id": "cto"}),
+    ).get_json()["thread"]["thread_id"]
+    now = datetime.now(timezone.utc)
+    recent = store.add_message(thread_id, role="user", content="just now")
+    older = store.add_message(thread_id, role="assistant", content="two hours ago")
+    store.patch_message(
+        older["message_id"],
+        created_at=(now - timedelta(hours=2)).isoformat(),
+    )
+    assert recent["content"] == "just now"
+
+    history = client.get(f"/api/chat/threads/{thread_id}/messages", headers=_auth_headers())
+    assert history.status_code == 200
+    body = history.get_json()
+    assert [m["content"] for m in body["messages"]] == ["just now"]
+    assert body["has_older"] is False
+
+    quiet = client.post(
+        "/api/chat/threads",
+        headers=_auth_headers(),
+        data=json.dumps({"agent_id": "cfo"}),
+    ).get_json()["thread"]["thread_id"]
+    stale = store.add_message(quiet, role="user", content="only old")
+    store.patch_message(
+        stale["message_id"],
+        created_at=(now - timedelta(hours=3)).isoformat(),
+    )
+    empty = client.get(f"/api/chat/threads/{quiet}/messages", headers=_auth_headers())
+    assert empty.get_json()["messages"] == []
+    assert empty.get_json()["has_older"] is True
+
+    latest = client.get(
+        f"/api/chat/threads/{quiet}/messages?latest=5",
+        headers=_auth_headers(),
+    )
+    assert [m["content"] for m in latest.get_json()["messages"]] == ["only old"]
+
+    since = (now - timedelta(hours=4)).isoformat()
+    polled = client.get(
+        f"/api/chat/threads/{thread_id}/messages?since={since}",
+        headers=_auth_headers(),
+    )
+    assert {m["content"] for m in polled.get_json()["messages"]} == {"two hours ago", "just now"}
+
+
+def test_send_message_keeps_last_ten_turns_for_the_model(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from bigas.chat.db import get_chat_store
+
+    store = get_chat_store()
+    captured = {}
+
+    def mock_handle(**kwargs):
+        captured["history"] = kwargs.get("history") or []
+        msg = store.add_message(kwargs["thread_id"], role="assistant", content="ok")
+        return {"status": "complete", "message": msg}
+
+    monkeypatch.setattr("bigas.resources.chat.endpoints.handle_chat_message", mock_handle)
+    thread_id = client.post(
+        "/api/chat/threads",
+        headers=_auth_headers(),
+        data=json.dumps({"agent_id": "marketing"}),
+    ).get_json()["thread"]["thread_id"]
+    base = datetime.now(timezone.utc) - timedelta(hours=3)
+    for index in range(12):
+        message = store.add_message(thread_id, role="user", content=f"m{index}")
+        store.patch_message(
+            message["message_id"],
+            created_at=(base + timedelta(minutes=index)).isoformat(),
+        )
+
+    resp = client.post(
+        f"/api/chat/threads/{thread_id}/messages",
+        headers=_auth_headers(),
+        data=json.dumps({"content": "continue"}),
+    )
+    assert resp.status_code == 200
+    contents = [item["content"] for item in captured["history"]]
+    assert len(contents) == 10
+    assert "m0" not in contents
+    assert "m1" not in contents
+    assert contents[0].endswith("m2") or "m2" in contents[0]
+    assert "m11" in contents[-1]
+
+
+def test_delete_old_messages_drops_every_chat_older_than_a_week():
+    from datetime import datetime, timedelta, timezone
+
+    from bigas.chat.db import MemoryChatStore
+    from bigas.tickets.attachments import get_attachment_blob_store
+
+    store = MemoryChatStore()
+    chief = store.create_thread("history-user", "chief")
+    cto = store.create_thread("history-user", "cto")
+    blobs = get_attachment_blob_store()
+    blobs.put("chat_attachments/old.bin", b"secret", "text/plain")
+    now = datetime.now(timezone.utc)
+    ancient = store.add_message(
+        chief["thread_id"],
+        role="user",
+        content="ancient",
+        metadata={
+            "attachments": [
+                {"storage_path": "chat_attachments/old.bin", "filename": "old.bin"}
+            ]
+        },
+    )
+    store.patch_message(
+        ancient["message_id"],
+        created_at=(now - timedelta(days=8)).isoformat(),
+    )
+    fresh = store.add_message(cto["thread_id"], role="assistant", content="this week")
+    store.patch_message(
+        fresh["message_id"],
+        created_at=(now - timedelta(days=6)).isoformat(),
+    )
+
+    deleted = store.delete_old_messages(keep_days=7)
+    assert deleted == 1
+    assert store.list_messages(chief["thread_id"]) == []
+    assert store.get_thread(chief["thread_id"])["message_count"] == 0
+    assert [m["content"] for m in store.list_messages(cto["thread_id"])] == ["this week"]
+    assert blobs.get("chat_attachments/old.bin") is None
+
+
+def test_cleanup_old_activity_also_deletes_chat_messages(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from flask import Flask
+
+    from bigas.chat.db import MemoryChatStore
+    from bigas.resources.chat.endpoints import chat_bp
+
+    store = MemoryChatStore()
+    thread = store.create_thread("cleanup-user", "devops")
+    now = datetime.now(timezone.utc)
+    old = store.add_message(thread["thread_id"], role="user", content="too old")
+    store.patch_message(
+        old["message_id"],
+        created_at=(now - timedelta(days=8)).isoformat(),
+    )
+    kept = store.add_message(thread["thread_id"], role="assistant", content="still here")
+    store.patch_message(
+        kept["message_id"],
+        created_at=(now - timedelta(days=2)).isoformat(),
+    )
+    monkeypatch.setattr("bigas.resources.chat.endpoints.get_chat_store", lambda: store)
+
+    app = Flask(__name__)
+    app.register_blueprint(chat_bp)
+    resp = app.test_client().post(
+        "/mcp/tools/cleanup_old_activity",
+        json={"max_to_delete": 2},
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["messages_deleted"] == 1
+    assert body["message_keep_days"] == 7
+    assert [m["content"] for m in store.list_messages(thread["thread_id"])] == ["still here"]
 
 
 def test_chat_callback(client):

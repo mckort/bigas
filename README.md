@@ -694,12 +694,12 @@ Bigas includes a **clean, brand-aligned web chat UI** (when the frontend is buil
 | **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; **live Objectives and KR health are injected into every session**; can file Jira Task/Bug issues; delegates domain tasks to specialists |
 | **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows. Product and Marketing also receive the live OKR scoreboard so they cannot plan a week without knowing which KRs are red |
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
-| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. PR review, autofix, and pipeline cards (Ready to merge, Final approval, auto-merge) stay in Activity and Discord — they are not posted into the CTO chat thread. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
+| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. PR review, autofix, and pipeline cards (Ready to merge, Final approval, auto-merge) stay in Activity and Discord — they are not posted into the CTO chat thread. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job, which also deletes chat messages older than 7 days. |
 | **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
-| **Starter prompts** | Empty threads show clickable example questions (e.g. summarize PRs, draft a tweet, GA4 traffic) so you can try the team without reading the API reference |
+| **Starter prompts** | When the last hour is empty, the thread shows clickable example questions (e.g. summarize PRs, draft a tweet, GA4 traffic). If older messages remain, it also offers “Get 5 latest messages” |
 | **Kanban board** | Native task pipeline at `/board` — multiple boards per project plus a personal list. Project boards mirror Jira AI columns (research, design, implement); personal boards use a simple To Do → Done flow without agent automation |
 | **Objectives** | Quarterly OKR dashboard at `/objectives`. Each Objective has Key Results you sign off; tasks on the board link to a KR. Open an Objective or KR on the board to filter the work that moves the number |
-| **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
+| **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev). Opening a chat loads the last hour; messages older than 7 days are deleted |
 
 ### Setup
 
@@ -759,10 +759,10 @@ The login page has no “create account” button, but that is not enough on its
 | `PUT /api/agents/<id>` | Update agent name and goals |
 | `POST /api/chat/threads` | Create thread (`agent_id`: chief, marketing, product, cto, cfo, devops) |
 | `GET /api/chat/threads` | List the user's threads (`last_incoming_at` / `last_message_role` used for unread dots) |
-| `GET/POST /api/chat/threads/<id>/messages` | Fetch history / send message (poll GET for async results) |
+| `GET/POST /api/chat/threads/<id>/messages` | Fetch the last hour (`?since=` polls newer messages, `?latest=5` loads the five newest) / send message |
 | `POST /api/chat/callback` | Sub-agents report async completion (`X-Bigas-Chat-Callback` header) |
 | `GET /api/feed` | Activity feed (Discord mirror) |
-| `POST /mcp/tools/cleanup_old_activity` | Delete activity events older than 7 days (Cloud Scheduler) |
+| `POST /mcp/tools/cleanup_old_activity` | Delete activity events and chat messages older than 7 days (Cloud Scheduler) |
 
 Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_id}` when a delegated task finishes asynchronously.
 
@@ -1051,7 +1051,7 @@ gcloud scheduler jobs create http bigas-website-monitor \
 
 ### Chat activity cleanup with Cloud Scheduler
 
-The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification. `cleanup_old_activity` deletes events older than 7 days in batches of up to 500 until none remain. Recommended schedule: Monday 02:00 CET, before the work week starts.
+The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification, and chat messages accumulate in `messages`. `cleanup_old_activity` deletes activity events and chat messages older than 7 days, for every agent, in batches of up to 500 until none remain. Recommended schedule: Monday 02:00 CET, before the work week starts. Deploy `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, ascending and descending) so the last-hour load and the five-message fallback do not scan a whole thread.
 
 ```bash
 gcloud scheduler jobs create http bigas-cleanup-chat-activity \
