@@ -17,6 +17,7 @@ from bigas.chat.db import (
     DEFAULT_ACTIVITY_KEEP_DAYS,
     DEFAULT_ACTIVITY_MAX_DELETE,
     DEFAULT_MESSAGE_KEEP_DAYS,
+    MAX_CLEANUP_DELETE_BATCHES,
     get_chat_store,
     visible_history_cutoff_iso,
 )
@@ -421,7 +422,7 @@ def cleanup_old_activity():
     try:
         store = get_chat_store()
         total_deleted = 0
-        while True:
+        for _ in range(MAX_CLEANUP_DELETE_BATCHES):
             deleted = store.delete_old_activity(
                 keep_days=keep_days, max_to_delete=max_to_delete
             )
@@ -429,7 +430,7 @@ def cleanup_old_activity():
             if deleted < max_to_delete:
                 break
         messages_deleted = 0
-        while True:
+        for _ in range(MAX_CLEANUP_DELETE_BATCHES):
             deleted_messages = store.delete_old_messages(
                 keep_days=DEFAULT_MESSAGE_KEEP_DAYS,
                 max_to_delete=max_to_delete,
@@ -483,7 +484,11 @@ def get_manifest():
                         },
                         "max_to_delete": {
                             "type": "integer",
-                            "description": "Max events to delete per batch (Firestore batch limit 500); loops until none remain.",
+                            "description": (
+                                "Max events to delete per batch (Firestore batch limit 500). "
+                                f"Each run deletes at most {MAX_CLEANUP_DELETE_BATCHES} batches; "
+                                "later weekly runs finish any remainder."
+                            ),
                             "default": DEFAULT_ACTIVITY_MAX_DELETE,
                             "minimum": 1,
                             "maximum": 500,

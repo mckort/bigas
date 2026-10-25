@@ -6572,12 +6572,12 @@ def cleanup_old_reports():
         errors.append(f"chat_attachments: {exc}")
 
     try:
-        from bigas.chat.db import get_chat_store
+        from bigas.chat.db import MAX_CLEANUP_DELETE_BATCHES, get_chat_store
 
         store = get_chat_store()
         if hasattr(store, "delete_old_messages"):
             deleted_messages = 0
-            while True:
+            for _ in range(MAX_CLEANUP_DELETE_BATCHES):
                 batch = store.delete_old_messages(
                     keep_days=keep_days_messages, max_to_delete=max_to_delete
                 )

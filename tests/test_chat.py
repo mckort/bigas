@@ -401,6 +401,173 @@ def test_cleanup_old_activity_deletes_all_eligible_batches(monkeypatch):
     assert store.list_activity(limit=100) == []
 
 
+def test_cleanup_old_activity_stops_after_batch_cap(monkeypatch):
+    from flask import Flask
+
+    from bigas.chat.db import MAX_CLEANUP_DELETE_BATCHES
+    from bigas.resources.chat.endpoints import chat_bp
+
+    calls = {"activity": 0, "messages": 0}
+
+    class Store:
+        def delete_old_activity(self, **kwargs):
+            calls["activity"] += 1
+            return kwargs["max_to_delete"]
+
+        def delete_old_messages(self, **kwargs):
+            calls["messages"] += 1
+            return kwargs["max_to_delete"]
+
+    monkeypatch.setattr("bigas.resources.chat.endpoints.get_chat_store", lambda: Store())
+
+    app = Flask(__name__)
+    app.register_blueprint(chat_bp)
+    resp = app.test_client().post(
+        "/mcp/tools/cleanup_old_activity",
+        json={"max_to_delete": 2},
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert calls["activity"] == MAX_CLEANUP_DELETE_BATCHES
+    assert calls["messages"] == MAX_CLEANUP_DELETE_BATCHES
+    assert body["deleted"] == 2 * MAX_CLEANUP_DELETE_BATCHES
+    assert body["messages_deleted"] == 2 * MAX_CLEANUP_DELETE_BATCHES
+
+
+def test_cleanup_old_reports_stops_message_deletion_after_batch_cap(monkeypatch):
+    from flask import Flask
+
+    from bigas.chat.db import MAX_CLEANUP_DELETE_BATCHES
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    calls = {"messages": 0}
+
+    class Store:
+        def delete_old_messages(self, **kwargs):
+            calls["messages"] += 1
+            return kwargs["max_to_delete"]
+
+    class Storage:
+        def delete_old_reports(self, *args, **kwargs):
+            return 0
+
+        def delete_old_raw_ads(self, *args, **kwargs):
+            return 0
+
+        def delete_old_attachments(self, *args, **kwargs):
+            return 0
+
+    class Service:
+        def __init__(self, *args, **kwargs):
+            self.storage_service = Storage()
+
+    class Drafts:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def cleanup_expired_drafts(self, **kwargs):
+            return 0
+
+    class EvalStorage:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def delete_old_eval_reports(self, *args, **kwargs):
+            return 0
+
+    monkeypatch.setattr(
+        "bigas.resources.marketing.endpoints.MarketingAnalyticsService",
+        Service,
+    )
+    monkeypatch.setattr("bigas.resources.product.x_posts.service.XPostsService", Drafts)
+    monkeypatch.setattr("bigas.resources.cto.qa_agent.service.QAAgentService", Drafts)
+    monkeypatch.setattr("bigas.eval.storage.EvalStorage", EvalStorage)
+    monkeypatch.setattr("bigas.chat.db.get_chat_store", lambda: Store())
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    resp = app.test_client().post(
+        "/mcp/tools/cleanup_old_reports",
+        json={"max_to_delete": 3},
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert calls["messages"] == MAX_CLEANUP_DELETE_BATCHES
+    assert body["deleted_old_messages"] == 3 * MAX_CLEANUP_DELETE_BATCHES
+    assert body["status"] == "success"
+
+
+def test_firestore_message_count_decrement_clamps_at_zero(monkeypatch):
+    from google.cloud import firestore as firestore_mod
+
+    from bigas.chat.db import FirestoreChatStore
+
+    monkeypatch.setattr(firestore_mod, "transactional", lambda fn: fn)
+
+    class Snapshot:
+        def __init__(self, data, exists=True):
+            self._data = data
+            self.exists = exists
+
+        def to_dict(self):
+            return self._data
+
+    class Document:
+        def __init__(self, data, exists=True):
+            self.data = data
+            self.exists = exists
+            self.updated = None
+
+        def get(self, transaction=None):
+            return Snapshot(self.data, self.exists)
+
+    class Transaction:
+        def update(self, ref, payload):
+            ref.updated = payload
+
+    class Database:
+        def transaction(self):
+            return Transaction()
+
+    class Threads:
+        def __init__(self, docs):
+            self.docs = docs
+
+        def document(self, thread_id):
+            return self.docs[thread_id]
+
+    docs = {
+        "low": Document({"message_count": 1}),
+        "unset": Document({}),
+        "negative": Document({"message_count": -4}),
+        "healthy": Document({"message_count": 6}),
+        "missing": Document(None, exists=False),
+    }
+    store = FirestoreChatStore.__new__(FirestoreChatStore)
+    store._threads = Threads(docs)
+    store._db = Database()
+
+    store._decrement_message_counts(
+        [
+            {"thread_id": "low"},
+            {"thread_id": "low"},
+            {"thread_id": "unset"},
+            {"thread_id": "negative"},
+            {"thread_id": "healthy"},
+            {"thread_id": "missing"},
+            {"thread_id": ""},
+        ]
+    )
+
+    assert docs["low"].updated == {"message_count": 0}
+    assert docs["unset"].updated == {"message_count": 0}
+    assert docs["negative"].updated == {"message_count": 0}
+    assert docs["healthy"].updated == {"message_count": 5}
+    assert docs["missing"].updated is None
+
+
 def test_cleanup_old_activity_ignores_non_object_json():
     from flask import Flask
 

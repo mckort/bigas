@@ -1051,7 +1051,7 @@ gcloud scheduler jobs create http bigas-website-monitor \
 
 ### Chat activity cleanup with Cloud Scheduler
 
-The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification, and chat messages accumulate in `messages`. `cleanup_old_activity` deletes activity events and chat messages older than 7 days, for every agent, in batches of up to 500 until none remain. Recommended schedule: Monday 02:00 CET, before the work week starts. Deploy `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, ascending and descending) so the last-hour load and the five-message fallback do not scan a whole thread.
+The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification, and chat messages accumulate in `messages`. `cleanup_old_activity` deletes activity events and chat messages older than 7 days, for every agent, in batches of up to 500. Each invocation stops after 20 batches per collection so the request stays inside the Cloud Run timeout; the next weekly run deletes anything that remains. `cleanup_old_reports` applies the same 20-batch cap when it deletes old chat messages. Recommended schedule: Monday 02:00 CET, before the work week starts. Deploy `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, ascending and descending) so the last-hour load and the five-message fallback do not scan a whole thread.
 
 ```bash
 gcloud scheduler jobs create http bigas-cleanup-chat-activity \

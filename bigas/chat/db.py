@@ -14,6 +14,9 @@ DEFAULT_ACTIVITY_KEEP_DAYS = 7
 DEFAULT_ACTIVITY_MAX_DELETE = 500
 DEFAULT_MESSAGE_KEEP_DAYS = 7
 DEFAULT_MESSAGE_MAX_DELETE = 500
+# Bound a single HTTP cleanup so a large backlog cannot hit the request timeout.
+# Later weekly scheduler runs delete anything that remains.
+MAX_CLEANUP_DELETE_BATCHES = 20
 CHAT_VISIBLE_HISTORY_HOURS = 1
 CHAT_LATEST_FALLBACK_LIMIT = 5
 CHAT_LLM_HISTORY_LIMIT = 10
@@ -901,8 +904,6 @@ class FirestoreChatStore:
         return deleted
 
     def _decrement_message_counts(self, messages: List[Dict[str, Any]]) -> None:
-        from google.cloud import firestore
-
         counts: Dict[str, int] = {}
         for message in messages:
             thread_id = message.get("thread_id") or ""
@@ -910,15 +911,29 @@ class FirestoreChatStore:
                 counts[thread_id] = counts.get(thread_id, 0) + 1
         for thread_id, count in counts.items():
             try:
-                self._threads.document(thread_id).update(
-                    {"message_count": firestore.Increment(-int(count))}
-                )
+                self._decrement_thread_message_count(thread_id, count)
             except Exception:
                 logger.warning(
                     "Failed to decrement message_count for thread %s",
                     thread_id,
                     exc_info=True,
                 )
+
+    def _decrement_thread_message_count(self, thread_id: str, count: int) -> None:
+        """Subtract count from message_count, never below zero."""
+        from google.cloud import firestore
+
+        ref = self._threads.document(thread_id)
+
+        @firestore.transactional
+        def _apply(transaction):
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return
+            current = int((snap.to_dict() or {}).get("message_count") or 0)
+            transaction.update(ref, {"message_count": max(0, current - int(count))})
+
+        _apply(self._db.transaction())
 
     def _batch_delete_docs(self, docs: List[Any]) -> int:
         deleted = 0
