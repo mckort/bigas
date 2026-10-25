@@ -473,8 +473,10 @@ def get_manifest():
                     "leftover pending project. Skips backend, web, or app workflows that "
                     "have no file changes vs the current prod tag. VFA runs separate "
                     "backend and web workflows. BIG dispatches deploy.yml on mckort/bigas "
-                    "(Cloud Run). AURA dispatches deploy.yml on mckort/auralearn "
-                    "(Cloud Run, default branch master). GPWW/FYDA/REM/MYL dispatch deploy.yml on the VM infra "
+                    "(Cloud Run). AURA dispatches deploy.yml and eas-preview-ios.yml on "
+                    "mckort/auralearn (Cloud Run, default branch master). "
+                    "eas-preview-ios.yml only queues an iOS preview build. "
+                    "GPWW/FYDA/REM/MYL dispatch deploy.yml on the VM infra "
                     "repo when BIGAS_DEPLOY_REPO_MAP is set."
                 ),
                 "path": "/mcp/tools/trigger_deployment",

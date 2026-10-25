@@ -219,7 +219,7 @@ def test_resolve_deploy_target_aura_cloud_run(monkeypatch):
     assert target is not None
     assert target.repo == "mckort/auralearn"
     assert target.dispatch_repo == "mckort/auralearn"
-    assert target.workflows == ["deploy.yml"]
+    assert target.workflows == ["deploy.yml", "eas-preview-ios.yml"]
     assert target.workflow_inputs is None
 
     from_text = resolve_deploy_target(site_or_text="deploy auralearn")

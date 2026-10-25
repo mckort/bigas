@@ -31,7 +31,7 @@ DEFAULT_WORKFLOW_MAP: Dict[str, List[str]] = {
     "VFA": ["deploy-backend.yml", "deploy-web.yml"],
     "BIG": ["deploy.yml"],
     "FRI": ["deploy.yml"],
-    "AURA": ["deploy.yml"],
+    "AURA": ["deploy.yml", "eas-preview-ios.yml"],
     "POF": ["deploy.yml"],
 }
 
