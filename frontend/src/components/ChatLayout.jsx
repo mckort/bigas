@@ -1011,7 +1011,7 @@ function MobileAgentTabs({ agents, activeAgentId, onSelectAgent, unreadAgentIds 
   )
 }
 
-function ChatComposer({
+const ChatComposer = memo(function ChatComposer({
   agentName,
   agentIcon,
   threadId,
@@ -1213,7 +1213,7 @@ function ChatComposer({
       </form>
     </div>
   )
-}
+})
 
 export default function ChatLayout({
   user,
@@ -1672,7 +1672,7 @@ export default function ChatLayout({
     }
   }, [threadId])
 
-  async function handleSend(text, files = []) {
+  const handleSend = useCallback(async (text, files = []) => {
     const trimmed = (text || '').trim()
     const attached = Array.from(files || []).filter(Boolean)
     if ((!trimmed && !attached.length) || !threadId || sendingRef.current) return false
@@ -1739,7 +1739,7 @@ export default function ChatLayout({
       sendingRef.current = false
       setSending(false)
     }
-  }
+  }, [threadId])
 
   function handleLogout() {
     logout()
