@@ -716,7 +716,7 @@ Use the same GCP project as Cloud Run.
 1. [Firebase Console](https://console.firebase.google.com/) → add Firebase to the existing GCP project → add a **Web** app. Copy API key, auth domain (`<project>.firebaseapp.com`), and project ID.
 2. Authentication → Sign-in method: enable **Email/Password** and/or **Google**. Create a user (or use Google sign-in).
 3. Authentication → Settings → Authorized domains: add your Cloud Run host (e.g. `your-service-xxxxx.region.run.app`). Do not include `https://`.
-4. Firestore Database → **Create database**, mode **Native** (not Datastore). Prefer the same region as Cloud Run (e.g. `europe-north1`). Collections are created on first use; no composite indexes are required. Keep client rules locked down — the browser does not talk to Firestore; Cloud Run does via the runtime service account.
+4. Firestore Database → **Create database**, mode **Native** (not Datastore). Prefer the same region as Cloud Run (e.g. `europe-north1`). Collections are created on first use. Deploy the composite indexes in `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, ascending and descending, and `tickets` on `board_id` + `updated_at`) before incremental chat and board polls. Keep client rules locked down — the browser does not talk to Firestore; Cloud Run does via the runtime service account.
 5. Enable APIs and grant the Cloud Run service account Firestore access:
    ```bash
    gcloud services enable firestore.googleapis.com identitytoolkit.googleapis.com
@@ -1051,7 +1051,7 @@ gcloud scheduler jobs create http bigas-website-monitor \
 
 ### Chat activity cleanup with Cloud Scheduler
 
-The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification, and chat messages accumulate in `messages`. `cleanup_old_activity` deletes activity events and chat messages older than 7 days, for every agent, in batches of up to 500. Each invocation stops after 20 batches per collection so the request stays inside the Cloud Run timeout; the next weekly run deletes anything that remains. `cleanup_old_reports` applies the same 20-batch cap when it deletes old chat messages. Recommended schedule: Monday 02:00 CET, before the work week starts. Deploy `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, ascending and descending) so the last-hour load and the five-message fallback do not scan a whole thread.
+The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification, and chat messages accumulate in `messages`. `cleanup_old_activity` deletes activity events and chat messages older than 7 days, for every agent, in batches of up to 500. Each invocation stops after 20 batches per collection so the request stays inside the Cloud Run timeout; the next weekly run deletes anything that remains. `cleanup_old_reports` applies the same 20-batch cap when it deletes old chat messages. Recommended schedule: Monday 02:00 CET, before the work week starts. Deploy `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, ascending and descending, and `tickets` on `board_id` + `updated_at`) so the last-hour load, the five-message fallback, and an idle board poll do not scan a whole collection.
 
 ```bash
 gcloud scheduler jobs create http bigas-cleanup-chat-activity \

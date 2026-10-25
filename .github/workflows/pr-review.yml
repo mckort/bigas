@@ -138,7 +138,29 @@ jobs:
         env:
           BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
 
+      # A burst of commits cancels this job (concurrency) during the wait, so
+      # only the push that stays head for 2 minutes calls Bigas. [bigas-autofix]
+      # commits never reach this job.
+      - name: Wait for commits to settle
+        id: settle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          sleep 120
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha || true)"
+          if [ -n "$current" ] && [ "$current" != "$HEAD_SHA" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Newer commit ${current} landed while waiting; leaving review to that push."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Head ${HEAD_SHA} is still current."
+          fi
+
       - name: Get PR diff via GitHub API
+        if: steps.settle.outputs.skip != 'true'
         id: diff
         env:
           GH_PAT: ${{ secrets.GH_PAT_FOR_BIGAS }}
@@ -175,6 +197,7 @@ jobs:
 
       - name: Trigger Bigas review + comment
         id: bigas
+        if: steps.settle.outputs.skip != 'true'
         env:
           BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
@@ -202,6 +225,7 @@ jobs:
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
 
       - name: Check Bigas response
+        if: steps.settle.outputs.skip != 'true'
         run: |
           HTTP_CODE="${{ steps.bigas.outputs.http_code }}"
           if [ "$HTTP_CODE" != "200" ]; then
@@ -214,7 +238,7 @@ jobs:
           cat response_body.txt || true
 
       - name: Autofix loop (up to 5 rounds) + re-review
-        if: ${{ (inputs.auto_fix || vars.BIGAS_AUTO_FIX || 'true') == 'true' }}
+        if: ${{ steps.settle.outputs.skip != 'true' && (inputs.auto_fix || vars.BIGAS_AUTO_FIX || 'true') == 'true' }}
         env:
           BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
           BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
@@ -246,6 +270,9 @@ jobs:
               or auto_merge.get("reason") == "pr_already_merged"
           ):
               print("PR already merged during review; skipping autofix.")
+              raise SystemExit(0)
+          if review.get("skipped") and review.get("reason") == "already_reviewed":
+              print("Head SHA already has a Bigas review; skipping autofix.")
               raise SystemExit(0)
 
           def with_github_token(body):

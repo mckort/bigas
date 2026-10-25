@@ -66,6 +66,10 @@ def summarize_review_result(payload: dict) -> str:
             f"{suffix}"
         ).strip()
 
+    if payload.get("skipped") and reason == "already_reviewed":
+        suffix = f" Comment: {comment_url}." if comment_url else ""
+        return f"This commit already has a Bigas review.{suffix}".strip()
+
     merge_bit = _auto_merge_clause(payload.get("auto_merge"))
     board = payload.get("board_ticket")
     ticket_bit = ""

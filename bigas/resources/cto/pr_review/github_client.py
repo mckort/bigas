@@ -18,6 +18,13 @@ from bigas.resources.cto.pr_review.markers import (
 logger = logging.getLogger(__name__)
 
 
+def pull_request_head_sha(pr: dict | None) -> str:
+    head = (pr or {}).get("head") if isinstance(pr, dict) else None
+    if not isinstance(head, dict):
+        return ""
+    return str(head.get("sha") or "").strip().lower()
+
+
 class GitHubPRCommentError(RuntimeError):
     """Raised when GitHub API calls fail (auth, rate limit, not found, etc.)."""
     pass
@@ -106,8 +113,13 @@ class GitHubPRCommentClient:
         comments = resp.json() if resp.text else []
         if not isinstance(comments, list):
             comments = []
+        # A SHA suffix still updates the one review comment. Searching for the
+        # whole suffix would miss the previous comment and post a second one.
+        search_marker = marker
+        if marker and BIGAS_REVIEW_MARKER in marker:
+            search_marker = BIGAS_REVIEW_MARKER
         existing_id = next(
-            (c["id"] for c in comments if marker in (c.get("body") or "")),
+            (c["id"] for c in comments if search_marker in (c.get("body") or "")),
             None,
         )
 

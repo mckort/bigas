@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from unittest.mock import MagicMock
+from urllib.parse import urlencode
 
 import pytest
 
@@ -163,6 +164,56 @@ def test_boards_and_tickets_api(client):
     )
     assert update_resp.status_code == 200
     assert update_resp.get_json()["ticket"]["status"] == "In Progress"
+
+
+def test_board_tickets_updated_since_is_incremental(client):
+    resp = client.get("/api/boards", headers=_auth_headers())
+    personal = next(b for b in resp.get_json()["boards"] if not b.get("project_key"))
+    board_id = personal["board_id"]
+    created = client.post(
+        f"/api/boards/{board_id}/tickets",
+        headers=_auth_headers(),
+        data=json.dumps({"title": "Cursor ticket"}),
+    )
+    assert created.status_code == 201
+    ticket = created.get_json()["ticket"]
+    stamp = ticket["updated_at"]
+    assert stamp
+
+    quiet = client.get(
+        f"/api/boards/{board_id}/tickets?{urlencode({'updated_since': stamp})}",
+        headers=_auth_headers(),
+    )
+    assert quiet.status_code == 200
+    quiet_body = quiet.get_json()
+    assert quiet_body["incremental"] is True
+    assert all(item["ticket_id"] != ticket["ticket_id"] for item in quiet_body["tickets"])
+
+    updated = client.put(
+        f"/api/tickets/{ticket['ticket_id']}",
+        headers=_auth_headers(),
+        data=json.dumps({"status": "In Progress"}),
+    )
+    assert updated.status_code == 200
+    changed = client.get(
+        f"/api/boards/{board_id}/tickets?{urlencode({'updated_since': stamp})}",
+        headers=_auth_headers(),
+    )
+    found = [
+        item
+        for item in changed.get_json()["tickets"]
+        if item["ticket_id"] == ticket["ticket_id"]
+    ]
+    assert len(found) == 1
+    assert found[0]["status"] == "In Progress"
+
+    invalid = client.get(
+        f"/api/boards/{board_id}/tickets?updated_since=not-a-time",
+        headers=_auth_headers(),
+    )
+    invalid_body = invalid.get_json()
+    assert "incremental" not in invalid_body
+    assert any(item["ticket_id"] == ticket["ticket_id"] for item in invalid_body["tickets"])
 
 
 def test_drag_to_done_sets_done_at(client):

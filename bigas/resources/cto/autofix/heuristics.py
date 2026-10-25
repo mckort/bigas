@@ -4,7 +4,10 @@ from __future__ import annotations
 import re
 from typing import Tuple
 
-from bigas.resources.cto.pr_review.markers import BIGAS_REVIEW_MARKER
+from bigas.resources.cto.pr_review.markers import (
+    BIGAS_REVIEW_MARKER,  # noqa: F401  re-exported for existing callers
+    strip_bigas_review_markers,
+)
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
 # Must contain AUTOFIX_COMMIT_MARKER so the Actions skip-on-autofix-head
@@ -283,7 +286,7 @@ def _line_is_empty_section_marker(line: str) -> bool:
 
 
 def _section_has_findings(body: str) -> bool:
-    raw = (body or "").replace(BIGAS_REVIEW_MARKER, "").strip()
+    raw = strip_bigas_review_markers(body).strip()
     first_line = next(
         (ln.strip() for ln in raw.splitlines() if ln.strip()),
         "",
@@ -316,7 +319,7 @@ def _line_is_verdict_closer(line: str) -> bool:
 
 def _strip_section_closer(body: str) -> str:
     """Drop a trailing LGTM / ready-to-merge closer so it is not a finding."""
-    text = (body or "").replace(BIGAS_REVIEW_MARKER, "").strip()
+    text = strip_bigas_review_markers(body).strip()
     lines = text.splitlines()
     while lines and not lines[-1].strip():
         lines.pop()

@@ -1674,13 +1674,34 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
     }
   }, [activeBoard?.project_key])
 
-  const loadTickets = useCallback(async () => {
+  const ticketCursorRef = useRef('')
+
+  const loadTickets = useCallback(async ({ incremental = false } = {}) => {
     if (!activeBoardId) return
-    const data = await fetchBoardTickets(activeBoardId)
+    const since = incremental ? ticketCursorRef.current : ''
+    const data = await fetchBoardTickets(activeBoardId, since ? { updatedSince: since } : {})
     const incoming = data.tickets || []
+    const merge = Boolean(since && data.incremental)
+    let cursor = merge ? ticketCursorRef.current || '' : ''
+    for (const ticket of incoming) {
+      const stamp = ticket?.updated_at || ''
+      if (stamp > cursor) cursor = stamp
+    }
+    if (cursor) ticketCursorRef.current = cursor
     optimisticTicketsRef.current = optimisticTicketsRef.current.filter(
       (ticket) => !incoming.some((item) => item.ticket_id === ticket.ticket_id),
     )
+    if (merge) {
+      if (!incoming.length && !optimisticTicketsRef.current.length) return
+      setTickets((prev) => {
+        const merged = incoming.reduce((acc, ticket) => upsertTicket(acc, ticket), prev)
+        return optimisticTicketsRef.current.reduce(
+          (acc, ticket) => upsertTicket(acc, ticket),
+          merged,
+        )
+      })
+      return
+    }
     const merged = optimisticTicketsRef.current.reduce(
       (acc, ticket) => upsertTicket(acc, ticket),
       incoming,
@@ -1693,6 +1714,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }, [loadBoards])
 
   useEffect(() => {
+    ticketCursorRef.current = ''
     optimisticTicketsRef.current = []
     setTicketSearch('')
     setSearchBusy(false)
@@ -1701,11 +1723,50 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }, [activeBoardId])
 
   useEffect(() => {
-    loadTickets()
-    loadReleases()
-    const id = setInterval(() => loadTickets(), 5000)
-    return () => clearInterval(id)
-  }, [loadTickets, loadReleases])
+    if (!activeBoardId) return undefined
+    let stopped = false
+    let pollId = 0
+    let fullId = 0
+
+    const stopTimers = () => {
+      window.clearInterval(pollId)
+      window.clearInterval(fullId)
+      pollId = 0
+      fullId = 0
+    }
+
+    const startTimers = () => {
+      stopTimers()
+      if (stopped || document.visibilityState === 'hidden') return
+      loadTickets()
+      loadReleases()
+      pollId = window.setInterval(() => {
+        if (document.visibilityState === 'hidden') return
+        loadTickets({ incremental: true })
+      }, 5000)
+      // Full read catches deletes and tickets that moved off this board.
+      fullId = window.setInterval(() => {
+        if (document.visibilityState === 'hidden') return
+        loadTickets()
+      }, 5 * 60 * 1000)
+    }
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stopTimers()
+        return
+      }
+      startTimers()
+    }
+
+    startTimers()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stopped = true
+      stopTimers()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [activeBoardId, loadTickets, loadReleases])
 
   useEffect(() => {
     if (!boardRefreshKey) return
