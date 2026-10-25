@@ -1675,11 +1675,19 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }, [activeBoard?.project_key])
 
   const ticketCursorRef = useRef('')
+  const activeBoardIdRef = useRef(activeBoardId)
+  const ticketLoadEpochRef = useRef(0)
+  activeBoardIdRef.current = activeBoardId
 
   const loadTickets = useCallback(async ({ incremental = false } = {}) => {
     if (!activeBoardId) return
+    const boardId = activeBoardId
+    const epoch = ticketLoadEpochRef.current
     const since = incremental ? ticketCursorRef.current : ''
-    const data = await fetchBoardTickets(activeBoardId, since ? { updatedSince: since } : {})
+    const data = await fetchBoardTickets(boardId, since ? { updatedSince: since } : {})
+    // A board switch bumps the epoch and activeBoardIdRef before this resolves.
+    // Drop the response so a slower board cannot overwrite tickets or the cursor.
+    if (ticketLoadEpochRef.current !== epoch || activeBoardIdRef.current !== boardId) return
     const incoming = data.tickets || []
     const merge = Boolean(since && data.incremental)
     let cursor = merge ? ticketCursorRef.current || '' : ''
@@ -1687,7 +1695,9 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
       const stamp = ticket?.updated_at || ''
       if (stamp > cursor) cursor = stamp
     }
-    if (cursor) ticketCursorRef.current = cursor
+    // Full refresh must clear a stale cursor when the board has no tickets.
+    // An incremental poll keeps the previous cursor when nothing newer arrived.
+    if (!merge || cursor) ticketCursorRef.current = cursor
     optimisticTicketsRef.current = optimisticTicketsRef.current.filter(
       (ticket) => !incoming.some((item) => item.ticket_id === ticket.ticket_id),
     )
@@ -1714,6 +1724,7 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
   }, [loadBoards])
 
   useEffect(() => {
+    ticketLoadEpochRef.current += 1
     ticketCursorRef.current = ''
     optimisticTicketsRef.current = []
     setTicketSearch('')
