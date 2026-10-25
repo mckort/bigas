@@ -1098,6 +1098,10 @@ class FirestoreTicketStore:
         if updated_since:
             # board_id + updated_at is a composite index. An idle board matches
             # no documents (one minimum read) instead of every recent ticket.
+            # The range is on updated_at, so Firestore requires that field as
+            # the first order_by. This query cannot stream pages ordered by
+            # created_at. The result is the change set since the cursor, not
+            # the whole board; created_at order is applied in memory below.
             docs = (
                 self._tickets.where("board_id", "==", board_id)
                 .where("updated_at", ">", updated_since)

@@ -8,6 +8,9 @@
 #   - Variable BIGAS_URL (required)
 #   - Secret   BIGAS_API_KEY (required)
 #   - Variable BIGAS_AUTO_FIX (default true when called as reusable)
+#   - Variable BIGAS_REVIEW_SETTLE_SECONDS (optional; default 120). Seconds to
+#     wait before every review, including a single commit, so a burst of pushes
+#     collapses into one run. workflow_call input settle_seconds overrides it.
 #   - Secret   GH_PAT_FOR_BIGAS (optional; stale PATs 401 — github.token is used first)
 # Discord: Bigas posts to CTO via DISCORD_WEBHOOK_URL_CTO in GCP Secret Manager.
 name: Bigas PR review
@@ -26,6 +29,15 @@ on:
         type: string
         required: false
         default: "true"
+      settle_seconds:
+        description: >
+          Seconds to wait before review so a burst of pushes collapses into
+          one run. This wait runs on every review, including a single commit.
+          Whole number; 0 skips the wait. Overrides repository variable
+          BIGAS_REVIEW_SETTLE_SECONDS. Default 120 when omitted.
+        type: string
+        required: false
+        default: ""
     secrets:
       BIGAS_API_KEY:
         required: true
@@ -139,7 +151,10 @@ jobs:
           BIGAS_URL: ${{ inputs.bigas_url || vars.BIGAS_URL }}
 
       # A burst of commits cancels this job (concurrency) during the wait, so
-      # only the push that stays head for 2 minutes calls Bigas. [bigas-autofix]
+      # only the push that stays head for the settle window calls Bigas.
+      # The wait runs on every review, including an isolated single commit.
+      # Default is 120 seconds. workflow_call input settle_seconds overrides
+      # repository variable BIGAS_REVIEW_SETTLE_SECONDS. [bigas-autofix]
       # commits never reach this job.
       - name: Wait for commits to settle
         id: settle
@@ -147,9 +162,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SETTLE_SECONDS: ${{ inputs.settle_seconds || vars.BIGAS_REVIEW_SETTLE_SECONDS || '120' }}
         run: |
           set -euo pipefail
-          sleep 120
+          seconds="${SETTLE_SECONDS:-120}"
+          if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
+            echo "::error::Review settle window must be a whole number of seconds (got '${seconds}'). Set workflow input settle_seconds or repository variable BIGAS_REVIEW_SETTLE_SECONDS."
+            exit 1
+          fi
+          echo "Waiting ${seconds}s for commits to settle before review."
+          echo "This wait runs on every review, including a single commit, so a burst of pushes becomes one Bigas call. Override with workflow input settle_seconds or repository variable BIGAS_REVIEW_SETTLE_SECONDS (default 120)."
+          if [ "$seconds" -gt 0 ]; then
+            sleep "$seconds"
+          fi
           current="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha || true)"
           if [ -n "$current" ] && [ "$current" != "$HEAD_SHA" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"

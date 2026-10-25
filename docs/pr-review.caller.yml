@@ -18,6 +18,9 @@ jobs:
     with:
       bigas_url: ${{ vars.BIGAS_URL }}
       auto_fix: ${{ vars.BIGAS_AUTO_FIX || 'true' }}
+      # Optional. Seconds to wait before every review (including one commit).
+      # Overrides repository variable BIGAS_REVIEW_SETTLE_SECONDS. Default 120.
+      # settle_seconds: ${{ vars.BIGAS_REVIEW_SETTLE_SECONDS || '120' }}
     secrets:
       BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
       GH_PAT_FOR_BIGAS: ${{ secrets.GH_PAT_FOR_BIGAS }}
