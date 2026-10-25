@@ -8,7 +8,7 @@ Bigas treats **AuraLearn** as portfolio project **`AURA`**, with the internal bo
 - **Repo:** `mckort/auralearn`. Default branch is **`master`** (not `main`).
 - **Auto-review / auto-fix:** `.github/workflows/pr-review.yml` in the product repo calls [`docs/pr-review.caller.yml`](pr-review.caller.yml). Repository variable `BIGAS_URL`, optional `BIGAS_AUTO_FIX=true`, plus secrets `BIGAS_API_KEY` and `GH_PAT_FOR_BIGAS` (see [cto-pr-review.md](cto-pr-review.md)).
 - **Implement:** Drag a card to **In Progress (AI)** with `CURSOR_API_KEY` + `GITHUB_TOKEN` on the Bigas instance. Cursor starts from `master`.
-- **Deploy:** DevOps dispatches `deploy.yml` on `mckort/auralearn` (Cloud Run, same pattern as BIG). It runs `deploy-auralearn.sh`. It does not use `mckort/gcp-single-vm-webstack`.
+- **Deploy:** DevOps dispatches `deploy.yml` on `mckort/auralearn` (Cloud Run, same pattern as BIG). It runs `deploy-auralearn.sh`. When `mobile/` changed since the last preview build, it also dispatches `eas-preview-ios.yml`, which queues `eas build --profile preview --platform ios` and returns without waiting. The result is posted to the CTO Discord chat. It does not use `mckort/gcp-single-vm-webstack`.
 
 There is no public marketing domain yet, so chat does not map a site hostname to `AURA`.
 
@@ -22,12 +22,12 @@ BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS=VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,F
 # Optional explicit override (defaults are baked into Bigas for AURA):
 # BIGAS_JIRA_PROJECT_REPO_MAP=...,AURA:mckort/auralearn
 # BIGAS_JIRA_REPO_BASE_BRANCH_MAP=...,mckort/auralearn:master
-# BIGAS_DEPLOY_WORKFLOW_MAP=...|AURA:deploy.yml
+# BIGAS_DEPLOY_WORKFLOW_MAP=...|AURA:deploy.yml,eas-preview-ios.yml
 # Do not add AURA to BIGAS_DEPLOY_REPO_MAP. Dispatch stays on mckort/auralearn.
 # BIGAS_PROJECT_LOCAL_PATH_MAP=AURA:/path/to/auralearn
 ```
 
-With `SECRET_MANAGER=true`, sync `BIGAS_DEPLOY_WORKFLOW_MAP` and restart. Code defaults still resolve `AURA` → `deploy.yml` on `mckort/auralearn` when the env map omits the key, after this Bigas revision is deployed.
+With `SECRET_MANAGER=true`, sync `BIGAS_DEPLOY_WORKFLOW_MAP` and restart. Code defaults still resolve `AURA` → `deploy.yml,eas-preview-ios.yml` on `mckort/auralearn` when the env map omits the key, after this Bigas revision is deployed. An explicit `AURA:deploy.yml` entry in the secret overrides that default, so the secret has to list `eas-preview-ios.yml` too.
 
 ## GitHub (`mckort/auralearn`)
 
