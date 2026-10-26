@@ -314,6 +314,35 @@ class FetchAiUsageTests(unittest.TestCase):
         self.assertIn("CFO analysis", msg)
         self.assertIn("### Drivers", msg)
 
+    def test_cfo_weekly_report_links_savings_tickets(self):
+        class FakeLlm:
+            def complete(self, messages, **kwargs):
+                return (
+                    "### Drivers\n- Firestore reads led the invoice.\n"
+                    "### Savings\n- Cut idle reads.\n"
+                    "### Model\n- Stay.\n\n"
+                    "```actions\n"
+                    '[{"id":"firestore-read-ops","title":"Cut idle Firestore reads",'
+                    '"detail":"Reads.","impact_usd":140}]\n'
+                    "```"
+                )
+
+        with patch(
+            "bigas.llm.factory.get_llm_client",
+            return_value=(FakeLlm(), "gemini-3.1-pro-preview"),
+        ), patch(
+            "bigas.resources.cto.usage.service.open_cfo_savings_ticket",
+            return_value={"key": "BIG-200", "url": "/board?ticket=BIG-200"},
+        ) as opener:
+            msg = build_weekly_cfo_ai_report(
+                {"days": 7, "totals": {"est_cost_usd": 1.0}, "events": []},
+                include_prior_period=False,
+            )
+        opener.assert_called_once()
+        self.assertNotIn("```actions", msg)
+        self.assertIn("[BIG-200](/board?ticket=BIG-200)", msg)
+        self.assertIn("Cut idle Firestore reads", msg)
+
     def test_cfo_prompt_may_challenge_pro_if_quality_holds(self):
         from bigas.resources.cto.usage.service import CFO_WEEKLY_ANALYSIS_INSTRUCTIONS
 
@@ -324,6 +353,9 @@ class FetchAiUsageTests(unittest.TestCase):
         self.assertIn("### Savings", text)
         self.assertIn("### Model", text)
         self.assertIn("180 words", text)
+        self.assertIn("Invoice SKUs", text)
+        self.assertIn("```actions", text)
+        self.assertIn("without adding the two figures", text)
 
     def test_cfo_analysis_complete_heuristic(self):
         from bigas.resources.cto.usage.service import _cfo_analysis_looks_complete
@@ -372,6 +404,139 @@ class FetchAiUsageTests(unittest.TestCase):
             msg = build_weekly_cfo_ai_report(report, include_prior_period=False)
         self.assertIn("CFO: AI + cloud usage", msg)
         self.assertNotIn("CFO analysis", msg)
+
+    def test_weekly_report_names_sku_and_gemini_gap(self):
+        report = {
+            "days": 7,
+            "totals": {"est_cost_usd": 12.0, "events": 2, "invoice_cost_usd": 144.0},
+            "events": [
+                {
+                    "provider": "gcp_billing",
+                    "feature": "gcp.firestore",
+                    "est_cost_usd": 144.58,
+                    "meta": {
+                        "gcp_project": "bigas-503008",
+                        "gcp_service": "App Engine",
+                        "gcp_sku": "Cloud Firestore Read Ops",
+                    },
+                },
+                {
+                    "provider": "gcp_billing",
+                    "feature": "gcp.gemini_invoice",
+                    "est_cost_usd": 235.53,
+                    "model": None,
+                    "meta": {"gcp_sku": "Gemini 3.8 Flash Output"},
+                },
+                {
+                    "provider": "llm_logs",
+                    "feature": "cto_pr_review",
+                    "model": "gemini-3.8-flash",
+                    "est_cost_usd": 31.43,
+                    "input_tokens": 1000,
+                    "output_tokens": 400,
+                },
+            ],
+        }
+        msg = format_weekly_cto_ai_report(report)
+        self.assertIn("Cloud Firestore Read Ops", msg)
+        self.assertIn("billed as App Engine", msg)
+        self.assertIn("gcp.firestore", msg)
+        self.assertIn("invoice ≈$235.53", msg)
+        self.assertIn("llm_logs ≈$31.43", msg)
+        self.assertIn("in 1,000 / out 400", msg)
+
+    def test_savings_tickets_skip_small_items_and_reuse_open_cards(self):
+        from bigas.resources.cto.usage.service import (
+            savings_tickets_section,
+            split_cfo_actions,
+        )
+
+        prose, actions = split_cfo_actions(
+            "### Drivers\n- Reads.\n### Savings\n- Cut reads.\n### Model\n- Stay.\n\n"
+            "```actions\n"
+            "["
+            '{"id":"firestore-read-ops","title":"Cut idle Firestore reads","detail":"44M reads.","impact_usd":140},'
+            '{"id":"tiny","title":"Ignore noise","detail":"small","impact_usd":2}'
+            "]\n"
+            "```"
+        )
+        self.assertIn("### Drivers", prose)
+        self.assertNotIn("```actions", prose)
+        opened = []
+
+        def opener(action):
+            opened.append(action["id"])
+            if action["id"] == "firestore-read-ops":
+                return {
+                    "key": "BIG-200",
+                    "url": "/board?ticket=BIG-200",
+                    "reused": True,
+                }
+            return {"key": "BIG-201", "url": "/board?ticket=BIG-201"}
+
+        section = savings_tickets_section(actions, opener=opener)
+        self.assertEqual(opened, ["firestore-read-ops"])
+        self.assertIn("[BIG-200](/board?ticket=BIG-200)", section)
+        self.assertIn("already open", section)
+        self.assertNotIn("Ignore noise", section)
+
+    def test_split_cfo_actions_parses_currency_impact_strings(self):
+        from bigas.resources.cto.usage.service import split_cfo_actions
+
+        _, actions = split_cfo_actions(
+            "### Drivers\n- Reads.\n### Savings\n- Cut reads.\n### Model\n- Stay.\n\n"
+            "```actions\n"
+            "["
+            '{"id":"firestore-read-ops","title":"Cut idle Firestore reads",'
+            '"detail":"44M reads.","impact_usd":"$140/week"},'
+            '{"id":"log-volume","title":"Drop extra logs","detail":"logs.",'
+            '"impact_usd":"1,200"}'
+            "]\n"
+            "```"
+        )
+        self.assertEqual(
+            [(a["id"], a["impact_usd"]) for a in actions],
+            [("firestore-read-ops", 140.0), ("log-volume", 1200.0)],
+        )
+
+    def test_savings_section_omits_duplicate_title_without_link(self):
+        from bigas.resources.cto.usage.service import savings_tickets_section
+
+        action = {
+            "id": "firestore-read-ops",
+            "title": "Cut idle Firestore reads",
+            "impact_usd": 140,
+        }
+        section = savings_tickets_section([action], opener=lambda _action: {})
+        self.assertEqual(
+            section,
+            "**Savings tickets**\n- Cut idle Firestore reads (~$140.00/week)",
+        )
+        self.assertEqual(section.count("Cut idle Firestore reads"), 1)
+
+    def test_savings_section_reports_non_dict_ticket(self):
+        from bigas.resources.cto.usage.service import savings_tickets_section
+
+        action = {
+            "id": "firestore-read-ops",
+            "title": "Cut idle Firestore reads",
+            "impact_usd": 140,
+        }
+        section = savings_tickets_section([action], opener=lambda _action: None)
+        self.assertIn("ticket was not created", section)
+        self.assertEqual(section.count("Cut idle Firestore reads"), 1)
+
+    def test_slug_from_title_strips_hyphen_left_by_slice(self):
+        from bigas.resources.cto.usage.service import _slug_from_title
+
+        self.assertEqual(
+            _slug_from_title("Cut idle Firestore reads in productions now"),
+            "cut-idle-firestore-reads-in-productions",
+        )
+        self.assertEqual(
+            _slug_from_title("Cut idle Firestore reads"),
+            "cut-idle-firestore-reads",
+        )
 
     def test_publish_weekly_goes_to_cfo_not_cto(self):
         with patch(
@@ -621,6 +786,18 @@ class GcpBillingTests(unittest.TestCase):
         self.assertEqual(service_feature("Vertex AI"), "gcp.gemini_invoice")
         self.assertEqual(service_feature("Generative Language API"), "gcp.gemini_invoice")
 
+    def test_invoice_feature_prefers_firestore_sku_over_app_engine(self):
+        from bigas.providers.usage.gcp_billing import invoice_feature
+
+        self.assertEqual(
+            invoice_feature("App Engine", "Cloud Firestore Read Ops"),
+            "gcp.firestore",
+        )
+        self.assertEqual(
+            invoice_feature("App Engine", "Frontend Instances"),
+            "gcp.app_engine",
+        )
+
     def test_rows_to_events(self):
         from bigas.providers.usage.gcp_billing import _rows_to_events
 
@@ -644,6 +821,43 @@ class GcpBillingTests(unittest.TestCase):
         self.assertFalse(events[0].cost_estimate)
         self.assertEqual(events[0].meta["app"], "bigas")
         self.assertEqual(events[1].meta["app"], "vcfieldassistant")
+
+    def test_long_sku_source_ids_stay_unique(self):
+        from bigas.providers.usage.gcp_billing import _rows_to_events
+
+        central = "Compute Engine Custom Instance Core running in us-central1"
+        east = "Compute Engine Custom Instance Core running in us-east1"
+        events = _rows_to_events(
+            [
+                {
+                    "project_id": "bigas-503008",
+                    "service": "Compute Engine",
+                    "sku": central,
+                    "net_cost": "1.0",
+                },
+                {
+                    "project_id": "bigas-503008",
+                    "service": "Compute Engine",
+                    "sku": east,
+                    "net_cost": "2.0",
+                },
+                {
+                    "project_id": "bigas-503008",
+                    "service": "Cloud Firestore",
+                    "sku": "Cloud Firestore Read Ops",
+                    "net_cost": "3.0",
+                },
+            ],
+            started_at="2026-08-17T00:00:00+00:00",
+        )
+        self.assertEqual(len(events), 3)
+        self.assertNotEqual(events[0].source_id, events[1].source_id)
+        self.assertIn("us-central1", events[0].source_id)
+        self.assertIn("us-east1", events[1].source_id)
+        self.assertEqual(
+            events[2].source_id,
+            "gcp:bigas-503008:gcp.firestore:cloud-firestore-read-ops",
+        )
 
     @patch.dict(
         "os.environ",
