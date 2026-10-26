@@ -1,8 +1,10 @@
 """Aggregate AI usage from UsageProvider implementations + Discord helpers."""
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -321,6 +323,74 @@ def _approx_money(value: Optional[float], *, digits: int = 2) -> str:
     return f"≈{money}"
 
 
+def _invoice_sku_lines(report: Dict[str, Any]) -> List[str]:
+    """Top Cloud Billing SKUs. The SKU name wins over the service name."""
+    ranked: List[Tuple[float, str]] = []
+    for ev in report.get("events") or []:
+        if not isinstance(ev, dict) or ev.get("provider") != "gcp_billing":
+            continue
+        meta = ev.get("meta") if isinstance(ev.get("meta"), dict) else {}
+        sku = str(meta.get("gcp_sku") or "").strip()
+        service = str(meta.get("gcp_service") or "").strip()
+        label = sku or service or str(ev.get("feature") or "invoice")
+        try:
+            cost = float(ev.get("est_cost_usd") or 0)
+        except (TypeError, ValueError):
+            continue
+        if cost < 0.5:
+            continue
+        project = str(meta.get("gcp_project") or "").strip()
+        feature = str(ev.get("feature") or "").strip()
+        billed_as = ""
+        if sku and service and service.lower() not in sku.lower():
+            billed_as = f", billed as {service}"
+        where = f" ({project}{billed_as})" if project or billed_as else ""
+        mapped = f" → {feature}" if feature else ""
+        ranked.append((cost, f"- {label}{where}: {_approx_money(cost)}{mapped}"))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [line for _, line in ranked[:8]]
+
+
+def _gemini_invoice_gap_line(report: Dict[str, Any]) -> str:
+    """Invoice Gemini dollars next to llm_logs list-price and token volume."""
+    invoice = 0.0
+    list_price = 0.0
+    in_tok = 0
+    out_tok = 0
+    saw_invoice = False
+    saw_logs = False
+    for ev in report.get("events") or []:
+        if not isinstance(ev, dict):
+            continue
+        feature = str(ev.get("feature") or "")
+        model = str(ev.get("model") or "")
+        try:
+            cost = float(ev.get("est_cost_usd") or 0)
+        except (TypeError, ValueError):
+            cost = 0.0
+        if feature == "gcp.gemini_invoice":
+            invoice += cost
+            saw_invoice = True
+        if ev.get("provider") == "llm_logs" and "gemini" in model.lower():
+            list_price += cost
+            saw_logs = True
+            try:
+                in_tok += int(ev.get("input_tokens") or 0)
+                out_tok += int(ev.get("output_tokens") or 0)
+            except (TypeError, ValueError):
+                pass
+    if not saw_invoice and not saw_logs:
+        return ""
+    token_bit = ""
+    if in_tok or out_tok:
+        token_bit = f" llm_logs tokens: in {in_tok:,} / out {out_tok:,}."
+    return (
+        "Gemini invoice vs list-price (do not add them): "
+        f"invoice {_approx_money(invoice)} · llm_logs {_approx_money(list_price)}."
+        f"{token_bit}"
+    )
+
+
 def _billing_export_console_url() -> str:
     account = (os.environ.get("BIGAS_BILLING_ACCOUNT") or "011097-9C6611-22F8ED").strip()
     project = (
@@ -580,10 +650,21 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
         for err in other_errors[:5]:
             lines.append(f"- {err.get('provider')}: {err.get('error')}")
 
+    sku_lines = _invoice_sku_lines(report)
+    if sku_lines:
+        lines.append("")
+        lines.append("Invoice SKUs (Cloud Billing, not list-price):")
+        lines.extend(sku_lines)
+    gap = _gemini_invoice_gap_line(report)
+    if gap:
+        lines.append("")
+        lines.append(gap)
+
     lines.append("")
     lines.append(
         "_List-price: Cursor, llm_logs, Tavily. "
         "gcp_billing is the Cloud Billing invoice (about 1 day lag). "
+        "SKU text is the billable line; a service name like App Engine can hide Firestore. "
         "Do not add gcp.gemini_invoice to llm_logs Gemini._"
     )
     return "\n".join(lines)
@@ -628,10 +709,12 @@ CFO_WEEKLY_ANALYSIS_INSTRUCTIONS = (
     "3 bullets: what drove list-price (app / feature / Pro vs Flash). "
     "Mention GCP only if invoice rows exist or the report says invoice is unavailable.\n"
     "### Savings\n"
-    "2–4 concrete actions with rough $ impact from the numbers "
-    "(e.g. cut PR-review volume, cadence, caching). "
-    "List-price (llm_logs, Cursor, Tavily) is not the GCP invoice. "
-    "Do not add gcp.gemini_invoice to llm_logs Gemini.\n"
+    "2–4 concrete actions with rough $ impact from the numbers. "
+    "When Invoice SKUs are listed, name the SKU, not the GCP service, "
+    "when they differ (Firestore reads billed as App Engine are Firestore). "
+    "When a Gemini invoice vs list-price line is present, one action must "
+    "address that gap (price table or real call volume), without adding the "
+    "two figures together. List-price is not the GCP invoice.\n"
     "### Model\n"
     "1–3 bullets: stay / watch / switch for the stack we run "
     "(Gemini 2.5/3.x Pro+Flash, Claude, GPT, Cursor composer). "
@@ -641,8 +724,153 @@ CFO_WEEKLY_ANALYSIS_INSTRUCTIONS = (
     "performance must not get worse and why quality would hold. "
     "Do not suggest Flash for judgment unless you can argue quality would not drop. "
     "Flag uncertainty. Do not invent list prices.\n\n"
-    "Hard limit: 180 words total. Finish every section — never truncate mid-sentence.\n"
+    "The three sections stay within 180 words. Finish every section.\n"
+    "After them, and outside the word limit, add one fence and nothing else:\n"
+    "```actions\n"
+    "[{\"id\":\"firestore-read-ops\",\"title\":\"Cut idle Firestore reads\","
+    "\"detail\":\"Why this week, in one sentence.\",\"impact_usd\":140}]\n"
+    "```\n"
+    "id is a stable lowercase slug reused every week for the same saving. "
+    "1–4 items. impact_usd is dollars per week taken from the report. "
+    "Omit anything under $10. Titles stay the same week to week for the same id.\n"
 )
+
+
+_ACTIONS_FENCE_RE = re.compile(
+    r"```actions\s*(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+_SAVING_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_SAVINGS_MIN_USD = 10.0
+_SAVINGS_MAX_TICKETS = 4
+_CLOSED_TICKET_STATUSES = frozenset(
+    {"done", "closed", "resolved", "cancelled", "canceled", "completed"}
+)
+
+
+def _slug_from_title(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")
+    return slug[:40] or "cfo-saving"
+
+
+def split_cfo_actions(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Split the briefing from the machine-readable savings fence."""
+    raw_text = text or ""
+    match = _ACTIONS_FENCE_RE.search(raw_text)
+    if not match:
+        return raw_text.strip(), []
+    prose = (raw_text[: match.start()] + raw_text[match.end() :]).strip()
+    try:
+        parsed = json.loads(match.group(1).strip())
+    except json.JSONDecodeError:
+        logger.warning("CFO actions fence was not valid JSON")
+        return prose, []
+    if isinstance(parsed, dict):
+        parsed = parsed.get("actions") or []
+    if not isinstance(parsed, list):
+        return prose, []
+    actions: List[Dict[str, Any]] = []
+    seen = set()
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        try:
+            impact = float(item.get("impact_usd"))
+        except (TypeError, ValueError):
+            continue
+        slug = str(item.get("id") or "").strip().lower()
+        if not _SAVING_ID_RE.match(slug):
+            slug = _slug_from_title(title)
+        if slug in seen:
+            continue
+        seen.add(slug)
+        actions.append(
+            {
+                "id": slug,
+                "title": title[:140],
+                "detail": str(item.get("detail") or "").strip()[:600],
+                "impact_usd": impact,
+            }
+        )
+    return prose, actions
+
+
+def open_cfo_savings_ticket(action: Dict[str, Any]) -> Dict[str, Any]:
+    """Open a BIG Improvement in To Do, or reuse the open card with this saving id."""
+    from bigas.tickets.service import TicketService, ticket_to_api
+
+    slug = str(action.get("id") or "").strip()
+    marker = f"cfo-saving-id: {slug}"
+    service = TicketService()
+    for ticket in service._store.list_tickets_by_project("BIG", issue_type="Improvement"):
+        status = (ticket.get("status") or "").strip().lower()
+        if status in _CLOSED_TICKET_STATUSES:
+            continue
+        if marker in str(ticket.get("description") or ""):
+            reused = ticket_to_api(ticket)
+            reused["reused"] = True
+            return reused
+    detail = str(action.get("detail") or action.get("title") or "").strip()
+    description = (
+        f"{marker}\n\n"
+        f"{detail}\n\n"
+        f"About {_money(float(action.get('impact_usd') or 0))} per week in the CFO report. "
+        "Opened from the weekly cost briefing. Leave this card in To Do."
+    )
+    return service.create_ticket_for_project(
+        "BIG",
+        title=str(action.get("title") or slug),
+        description=description,
+        issue_type="Improvement",
+        status="To Do",
+        start_automation=False,
+    )
+
+
+def savings_tickets_section(
+    actions: Sequence[Dict[str, Any]],
+    *,
+    opener,
+) -> str:
+    """Create or reuse one board card per saving at or above the weekly floor."""
+    chosen = [
+        action
+        for action in actions
+        if float(action.get("impact_usd") or 0) >= _SAVINGS_MIN_USD
+    ]
+    chosen.sort(key=lambda action: float(action["impact_usd"]), reverse=True)
+    chosen = chosen[:_SAVINGS_MAX_TICKETS]
+    if not chosen:
+        return ""
+    lines = ["**Savings tickets**"]
+    for action in chosen:
+        try:
+            ticket = opener(action)
+        except Exception:
+            logger.warning(
+                "Could not open CFO savings ticket %s",
+                action.get("id"),
+                exc_info=True,
+            )
+            lines.append(
+                f"- {action['title']} (~{_money(action['impact_usd'])}/week) — ticket was not created"
+            )
+            continue
+        if not isinstance(ticket, dict):
+            continue
+        key = str(ticket.get("key") or "").strip()
+        url = str(ticket.get("url") or "").strip() or (
+            f"/board?ticket={key}" if key else ""
+        )
+        reused = " (already open)" if ticket.get("reused") else ""
+        link = f"[{key}]({url})" if key and url else action["title"]
+        lines.append(
+            f"- {link} {action['title']} (~{_money(float(action['impact_usd']))}/week){reused}"
+        )
+    return "\n".join(lines)
 
 
 def analyze_weekly_ai_spend(report: Dict[str, Any]) -> Optional[str]:
@@ -678,13 +906,15 @@ def analyze_weekly_ai_spend(report: Dict[str, Any]) -> Optional[str]:
             call_kwargs["thinking_budget"] = 1_024
 
         text = (llm.complete(messages, **call_kwargs) or "").strip()
-        if not text or not _cfo_analysis_looks_complete(text):
+        prose, _actions = split_cfo_actions(text)
+        if not prose or not _cfo_analysis_looks_complete(prose):
             # One retry with more output room and no thinking budget.
             retry_kwargs = {"max_tokens": 4_096, "temperature": 0.2}
             text2 = (llm.complete(messages, **retry_kwargs) or "").strip()
-            if text2 and (
-                _cfo_analysis_looks_complete(text2)
-                or len(text2) > len(text)
+            prose2, _actions2 = split_cfo_actions(text2)
+            if prose2 and (
+                _cfo_analysis_looks_complete(prose2)
+                or len(prose2) > len(prose)
             ):
                 text = text2
         return text or None
@@ -746,7 +976,12 @@ def build_weekly_cfo_ai_report(
         parts.append(books)
     analysis = analyze_weekly_ai_spend(enriched)
     if analysis:
-        parts.append(f"**CFO analysis**\n{analysis}")
+        prose, actions = split_cfo_actions(analysis)
+        if prose:
+            parts.append(f"**CFO analysis**\n{prose}")
+        tickets = savings_tickets_section(actions, opener=open_cfo_savings_ticket)
+        if tickets:
+            parts.append(tickets)
     return "\n\n".join(parts)
 
 
