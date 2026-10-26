@@ -480,6 +480,64 @@ class FetchAiUsageTests(unittest.TestCase):
         self.assertIn("already open", section)
         self.assertNotIn("Ignore noise", section)
 
+    def test_split_cfo_actions_parses_currency_impact_strings(self):
+        from bigas.resources.cto.usage.service import split_cfo_actions
+
+        _, actions = split_cfo_actions(
+            "### Drivers\n- Reads.\n### Savings\n- Cut reads.\n### Model\n- Stay.\n\n"
+            "```actions\n"
+            "["
+            '{"id":"firestore-read-ops","title":"Cut idle Firestore reads",'
+            '"detail":"44M reads.","impact_usd":"$140/week"},'
+            '{"id":"log-volume","title":"Drop extra logs","detail":"logs.",'
+            '"impact_usd":"1,200"}'
+            "]\n"
+            "```"
+        )
+        self.assertEqual(
+            [(a["id"], a["impact_usd"]) for a in actions],
+            [("firestore-read-ops", 140.0), ("log-volume", 1200.0)],
+        )
+
+    def test_savings_section_omits_duplicate_title_without_link(self):
+        from bigas.resources.cto.usage.service import savings_tickets_section
+
+        action = {
+            "id": "firestore-read-ops",
+            "title": "Cut idle Firestore reads",
+            "impact_usd": 140,
+        }
+        section = savings_tickets_section([action], opener=lambda _action: {})
+        self.assertEqual(
+            section,
+            "**Savings tickets**\n- Cut idle Firestore reads (~$140.00/week)",
+        )
+        self.assertEqual(section.count("Cut idle Firestore reads"), 1)
+
+    def test_savings_section_reports_non_dict_ticket(self):
+        from bigas.resources.cto.usage.service import savings_tickets_section
+
+        action = {
+            "id": "firestore-read-ops",
+            "title": "Cut idle Firestore reads",
+            "impact_usd": 140,
+        }
+        section = savings_tickets_section([action], opener=lambda _action: None)
+        self.assertIn("ticket was not created", section)
+        self.assertEqual(section.count("Cut idle Firestore reads"), 1)
+
+    def test_slug_from_title_strips_hyphen_left_by_slice(self):
+        from bigas.resources.cto.usage.service import _slug_from_title
+
+        self.assertEqual(
+            _slug_from_title("Cut idle Firestore reads in productions now"),
+            "cut-idle-firestore-reads-in-productions",
+        )
+        self.assertEqual(
+            _slug_from_title("Cut idle Firestore reads"),
+            "cut-idle-firestore-reads",
+        )
+
     def test_publish_weekly_goes_to_cfo_not_cto(self):
         with patch(
             "bigas.discord_webhook.post_long_to_discord"
@@ -763,6 +821,43 @@ class GcpBillingTests(unittest.TestCase):
         self.assertFalse(events[0].cost_estimate)
         self.assertEqual(events[0].meta["app"], "bigas")
         self.assertEqual(events[1].meta["app"], "vcfieldassistant")
+
+    def test_long_sku_source_ids_stay_unique(self):
+        from bigas.providers.usage.gcp_billing import _rows_to_events
+
+        central = "Compute Engine Custom Instance Core running in us-central1"
+        east = "Compute Engine Custom Instance Core running in us-east1"
+        events = _rows_to_events(
+            [
+                {
+                    "project_id": "bigas-503008",
+                    "service": "Compute Engine",
+                    "sku": central,
+                    "net_cost": "1.0",
+                },
+                {
+                    "project_id": "bigas-503008",
+                    "service": "Compute Engine",
+                    "sku": east,
+                    "net_cost": "2.0",
+                },
+                {
+                    "project_id": "bigas-503008",
+                    "service": "Cloud Firestore",
+                    "sku": "Cloud Firestore Read Ops",
+                    "net_cost": "3.0",
+                },
+            ],
+            started_at="2026-08-17T00:00:00+00:00",
+        )
+        self.assertEqual(len(events), 3)
+        self.assertNotEqual(events[0].source_id, events[1].source_id)
+        self.assertIn("us-central1", events[0].source_id)
+        self.assertIn("us-east1", events[1].source_id)
+        self.assertEqual(
+            events[2].source_id,
+            "gcp:bigas-503008:gcp.firestore:cloud-firestore-read-ops",
+        )
 
     @patch.dict(
         "os.environ",

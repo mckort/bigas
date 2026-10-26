@@ -750,7 +750,7 @@ _CLOSED_TICKET_STATUSES = frozenset(
 
 def _slug_from_title(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")
-    return slug[:40] or "cfo-saving"
+    return slug[:40].rstrip("-") or "cfo-saving"
 
 
 def split_cfo_actions(text: str) -> Tuple[str, List[Dict[str, Any]]]:
@@ -777,8 +777,11 @@ def split_cfo_actions(text: str) -> Tuple[str, List[Dict[str, Any]]]:
         title = str(item.get("title") or "").strip()
         if not title:
             continue
+        raw_impact: Any = item.get("impact_usd")
+        if isinstance(raw_impact, str):
+            raw_impact = re.sub(r"[^\d.]", "", raw_impact.split("/")[0])
         try:
-            impact = float(item.get("impact_usd"))
+            impact = float(raw_impact)
         except (TypeError, ValueError):
             continue
         slug = str(item.get("id") or "").strip().lower()
@@ -860,15 +863,23 @@ def savings_tickets_section(
             )
             continue
         if not isinstance(ticket, dict):
+            logger.warning(
+                "CFO savings ticket opener returned %s for %s",
+                type(ticket).__name__,
+                action.get("id"),
+            )
+            lines.append(
+                f"- {action['title']} (~{_money(action['impact_usd'])}/week) — ticket was not created"
+            )
             continue
         key = str(ticket.get("key") or "").strip()
         url = str(ticket.get("url") or "").strip() or (
             f"/board?ticket={key}" if key else ""
         )
         reused = " (already open)" if ticket.get("reused") else ""
-        link = f"[{key}]({url})" if key and url else action["title"]
+        prefix = f"[{key}]({url}) " if key and url else ""
         lines.append(
-            f"- {link} {action['title']} (~{_money(float(action['impact_usd']))}/week){reused}"
+            f"- {prefix}{action['title']} (~{_money(float(action['impact_usd']))}/week){reused}"
         )
     return "\n".join(lines)
 

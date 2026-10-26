@@ -90,11 +90,7 @@ def service_feature(description: str) -> str:
 
 def invoice_feature(service: str, sku: str = "") -> str:
     """Prefer the SKU so Firestore reads billed as App Engine stay Firestore."""
-    return (
-        matched_service_feature(sku)
-        or matched_service_feature(service)
-        or service_feature(service)
-    )
+    return matched_service_feature(sku) or service_feature(service)
 
 
 def _feature_matches(feature: str, prefix: Optional[str]) -> bool:
@@ -123,7 +119,9 @@ def _rows_to_events(
         if abs(cost) < 1e-9:
             continue
         feature = invoice_feature(service, sku)
-        sku_slug = re.sub(r"[^a-z0-9]+", "-", sku.lower()).strip("-")[:48]
+        # Keep the full slug. A fixed cut collapses SKUs that share a prefix
+        # (regions, machine families) onto one source_id and drops rows.
+        sku_slug = re.sub(r"[^a-z0-9]+", "-", sku.lower()).strip("-")
         source_id = f"gcp:{project}:{feature}"
         if sku_slug:
             source_id = f"{source_id}:{sku_slug}"
