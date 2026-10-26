@@ -225,7 +225,7 @@ jobs:
           MAX_COOLDOWN_WAITS: "20"
         run: |
           python3 <<'PY'
-          import json, os, re, subprocess, time, urllib.error, urllib.request
+          import json, os, time, urllib.error, urllib.request
 
           base = os.environ["BIGAS_URL"].rstrip("/")
           api_key = os.environ["BIGAS_API_KEY"]
@@ -340,75 +340,6 @@ jobs:
                   raise SystemExit(f"autofix_followup finalize failed: HTTP {code}")
               return final
 
-          def _section(body, title):
-              match = re.search(
-                  rf"###\s*{title}\s*\n(.*?)(?=\n###|\n---|\Z)",
-                  body or "",
-                  re.I | re.S,
-              )
-              return (match.group(1) if match else "").strip()
-
-          def _section_has_finding(text):
-              lines = []
-              for raw in (text or "").splitlines():
-                  line = raw.strip().lstrip("-*").strip().strip("*").strip()
-                  if line:
-                      lines.append(line.lower().rstrip("."))
-              if not lines:
-                  return False
-              empty = {"none", "n/a", "na", "inga", "no"}
-              return any(line not in empty for line in lines)
-
-          def review_is_minor_only(body):
-              if "### Blockers" not in (body or "") or "### Important" not in (body or ""):
-                  return False
-              if _section_has_finding(_section(body, "Blockers")):
-                  return False
-              if _section_has_finding(_section(body, "Important")):
-                  return False
-              return _section_has_finding(_section(body, "Minor"))
-
-          def latest_bigas_review():
-              token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_PAT") or "").strip()
-              if not token:
-                  return ""
-              req = urllib.request.Request(
-                  f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments?per_page=100",
-                  headers={
-                      "Authorization": f"Bearer {token}",
-                      "Accept": "application/vnd.github+json",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                  },
-              )
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as resp:
-                      comments = json.loads(resp.read().decode() or "[]")
-              except Exception as exc:
-                  print(f"Could not read review comments: {exc}")
-                  return ""
-              for comment in reversed(comments):
-                  text = comment.get("body") or ""
-                  if "bigas-ai-review-marker" in text:
-                      return text
-              return ""
-
-          def enable_squash_automerge():
-              token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_PAT") or "").strip()
-              if not token:
-                  print("No GitHub token; cannot enable auto-merge.")
-                  return
-              env = dict(os.environ)
-              env["GH_TOKEN"] = token
-              proc = subprocess.run(
-                  ["gh", "pr", "merge", str(pr_number), "--squash", "--auto", "--repo", repo],
-                  env=env,
-                  capture_output=True,
-                  text=True,
-              )
-              print((proc.stdout or "") + (proc.stderr or ""))
-              if proc.returncode != 0:
-                  print("Could not enable auto-merge; leaving the PR open.")
-
           def cooldown_wait_seconds(data):
               try:
                   raw_cooldown = data.get("cooldown_seconds")
@@ -502,13 +433,6 @@ jobs:
                   print("Loop protection after re-review; done.")
                   break
               if not final.get("fixes_pushed", True):
-                  if final.get("rereviewed") and review_is_minor_only(latest_bigas_review()):
-                      print(
-                          "Autofix pushed nothing and only a minor remark remains. "
-                          "Enabling squash auto-merge."
-                      )
-                      enable_squash_automerge()
-                      break
                   if final.get("rereviewed"):
                       print("No new commits; re-review already ran. Stopping loop.")
                   else:
