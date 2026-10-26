@@ -23,6 +23,7 @@ from bigas.resources.cto.autofix.heuristics import (
     autofix_pushed_new_commit,
     format_loop_protection_message,
     minor_autofix_max_iterations,
+    review_is_nits_only,
     review_is_ready_to_merge,
 )
 from bigas.resources.cto.autofix.service import (
@@ -1619,6 +1620,13 @@ def autofix_followup():
         max_iterations=max_iters,
         minor_max_iterations=minor_autofix_max_iterations(),
     )
+    # A nits-only agent that pushes nothing has looked at the leftover minor and
+    # left it. Waiting for a second round never starts, so merge instead.
+    accepted_leftover_nits = (
+        not ready and not fixes_pushed and review_is_nits_only(review_body)
+    )
+    if accepted_leftover_nits:
+        ready = True
     cost_line = _discord_llm_cost_line(review_result)
     cost_suffix = f"\n{cost_line}" if cost_line else ""
     _post_to_discord_cto_chunks(
@@ -1688,6 +1696,7 @@ def autofix_followup():
         "rereviewed": True,
         "comment_url": comment_url,
         "ready_to_merge": ready,
+        "accepted_leftover_nits": accepted_leftover_nits,
         "fixes_pushed": fixes_pushed,
         "head_sha": head_sha,
         "baseline_head_sha": baseline_head_sha,

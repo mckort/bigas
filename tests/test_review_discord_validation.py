@@ -283,6 +283,77 @@ def test_autofix_followup_rereviews_when_no_new_commit(
 
 
 @patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
+@patch("bigas.resources.cto.endpoints._maybe_auto_merge_pr", return_value={"merged": True, "ok": True})
+@patch("bigas.resources.cto.endpoints._final_approval_after_merge", return_value={"skipped": True})
+@patch("bigas.resources.cto.endpoints.PRReviewService")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "Fix", "merged": False})
+@patch("bigas.resources.cto.endpoints.AutofixService")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto_chunks")
+def test_autofix_followup_merges_when_nits_agent_pushes_nothing(
+    _chunks,
+    _discord,
+    mock_service,
+    _mock_pr,
+    mock_gh,
+    mock_review,
+    mock_merge,
+    _jira,
+    _usage,
+):
+    from bigas.llm.usage import TokenUsage
+    from bigas.resources.cto.pr_review.service import PRReviewResult
+
+    svc = mock_service.return_value
+    svc.poll_status.return_value = {
+        "done": True,
+        "ok": True,
+        "status": "FINISHED",
+        "agent_id": "bc-1",
+        "run_id": "run-1",
+        "agent_url": "https://cursor.com/agents/bc-1",
+        "result_text": "The test name is not duplicated. No change.",
+    }
+    svc.get_pr_head_commit.return_value = ("abc123", "[bigas-autofix] [nits-only] look again")
+    svc.fetch_pr_diff.return_value = "diff --git a/x b/x"
+    svc.count_autofix_rounds.return_value = (2, 1)
+    mock_gh.return_value.get_marked_comment.return_value = None
+    mock_gh.return_value.post_or_update_pr_comment.return_value = {
+        "html_url": "https://github.com/acme/app/pull/1#issuecomment-2"
+    }
+    mock_review.return_value.review.return_value = PRReviewResult(
+        text=(
+            "### Blockers\nNone.\n\n### Important\nNone.\n\n"
+            "### Minor\n- Duplicate test name.\n\n"
+            "The pull request is ready to merge.\n"
+        ),
+        model="gemini-pro-latest",
+        usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+    )
+
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/autofix_followup",
+        json={
+            "repo": "acme/app",
+            "pr_number": 1,
+            "agent_id": "bc-1",
+            "baseline_head_sha": "abc123",
+            "finalize": True,
+            "github_token": "tok",
+            "cursor_api_key": "ck",
+        },
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    assert body.get("fixes_pushed") is False
+    assert body.get("accepted_leftover_nits") is True
+    assert body.get("ready_to_merge") is True
+    mock_merge.assert_called_once()
+
+
+@patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
 @patch("bigas.resources.cto.endpoints.PRReviewService")
 @patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "Fix", "merged": False})
 @patch("bigas.resources.cto.endpoints.AutofixService")
