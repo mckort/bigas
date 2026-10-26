@@ -239,6 +239,8 @@ def summarize_followup_result(payload: dict) -> str:
     if payload.get("ready_to_merge"):
         if pushed:
             lead = "Autofix pushed fixes and the re-review looks clean."
+        elif payload.get("accepted_leftover_nits"):
+            lead = "Autofix pushed nothing. The leftover remark is minor, so the PR can merge."
         else:
             lead = "Autofix did not need new commits; the re-review looks clean."
         if comment_url:
