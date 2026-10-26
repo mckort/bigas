@@ -1226,7 +1226,7 @@ export default function ChatLayout({
   agentsRefreshKey = 0,
 }) {
   const [agents, setAgents] = useState([])
-  const [activeAgentId, setActiveAgentId] = useState('chief')
+  const [activeAgentId, setActiveAgentId] = useState('devops')
   const [threadId, setThreadId] = useState(null)
   const [messages, setMessages] = useState([])
   const [hasOlder, setHasOlder] = useState(false)
