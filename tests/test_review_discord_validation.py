@@ -298,8 +298,8 @@ def test_autofix_followup_merges_when_nits_agent_pushes_nothing(
     _mock_pr,
     mock_gh,
     mock_review,
+    mock_approval,
     mock_merge,
-    _jira,
     _usage,
 ):
     from bigas.llm.usage import TokenUsage
@@ -351,6 +351,7 @@ def test_autofix_followup_merges_when_nits_agent_pushes_nothing(
     assert body.get("accepted_leftover_nits") is True
     assert body.get("ready_to_merge") is True
     mock_merge.assert_called_once()
+    mock_approval.assert_called_once()
 
 
 @patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
