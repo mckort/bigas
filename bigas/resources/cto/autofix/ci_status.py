@@ -19,6 +19,9 @@ _INFRA = (
     "the job was not started because",
 )
 _PENDING_STATUSES = {"queued", "in_progress", "pending", "waiting", "requested"}
+# GitHub marks a timed-out job completed with conclusion "timed_out", not "failure".
+# Cancelled and action_required are also terminal non-success and must not look green.
+_FAILURE_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required"}
 _USELESS_ANNOTATION = re.compile(
     r"process completed with exit code|node\.js 20 is deprecated|ubuntu-latest label will migrate",
     re.IGNORECASE,
@@ -58,6 +61,18 @@ def annotation_excerpt(annotations: list[dict[str, Any]]) -> str:
         loc = f"{path}:{line_no} " if path else ""
         lines.append(f"{loc}{message}")
     return "\n".join(lines)
+
+
+def check_output_excerpt(output: Any, *, limit: int = 2500) -> str:
+    """Check-run summary or text, used when annotations and job logs are empty."""
+    if not isinstance(output, dict):
+        return ""
+    summary = str(output.get("summary") or "").strip()
+    text = str(output.get("text") or "").strip()
+    excerpt = summary or text
+    if len(excerpt) > limit:
+        return excerpt[:limit]
+    return excerpt
 
 
 def log_excerpt(text: str, *, limit: int = 2500) -> str:
@@ -144,7 +159,7 @@ def fetch_head_ci(client: Any, owner: str, repo: str, sha: str) -> dict[str, Any
             if status in _PENDING_STATUSES:
                 pending.append(name)
             continue
-        if conclusion != "failure":
+        if conclusion not in _FAILURE_CONCLUSIONS:
             continue
         excerpt = ""
         check_id = run.get("id")
@@ -167,6 +182,8 @@ def fetch_head_ci(client: Any, owner: str, repo: str, sha: str) -> dict[str, Any
                 except Exception:
                     logger.warning("Could not read job log %s", job_id, exc_info=True)
                     excerpt = ""
+            if not excerpt:
+                excerpt = check_output_excerpt(run.get("output"))
             if is_infrastructure_failure(excerpt):
                 continue
         failed.append(

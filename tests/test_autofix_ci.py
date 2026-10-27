@@ -1,5 +1,7 @@
 from bigas.resources.cto.autofix.ci_status import (
     annotation_excerpt,
+    check_output_excerpt,
+    fetch_head_ci,
     is_bigas_review_check,
     is_infrastructure_failure,
     log_excerpt,
@@ -146,6 +148,131 @@ def test_autofix_launches_for_failing_ci_when_review_is_clean(monkeypatch):
     assert "bigas / review" not in launched["prompt_text"]
     assert "npm audit fix" in launched["prompt_text"]
     assert "--force" in launched["prompt_text"]
+
+
+class _CheckRuns:
+    def __init__(self, runs, annotations=None, log=""):
+        self.runs = runs
+        self.annotations = [] if annotations is None else annotations
+        self.log = log
+
+    def list_commit_check_runs(self, *args, **kwargs):
+        return self.runs
+
+    def list_check_run_annotations(self, *args, **kwargs):
+        return self.annotations
+
+    def get_actions_job_log(self, *args, **kwargs):
+        return self.log
+
+
+def test_fetch_head_ci_treats_timeout_cancel_and_action_required_as_failures():
+    result = fetch_head_ci(
+        _CheckRuns(
+            [
+                {"id": 1, "name": "test", "status": "completed", "conclusion": "timed_out"},
+                {"id": 2, "name": "lint", "status": "completed", "conclusion": "cancelled"},
+                {"id": 3, "name": "build", "status": "completed", "conclusion": "action_required"},
+                {"id": 4, "name": "typecheck", "status": "completed", "conclusion": "success"},
+                {"id": 5, "name": "optional", "status": "completed", "conclusion": "skipped"},
+                {"id": 6, "name": "notes", "status": "completed", "conclusion": "neutral"},
+            ]
+        ),
+        "owner",
+        "repo",
+        "abc",
+    )
+    assert [item["name"] for item in result["failed"]] == ["test", "lint", "build"]
+    assert ready_after_ci(True, result, block_on_pending=False) == (False, False, True)
+
+
+def test_fetch_head_ci_uses_check_output_when_annotations_and_logs_are_empty():
+    summary = "AssertionError: expected 1"
+    result = fetch_head_ci(
+        _CheckRuns(
+            [
+                {
+                    "id": 1,
+                    "name": "test",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "html_url": "https://github.com/owner/repo/actions/runs/1/job/9",
+                    "output": {"summary": summary, "text": "full log that should not win"},
+                }
+            ],
+            annotations=[],
+            log="",
+        ),
+        "owner",
+        "repo",
+        "abc",
+    )
+    assert result["failed"][0]["excerpt"] == summary
+
+    text_only = fetch_head_ci(
+        _CheckRuns(
+            [
+                {
+                    "id": 2,
+                    "name": "test",
+                    "status": "completed",
+                    "conclusion": "timed_out",
+                    "output": {"summary": "  ", "text": "job timed out after 10m"},
+                }
+            ]
+        ),
+        "owner",
+        "repo",
+        "abc",
+    )
+    assert text_only["failed"][0]["excerpt"] == "job timed out after 10m"
+    long_summary = "x" * 3000
+    assert check_output_excerpt({"summary": long_summary}) == "x" * 2500
+
+
+def test_autofix_does_not_launch_when_ci_fails_at_max_iterations(monkeypatch):
+    launched = {}
+
+    class FakeCursor:
+        def __init__(self, api_key):
+            pass
+
+        def launch_pr_autofix(self, **kwargs):
+            launched.update(kwargs)
+            return {
+                "agent_id": "bc-next",
+                "agent_url": "https://cursor.com/agents/bc-next",
+                "run_id": "run-next",
+            }
+
+    class AtCap(_CleanGH):
+        def count_autofix_rounds(self, *args, **kwargs):
+            return 5, 0
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
+        lambda token: AtCap(
+            [
+                {
+                    "id": 1,
+                    "name": "test",
+                    "status": "completed",
+                    "conclusion": "failure",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.autofix.service.CursorCloudAgentClient",
+        FakeCursor,
+    )
+    result = AutofixService(cursor_api_key="c", github_token="t").run(
+        repo="owner/repo", pr_number=9
+    )
+    assert result["skipped"] is True
+    assert result.get("loop_protection") is True
+    assert result.get("launched") is not True
+    assert launched == {}
 
 
 def test_autofix_waits_while_ci_is_still_running(monkeypatch):

@@ -1270,6 +1270,13 @@ def autofix_pr():
                     pr_url=pr_url,
                     github_token=gh_token,
                 )
+                result["jira_final_approval"] = _final_approval_after_merge(
+                    repo=repo,
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    github_token=gh_token,
+                    merged=bool(auto_merge.get("merged")),
+                )
             result["auto_merge"] = auto_merge
             _post_cto_status(
                 f"**CTO autofix skipped**\n"
@@ -1717,6 +1724,17 @@ def autofix_followup():
             "Review is clean. Waiting for CI before merge.\n"
             f"{pr_ref}"
         )
+    elif autofix_count >= max_iters:
+        # Cap wins over a still-red check. Otherwise a failing CI run tells
+        # Actions to launch again and the iteration limit never fires.
+        _notify_autofix_loop_protection(
+            repo=repo,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            autofix_count=autofix_count,
+            max_iterations=max_iters,
+            github_token=gh_token,
+        )
     elif ci_failed and review_ready:
         _post_cto_status(
             f"**CTO autofix follow-up**\n"
@@ -1730,15 +1748,6 @@ def autofix_followup():
             "Agent did not push; re-review still has findings. "
             "Stopping the autofix loop for this run.\n"
             f"{pr_ref}"
-        )
-    elif autofix_count >= max_iters:
-        _notify_autofix_loop_protection(
-            repo=repo,
-            pr_number=pr_number,
-            pr_url=pr_url,
-            autofix_count=autofix_count,
-            max_iterations=max_iters,
-            github_token=gh_token,
         )
     else:
         # autofix_count = agents started on this PR. Several commits from one
