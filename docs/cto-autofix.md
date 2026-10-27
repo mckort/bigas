@@ -12,7 +12,9 @@ PR opened/push
          → when the PR is actually merged (auto-merge or someone else merges): move ticket to Final approval
   → if repo var BIGAS_AUTO_FIX=true (Actions loop, up to 5 rounds):
       → autofix_pr
-          → skip if review is fully clean (LGTM, no leftover Minor)
+          → skip if review is fully clean and CI is green (or not reported)
+          → wait and retry while non-Bigas CI checks are still running
+          → launch when a non-Bigas check failed, even if the review is clean
           → leftover Minor / nits launch up to 2 extra `[bigas-autofix] [nits-only]` rounds
           → skip with loop protection if 5 autofix agents have already started
             on this PR and Blockers/Important remain
@@ -23,7 +25,9 @@ PR opened/push
       → poll autofix_followup until agent terminal
           → Discord + Activity: autofix completed / failed / without commits (not the CTO chat thread)
           → re-review updated diff
-          → if LGTM, or leftover Minor after the nits budget / 5-round cap: Discord "Ready to merge"
+          → if LGTM and CI is green, or leftover Minor after the nits budget / 5-round cap and CI is green: Discord "Ready to merge"
+          → if the review is clean but CI is still running: wait, then merge or launch another round
+          → if the review is clean but CI failed: launch another autofix round with the check log
             → if BIGAS_CTO_AUTO_MERGE=true: squash-merge or enable GitHub auto-merge + Discord
             → when the PR is actually merged: move ticket to Final approval
           → else if under 5 rounds: next autofix round with updated review
@@ -101,7 +105,7 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 
 ## Guards
 
-- Skip when review looks like LGTM / no leftover findings, **except** when GitHub reports merge conflicts (`mergeable_state` dirty / conflicting) — then launch the same Cursor autofix agent to rebase or merge the base branch and resolve conflicts
+- Skip when review looks like LGTM / no leftover findings, **except** when GitHub reports merge conflicts (`mergeable_state` dirty / conflicting) — then launch the same Cursor autofix agent to rebase or merge the base branch and resolve conflicts — **or** when a non-Bigas check on the PR head has failed. Failed lint, test, typecheck, and unused-file jobs are included in the agent prompt. The loop waits while those checks are still running, and does not mark the PR ready to merge until they are green. Bigas's own review jobs, and GitHub billing or spending-limit failures, are ignored. An npm audit failure may use `npm audit fix` without `--force`; a breaking major upgrade is not taken just to silence the advisory.
 - Leftover Minor / nits (including structured `### Minor` with empty Blockers/Important) launch up to `BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS` (default 2) extra rounds using `[bigas-autofix] [nits-only]`
 - After those two nits-only rounds, or at the overall 5-round cap with only Minor left, accept leftover nits and treat the PR as ready to merge
 - When autofix runs for Blockers/Important, the agent also fixes Minor items from the same review
