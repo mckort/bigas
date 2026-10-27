@@ -190,6 +190,7 @@ class PRReviewService:
         *,
         phase: ReviewPhase = "initial",
         previous_review: Optional[str] = None,
+        repo: Optional[str] = None,
     ) -> PRReviewResult:
         """
         Run AI review on the given diff. Returns markdown review text plus usage.
@@ -214,7 +215,7 @@ class PRReviewService:
             phase=phase,
             previous_review=previous_review,
         )
-        system_prompt = system_prompt_for_phase(phase)
+        system_prompt = system_prompt_for_phase(phase, repo=repo)
         # Slightly lower temperature for more consistent, checklist-driven reviews.
         temperature = 0.1 if phase == "initial" else 0.0
         max_tokens = _max_review_tokens()

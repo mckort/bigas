@@ -51,6 +51,8 @@ Optional auto-merge: set Bigas env `BIGAS_CTO_AUTO_MERGE=true` to squash-merge w
 
 Dead/unused code this PR introduced or made unused (imports, functions, helpers, files, replaced call sites) is classified as **Important**, so it blocks ready-to-merge / auto-merge and triggers autofix. Reviewers must not hunt pre-existing unused code elsewhere in the repo, must not flag a replaced file when other files may still reference it, and must not write “ready to merge” while Blockers, Important, or Minor still have findings.
 
+Product-specific false-positive rules stay out of the shared review prompts. The VC Field Assistant invite and shared-company checks are appended only when the review target is that repository (`VFA` in the project repo map, default `mckort/vcfieldassistant`).
+
 ## Server-side configuration (Bigas)
 
 1. **GitHub Personal Access Token**

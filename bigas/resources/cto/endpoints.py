@@ -907,6 +907,7 @@ def review_and_comment_pr():
             instructions=instructions,
             phase=phase,  # type: ignore[arg-type]
             previous_review=previous_review,
+            repo=repo,
         )
         review_body = review_result.text
     except PRReviewError as e:
@@ -1562,6 +1563,7 @@ def autofix_followup():
             ),
             phase="post_autofix",
             previous_review=previous_review,
+            repo=repo,
         )
         review_body = review_result.text
     except PRReviewError as e:

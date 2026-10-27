@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
+from bigas.portfolio import repo_map
+
 ReviewPhase = Literal["initial", "post_autofix", "prepare_staging", "prepare_staging_post"]
 
 # Shared output contract so autofix heuristics can classify severity reliably.
@@ -80,6 +82,26 @@ Dead / unused code (classify as Important, not Minor):
   this PR removed on purpose.
 """.strip()
 
+# Appended only when the review target is the VFA repository. The shared
+# prompt strings stay generic so other products do not inherit this flow.
+_VFA_INVITE_FALSE_POSITIVES = """
+Invite and shared-company false blockers (do not report these):
+- Do not say `listSharedCompanies()` is skipped for external viewers unless that
+  call itself is inside the guard. A guard around the workspace portfolio fetch
+  does not cover a later `listSharedCompanies()` call.
+- Do not treat `PENDING_WORKSPACE_INVITES` as a lockout with no accept UI when
+  `LoginPage` renders `PendingWorkspaceInvitesPanel` for that code. That screen
+  is how an invited workspace member accepts the organization.
+- When re-checking either finding, mark it resolved if the diff matches the
+  case above. Do not repeat it.
+""".strip()
+
+_VFA_INVITE_POST_AUTOFIX = """
+- If a previous finding says `listSharedCompanies()` is skipped, or that
+  `PENDING_WORKSPACE_INVITES` leaves the user with no accept UI, mark it
+  resolved when the shared-company call is outside the portfolio guard and
+  `LoginPage` still renders `PendingWorkspaceInvitesPanel` for that code.
+""".strip()
 
 PR_REVIEW_SYSTEM_PROMPT = f"""You are a senior engineer performing a pull request review.
 Your role is to catch real issues early with specific, actionable feedback.
@@ -217,14 +239,33 @@ Guidelines:
 """
 
 
-def system_prompt_for_phase(phase: ReviewPhase = "initial") -> str:
-    if phase == "prepare_staging":
-        return PR_REVIEW_PREPARE_STAGING_SYSTEM_PROMPT
-    if phase == "prepare_staging_post":
-        return PR_REVIEW_PREPARE_STAGING_POST_SYSTEM_PROMPT
+def _false_positive_rules_for_repo(repo: Optional[str], phase: ReviewPhase) -> str:
+    """Repo-specific false-positive rules. Empty for every repository except VFA."""
+    target = (repo or "").strip().lower()
+    if not target:
+        return ""
+    vfa = (repo_map().get("VFA") or "").strip().lower()
+    if not vfa or target != vfa:
+        return ""
     if phase == "post_autofix":
-        return PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
-    return PR_REVIEW_INITIAL_SYSTEM_PROMPT
+        return f"{_VFA_INVITE_FALSE_POSITIVES}\n\n{_VFA_INVITE_POST_AUTOFIX}"
+    return _VFA_INVITE_FALSE_POSITIVES
+
+
+def system_prompt_for_phase(phase: ReviewPhase = "initial", repo: Optional[str] = None) -> str:
+    if phase == "prepare_staging":
+        base = PR_REVIEW_PREPARE_STAGING_SYSTEM_PROMPT
+    elif phase == "prepare_staging_post":
+        base = PR_REVIEW_PREPARE_STAGING_POST_SYSTEM_PROMPT
+    elif phase == "post_autofix":
+        base = PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
+    else:
+        base = PR_REVIEW_INITIAL_SYSTEM_PROMPT
+        phase = "initial"
+    extra = _false_positive_rules_for_repo(repo, phase)
+    if not extra:
+        return base
+    return f"{base}\n\n{extra}"
 
 
 def build_pr_review_user_prompt(
