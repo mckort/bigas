@@ -126,6 +126,63 @@ def test_autofix_loop_protection_skips_chat_thread(mock_discord, _mock_pr):
     assert "CTO autofix stopped" in mock_discord.call_args.args[0]
 
 
+@patch("bigas.resources.cto.endpoints._final_approval_after_merge", return_value={"ok": True, "issue_key": "BIG-158"})
+@patch("bigas.resources.cto.endpoints._maybe_auto_merge_pr", return_value={"merged": True, "ok": True})
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "BIG-158: CI"})
+@patch("bigas.resources.cto.endpoints.AutofixService")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+def test_autofix_pr_moves_ticket_when_auto_merge_lands(
+    _discord, mock_service, _mock_pr, mock_merge, mock_approval
+):
+    mock_service.return_value.run.return_value = {
+        "skipped": True,
+        "review_clean": True,
+        "ci_settled": True,
+        "reason": "review looks clean (LGTM)",
+    }
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/autofix_pr",
+        json={
+            "repo": "acme/app",
+            "pr_number": 9,
+            "cursor_api_key": "ck",
+            "github_token": "tok",
+        },
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    assert (body.get("auto_merge") or {}).get("merged") is True
+    assert (body.get("jira_final_approval") or {}).get("issue_key") == "BIG-158"
+    mock_merge.assert_called_once()
+    mock_approval.assert_called_once()
+    assert mock_approval.call_args.kwargs["merged"] is True
+
+
+@patch("bigas.resources.cto.endpoints._final_approval_after_merge", return_value={"skipped": True})
+@patch("bigas.resources.cto.endpoints._maybe_auto_merge_pr", return_value={"merged": True, "ok": True})
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "BIG-158: CI"})
+@patch("bigas.resources.cto.endpoints.AutofixService")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+def test_autofix_pr_does_not_merge_when_ci_is_not_settled(
+    _discord, mock_service, _mock_pr, mock_merge, mock_approval
+):
+    mock_service.return_value.run.return_value = {
+        "skipped": True,
+        "review_clean": True,
+        "ci_settled": False,
+        "reason": "review looks clean (LGTM)",
+    }
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/autofix_pr",
+        json={"repo": "acme/app", "pr_number": 9, "cursor_api_key": "ck"},
+    )
+    assert res.status_code == 200
+    mock_merge.assert_not_called()
+    mock_approval.assert_not_called()
+
+
 @patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "Fix"})
 @patch("bigas.resources.cto.endpoints.AutofixService")
 @patch("bigas.resources.cto.endpoints._post_to_discord_cto")
@@ -352,6 +409,154 @@ def test_autofix_followup_merges_when_nits_agent_pushes_nothing(
     assert body.get("ready_to_merge") is True
     mock_merge.assert_called_once()
     mock_approval.assert_called_once()
+
+
+@patch(
+    "bigas.resources.cto.endpoints._ci_for_commit",
+    return_value={"failed": [{"name": "test"}], "pending": [], "unavailable": False},
+)
+@patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
+@patch("bigas.resources.cto.endpoints._maybe_auto_merge_pr", return_value={"skipped": True})
+@patch("bigas.resources.cto.endpoints._final_approval_after_merge", return_value={"skipped": True})
+@patch("bigas.resources.cto.endpoints.PRReviewService")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "Fix", "merged": False})
+@patch("bigas.resources.cto.endpoints.AutofixService")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto_chunks")
+def test_autofix_followup_stops_at_cap_when_ci_still_fails(
+    _chunks,
+    mock_discord,
+    mock_service,
+    _mock_pr,
+    mock_gh,
+    mock_review,
+    _jira,
+    _merge,
+    _usage,
+    _ci,
+):
+    from bigas.llm.usage import TokenUsage
+    from bigas.resources.cto.pr_review.service import PRReviewResult
+
+    svc = mock_service.return_value
+    svc.poll_status.return_value = {
+        "done": True,
+        "ok": True,
+        "status": "FINISHED",
+        "agent_id": "bc-1",
+        "run_id": "run-1",
+        "agent_url": "https://cursor.com/agents/bc-1",
+        "result_text": "Fixed the test.",
+    }
+    svc.get_pr_head_commit.return_value = (
+        "def456",
+        "BIG-158: [bigas-autofix] fix the test",
+    )
+    svc.fetch_pr_diff.return_value = "diff --git a/x b/x"
+    svc.count_autofix_rounds.return_value = (5, 0)
+    mock_gh.return_value.get_marked_comment_body.return_value = None
+    mock_gh.return_value.post_or_update_pr_comment.return_value = {
+        "html_url": "https://github.com/acme/app/pull/1#issuecomment-3"
+    }
+    mock_review.return_value.review.return_value = PRReviewResult(
+        text=_CLEAN_REVIEW,
+        model="gemini-pro-latest",
+        usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+    )
+
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/autofix_followup",
+        json={
+            "repo": "acme/app",
+            "pr_number": 1,
+            "agent_id": "bc-1",
+            "baseline_head_sha": "abc123",
+            "finalize": True,
+            "github_token": "tok",
+            "cursor_api_key": "ck",
+        },
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    messages = [call.args[0] for call in mock_discord.call_args_list]
+    assert body.get("ci_failed") is True
+    assert body.get("ready_to_merge") is False
+    assert body.get("loop_protection") is True
+    assert any("CTO autofix stopped (loop protection)" in message for message in messages)
+    assert not any("may launch another autofix round" in message for message in messages)
+
+
+@patch(
+    "bigas.resources.cto.endpoints._ci_for_commit",
+    return_value={"failed": [{"name": "test"}], "pending": [], "unavailable": False},
+)
+@patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
+@patch("bigas.resources.cto.endpoints.PRReviewService")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+@patch("bigas.resources.cto.endpoints._fetch_pull_request", return_value={"title": "Fix", "merged": False})
+@patch("bigas.resources.cto.endpoints.AutofixService")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto_chunks")
+def test_autofix_followup_may_retry_ci_while_under_the_cap(
+    _chunks,
+    mock_discord,
+    mock_service,
+    _mock_pr,
+    mock_gh,
+    mock_review,
+    _usage,
+    _ci,
+):
+    from bigas.llm.usage import TokenUsage
+    from bigas.resources.cto.pr_review.service import PRReviewResult
+
+    svc = mock_service.return_value
+    svc.poll_status.return_value = {
+        "done": True,
+        "ok": True,
+        "status": "FINISHED",
+        "agent_id": "bc-1",
+        "run_id": "run-1",
+        "agent_url": "https://cursor.com/agents/bc-1",
+        "result_text": "Fixed the test.",
+    }
+    svc.get_pr_head_commit.return_value = (
+        "def456",
+        "BIG-158: [bigas-autofix] fix the test",
+    )
+    svc.fetch_pr_diff.return_value = "diff --git a/x b/x"
+    svc.count_autofix_rounds.return_value = (1, 0)
+    mock_gh.return_value.get_marked_comment_body.return_value = None
+    mock_gh.return_value.post_or_update_pr_comment.return_value = {
+        "html_url": "https://github.com/acme/app/pull/1#issuecomment-4"
+    }
+    mock_review.return_value.review.return_value = PRReviewResult(
+        text=_CLEAN_REVIEW,
+        model="gemini-pro-latest",
+        usage=TokenUsage(prompt_tokens=1, candidates_tokens=1, total_tokens=2),
+    )
+
+    client = _app().test_client()
+    res = client.post(
+        "/mcp/tools/autofix_followup",
+        json={
+            "repo": "acme/app",
+            "pr_number": 1,
+            "agent_id": "bc-1",
+            "baseline_head_sha": "abc123",
+            "finalize": True,
+            "github_token": "tok",
+            "cursor_api_key": "ck",
+        },
+    )
+    assert res.status_code == 200
+    body = res.get_json() or {}
+    messages = [call.args[0] for call in mock_discord.call_args_list]
+    assert body.get("ci_failed") is True
+    assert body.get("loop_protection") is False
+    assert any("may launch another autofix round" in message for message in messages)
 
 
 @patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")

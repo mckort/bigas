@@ -12,10 +12,14 @@ PR opened/push
          → when the PR is actually merged (auto-merge or someone else merges): move ticket to Final approval
   → if repo var BIGAS_AUTO_FIX=true (Actions loop, up to 5 rounds):
       → autofix_pr
-          → skip if review is fully clean (LGTM, no leftover Minor)
+          → skip if review is fully clean and CI is green (or not reported);
+            auto-merge may squash-merge, and a landed merge moves the ticket to Final approval
+          → wait and retry while non-Bigas CI checks are still running
+          → launch when a non-Bigas check failed, even if the review is clean
           → leftover Minor / nits launch up to 2 extra `[bigas-autofix] [nits-only]` rounds
           → skip with loop protection if 5 autofix agents have already started
-            on this PR and Blockers/Important remain
+            on this PR and Blockers/Important remain, or CI is still failing
+            (a red, timed-out, cancelled, or action-required check does not start another round)
           → leftover Minor after 2 nits-only rounds, or at the 5-round cap, is accepted
             (ready to merge / auto-merge)
           → if cooldown (fresh [bigas-autofix] head): Discord + PR notice, wait, retry
@@ -23,9 +27,12 @@ PR opened/push
       → poll autofix_followup until agent terminal
           → Discord + Activity: autofix completed / failed / without commits (not the CTO chat thread)
           → re-review updated diff
-          → if LGTM, or leftover Minor after the nits budget / 5-round cap: Discord "Ready to merge"
+          → if LGTM and CI is green, or leftover Minor after the nits budget / 5-round cap and CI is green: Discord "Ready to merge"
             → if BIGAS_CTO_AUTO_MERGE=true: squash-merge or enable GitHub auto-merge + Discord
             → when the PR is actually merged: move ticket to Final approval
+          → if the review is clean but CI is still running: wait, then merge or launch another round
+          → if the review is clean but CI failed and rounds remain: launch another autofix round with the check log
+          → if that same CI failure is already at the iteration cap: loop protection, no further round
           → else if under 5 rounds: next autofix round with updated review
           → else: Discord + Jira comment — loop protection, manual handling
 ```
@@ -101,11 +108,11 @@ The autofix prompt instructs the agent **not** to ask for confirmation and to pu
 
 ## Guards
 
-- Skip when review looks like LGTM / no leftover findings, **except** when GitHub reports merge conflicts (`mergeable_state` dirty / conflicting) — then launch the same Cursor autofix agent to rebase or merge the base branch and resolve conflicts
+- Skip when review looks like LGTM / no leftover findings, **except** when GitHub reports merge conflicts (`mergeable_state` dirty / conflicting) — then launch the same Cursor autofix agent to rebase or merge the base branch and resolve conflicts — **or** when a non-Bigas check on the PR head has failed. A completed check counts as failed when its conclusion is `failure`, `timed_out`, `cancelled`, or `action_required` (a timeout is not a green check). Failed lint, test, typecheck, and unused-file jobs are included in the agent prompt, using the check-run summary when annotations and the job log are empty. The loop waits while those checks are still running, and does not mark the PR ready to merge until they are green. Bigas's own review jobs, and GitHub billing or spending-limit failures, are ignored. An npm audit failure may use `npm audit fix` without `--force`; a breaking major upgrade is not taken just to silence the advisory.
 - Leftover Minor / nits (including structured `### Minor` with empty Blockers/Important) launch up to `BIGAS_CTO_AUTOFIX_MINOR_ITERATIONS` (default 2) extra rounds using `[bigas-autofix] [nits-only]`
 - After those two nits-only rounds, or at the overall 5-round cap with only Minor left, accept leftover nits and treat the PR as ready to merge
 - When autofix runs for Blockers/Important, the agent also fixes Minor items from the same review
-- Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) autofix agents started on this PR if Blockers/Important remain. The count is the hidden PR comment `<!-- bigas-autofix-rounds-marker -->`, not the number of `[bigas-autofix]` commits.
+- Stop after `BIGAS_CTO_AUTOFIX_MAX_ITERATIONS` (default 5) autofix agents started on this PR if Blockers/Important remain, or if CI is still failing. The cap is checked before a failing check can launch another round. The count is the hidden PR comment `<!-- bigas-autofix-rounds-marker -->`, not the number of `[bigas-autofix]` commits.
 - Cooldown when head is a fresh `[bigas-autofix]` commit *and* no newer Bigas review exists yet: Actions waits/retries; Bigas posts a PR cooldown notice. If review is already newer than the autofix head, the next agent launches immediately.
 
 **Actions note:** `pr-review.yml` skips workflow runs whose head commit **subject** contains `[bigas-autofix]` (gate job). That prevents the autofix push from cancelling the in-flight job or starting a second full review/merge cycle. Bigas also skips review / final-approval Discord / auto-merge quietly when the PR is already merged.

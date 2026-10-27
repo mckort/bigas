@@ -467,6 +467,52 @@ class GitHubPRCommentClient:
         )
         return counts
 
+    def list_commit_check_runs(self, owner: str, repo: str, sha: str) -> list[dict[str, Any]]:
+        """Check runs for a commit. One page is enough for a pull request head."""
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs"
+        resp = requests.get(
+            url,
+            headers=self._headers,
+            params={"per_page": 100},
+            timeout=30,
+        )
+        if resp.status_code in (401, 403, 404):
+            detail = _github_error_detail(resp) or (resp.text or "").strip()[:300]
+            raise GitHubPRCommentError(
+                f"GitHub check runs failed ({resp.status_code}): {detail or 'unknown error'}"
+            )
+        resp.raise_for_status()
+        data = resp.json() if resp.text else {}
+        runs = data.get("check_runs") if isinstance(data, dict) else None
+        return runs if isinstance(runs, list) else []
+
+    def list_check_run_annotations(
+        self, owner: str, repo: str, check_run_id: int
+    ) -> list[dict[str, Any]]:
+        url = (
+            f"https://api.github.com/repos/{owner}/{repo}/check-runs/"
+            f"{int(check_run_id)}/annotations"
+        )
+        resp = requests.get(url, headers=self._headers, timeout=30)
+        if resp.status_code in (401, 403, 404):
+            return []
+        resp.raise_for_status()
+        data = resp.json() if resp.text else []
+        return data if isinstance(data, list) else []
+
+    def get_actions_job_log(self, owner: str, repo: str, job_id: int) -> str:
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/jobs/{int(job_id)}/logs"
+        try:
+            resp = requests.get(url, headers=self._headers, timeout=30, allow_redirects=True)
+        except requests.RequestException:
+            return ""
+        if resp.status_code != 200:
+            return ""
+        text = resp.text or ""
+        if len(text) > 400_000:
+            return text[-400_000:]
+        return text
+
     def merge_pull_request(
         self,
         owner: str,

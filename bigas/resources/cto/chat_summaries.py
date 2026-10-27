@@ -150,6 +150,11 @@ def summarize_autofix_result(payload: dict) -> str:
             f"Needs a manual look.{pr_bit}"
         ).strip()
 
+    if payload.get("checks_pending"):
+        return (
+            f"CI is still running. Autofix will wait, then fix any failures.{pr_bit}"
+        ).strip()
+
     if payload.get("review_clean"):
         return f"Review is clean — no autofix needed.{pr_bit}".strip()
 

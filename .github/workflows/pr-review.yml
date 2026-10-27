@@ -386,6 +386,19 @@ jobs:
                   print("Loop protection reached; stopping.")
                   break
 
+              if data.get("checks_pending"):
+                  if cooldown_waits >= max_cooldown_waits:
+                      print("CI still running after the wait budget; stopping.")
+                      break
+                  cooldown_waits += 1
+                  print(
+                      f"CI still running ({cooldown_waits}/{max_cooldown_waits}): "
+                      "sleeping 45s then retrying."
+                  )
+                  round_i -= 1
+                  time.sleep(45)
+                  continue
+
               if data.get("cooldown"):
                   if cooldown_waits >= max_cooldown_waits:
                       print(
@@ -425,6 +438,19 @@ jobs:
               open("autofix_followup_response.txt", "w").write(
                   json.dumps(final, indent=2)
               )
+
+              if final.get("checks_pending") and not final.get("ready_to_merge"):
+                  if cooldown_waits >= max_cooldown_waits:
+                      print("CI still running after autofix; wait budget spent. Stopping.")
+                      break
+                  cooldown_waits += 1
+                  print(
+                      f"CI still running after autofix ({cooldown_waits}/{max_cooldown_waits}): "
+                      "sleeping 45s, then deciding merge or another fix round."
+                  )
+                  round_i -= 1
+                  time.sleep(45)
+                  continue
 
               if final.get("ready_to_merge") or final.get("reason") == "pr_already_merged":
                   print("Ready to merge after re-review; done.")
