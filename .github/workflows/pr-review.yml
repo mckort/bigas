@@ -352,7 +352,7 @@ jobs:
                   return 60
 
           def wait_until_checks_settle():
-              nonlocal auto_merge
+              global auto_merge
               reason = auto_merge.get("reason") if isinstance(auto_merge, dict) else ""
               if reason != "checks_pending":
                   return
@@ -368,9 +368,17 @@ jobs:
                       }),
                       timeout=120,
                   )
-                  settled = data.get("auto_merge") if isinstance(data, dict) else {}
-                  if not isinstance(settled, dict):
-                      settled = {}
+                  settled = data.get("auto_merge") if isinstance(data, dict) else None
+                  usable = (
+                      code == 200
+                      and isinstance(settled, dict)
+                      and (settled.get("reason") or settled.get("merged"))
+                  )
+                  if not usable:
+                      # Transient error or empty answer: keep waiting instead of
+                      # treating it as "checks no longer pending".
+                      print(f"check wait {i}/36: HTTP {code}, no usable auto_merge state; retrying")
+                      continue
                   print(
                       f"check wait {i}/36: HTTP {code} "
                       f"reason={settled.get('reason')} merged={settled.get('merged')}"

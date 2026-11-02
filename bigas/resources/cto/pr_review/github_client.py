@@ -473,19 +473,24 @@ class GitHubPRCommentClient:
         if not ref:
             return []
         url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}/check-runs"
-        resp = requests.get(
-            url,
-            headers=self._headers,
-            params={"per_page": 100},
-            timeout=30,
-        )
-        if resp.status_code in (401, 403, 404):
+        try:
+            resp = requests.get(
+                url,
+                headers=self._headers,
+                params={"per_page": 100},
+                timeout=30,
+            )
+        except requests.RequestException as e:
+            raise GitHubPRCommentError(f"GitHub check runs request failed: {e}") from e
+        if resp.status_code >= 400:
             detail = _github_error_detail(resp)
             raise GitHubPRCommentError(
                 f"GitHub check runs failed ({resp.status_code}): {detail or 'unknown'}"
             )
-        resp.raise_for_status()
-        data = resp.json() if resp.text else {}
+        try:
+            data = resp.json() if resp.text else {}
+        except ValueError as e:
+            raise GitHubPRCommentError(f"GitHub check runs returned invalid JSON: {e}") from e
         runs = data.get("check_runs") if isinstance(data, dict) else None
         return [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
 
@@ -496,12 +501,16 @@ class GitHubPRCommentClient:
             f"https://api.github.com/repos/{owner}/{repo}/check-runs/"
             f"{int(check_run_id)}/annotations"
         )
-        resp = requests.get(url, headers=self._headers, timeout=30)
-        if resp.status_code in (401, 403, 404):
+        try:
+            resp = requests.get(url, headers=self._headers, timeout=30)
+        except requests.RequestException:
             return []
         if resp.status_code >= 400:
             return []
-        data = resp.json() if resp.text else []
+        try:
+            data = resp.json() if resp.text else []
+        except ValueError:
+            return []
         return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
 
     def merge_pull_request(
