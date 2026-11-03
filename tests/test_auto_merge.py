@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bigas.resources.cto.endpoints import _maybe_auto_merge_pr
+from bigas.resources.cto.endpoints import _ci_gate_for_pr, _maybe_auto_merge_pr
 from bigas.resources.cto.pr_review.github_client import (
     GitHubMergeNotReadyError,
     GitHubPRCommentClient,
@@ -634,3 +634,94 @@ def test_final_approval_after_merge_skips_until_merged(monkeypatch):
     )
     assert moved.get("ok") is True
     assert called and called[0].get("assume_merged") is True
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_refuses_when_tests_failed(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "node_id": "PR_x",
+        "title": "VFA-257: Lint",
+        "head": {"sha": "abc123"},
+    }
+    client.list_commit_check_runs.return_value = [
+        {"name": "bigas / review", "status": "in_progress"},
+        {
+            "name": "test",
+            "status": "completed",
+            "conclusion": "failure",
+            "details_url": "https://github.com/acme/app/actions/runs/1",
+        },
+    ]
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+    )
+
+    assert result.get("merged") is False
+    assert result.get("reason") == "checks_failed"
+    client.merge_pull_request.assert_not_called()
+    client.enable_pull_request_auto_merge.assert_not_called()
+    mock_discord.assert_called_once()
+
+
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_waits_when_tests_pending(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "node_id": "PR_x",
+        "title": "VFA-257: Lint",
+        "head": {"sha": "abc123"},
+    }
+    client.list_commit_check_runs.return_value = [
+        {"name": "test", "status": "in_progress"},
+    ]
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+    )
+
+    assert result.get("merged") is False
+    assert result.get("reason") == "checks_pending"
+    client.merge_pull_request.assert_not_called()
+    mock_discord.assert_not_called()
+
+
+def test_ci_gate_names_clean_checks_passed(monkeypatch):
+    states = {
+        "passed": {"failed": [], "pending": []},
+        "failed": {"failed": [{"name": "test"}], "pending": []},
+        "pending": {"failed": [], "pending": ["test"]},
+    }
+
+    def fake_ci(_token, _owner, _repo, _sha):
+        payload = states[fake_ci.state]
+        return {**payload, "unavailable": False}
+
+    fake_ci.state = "passed"
+    monkeypatch.setattr(
+        "bigas.resources.cto.endpoints._ci_for_commit", fake_ci
+    )
+    pr = {"head": {"sha": "abc123"}}
+    for expected in ("passed", "failed", "pending"):
+        fake_ci.state = expected
+        gate = _ci_gate_for_pr("tok", "acme", "app", pr)
+        assert gate["state"] == expected

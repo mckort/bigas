@@ -480,23 +480,31 @@ class GitHubPRCommentClient:
         return counts
 
     def list_commit_check_runs(self, owner: str, repo: str, sha: str) -> list[dict[str, Any]]:
-        """Check runs for a commit. One page is enough for a pull request head."""
-        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs"
-        resp = requests.get(
-            url,
-            headers=self._headers,
-            params={"per_page": 100},
-            timeout=30,
-        )
-        if resp.status_code in (401, 403, 404):
-            detail = _github_error_detail(resp) or (resp.text or "").strip()[:300]
-            raise GitHubPRCommentError(
-                f"GitHub check runs failed ({resp.status_code}): {detail or 'unknown error'}"
+        """Check runs for a commit. Empty list when the SHA is missing."""
+        ref = (sha or "").strip()
+        if not ref:
+            return []
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}/check-runs"
+        try:
+            resp = requests.get(
+                url,
+                headers=self._headers,
+                params={"per_page": 100},
+                timeout=30,
             )
-        resp.raise_for_status()
-        data = resp.json() if resp.text else {}
+        except requests.RequestException as e:
+            raise GitHubPRCommentError(f"GitHub check runs request failed: {e}") from e
+        if resp.status_code >= 400:
+            detail = _github_error_detail(resp)
+            raise GitHubPRCommentError(
+                f"GitHub check runs failed ({resp.status_code}): {detail or 'unknown'}"
+            )
+        try:
+            data = resp.json() if resp.text else {}
+        except ValueError as e:
+            raise GitHubPRCommentError(f"GitHub check runs returned invalid JSON: {e}") from e
         runs = data.get("check_runs") if isinstance(data, dict) else None
-        return runs if isinstance(runs, list) else []
+        return [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
 
     def list_check_run_annotations(
         self, owner: str, repo: str, check_run_id: int
@@ -505,12 +513,17 @@ class GitHubPRCommentClient:
             f"https://api.github.com/repos/{owner}/{repo}/check-runs/"
             f"{int(check_run_id)}/annotations"
         )
-        resp = requests.get(url, headers=self._headers, timeout=30)
-        if resp.status_code in (401, 403, 404):
+        try:
+            resp = requests.get(url, headers=self._headers, timeout=30)
+        except requests.RequestException:
             return []
-        resp.raise_for_status()
-        data = resp.json() if resp.text else []
-        return data if isinstance(data, list) else []
+        if resp.status_code >= 400:
+            return []
+        try:
+            data = resp.json() if resp.text else []
+        except ValueError:
+            return []
+        return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
 
     def get_actions_job_log(self, owner: str, repo: str, job_id: int) -> str:
         url = f"https://api.github.com/repos/{owner}/{repo}/actions/jobs/{int(job_id)}/logs"
