@@ -2143,10 +2143,13 @@ def test_config_defaults(monkeypatch):
         "FYDA",
         "MYL",
         "FRI",
+        "AURA",
+        "POF",
     )
     assert cfg.repo_for_project("VFA") == "mckort/vcfieldassistant"
     assert cfg.repo_for_project("MYL") == "mckort/mylifesdeed"
     assert cfg.repo_for_project("FRI") == "mckort/frimaninvestments"
+    assert cfg.repo_for_project("POF") == "mckort/pass-or-fund"
     assert cfg.repo_for_project("GPWW") == "Green-Promo-Wear-Global/greenpromowear-website"
     assert cfg.repo_for_project("GPW-PROD") == "Green-Promo-Wear-Global/GPW"
     assert cfg.handler_for_status("Research and describe (AI)") == HANDLER_RESEARCH

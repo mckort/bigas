@@ -1152,10 +1152,8 @@ def review_and_merge_release_pr(
     phase: str = "initial",
     cut_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    from bigas.resources.cto.pr_review.github_client import (
-        BIGAS_REVIEW_MARKER,
-        GitHubPRCommentClient,
-    )
+    from bigas.resources.cto.pr_review.github_client import GitHubPRCommentClient
+    from bigas.resources.cto.pr_review.markers import reviewed_sha_marker
     from bigas.resources.cto.pr_review.service import PRReviewError, PRReviewService
 
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
@@ -1207,14 +1205,14 @@ def review_and_merge_release_pr(
         from bigas.resources.cto.pr_review.diff_context import expand_pr_diff
 
         diff = expand_pr_diff(gh, owner, repo_name, pr_number, diff)
-        review = PRReviewService().review(diff=diff, phase=phase)
+        review = PRReviewService().review(diff=diff, phase=phase, repo=repo)
         review_body = review.text
         gh.post_or_update_pr_comment(
             owner=owner,
             repo=repo_name,
             pr_number=pr_number,
             body=review_body,
-            marker=BIGAS_REVIEW_MARKER,
+            marker=reviewed_sha_marker(reviewed_sha),
         )
     except (PRReviewError, GitHubPRCommentError) as exc:
         _complete_pipeline_progress(thread_id)

@@ -649,7 +649,7 @@ def test_maybe_auto_merge_refuses_when_tests_failed(
         "title": "VFA-257: Lint",
         "head": {"sha": "abc123"},
     }
-    client.list_check_runs.return_value = [
+    client.list_commit_check_runs.return_value = [
         {"name": "bigas / review", "status": "in_progress"},
         {
             "name": "test",
@@ -687,7 +687,7 @@ def test_maybe_auto_merge_waits_when_tests_pending(
         "title": "VFA-257: Lint",
         "head": {"sha": "abc123"},
     }
-    client.list_check_runs.return_value = [
+    client.list_commit_check_runs.return_value = [
         {"name": "test", "status": "in_progress"},
     ]
     mock_client_cls.return_value = client

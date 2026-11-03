@@ -4,7 +4,10 @@ from __future__ import annotations
 import re
 from typing import Tuple
 
-from bigas.resources.cto.pr_review.markers import BIGAS_REVIEW_MARKER
+from bigas.resources.cto.pr_review.markers import (
+    BIGAS_REVIEW_MARKER,  # noqa: F401  re-exported for existing callers
+    strip_bigas_review_markers,
+)
 
 AUTOFIX_COMMIT_MARKER = "[bigas-autofix]"
 # Must contain AUTOFIX_COMMIT_MARKER so the Actions skip-on-autofix-head
@@ -283,7 +286,7 @@ def _line_is_empty_section_marker(line: str) -> bool:
 
 
 def _section_has_findings(body: str) -> bool:
-    raw = (body or "").replace(BIGAS_REVIEW_MARKER, "").strip()
+    raw = strip_bigas_review_markers(body).strip()
     first_line = next(
         (ln.strip() for ln in raw.splitlines() if ln.strip()),
         "",
@@ -316,7 +319,7 @@ def _line_is_verdict_closer(line: str) -> bool:
 
 def _strip_section_closer(body: str) -> str:
     """Drop a trailing LGTM / ready-to-merge closer so it is not a finding."""
-    text = (body or "").replace(BIGAS_REVIEW_MARKER, "").strip()
+    text = strip_bigas_review_markers(body).strip()
     lines = text.splitlines()
     while lines and not lines[-1].strip():
         lines.pop()
@@ -434,59 +437,6 @@ def review_needs_autofix(
 
 def latest_commit_is_autofix(message: str) -> bool:
     return AUTOFIX_COMMIT_MARKER in commit_subject(message)
-
-
-_CI_PENDING = {"queued", "in_progress", "waiting", "pending", "requested"}
-_CI_FAILED = {"failure", "timed_out", "cancelled", "startup_failure", "action_required"}
-
-
-def classify_ci_checks(check_runs: list) -> dict:
-    """
-    Decide whether non-Bigas checks allow a merge.
-
-    Bigas review jobs are ignored. They are still running while merge is decided.
-    ``passed`` means every relevant check succeeded. ``none`` means no test check
-    was reported (path filters skipped them). ``pending`` and ``failed`` block merge.
-    """
-    failed: list[dict] = []
-    pending: list[dict] = []
-    passed = 0
-    for run in check_runs or []:
-        if not isinstance(run, dict):
-            continue
-        name = (run.get("name") or "").strip() or "check"
-        if name.lower().startswith("bigas /") or name.lower() == "bigas":
-            continue
-        status = (run.get("status") or "").strip().lower()
-        conclusion = (run.get("conclusion") or "").strip().lower()
-        if conclusion in {"none", "null"}:
-            conclusion = ""
-        item = {
-            "name": name,
-            "status": status,
-            "conclusion": conclusion or status,
-            "details_url": (run.get("details_url") or run.get("html_url") or "").strip(),
-            "id": run.get("id"),
-        }
-        if status in _CI_PENDING or (status != "completed" and not conclusion):
-            pending.append(item)
-            continue
-        if conclusion in _CI_FAILED:
-            failed.append(item)
-            continue
-        if conclusion == "success":
-            passed += 1
-            continue
-        # skipped / neutral / stale do not block
-    if failed:
-        state = "failed"
-    elif pending:
-        state = "pending"
-    elif passed:
-        state = "passed"
-    else:
-        state = "none"
-    return {"state": state, "failed": failed, "pending": pending, "passed": passed}
 
 
 def pr_has_merge_conflicts(pr: dict) -> bool:

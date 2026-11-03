@@ -1,7 +1,6 @@
 from bigas.resources.cto.autofix.heuristics import (
     auto_merge_enabled,
     autofix_pushed_new_commit,
-    classify_ci_checks,
     leftover_nits_are_acceptable,
     latest_commit_is_autofix,
     pr_has_merge_conflicts,
@@ -461,11 +460,50 @@ def test_pr_review_prompts_respect_project_helpers():
         assert "deletes the import or definition that a remaining call still uses" in text
         assert "Do NOT report a missing prop, type field, parameter, or export" in text
         assert "mark it resolved unless this diff shows the declaration without" in text
+        assert "listSharedCompanies()" not in text
+        assert "PENDING_WORKSPACE_INVITES" not in text
+        assert "PendingWorkspaceInvitesPanel" not in text
 
     assert "An unchanged function outside the hunks is not missing" in PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
 
     assert "mobile/responsive" in PR_REVIEW_INITIAL_SYSTEM_PROMPT
     assert "small mobile screens" in PR_REVIEW_SYSTEM_PROMPT
+
+
+def test_invite_false_positives_apply_only_to_vfa():
+    from bigas.portfolio import DEFAULT_PROJECT_REPOS
+    from bigas.resources.cto.pr_review.prompts import (
+        PR_REVIEW_PREPARE_STAGING_SYSTEM_PROMPT,
+        PR_REVIEW_SYSTEM_PROMPT,
+        system_prompt_for_phase,
+    )
+
+    vfa = DEFAULT_PROJECT_REPOS["VFA"]
+    for text in (
+        PR_REVIEW_SYSTEM_PROMPT,
+        PR_REVIEW_PREPARE_STAGING_SYSTEM_PROMPT,
+        system_prompt_for_phase("initial"),
+        system_prompt_for_phase("post_autofix"),
+        system_prompt_for_phase("prepare_staging", repo="mckort/bigas"),
+        system_prompt_for_phase("initial", repo="mckort/roadpal"),
+    ):
+        assert "listSharedCompanies()" not in text
+        assert "PENDING_WORKSPACE_INVITES" not in text
+        assert "PendingWorkspaceInvitesPanel" not in text
+
+    for phase in ("initial", "post_autofix", "prepare_staging", "prepare_staging_post"):
+        text = system_prompt_for_phase(phase, repo=vfa)
+        assert "listSharedCompanies()" in text
+        assert "PENDING_WORKSPACE_INVITES" in text
+        assert "PendingWorkspaceInvitesPanel" in text
+
+    assert "listSharedCompanies()" in system_prompt_for_phase("initial", repo=vfa.upper())
+    post = system_prompt_for_phase("post_autofix", repo=vfa)
+    assert "leaves the user with no accept UI" in post
+    assert "leaves the user with no accept UI" not in system_prompt_for_phase("initial", repo=vfa)
+    assert "leaves the user with no accept UI" not in system_prompt_for_phase(
+        "prepare_staging_post", repo=vfa
+    )
 
 
 def test_pr_review_prompts_classify_dead_code_as_important():
@@ -568,30 +606,6 @@ def test_auto_merge_enabled_false_values(monkeypatch):
         assert auto_merge_enabled() is False, value
 
 
-def test_classify_ci_checks_ignores_bigas_and_blocks_on_failure():
-    gate = classify_ci_checks(
-        [
-            {"name": "bigas / review", "status": "in_progress"},
-            {"name": "test", "status": "completed", "conclusion": "failure", "id": 7},
-            {"name": "web", "status": "completed", "conclusion": "success"},
-        ]
-    )
-    assert gate["state"] == "failed"
-    assert gate["failed"][0]["name"] == "test"
-
-
-def test_classify_ci_checks_pending_and_none():
-    assert classify_ci_checks(
-        [{"name": "test", "status": "in_progress"}]
-    )["state"] == "pending"
-    assert classify_ci_checks(
-        [{"name": "bigas / gate", "status": "completed", "conclusion": "success"}]
-    )["state"] == "none"
-    assert classify_ci_checks(
-        [{"name": "test", "status": "completed", "conclusion": "success"}]
-    )["state"] == "passed"
-
-
 def test_pr_has_merge_conflicts_dirty_and_conflicting():
     assert pr_has_merge_conflicts({"mergeable_state": "dirty"}) is True
     assert pr_has_merge_conflicts({"mergeable_state": "CONFLICTING"}) is True
@@ -654,81 +668,6 @@ def test_autofix_launches_for_merge_conflicts_when_review_clean(monkeypatch):
     assert result.get("merge_conflict") is True
     assert "Merge conflicts" in launched["prompt_text"]
     assert "staging-0.3.0" in launched["prompt_text"]
-
-
-def test_autofix_launches_when_review_is_clean_but_ci_failed(monkeypatch):
-    from bigas.resources.cto.autofix.service import AutofixService
-
-    launched = {}
-
-    class FakeGH:
-        def get_pull_request(self, *args, **kwargs):
-            return {
-                "merged": False,
-                "mergeable_state": "clean",
-                "title": "VFA-257: Lint",
-                "body": "",
-                "head": {"ref": "VFA-257-lint", "sha": "abc123"},
-                "base": {"ref": "staging-0.88.0"},
-            }
-
-        def get_pr_head_commit_meta(self, *args, **kwargs):
-            return "abc123", "VFA-257: Lint", "2026-09-17T17:00:00Z"
-
-        def list_pr_commit_messages(self, *args, **kwargs):
-            return []
-
-        def count_autofix_rounds(self, *args, **kwargs):
-            return 0, 0
-
-        def record_autofix_round(self, *args, **kwargs):
-            return 1, 0
-
-        def get_marked_comment(self, **kwargs):
-            return {"body": _CLEAN_STRUCTURED, "updated_at": "2026-09-17T17:10:00Z"}
-
-        def list_check_runs(self, owner, repo, sha):
-            return [
-                {
-                    "name": "test",
-                    "status": "completed",
-                    "conclusion": "failure",
-                    "id": 9,
-                    "details_url": "https://github.com/owner/repo/actions/runs/1",
-                }
-            ]
-
-        def list_check_run_annotations(self, owner, repo, check_run_id):
-            return [
-                {
-                    "path": "backend/src/companyInvites.ts",
-                    "start_line": 683,
-                    "message": "'getContact' is already declared",
-                }
-            ]
-
-    class FakeCursor:
-        def __init__(self, api_key):
-            pass
-
-        def launch_pr_autofix(self, **kwargs):
-            launched.update(kwargs)
-            return {"agent_id": "bc-2", "agent_url": "https://cursor.com/agents/bc-2", "run_id": "run-2"}
-
-    monkeypatch.setattr(
-        "bigas.resources.cto.autofix.service.GitHubPRCommentClient",
-        lambda token: FakeGH(),
-    )
-    monkeypatch.setattr(
-        "bigas.resources.cto.autofix.service.CursorCloudAgentClient",
-        FakeCursor,
-    )
-    result = AutofixService(cursor_api_key="c", github_token="t").run(
-        repo="owner/repo", pr_number=9
-    )
-    assert result.get("launched") is True
-    assert "Failing checks" in launched["prompt_text"]
-    assert "getContact" in launched["prompt_text"]
 
 
 def test_autofix_skips_already_merged_pr(monkeypatch):

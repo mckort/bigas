@@ -27,6 +27,12 @@ DEFAULT_PROJECT_ALIASES: Dict[str, List[str]] = {
         "friman investments board",
     ],
     "AURA": ["auralearn", "aura learn"],
+    "POF": [
+        "pass or fund",
+        "pass-or-fund",
+        "passorfund",
+        "pass or fund board",
+    ],
 }
 
 DEFAULT_BRAND_NAMES: Dict[str, str] = {
@@ -40,6 +46,7 @@ DEFAULT_BRAND_NAMES: Dict[str, str] = {
     "MYL": "My Life's Deed",
     "FRI": "Friman investments",
     "AURA": "AuraLearn",
+    "POF": "Pass or Fund",
 }
 
 # Retired internal board titles → migrate to ``board_name_for_project`` on /api/boards load.
@@ -59,6 +66,7 @@ DEFAULT_PROJECT_REPOS: Dict[str, str] = {
     "MYL": "mckort/mylifesdeed",
     "FRI": "mckort/frimaninvestments",
     "AURA": "mckort/auralearn",
+    "POF": "mckort/pass-or-fund",
 }
 
 # owner/repo → default branch for Cursor implement / deploy refs
@@ -73,6 +81,7 @@ DEFAULT_REPO_BASE_BRANCHES: Dict[str, str] = {
     "mckort/mylifesdeed": "main",
     "mckort/frimaninvestments": "main",
     "mckort/auralearn": "master",
+    "mckort/pass-or-fund": "main",
 }
 
 DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
@@ -92,6 +101,8 @@ DEFAULT_SITE_TO_PROJECT: Dict[str, str] = {
     "www.bigas.me": "BIG",
     "frimaninvestments.com": "FRI",
     "www.frimaninvestments.com": "FRI",
+    "passorfund.com": "POF",
+    "www.passorfund.com": "POF",
 }
 
 

@@ -17,13 +17,18 @@ from bigas.resources.cto.chat_summaries import (
     summarize_review_result,
     with_summary,
 )
+from bigas.resources.cto.autofix.ci_status import (
+    empty_ci,
+    fetch_head_ci,
+    ready_after_ci,
+)
 from bigas.resources.cto.autofix.heuristics import (
     auto_merge_enabled,
     autofix_max_iterations,
     autofix_pushed_new_commit,
-    classify_ci_checks,
     format_loop_protection_message,
     minor_autofix_max_iterations,
+    review_is_nits_only,
     review_is_ready_to_merge,
 )
 from bigas.resources.cto.autofix.service import (
@@ -37,6 +42,11 @@ from bigas.resources.cto.pr_review.github_client import (
     GitHubMergeNotReadyError,
     GitHubPRCommentClient,
     GitHubPRCommentError,
+    pull_request_head_sha,
+)
+from bigas.resources.cto.pr_review.markers import (
+    reviewed_sha_from_comment,
+    reviewed_sha_marker,
 )
 from bigas.resources.cto.pr_review.service import (
     PRReviewError,
@@ -366,26 +376,19 @@ def _pr_autofix_round_counts(
         return 0, 0
 
 
-def _ci_gate_for_pr(client: GitHubPRCommentClient, owner: str, repo_name: str, pr: dict) -> dict:
+def _ci_gate_for_pr(github_token: str, owner: str, repo_name: str, pr: dict) -> dict:
     """Classify test checks on the PR head. Missing SHA or API errors do not block."""
-    head = pr.get("head") if isinstance(pr, dict) else None
-    sha = (head.get("sha") or "").strip() if isinstance(head, dict) else ""
-    if not sha:
-        return {"state": "none", "failed": [], "pending": [], "passed": 0}
-    try:
-        runs = client.list_check_runs(owner, repo_name, sha)
-    except GitHubPRCommentError:
-        logger.warning(
-            "Could not read check runs for %s/%s@%s",
-            owner,
-            repo_name,
-            sha[:8],
-            exc_info=True,
-        )
-        return {"state": "none", "failed": [], "pending": [], "passed": 0}
-    if not isinstance(runs, list):
-        return {"state": "none", "failed": [], "pending": [], "passed": 0}
-    return classify_ci_checks(runs)
+    sha = pull_request_head_sha(pr if isinstance(pr, dict) else None)
+    ci = _ci_for_commit(github_token, owner, repo_name, sha)
+    failed = list(ci.get("failed") or [])
+    pending = list(ci.get("pending") or [])
+    if failed:
+        state = "failed"
+    elif pending:
+        state = "pending"
+    else:
+        state = "none"
+    return {"state": state, "failed": failed, "pending": pending}
 
 
 def _pr_already_merged(
@@ -404,6 +407,24 @@ def _pr_already_merged(
             github_token=github_token,
         ).get("merged")
     )
+
+
+def _ci_for_commit(github_token: str, owner: str, repo: str, sha: str) -> dict:
+    """Check status for a SHA. A GitHub error does not block merge."""
+    if not (github_token or "").strip() or not (sha or "").strip():
+        return empty_ci(unavailable=True)
+    try:
+        client = GitHubPRCommentClient(token=github_token)
+        return fetch_head_ci(client, owner, repo, sha)
+    except Exception:
+        logger.warning(
+            "Could not read CI checks for %s/%s@%s",
+            owner,
+            repo,
+            (sha or "")[:8],
+            exc_info=True,
+        )
+        return empty_ci(unavailable=True)
 
 
 def _maybe_auto_merge_pr(
@@ -542,7 +563,7 @@ def _maybe_auto_merge_pr(
         "\nMarked draft as ready for review." if converted_draft else ""
     )
 
-    gate = _ci_gate_for_pr(client, owner, repo_name, pr)
+    gate = _ci_gate_for_pr(github_token, owner, repo_name, pr)
     if gate["state"] == "failed":
         names = ", ".join(item.get("name") or "check" for item in gate["failed"]) or "checks"
         _post_cto_status(
@@ -953,6 +974,41 @@ def review_and_comment_pr():
             summarize_review_result,
         )
 
+    head_sha = pull_request_head_sha(pr)
+    if head_sha:
+        try:
+            existing = GitHubPRCommentClient(token=github_token).get_marked_comment(
+                owner=owner,
+                repo=repo_name,
+                pr_number=pr_number,
+                marker=BIGAS_REVIEW_MARKER,
+            )
+        except GitHubPRCommentError:
+            logger.warning(
+                "Could not load existing Bigas review for %s#%s",
+                repo,
+                pr_number,
+                exc_info=True,
+            )
+            existing = None
+        existing_body = existing.get("body") if isinstance(existing, dict) else None
+        if reviewed_sha_from_comment(
+            existing_body if isinstance(existing_body, str) else None
+        ) == head_sha:
+            return _json_summary(
+                {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "already_reviewed",
+                    "review_posted": False,
+                    "comment_url": (existing or {}).get("html_url") or "",
+                    "head_sha": head_sha,
+                    "phase": phase,
+                    "pr_url": pr_url,
+                },
+                summarize_review_result,
+            )
+
     board_ticket: dict = {"skipped": True, "reason": "pr_missing"}
     if pr:
         from bigas.resources.product.jira_automation.final_approval import (
@@ -1026,6 +1082,7 @@ def review_and_comment_pr():
             instructions=instructions,
             phase=phase,  # type: ignore[arg-type]
             previous_review=previous_review,
+            repo=repo,
         )
         review_body = review_result.text
     except PRReviewError as e:
@@ -1091,7 +1148,7 @@ def review_and_comment_pr():
             repo=repo_name,
             pr_number=pr_number,
             body=review_body,
-            marker=BIGAS_REVIEW_MARKER,
+            marker=reviewed_sha_marker(head_sha),
         )
         comment_url = result.get("html_url") or ""
     except GitHubPRCommentError as e:
@@ -1117,6 +1174,12 @@ def review_and_comment_pr():
         autofix_count=autofix_count,
         minor_autofix_count=minor_autofix_count,
     )
+    head_for_ci = pr.get("head") if isinstance(pr, dict) else {}
+    ci_sha = str(head_for_ci.get("sha") or "").strip() if isinstance(head_for_ci, dict) else ""
+    if ready:
+        ci_now = _ci_for_commit(github_token, owner, repo_name, ci_sha)
+        if ci_now.get("failed"):
+            ready = False
     done_label = (
         "**CTO PR re-review after autofix done**"
         if phase == "post_autofix"
@@ -1345,7 +1408,29 @@ def autofix_pr():
                 ),
                 github_token=github_token or "",
             )
+        elif result.get("checks_pending"):
+            logger.info(
+                "Autofix waiting for CI on %s#%s before launch or merge",
+                repo,
+                pr_number,
+            )
         elif result.get("review_clean"):
+            auto_merge = {"skipped": True, "reason": "ci_not_settled"}
+            if result.get("ci_settled"):
+                auto_merge = _maybe_auto_merge_pr(
+                    repo=repo,
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    github_token=gh_token,
+                )
+                result["jira_final_approval"] = _final_approval_after_merge(
+                    repo=repo,
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    github_token=gh_token,
+                    merged=bool(auto_merge.get("merged")),
+                )
+            result["auto_merge"] = auto_merge
             _post_cto_status(
                 f"**CTO autofix skipped**\n"
                 f"Review does not need autofix ({sanitize_error_message(reason)}).\n"
@@ -1658,69 +1743,86 @@ def autofix_followup():
         )
 
     gh_token = github_token or os.environ.get("GITHUB_TOKEN") or ""
-    _post_cto_status(f"**CTO PR re-review after autofix started**\n{pr_ref}")
     previous_review = None
+    previous_comment: dict | None = None
     try:
-        previous_review = GitHubPRCommentClient(token=gh_token).get_marked_comment_body(
+        loaded = GitHubPRCommentClient(token=gh_token).get_marked_comment(
             owner=owner,
             repo=repo_name,
             pr_number=pr_number,
             marker=BIGAS_REVIEW_MARKER,
         )
+        if isinstance(loaded, dict):
+            previous_comment = loaded
+            body = loaded.get("body")
+            previous_review = body if isinstance(body, str) else None
     except GitHubPRCommentError:
         logger.warning("Could not load previous Bigas review before post_autofix", exc_info=True)
-    try:
-        review_service = PRReviewService()
-        review_result = review_service.review(
-            diff=_with_nearby_declarations(
-                diff,
-                owner=owner,
-                repo_name=repo_name,
-                pr_number=pr_number,
-                github_token=gh_token,
-            ),
-            phase="post_autofix",
-            previous_review=previous_review,
-        )
-        review_body = review_result.text
-    except PRReviewError as e:
-        err = sanitize_error_message(str(e))
-        _post_cto_status(
-            f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
-        )
-        return _json_summary(
-            {"error": err, **base, "finalized": True, "rereviewed": False},
-            summarize_followup_result,
-            500,
-        )
 
-    if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
-        review_body = (
-            review_body[:MAX_GITHUB_COMMENT_CHARS]
-            + "\n\n---\n\n_Review truncated for GitHub comment length._"
-        )
-
+    reused_review = bool(head_sha) and reviewed_sha_from_comment(previous_review) == head_sha.lower()
+    review_result = None
     comment_url = ""
-    try:
-        client = GitHubPRCommentClient(token=gh_token)
-        posted = client.post_or_update_pr_comment(
-            owner=owner,
-            repo=repo_name,
-            pr_number=pr_number,
-            body=review_body,
-            marker=BIGAS_REVIEW_MARKER,
+    if reused_review:
+        review_body = previous_review or ""
+        comment_url = (previous_comment or {}).get("html_url") or ""
+        logger.info(
+            "Skipping post-autofix LLM review; head %s already has a Bigas review",
+            head_sha[:12],
         )
-        comment_url = posted.get("html_url") or ""
-    except GitHubPRCommentError as e:
-        err = sanitize_error_message(str(e))
-        _post_cto_status(
-            f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
-        )
-        return _json_summary(
-            {"error": err, **base, "finalized": True, "rereviewed": False},
-            summarize_followup_result,
-            502,
-        )
+    else:
+        _post_cto_status(f"**CTO PR re-review after autofix started**\n{pr_ref}")
+        try:
+            review_service = PRReviewService()
+            review_result = review_service.review(
+                diff=_with_nearby_declarations(
+                    diff,
+                    owner=owner,
+                    repo_name=repo_name,
+                    pr_number=pr_number,
+                    github_token=gh_token,
+                ),
+                phase="post_autofix",
+                previous_review=previous_review,
+                repo=repo,
+            )
+            review_body = review_result.text
+        except PRReviewError as e:
+            err = sanitize_error_message(str(e))
+            _post_cto_status(
+                f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
+            )
+            return _json_summary(
+                {"error": err, **base, "finalized": True, "rereviewed": False},
+                summarize_followup_result,
+                500,
+            )
+
+        if len(review_body) > MAX_GITHUB_COMMENT_CHARS:
+            review_body = (
+                review_body[:MAX_GITHUB_COMMENT_CHARS]
+                + "\n\n---\n\n_Review truncated for GitHub comment length._"
+            )
+
+        try:
+            client = GitHubPRCommentClient(token=gh_token)
+            posted = client.post_or_update_pr_comment(
+                owner=owner,
+                repo=repo_name,
+                pr_number=pr_number,
+                body=review_body,
+                marker=reviewed_sha_marker(head_sha),
+            )
+            comment_url = posted.get("html_url") or ""
+        except GitHubPRCommentError as e:
+            err = sanitize_error_message(str(e))
+            _post_cto_status(
+                f"**CTO PR re-review after autofix done**\nNo comment posted.\nReason: {err}"
+            )
+            return _json_summary(
+                {"error": err, **base, "finalized": True, "rereviewed": False},
+                summarize_followup_result,
+                502,
+            )
 
     autofix_count = 0
     minor_autofix_count = 0
@@ -1732,25 +1834,38 @@ def autofix_followup():
     except AutofixError:
         logger.warning("Could not count autofix rounds after re-review", exc_info=True)
 
-    ready = review_is_ready_to_merge(
+    review_ready = review_is_ready_to_merge(
         review_body,
         autofix_count=autofix_count,
         minor_autofix_count=minor_autofix_count,
         max_iterations=max_iters,
         minor_max_iterations=minor_autofix_max_iterations(),
     )
-    cost_line = _discord_llm_cost_line(review_result)
-    cost_suffix = f"\n{cost_line}" if cost_line else ""
-    _post_to_discord_cto_chunks(
-        _discord_review_posted_message(
-            done_label="**CTO PR re-review after autofix done**",
-            pr_url=pr_url,
-            comment_url=comment_url,
-            review_body=review_body,
-            cost_suffix=cost_suffix,
-            pr_title=pr_title,
-        )
+    # A nits-only agent that pushes nothing has looked at the leftover minor and
+    # left it. Waiting for a second round never starts, so merge instead —
+    # unless CI on this head is still red or still running.
+    accepted_leftover_nits = (
+        not review_ready and not fixes_pushed and review_is_nits_only(review_body)
     )
+    if accepted_leftover_nits:
+        review_ready = True
+    ci_now = _ci_for_commit(gh_token, owner, repo_name, head_sha)
+    ready, checks_pending, ci_failed = ready_after_ci(
+        review_ready, ci_now, block_on_pending=True
+    )
+    cost_line = _discord_llm_cost_line(review_result) if review_result is not None else ""
+    cost_suffix = f"\n{cost_line}" if cost_line else ""
+    if not reused_review:
+        _post_to_discord_cto_chunks(
+            _discord_review_posted_message(
+                done_label="**CTO PR re-review after autofix done**",
+                pr_url=pr_url,
+                comment_url=comment_url,
+                review_body=review_body,
+                cost_suffix=cost_suffix,
+                pr_title=pr_title,
+            )
+        )
 
     jira_final = {"skipped": True, "reason": "not_ready"}
     auto_merge: dict = {"skipped": True, "reason": "not_ready"}
@@ -1774,14 +1889,15 @@ def autofix_followup():
             github_token=gh_token,
             merged=bool(auto_merge.get("merged")),
         )
-    elif not fixes_pushed:
+    elif checks_pending:
         _post_cto_status(
             f"**CTO autofix follow-up**\n"
-            "Agent did not push; re-review still has findings. "
-            "Stopping the autofix loop for this run.\n"
+            "Review is clean. Waiting for CI before merge.\n"
             f"{pr_ref}"
         )
     elif autofix_count >= max_iters:
+        # Cap wins over a still-red check. Otherwise a failing CI run tells
+        # Actions to launch again and the iteration limit never fires.
         _notify_autofix_loop_protection(
             repo=repo,
             pr_number=pr_number,
@@ -1789,6 +1905,20 @@ def autofix_followup():
             autofix_count=autofix_count,
             max_iterations=max_iters,
             github_token=gh_token,
+        )
+    elif ci_failed and review_ready:
+        _post_cto_status(
+            f"**CTO autofix follow-up**\n"
+            "Review is clean, but CI is still failing. "
+            "Actions may launch another autofix round.\n"
+            f"{pr_ref}"
+        )
+    elif not fixes_pushed:
+        _post_cto_status(
+            f"**CTO autofix follow-up**\n"
+            "Agent did not push; re-review still has findings. "
+            "Stopping the autofix loop for this run.\n"
+            f"{pr_ref}"
         )
     else:
         # autofix_count = agents started on this PR. Several commits from one
@@ -1808,6 +1938,9 @@ def autofix_followup():
         "rereviewed": True,
         "comment_url": comment_url,
         "ready_to_merge": ready,
+        "checks_pending": checks_pending,
+        "ci_failed": ci_failed,
+        "accepted_leftover_nits": accepted_leftover_nits,
         "fixes_pushed": fixes_pushed,
         "head_sha": head_sha,
         "baseline_head_sha": baseline_head_sha,
@@ -1816,8 +1949,8 @@ def autofix_followup():
         "autofix_round": autofix_round_n or autofix_count,
         "max_iterations": max_iters,
         "loop_protection": (not ready) and autofix_count >= max_iters,
-        "used_model": review_result.model,
-        "usage": review_result.usage_dict(),
+        "used_model": review_result.model if review_result is not None else None,
+        "usage": review_result.usage_dict() if review_result is not None else {},
         "jira_final_approval": jira_final,
         "auto_merge": auto_merge,
     })

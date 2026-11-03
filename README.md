@@ -176,7 +176,7 @@ Quickstart is chat plus Bigas's **own board** at `/board` and Objectives at `/ob
 - `CURSOR_API_KEY` — drag a card to **In Progress (AI)** and get a PR
 - In the product repo: copy [`docs/pr-review.caller.yml`](docs/pr-review.caller.yml) and set `BIGAS_URL` + `BIGAS_API_KEY`
 
-**Optional:** `DISCORD_WEBHOOK_URL_CTO`. Map a board project to a repo with `BIGAS_JIRA_PROJECT_REPO_MAP` when you have more than one repo (the name is historical — it works for the internal board too). Example: [Friman investments (FRI)](docs/friman-investments-board.md).
+**Optional:** `DISCORD_WEBHOOK_URL_CTO`. Map a board project to a repo with `BIGAS_JIRA_PROJECT_REPO_MAP` when you have more than one repo (the name is historical — it works for the internal board too). Examples: [Friman investments (FRI)](docs/friman-investments-board.md), [AuraLearn (AURA)](docs/auralearn-board.md), [Pass or Fund (POF)](docs/pass-or-fund-board.md).
 
 **Try:** open a PR, or on `/board` write a short Brief and drag to **In Progress (AI)**. In the CTO thread: *"Summarize my open PRs and flag blockers."*
 
@@ -396,7 +396,7 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `JIRA_BASE_URL` | Jira instance URL (optional — omit to use the native Kanban board at `/board`) |
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
-| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,FRI`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. GPW-PROD is the store (`store.greenpromowear.com`); GPWW is the marketing site. |
+| `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,FRI,AURA,POF`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. GPW-PROD is the store (`store.greenpromowear.com`); GPWW is the marketing site. POF is Pass or Fund (`passorfund.com`). |
 | `USE_INTERNAL_BOARD` | `true` (default, even if `JIRA_*` is set) uses the native `/board`; set `false` to drive external Jira |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
@@ -580,8 +580,8 @@ Call [.github/workflows/pr-review.yml](.github/workflows/pr-review.yml) from the
 
 1. **Review** — `review_and_comment_pr` reads the PR diff, posts or updates a **single** GitHub comment (marker-based, so re-runs do not spam), and notifies `bigas-cto` on Discord.
 2. **Clean review** — if Blockers, Important, **and** Minor are empty, Discord says **ready to merge**. Leftover Minor after two nits-only autofix rounds, or at the five-round cap, is also treated as ready. Optional: `BIGAS_CTO_AUTO_MERGE=true` squash-merges from the Actions loop (or enables GitHub auto-merge if checks are still pending). A chat/MCP review does not merge. Squash always uses the **current PR title plus number** (`VFA-59: … (#198)`), so a repo default that prefers the first branch commit cannot drop the ticket key. When the PR is merged (auto-merge or someone else merges), the linked card moves to **Final approval (manual)**. PRs without a key get a board ticket first; that ticket is stamped with the versioned feature branch, the board default, or the lowest unreleased version.
-3. **Autofix** — on by default (`BIGAS_AUTO_FIX` defaults to `true`; set `false` to skip). If the review has Blockers/Important, or leftover Minor, `autofix_pr` launches a Cursor cloud agent on the same branch; Actions polls `autofix_followup` until the agent finishes, then Bigas re-reviews (including when the agent finishes without a new commit, so stale findings can be dismissed). Up to five `[bigas-autofix]` rounds; leftover Minor also gets up to two `[bigas-autofix] [nits-only]` rounds, then auto-merge may accept the leftover nits. After five rounds with Blockers/Important still open, Discord/Jira ask you to handle it manually. Autofix commit subjects start with the ticket key (`VFA-53: [bigas-autofix] …`) so prepare-deploy can match git to the board.
-4. **No duplicate cycles** — autofix commits use `[bigas-autofix]` in the subject, so the workflow **skips** those pushes. Re-review stays with the in-flight job instead of starting a second review.
+3. **Autofix** — on by default (`BIGAS_AUTO_FIX` defaults to `true`; set `false` to skip). If the review has Blockers/Important, or leftover Minor, `autofix_pr` launches a Cursor cloud agent on the same branch; Actions polls `autofix_followup` until the agent finishes, then Bigas re-reviews (including when the agent finishes without a new commit, so stale findings can be dismissed). Up to five `[bigas-autofix]` rounds; leftover Minor also gets up to two `[bigas-autofix] [nits-only]` rounds, then auto-merge may accept the leftover nits. A failing check (including timed out, cancelled, or action required) can start another round only while that cap remains. After five rounds with Blockers/Important still open, or with CI still failing, Discord/Jira ask you to handle it manually. A clean review that auto-merges from `autofix_pr` moves the linked ticket to Final approval once the merge lands. Autofix commit subjects start with the ticket key (`VFA-53: [bigas-autofix] …`) so prepare-deploy can match git to the board.
+4. **No duplicate cycles** — autofix commits use `[bigas-autofix]` in the subject, so the workflow **skips** those pushes. Re-review stays with the in-flight job instead of starting a second review. Every other review waits `BIGAS_REVIEW_SETTLE_SECONDS` (default **120**, including a single commit) so a burst of pushes becomes one review. Pass workflow input `settle_seconds` to override; `0` skips the wait.
 
 Fully clean LGTM reviews do not launch autofix. Leftover Minor / nits launch up to two extra autofix rounds; if they remain after those two rounds or the five-round cap, the PR is treated as ready to merge. Post-autofix reviews verify the previous Bigas comment instead of inventing a fresh nit list. Dead/unused code introduced or left unused by the PR is classified as **Important** (so it is fixed before merge), not Minor — but only when the diff itself shows it is unused.
 
@@ -601,7 +601,7 @@ Think of three layers:
 2. **GitHub Actions is the workshop.** Target repos need workflow files with `on: workflow_dispatch` (manual/API start, not only on push). For VC Field Assistant that is `deploy-backend.yml` and `deploy-web.yml`, which wrap `deploy-vcfieldassistant-backend.sh` and `deploy-vcfieldassistant-web.sh`. For **Bigas itself** (`BIG`) that is `deploy.yml`, which wraps `./deploy.sh` (Docker build + Cloud Run `mcp-marketing`). A GitHub-hosted runner checks out the repo, logs into GCP, writes env files from GitHub secrets, and executes those scripts.
 3. **Three identities, three jobs.** Your **`GITHUB_TOKEN`** in Bigas only needs Actions write so it can *press the button*. A dedicated GCP deploy service account (GitHub OIDC / Workload Identity — no JSON key in secrets) is allowed to push images and `gcloud run deploy`. The **runtime** service account is still what the app uses in production; the deploy account may impersonate it only while deploying.
 
-**Map:** `BIGAS_JIRA_PROJECT_REPO_MAP` says which GitHub repo a Jira project is. `BIGAS_DEPLOY_WORKFLOW_MAP` says which workflow filenames to dispatch (VFA defaults to the two files above if unset; include `BIG:deploy.yml` for this repo). `BIGAS_DEPLOY_REPO_MAP` optionally points those workflows at a different repo — used for GPWW/FYDA/REM/MYL/FRI, which deploy by SSHing to the shared VM in `multiple-websites-491407` via `mckort/gcp-single-vm-webstack` `deploy.yml` (FRI defaults to that infra repo in code). Workflows must exist on the **infra repo default branch** (or this repo’s default branch for BIG) or dispatch returns 404. When the deploy repo differs, Bigas dispatches on that default branch and passes `site=<product-repo-name>` plus `ref=<product-branch>` so `deploy.sh` only pulls that app at the requested ref.
+**Map:** `BIGAS_JIRA_PROJECT_REPO_MAP` says which GitHub repo a Jira project is. `BIGAS_DEPLOY_WORKFLOW_MAP` says which workflow filenames to dispatch (VFA defaults to the two files above if unset; include `BIG:deploy.yml` for this repo and `AURA:deploy.yml,eas-preview-ios.yml` for AuraLearn). `BIGAS_DEPLOY_REPO_MAP` optionally points those workflows at a different repo — used for GPWW/FYDA/REM/MYL/FRI/POF, which deploy by SSHing to the shared VM in `multiple-websites-491407` via `mckort/gcp-single-vm-webstack` `deploy.yml` (FRI and POF default to that infra repo in code). BIG and AURA dispatch `deploy.yml` on their own repos (Cloud Run). AuraLearn’s default branch is `master`. Workflows must exist on the **infra repo default branch** (or the product default branch for BIG and AURA) or dispatch returns 404. When the deploy repo differs, Bigas dispatches on that default branch and passes `site=<product-repo-name>` plus `ref=<product-branch>` so `deploy.sh` only pulls that app at the requested ref. POF sends `site=pass-or-fund`.
 
 **One-time setup on the product repo** (example: vcfieldassistant or this repo): add the workflow YAML, then run that repo’s `./scripts/setup-github-actions-deploy.sh` so it creates the deploy service account, binds GitHub OIDC, and uploads `.env` as an Actions secret. Re-run the script when those files change. For Bigas itself, also sync `BIGAS_DEPLOY_WORKFLOW_MAP` to Secret Manager so the running instance can resolve project `BIG`.
 
@@ -694,12 +694,12 @@ Bigas includes a **clean, brand-aligned web chat UI** (when the frontend is buil
 | **Chief of Staff** | Answers general questions via your configured LLM; knows the full Jira/GitHub/site catalog; **live Objectives and KR health are injected into every session**; can file Jira Task/Bug issues; delegates domain tasks to specialists |
 | **Direct agent chat** | Start a thread with any specialist; they use the same MCP tools as Discord/cron workflows. Product and Marketing also receive the live OKR scoreboard so they cannot plan a week without knowing which KRs are red |
 | **Agent settings** | Edit each agent's name and goals/responsibilities from the UI |
-| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. PR review, autofix, and pipeline cards (Ready to merge, Final approval, auto-merge) stay in Activity and Discord — they are not posted into the CTO chat thread. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job. |
+| **Activity feed** | Discord notifications (PR reviews, uptime alerts, reports) are mirrored into a sidebar timeline. PR review, autofix, and pipeline cards (Ready to merge, Final approval, auto-merge) stay in Activity and Discord — they are not posted into the CTO chat thread. Events older than 7 days are deleted by a weekly `cleanup_old_activity` job, which also deletes chat messages older than 7 days. |
 | **Unread dots** | A small black dot appears next to a specialist when that thread has incoming messages since you last opened it (including from another browser tab). Your own messages do not light it up. The first visit seeds “seen” so existing history does not mark everything unread. |
-| **Starter prompts** | Empty threads show clickable example questions (e.g. summarize PRs, draft a tweet, GA4 traffic) so you can try the team without reading the API reference |
+| **Starter prompts** | When the last hour is empty, the thread shows clickable example questions (e.g. summarize PRs, draft a tweet, GA4 traffic). If older messages remain, it also offers “Get 5 latest messages” |
 | **Kanban board** | Native task pipeline at `/board` — multiple boards per project plus a personal list. Project boards mirror Jira AI columns (research, design, implement); personal boards use a simple To Do → Done flow without agent automation |
 | **Objectives** | Quarterly OKR dashboard at `/objectives`. Each Objective has Key Results you sign off; tasks on the board link to a KR. Open an Objective or KR on the board to filter the work that moves the number |
-| **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev) |
+| **Persistent history** | Threads and messages stored in Firestore (or in-memory for local dev). Opening a chat loads the last hour; messages older than 7 days are deleted |
 
 ### Setup
 
@@ -716,7 +716,7 @@ Use the same GCP project as Cloud Run.
 1. [Firebase Console](https://console.firebase.google.com/) → add Firebase to the existing GCP project → add a **Web** app. Copy API key, auth domain (`<project>.firebaseapp.com`), and project ID.
 2. Authentication → Sign-in method: enable **Email/Password** and/or **Google**. Create a user (or use Google sign-in).
 3. Authentication → Settings → Authorized domains: add your Cloud Run host (e.g. `your-service-xxxxx.region.run.app`). Do not include `https://`.
-4. Firestore Database → **Create database**, mode **Native** (not Datastore). Prefer the same region as Cloud Run (e.g. `europe-north1`). Collections are created on first use; no composite indexes are required. Keep client rules locked down — the browser does not talk to Firestore; Cloud Run does via the runtime service account.
+4. Firestore Database → **Create database**, mode **Native** (not Datastore). Prefer the same region as Cloud Run (e.g. `europe-north1`). Collections are created on first use. Deploy the composite indexes in `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, ascending and descending, and `tickets` on `board_id` + `updated_at`) before incremental chat and board polls. Keep client rules locked down — the browser does not talk to Firestore; Cloud Run does via the runtime service account.
 5. Enable APIs and grant the Cloud Run service account Firestore access:
    ```bash
    gcloud services enable firestore.googleapis.com identitytoolkit.googleapis.com
@@ -759,10 +759,10 @@ The login page has no “create account” button, but that is not enough on its
 | `PUT /api/agents/<id>` | Update agent name and goals |
 | `POST /api/chat/threads` | Create thread (`agent_id`: chief, marketing, product, cto, cfo, devops) |
 | `GET /api/chat/threads` | List the user's threads (`last_incoming_at` / `last_message_role` used for unread dots) |
-| `GET/POST /api/chat/threads/<id>/messages` | Fetch history / send message (poll GET for async results) |
+| `GET/POST /api/chat/threads/<id>/messages` | Fetch the last hour (`?since=` polls newer messages, `?latest=5` loads the five newest) / send message |
 | `POST /api/chat/callback` | Sub-agents report async completion (`X-Bigas-Chat-Callback` header) |
 | `GET /api/feed` | Activity feed (Discord mirror) |
-| `POST /mcp/tools/cleanup_old_activity` | Delete activity events older than 7 days (Cloud Scheduler) |
+| `POST /mcp/tools/cleanup_old_activity` | Delete activity events and chat messages older than 7 days (Cloud Scheduler) |
 
 Sub-agents can call `POST /api/chat/callback` with `{thread_id, content, agent_id}` when a delegated task finishes asynchronously.
 
@@ -1051,7 +1051,7 @@ gcloud scheduler jobs create http bigas-website-monitor \
 
 ### Chat activity cleanup with Cloud Scheduler
 
-The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification. `cleanup_old_activity` deletes events older than 7 days in batches of up to 500 until none remain. Recommended schedule: Monday 02:00 CET, before the work week starts.
+The chat activity feed (`activity_feed` in Firestore) grows with every Discord-mirrored notification, and chat messages accumulate in `messages`. `cleanup_old_activity` deletes activity events and chat messages older than 7 days, for every agent, in batches of up to 500. Each invocation stops after 20 batches per collection so the request stays inside the Cloud Run timeout; the next weekly run deletes anything that remains. `cleanup_old_reports` applies the same 20-batch cap when it deletes old chat messages. Recommended schedule: Monday 02:00 CET, before the work week starts. Deploy `firestore.indexes.json` (`messages` on `thread_id` + `created_at`, ascending and descending, and `tickets` on `board_id` + `updated_at`) so the last-hour load, the five-message fallback, and an idle board poll do not scan a whole collection.
 
 ```bash
 gcloud scheduler jobs create http bigas-cleanup-chat-activity \

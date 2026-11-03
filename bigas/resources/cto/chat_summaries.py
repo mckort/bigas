@@ -66,6 +66,10 @@ def summarize_review_result(payload: dict) -> str:
             f"{suffix}"
         ).strip()
 
+    if payload.get("skipped") and reason == "already_reviewed":
+        suffix = f" Comment: {comment_url}." if comment_url else ""
+        return f"This commit already has a Bigas review.{suffix}".strip()
+
     merge_bit = _auto_merge_clause(payload.get("auto_merge"))
     board = payload.get("board_ticket")
     ticket_bit = ""
@@ -148,6 +152,11 @@ def summarize_autofix_result(payload: dict) -> str:
         return (
             f"Autofix stopped after {count}/{max_n} rounds. "
             f"Needs a manual look.{pr_bit}"
+        ).strip()
+
+    if payload.get("checks_pending"):
+        return (
+            f"CI is still running. Autofix will wait, then fix any failures.{pr_bit}"
         ).strip()
 
     if payload.get("review_clean"):
@@ -239,6 +248,8 @@ def summarize_followup_result(payload: dict) -> str:
     if payload.get("ready_to_merge"):
         if pushed:
             lead = "Autofix pushed fixes and the re-review looks clean."
+        elif payload.get("accepted_leftover_nits"):
+            lead = "Autofix pushed nothing. The leftover remark is minor, so the PR can merge."
         else:
             lead = "Autofix did not need new commits; the re-review looks clean."
         if comment_url:

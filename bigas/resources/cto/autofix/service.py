@@ -10,6 +10,11 @@ from bigas.resources.cto.autofix.cursor_client import (
     CursorCloudAgentClient,
     CursorCloudAgentError,
 )
+from bigas.resources.cto.autofix.ci_status import (
+    empty_ci,
+    fetch_head_ci,
+    format_ci_prompt_block,
+)
 from bigas.resources.cto.autofix.heuristics import (
     AUTOFIX_COMMIT_MARKER,
     AUTOFIX_MINOR_COMMIT_MARKER,
@@ -99,74 +104,6 @@ def _ensure_issue_key_for_autofix(
     return (ensured.get("issue_key") or "").strip()
 
 
-def _ci_failure_block(failures: list[dict]) -> str:
-    if not failures:
-        return ""
-    lines = [
-        "## Failing checks",
-        "These GitHub checks failed on the current head. Fix them. "
-        "The pull request must not merge until they are green.",
-    ]
-    for item in failures:
-        name = item.get("name") or "check"
-        url = item.get("details_url") or ""
-        lines.append(f"- {name}" + (f" ({url})" if url else ""))
-        for note in item.get("annotations") or []:
-            lines.append(f"  - {note}")
-    return "\n".join(lines) + "\n\n"
-
-
-def _failed_ci_checks(token: str, owner: str, repo_name: str, pr: dict) -> list[dict]:
-    head = pr.get("head") if isinstance(pr, dict) else None
-    sha = (head.get("sha") or "").strip() if isinstance(head, dict) else ""
-    if not sha:
-        return []
-    gh = GitHubPRCommentClient(token=token)
-    lister = getattr(gh, "list_check_runs", None)
-    if not callable(lister):
-        return []
-    try:
-        runs = lister(owner, repo_name, sha)
-    except GitHubPRCommentError:
-        logger.warning(
-            "Could not read check runs for autofix on %s/%s@%s",
-            owner,
-            repo_name,
-            sha[:8],
-            exc_info=True,
-        )
-        return []
-    from bigas.resources.cto.autofix.heuristics import classify_ci_checks
-
-    gate = classify_ci_checks(runs if isinstance(runs, list) else [])
-    failed = list(gate.get("failed") or [])
-    annotator = getattr(gh, "list_check_run_annotations", None)
-    if not callable(annotator):
-        return failed
-    for item in failed:
-        check_id = item.get("id")
-        if not isinstance(check_id, int):
-            continue
-        try:
-            notes = annotator(owner, repo_name, check_id)
-        except Exception:
-            notes = []
-        messages = []
-        for note in (notes or [])[:8]:
-            if not isinstance(note, dict):
-                continue
-            path = (note.get("path") or "").strip()
-            line = note.get("start_line")
-            message = (note.get("message") or "").strip()
-            if not message:
-                continue
-            where = f"{path}:{line}" if path else ""
-            messages.append(f"{where} {message}".strip())
-        if messages:
-            item["annotations"] = messages
-    return failed
-
-
 def _build_prompt(
     *,
     repo: str,
@@ -177,7 +114,8 @@ def _build_prompt(
     nits_only: bool = False,
     merge_conflict: bool = False,
     base_branch: str = "",
-    ci_failures: Optional[list] = None,
+    ci_block: str = "",
+    ci_only: bool = False,
 ) -> str:
     conflict_block = ""
     if merge_conflict:
@@ -195,28 +133,33 @@ def _build_prompt(
             "resolve every conflict, and remove all conflict markers. "
             "Keep both the incoming base-branch changes and this PR's intended work.\n\n"
         )
-    ci_block = _ci_failure_block(list(ci_failures or []))
-    if nits_only:
+    ci_note = ""
+    if ci_block and not ci_only:
+        ci_note = "\nAlso fix the failing CI checks in the section below, in this same push."
+    if ci_only:
+        focus = (
+            "1. The review has no remaining code findings. "
+            "Fix the failing CI checks in the section below."
+        )
+    elif nits_only:
         focus = (
             "1. This review has only Minor / non-blocking items. Fix those leftover nits "
             "so the review can become fully clean."
+            + ci_note
         )
     elif merge_conflict:
         focus = (
             "1. Resolve the merge conflicts described above first so the PR becomes mergeable.\n"
             "2. Fix all Blockers and Important items called out in the review.\n"
             "3. Also fix Minor items listed in the same review when present."
-        )
-    elif ci_failures:
-        focus = (
-            "1. CI failed on this pull request. Fix the failing checks listed above.\n"
-            "2. Also fix Blockers and Important items in the review when they are still open."
+            + ci_note
         )
     else:
         focus = (
             "1. Fix all Blockers and Important items called out in the review.\n"
             "2. Also fix Minor items listed in the same review — they ride along in "
             "this round when Blockers/Important already triggered autofix."
+            + ci_note
         )
     return f"""You are fixing findings from an automated Bigas CTO PR review.
 
@@ -237,6 +180,7 @@ Pull request: {pr_url}
 9. If the review claims a helper/import is wrong (e.g. deleteField vs FieldValue.delete) but the repo already provides that helper via a local wrapper imported in the same file, treat the finding as already resolved — do not churn the code just to silence the review.
 10. Before you finish: run this repository's typecheck and test command. If they fail, fix them in this same push. If your fixes left unused imports, functions, helpers, files, or replaced call sites, remove that dead code after you have read the whole file and confirmed the name is unused. If typecheck or the linter reports an unused name in a file you edited, delete it. Do not leave that dead code in the branch. Do not expand into a repo-wide cleanup.
 11. Do not delete an import whose call site is outside the diff. Do not restore an HTML required attribute, or any other line, that this PR removed.
+12. When a Failing CI section is present, fix those checks. For an npm audit failure, run `npm audit fix` without `--force`. Do not take a breaking major upgrade to silence an advisory. Do not treat GitHub billing or spending-limit failures as code bugs, and do not weaken or skip the failing check.
 """
 
 
@@ -251,6 +195,22 @@ def select_autofix_model(
     if next_round >= 2 and review_has_blockers(review_body):
         return default_autofix_escalation_model()
     return base
+
+
+def _head_ci(gh: Any, owner: str, repo: str, sha: str) -> dict[str, Any]:
+    if not sha:
+        return empty_ci()
+    try:
+        return fetch_head_ci(gh, owner, repo, sha)
+    except Exception:
+        logger.warning(
+            "Could not read CI checks for %s/%s@%s",
+            owner,
+            repo,
+            sha[:8],
+            exc_info=True,
+        )
+        return empty_ci(unavailable=True)
 
 
 def autofix_looks_like_confirmation_stop(result_text: str) -> bool:
@@ -387,12 +347,6 @@ class AutofixService:
             }
 
         merge_conflicted = pr_has_merge_conflicts(pr if isinstance(pr, dict) else {})
-        ci_failures = _failed_ci_checks(
-            self._github_token,
-            owner,
-            repo_name,
-            pr if isinstance(pr, dict) else {},
-        )
         base_branch = ""
         if isinstance(pr, dict):
             base = pr.get("base")
@@ -505,23 +459,45 @@ class AutofixService:
                         "head_sha": head_sha,
                     }
 
-        nits_only = review_is_nits_only(body)
+        ci = _head_ci(gh, owner, repo_name, head_sha)
+        ci_failed = bool(ci.get("failed"))
+        ci_pending = bool(ci.get("pending")) and not ci_failed
+        nits_only = review_is_nits_only(body) and not ci_failed
+        should, _review_reason = review_needs_autofix(
+            body,
+            autofix_count=autofix_count,
+            minor_autofix_count=minor_autofix_count,
+            max_iterations=max_iters,
+        )
         if not force:
-            should, reason = review_needs_autofix(
-                body,
-                autofix_count=autofix_count,
-                minor_autofix_count=minor_autofix_count,
-                max_iterations=max_iters,
-            )
-            if not should and not merge_conflicted and not ci_failures:
+            if not should and not merge_conflicted and not ci_failed:
+                if ci_pending:
+                    return {
+                        "skipped": True,
+                        "checks_pending": True,
+                        # cooldown keeps older Actions callers waiting and retrying.
+                        "cooldown": True,
+                        "reason": (
+                            "CI checks are still running on the PR head. "
+                            "Waiting before deciding autofix."
+                        ),
+                        "pr_url": pr_url,
+                        "autofix_count": autofix_count,
+                        "minor_autofix_count": minor_autofix_count,
+                        "max_iterations": max_iters,
+                        "cooldown_seconds": 45,
+                        "head_age_seconds": 0,
+                        "head_sha": head_sha,
+                    }
                 return {
                     "skipped": True,
-                    "reason": reason,
+                    "reason": _review_reason,
                     "pr_url": pr_url,
                     "autofix_count": autofix_count,
                     "minor_autofix_count": minor_autofix_count,
                     "max_iterations": max_iters,
                     "review_clean": True,
+                    "ci_settled": not ci.get("unavailable"),
                     "nits_accepted": nits_only
                     and leftover_nits_are_acceptable(
                         autofix_count=autofix_count,
@@ -553,10 +529,11 @@ class AutofixService:
             pr_url=pr_url,
             review_body=body,
             issue_key=issue_key,
-            nits_only=nits_only and not merge_conflicted and not ci_failures,
+            nits_only=nits_only and not merge_conflicted,
             merge_conflict=merge_conflicted,
             base_branch=base_branch,
-            ci_failures=ci_failures,
+            ci_block=format_ci_prompt_block(ci.get("failed") or []),
+            ci_only=ci_failed and not should and not merge_conflicted,
         )
         model_id = select_autofix_model(
             next_round=next_round,

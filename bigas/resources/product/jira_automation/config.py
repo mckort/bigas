@@ -116,7 +116,7 @@ class JiraAutomationConfig:
         secret = (os.environ.get("JIRA_AUTOMATION_WEBHOOK_SECRET") or "").strip()
         allowed = _parse_csv_upper(
             os.environ.get("BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS")
-            or "VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,FRI,AURA"
+            or "VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,FRI,AURA,POF"
         )
         daily_raw = (os.environ.get("BIGAS_JIRA_AI_DAILY_QUOTA") or "20").strip()
         try:

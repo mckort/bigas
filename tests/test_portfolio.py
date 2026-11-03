@@ -51,6 +51,9 @@ def test_resolve_project_from_brand_and_repo(portfolio_env):
     assert resolve_project("friman investments board") == "FRI"
     assert resolve_project("how is frimaninvestments.com doing") == "FRI"
     assert resolve_project("review the auralearn PR") == "AURA"
+    assert resolve_project("deploy POF") == "POF"
+    assert resolve_project("pass or fund board") == "POF"
+    assert resolve_project("how is passorfund.com doing") == "POF"
     assert resolve_project("hello") is None
 
 
@@ -112,11 +115,13 @@ def test_normalize_project_key_accepts_list():
 
 def test_prompt_block_lists_all_projects(portfolio_env):
     block = prompt_block()
-    for key in ("VFA", "WAYW", "BIG", "REM", "GPWW", "FYDA", "MYL", "FRI", "AURA"):
+    for key in ("VFA", "WAYW", "BIG", "REM", "GPWW", "FYDA", "MYL", "FRI", "AURA", "POF"):
         assert key in block
     assert "mckort/roadpal" in block
     assert "mckort/frimaninvestments" in block
     assert "mckort/auralearn" in block
+    assert "mckort/pass-or-fund" in block
+    assert "passorfund.com" in block
     assert "not configured" in block
     assert "pr_url" in block
 

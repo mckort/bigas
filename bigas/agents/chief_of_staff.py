@@ -8,7 +8,7 @@ import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from bigas.chat.db import get_chat_store
+from bigas.chat.db import get_chat_store, visible_history_cutoff_iso
 from bigas.chat.timestamps import current_time_prompt_block
 from bigas.chat.jira_formatting import (
     JIRA_AWARE_AGENT_IDS,
@@ -1539,15 +1539,15 @@ def handle_chat_message(
         if should_run_deploy_pipeline(user_message, thread_id):
             result = run_chat_deploy_pipeline(thread_id=thread_id, user_message=user_message)
             status = result.get("status") or "complete"
-            all_msgs = store.list_messages(thread_id)
+            visible = store.list_messages(thread_id, since=visible_history_cutoff_iso())
             if status == "in_progress":
-                payload = {"status": "in_progress", "messages": all_msgs}
+                payload = {"status": "in_progress", "messages": visible}
                 if result.get("deploy_poll_active"):
                     payload["deploy_poll_active"] = True
                 return payload
-            last = store.list_messages(thread_id)
-            assistant = next((m for m in reversed(last) if m.get("role") == "assistant"), None)
-            return {"status": "complete", "message": assistant, "messages": all_msgs}
+            recent = store.list_messages(thread_id, limit=20)
+            assistant = next((m for m in reversed(recent) if m.get("role") == "assistant"), None)
+            return {"status": "complete", "message": assistant, "messages": visible}
 
     llm_user_message = _with_bookkeeping_figures(agent_id, llm_user_message)
     client = _mcp_client()
