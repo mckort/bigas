@@ -291,8 +291,16 @@ class TicketService:
 
         delete_attachment_blobs(list(ticket.get("attachments") or []))
 
-    def list_tickets(self, board_id: str, *, user_id: str) -> List[Dict[str, Any]]:
-        tickets = self._store.list_tickets(board_id, user_id=user_id)
+    def list_tickets(
+        self,
+        board_id: str,
+        *,
+        user_id: str,
+        updated_since: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        tickets = self._store.list_tickets(
+            board_id, user_id=user_id, updated_since=updated_since
+        )
         return [ticket_to_api(t, include_comments=False) for t in tickets]
 
     def add_comment(

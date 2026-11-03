@@ -25,6 +25,22 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def normalize_updated_since(value: Optional[str]) -> Optional[str]:
+    """Return an ISO timestamp for an incremental ticket query, or None.
+
+    None means the caller should read the whole board. Invalid values are
+    dropped so a bad cursor cannot turn into an unbounded or failing query.
+    """
+    text = (value or "").strip()
+    if not text or len(text) > 40:
+        return None
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return text
+
+
 def _board_prefix(project_key: Optional[str]) -> str:
     if project_key:
         return project_key.strip().upper()
@@ -464,6 +480,7 @@ class MemoryTicketStore:
         board_id: str,
         *,
         user_id: Optional[str] = None,
+        updated_since: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         board = self.get_board(board_id)
         if not board:
@@ -473,6 +490,12 @@ class MemoryTicketStore:
         with self._lock:
             tickets = [
                 dict(t) for t in self._tickets.values() if t.get("board_id") == board_id
+            ]
+        if updated_since:
+            tickets = [
+                ticket
+                for ticket in tickets
+                if str(ticket.get("updated_at") or "") > updated_since
             ]
         return sorted(tickets, key=lambda t: t.get("created_at", ""))
 
@@ -1065,14 +1088,29 @@ class FirestoreTicketStore:
         board_id: str,
         *,
         user_id: Optional[str] = None,
+        updated_since: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         board = self.get_board(board_id)
         if not board:
             return []
         if user_id and board.get("user_id") != user_id:
             return []
-        docs = self._tickets.where("board_id", "==", board_id).stream()
-        tickets = [doc.to_dict() for doc in docs if doc.exists]
+        if updated_since:
+            # board_id + updated_at is a composite index. An idle board matches
+            # no documents (one minimum read) instead of every recent ticket.
+            # The range is on updated_at, so Firestore requires that field as
+            # the first order_by. This query cannot stream pages ordered by
+            # created_at. The result is the change set since the cursor, not
+            # the whole board; created_at order is applied in memory below.
+            docs = (
+                self._tickets.where("board_id", "==", board_id)
+                .where("updated_at", ">", updated_since)
+                .stream()
+            )
+            tickets = [doc.to_dict() for doc in docs if doc.exists]
+        else:
+            docs = self._tickets.where("board_id", "==", board_id).stream()
+            tickets = [doc.to_dict() for doc in docs if doc.exists]
         return sorted(tickets, key=lambda t: t.get("created_at", ""))
 
     def list_tickets_for_user(self, user_id: str) -> List[Dict[str, Any]]:

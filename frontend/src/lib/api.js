@@ -167,8 +167,9 @@ export async function deleteBoard(boardId) {
   return apiFetch(`/api/boards/${boardId}`, { method: 'DELETE' })
 }
 
-export async function fetchBoardTickets(boardId) {
-  return apiFetch(`/api/boards/${boardId}/tickets`)
+export async function fetchBoardTickets(boardId, { updatedSince } = {}) {
+  const qs = updatedSince ? `?updated_since=${encodeURIComponent(updatedSince)}` : ''
+  return apiFetch(`/api/boards/${boardId}/tickets${qs}`)
 }
 
 export async function createTicket(boardId, payload) {
