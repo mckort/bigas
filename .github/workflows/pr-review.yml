@@ -421,25 +421,29 @@ jobs:
                       timeout=120,
                   )
                   settled = data.get("auto_merge") if isinstance(data, dict) else None
+                  reason = settled.get("reason") if isinstance(settled, dict) else ""
                   usable = (
                       code == 200
                       and isinstance(settled, dict)
-                      and (settled.get("reason") or settled.get("merged"))
+                      and (reason or settled.get("merged"))
                   )
-                  if not usable:
-                      # Transient error or empty answer: keep waiting instead of
-                      # treating it as "checks no longer pending".
-                      print(f"check wait {i}/36: HTTP {code}, no usable auto_merge state; retrying")
+                  # A comment-fetch blip makes review_is_ready_to_merge fail
+                  # closed as not_ready. Keep polling, same as an empty answer.
+                  if not usable or reason == "not_ready":
+                      print(
+                          f"check wait {i}/36: HTTP {code} "
+                          f"reason={reason or 'n/a'}; retrying"
+                      )
                       continue
                   print(
                       f"check wait {i}/36: HTTP {code} "
-                      f"reason={settled.get('reason')} merged={settled.get('merged')}"
+                      f"reason={reason} merged={settled.get('merged')}"
                   )
                   auto_merge = settled
-                  if settled.get("merged") or settled.get("reason") == "pr_already_merged":
+                  if settled.get("merged") or reason == "pr_already_merged":
                       print("Merged after checks passed.")
                       raise SystemExit(0)
-                  if settled.get("reason") != "checks_pending":
+                  if reason != "checks_pending":
                       return
               print("Checks still pending after 12 minutes; not merging.")
 
