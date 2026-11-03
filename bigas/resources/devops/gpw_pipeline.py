@@ -369,6 +369,7 @@ def review_candidate(
         }
     diff = client.get_compare_diff(owner, name, env.production_branch, env.candidate_branch)
     service = PRReviewService()
+    review_repo = env.repo
     body = review_compare_diff(
         diff,
         phase=review_phase,
@@ -377,6 +378,7 @@ def review_candidate(
             instructions=instructions,
             phase=review_phase,
             previous_review=prior if review_phase == "prepare_staging_post" else None,
+            repo=review_repo,
         ).text,
     ).strip()
     ready = review_is_ready_to_merge(staging_fix_review(body))
@@ -1544,7 +1546,7 @@ def _review_fix_pull_request(
     from bigas.resources.cto.pr_review.diff_context import expand_pr_diff
 
     diff = expand_pr_diff(gh, owner, name, pr_number, diff)
-    body = PRReviewService().review(diff=diff, phase=phase).text
+    body = PRReviewService().review(diff=diff, phase=phase, repo=env.repo).text
     autofix_count, minor_count = _autofix_counts(env.repo, pr_number)
     ready = review_is_ready_to_merge(
         body,

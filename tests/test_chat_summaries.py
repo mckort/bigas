@@ -180,6 +180,26 @@ def test_followup_summary_no_push_rereview_ready_to_merge():
     assert "trigger autofix again" not in text.lower()
 
 
+def test_followup_summary_accepts_leftover_minor_when_nothing_was_pushed():
+    text = summarize_followup_result(
+        {
+            "success": True,
+            "done": True,
+            "ok": True,
+            "finalized": True,
+            "fixes_pushed": False,
+            "rereviewed": True,
+            "ready_to_merge": True,
+            "accepted_leftover_nits": True,
+            "comment_url": "https://github.com/mckort/vcfieldassistant/pull/123#issuecomment-1",
+            "auto_merge": {"merged": True},
+        }
+    )
+    assert "leftover remark is minor" in text.lower()
+    assert "ready to merge" in text.lower()
+    assert "stopping the loop" not in text.lower()
+
+
 def test_followup_summary_no_push_rereview_still_has_findings():
     text = summarize_followup_result(
         {

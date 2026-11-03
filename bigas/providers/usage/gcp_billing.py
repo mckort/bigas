@@ -67,15 +67,30 @@ def _billing_account_table_suffix() -> Optional[str]:
     return raw.replace("-", "_")
 
 
-def service_feature(description: str) -> str:
-    """Map a Cloud Billing service description to a stable feature id."""
-    text = (description or "").strip()
-    low = text.lower()
+def matched_service_feature(description: str) -> Optional[str]:
+    """Return a known feature when the text hits a service needle, else None."""
+    low = (description or "").strip().lower()
+    if not low:
+        return None
     for needle, feature in _SERVICE_FEATURES:
         if needle in low:
             return feature
+    return None
+
+
+def service_feature(description: str) -> str:
+    """Map a Cloud Billing service description to a stable feature id."""
+    matched = matched_service_feature(description)
+    if matched:
+        return matched
+    low = (description or "").strip().lower()
     slug = re.sub(r"[^a-z0-9]+", "_", low).strip("_")[:48] or "other"
     return f"gcp.{slug}"
+
+
+def invoice_feature(service: str, sku: str = "") -> str:
+    """Prefer the SKU so Firestore reads billed as App Engine stay Firestore."""
+    return matched_service_feature(sku) or service_feature(service)
 
 
 def _feature_matches(feature: str, prefix: Optional[str]) -> bool:
@@ -96,17 +111,24 @@ def _rows_to_events(
     for row in rows:
         project = str(row.get("project_id") or "").strip() or "unknown"
         service = str(row.get("service") or "").strip() or "Unknown"
+        sku = str(row.get("sku") or "").strip()
         try:
             cost = float(row.get("net_cost") if row.get("net_cost") is not None else 0)
         except (TypeError, ValueError):
             continue
         if abs(cost) < 1e-9:
             continue
-        feature = service_feature(service)
+        feature = invoice_feature(service, sku)
+        # Keep the full slug. A fixed cut collapses SKUs that share a prefix
+        # (regions, machine families) onto one source_id and drops rows.
+        sku_slug = re.sub(r"[^a-z0-9]+", "-", sku.lower()).strip("-")
+        source_id = f"gcp:{project}:{feature}"
+        if sku_slug:
+            source_id = f"{source_id}:{sku_slug}"
         events.append(
             UsageEvent(
                 provider="gcp_billing",
-                source_id=f"gcp:{project}:{feature}",
+                source_id=source_id,
                 started_at=started_at,
                 feature=feature,
                 est_cost_usd=round(cost, 6),
@@ -115,6 +137,7 @@ def _rows_to_events(
                     "app": "vcfieldassistant" if project == "vcfieldassistant" else "bigas",
                     "gcp_project": project,
                     "gcp_service": service,
+                    "gcp_sku": sku,
                     "cost_kind": "invoice",
                 },
             )
@@ -153,13 +176,14 @@ class GcpBillingUsageProvider(UsageProvider):
         projects = _usage_project_ids(self._project)
         sql = (
             f"SELECT project.id AS project_id, service.description AS service, "
+            f"IFNULL(sku.description, '') AS sku, "
             f"SUM(cost) + SUM((SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) "
             f"AS net_cost "
             f"FROM `{table}` "
             f"WHERE DATE(usage_start_time) >= @start_date "
             f"AND DATE(usage_start_time) <= @end_date "
             f"AND project.id IN UNNEST(@projects) "
-            f"GROUP BY 1, 2"
+            f"GROUP BY 1, 2, 3"
         )
         params = [
             {

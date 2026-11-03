@@ -460,11 +460,50 @@ def test_pr_review_prompts_respect_project_helpers():
         assert "deletes the import or definition that a remaining call still uses" in text
         assert "Do NOT report a missing prop, type field, parameter, or export" in text
         assert "mark it resolved unless this diff shows the declaration without" in text
+        assert "listSharedCompanies()" not in text
+        assert "PENDING_WORKSPACE_INVITES" not in text
+        assert "PendingWorkspaceInvitesPanel" not in text
 
     assert "An unchanged function outside the hunks is not missing" in PR_REVIEW_POST_AUTOFIX_SYSTEM_PROMPT
 
     assert "mobile/responsive" in PR_REVIEW_INITIAL_SYSTEM_PROMPT
     assert "small mobile screens" in PR_REVIEW_SYSTEM_PROMPT
+
+
+def test_invite_false_positives_apply_only_to_vfa():
+    from bigas.portfolio import DEFAULT_PROJECT_REPOS
+    from bigas.resources.cto.pr_review.prompts import (
+        PR_REVIEW_PREPARE_STAGING_SYSTEM_PROMPT,
+        PR_REVIEW_SYSTEM_PROMPT,
+        system_prompt_for_phase,
+    )
+
+    vfa = DEFAULT_PROJECT_REPOS["VFA"]
+    for text in (
+        PR_REVIEW_SYSTEM_PROMPT,
+        PR_REVIEW_PREPARE_STAGING_SYSTEM_PROMPT,
+        system_prompt_for_phase("initial"),
+        system_prompt_for_phase("post_autofix"),
+        system_prompt_for_phase("prepare_staging", repo="mckort/bigas"),
+        system_prompt_for_phase("initial", repo="mckort/roadpal"),
+    ):
+        assert "listSharedCompanies()" not in text
+        assert "PENDING_WORKSPACE_INVITES" not in text
+        assert "PendingWorkspaceInvitesPanel" not in text
+
+    for phase in ("initial", "post_autofix", "prepare_staging", "prepare_staging_post"):
+        text = system_prompt_for_phase(phase, repo=vfa)
+        assert "listSharedCompanies()" in text
+        assert "PENDING_WORKSPACE_INVITES" in text
+        assert "PendingWorkspaceInvitesPanel" in text
+
+    assert "listSharedCompanies()" in system_prompt_for_phase("initial", repo=vfa.upper())
+    post = system_prompt_for_phase("post_autofix", repo=vfa)
+    assert "leaves the user with no accept UI" in post
+    assert "leaves the user with no accept UI" not in system_prompt_for_phase("initial", repo=vfa)
+    assert "leaves the user with no accept UI" not in system_prompt_for_phase(
+        "prepare_staging_post", repo=vfa
+    )
 
 
 def test_pr_review_prompts_classify_dead_code_as_important():

@@ -154,6 +154,11 @@ def summarize_autofix_result(payload: dict) -> str:
             f"Needs a manual look.{pr_bit}"
         ).strip()
 
+    if payload.get("checks_pending"):
+        return (
+            f"CI is still running. Autofix will wait, then fix any failures.{pr_bit}"
+        ).strip()
+
     if payload.get("review_clean"):
         return f"Review is clean — no autofix needed.{pr_bit}".strip()
 
@@ -243,6 +248,8 @@ def summarize_followup_result(payload: dict) -> str:
     if payload.get("ready_to_merge"):
         if pushed:
             lead = "Autofix pushed fixes and the re-review looks clean."
+        elif payload.get("accepted_leftover_nits"):
+            lead = "Autofix pushed nothing. The leftover remark is minor, so the PR can merge."
         else:
             lead = "Autofix did not need new commits; the re-review looks clean."
         if comment_url:

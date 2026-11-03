@@ -17,12 +17,18 @@ from bigas.resources.cto.chat_summaries import (
     summarize_review_result,
     with_summary,
 )
+from bigas.resources.cto.autofix.ci_status import (
+    empty_ci,
+    fetch_head_ci,
+    ready_after_ci,
+)
 from bigas.resources.cto.autofix.heuristics import (
     auto_merge_enabled,
     autofix_max_iterations,
     autofix_pushed_new_commit,
     format_loop_protection_message,
     minor_autofix_max_iterations,
+    review_is_nits_only,
     review_is_ready_to_merge,
 )
 from bigas.resources.cto.autofix.service import (
@@ -386,6 +392,24 @@ def _pr_already_merged(
             github_token=github_token,
         ).get("merged")
     )
+
+
+def _ci_for_commit(github_token: str, owner: str, repo: str, sha: str) -> dict:
+    """Check status for a SHA. A GitHub error does not block merge."""
+    if not (github_token or "").strip() or not (sha or "").strip():
+        return empty_ci(unavailable=True)
+    try:
+        client = GitHubPRCommentClient(token=github_token)
+        return fetch_head_ci(client, owner, repo, sha)
+    except Exception:
+        logger.warning(
+            "Could not read CI checks for %s/%s@%s",
+            owner,
+            repo,
+            (sha or "")[:8],
+            exc_info=True,
+        )
+        return empty_ci(unavailable=True)
 
 
 def _maybe_auto_merge_pr(
@@ -946,6 +970,7 @@ def review_and_comment_pr():
             instructions=instructions,
             phase=phase,  # type: ignore[arg-type]
             previous_review=previous_review,
+            repo=repo,
         )
         review_body = review_result.text
     except PRReviewError as e:
@@ -1037,6 +1062,12 @@ def review_and_comment_pr():
         autofix_count=autofix_count,
         minor_autofix_count=minor_autofix_count,
     )
+    head_for_ci = pr.get("head") if isinstance(pr, dict) else {}
+    ci_sha = str(head_for_ci.get("sha") or "").strip() if isinstance(head_for_ci, dict) else ""
+    if ready:
+        ci_now = _ci_for_commit(github_token, owner, repo_name, ci_sha)
+        if ci_now.get("failed"):
+            ready = False
     done_label = (
         "**CTO PR re-review after autofix done**"
         if phase == "post_autofix"
@@ -1265,7 +1296,29 @@ def autofix_pr():
                 ),
                 github_token=github_token or "",
             )
+        elif result.get("checks_pending"):
+            logger.info(
+                "Autofix waiting for CI on %s#%s before launch or merge",
+                repo,
+                pr_number,
+            )
         elif result.get("review_clean"):
+            auto_merge = {"skipped": True, "reason": "ci_not_settled"}
+            if result.get("ci_settled"):
+                auto_merge = _maybe_auto_merge_pr(
+                    repo=repo,
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    github_token=gh_token,
+                )
+                result["jira_final_approval"] = _final_approval_after_merge(
+                    repo=repo,
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    github_token=gh_token,
+                    merged=bool(auto_merge.get("merged")),
+                )
+            result["auto_merge"] = auto_merge
             _post_cto_status(
                 f"**CTO autofix skipped**\n"
                 f"Review does not need autofix ({sanitize_error_message(reason)}).\n"
@@ -1618,6 +1671,7 @@ def autofix_followup():
                 ),
                 phase="post_autofix",
                 previous_review=previous_review,
+                repo=repo,
             )
             review_body = review_result.text
         except PRReviewError as e:
@@ -1668,12 +1722,24 @@ def autofix_followup():
     except AutofixError:
         logger.warning("Could not count autofix rounds after re-review", exc_info=True)
 
-    ready = review_is_ready_to_merge(
+    review_ready = review_is_ready_to_merge(
         review_body,
         autofix_count=autofix_count,
         minor_autofix_count=minor_autofix_count,
         max_iterations=max_iters,
         minor_max_iterations=minor_autofix_max_iterations(),
+    )
+    # A nits-only agent that pushes nothing has looked at the leftover minor and
+    # left it. Waiting for a second round never starts, so merge instead —
+    # unless CI on this head is still red or still running.
+    accepted_leftover_nits = (
+        not review_ready and not fixes_pushed and review_is_nits_only(review_body)
+    )
+    if accepted_leftover_nits:
+        review_ready = True
+    ci_now = _ci_for_commit(gh_token, owner, repo_name, head_sha)
+    ready, checks_pending, ci_failed = ready_after_ci(
+        review_ready, ci_now, block_on_pending=True
     )
     cost_line = _discord_llm_cost_line(review_result) if review_result is not None else ""
     cost_suffix = f"\n{cost_line}" if cost_line else ""
@@ -1711,14 +1777,15 @@ def autofix_followup():
             github_token=gh_token,
             merged=bool(auto_merge.get("merged")),
         )
-    elif not fixes_pushed:
+    elif checks_pending:
         _post_cto_status(
             f"**CTO autofix follow-up**\n"
-            "Agent did not push; re-review still has findings. "
-            "Stopping the autofix loop for this run.\n"
+            "Review is clean. Waiting for CI before merge.\n"
             f"{pr_ref}"
         )
     elif autofix_count >= max_iters:
+        # Cap wins over a still-red check. Otherwise a failing CI run tells
+        # Actions to launch again and the iteration limit never fires.
         _notify_autofix_loop_protection(
             repo=repo,
             pr_number=pr_number,
@@ -1726,6 +1793,20 @@ def autofix_followup():
             autofix_count=autofix_count,
             max_iterations=max_iters,
             github_token=gh_token,
+        )
+    elif ci_failed and review_ready:
+        _post_cto_status(
+            f"**CTO autofix follow-up**\n"
+            "Review is clean, but CI is still failing. "
+            "Actions may launch another autofix round.\n"
+            f"{pr_ref}"
+        )
+    elif not fixes_pushed:
+        _post_cto_status(
+            f"**CTO autofix follow-up**\n"
+            "Agent did not push; re-review still has findings. "
+            "Stopping the autofix loop for this run.\n"
+            f"{pr_ref}"
         )
     else:
         # autofix_count = agents started on this PR. Several commits from one
@@ -1745,6 +1826,9 @@ def autofix_followup():
         "rereviewed": True,
         "comment_url": comment_url,
         "ready_to_merge": ready,
+        "checks_pending": checks_pending,
+        "ci_failed": ci_failed,
+        "accepted_leftover_nits": accepted_leftover_nits,
         "fixes_pushed": fixes_pushed,
         "head_sha": head_sha,
         "baseline_head_sha": baseline_head_sha,
