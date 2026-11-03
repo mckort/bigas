@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bigas.resources.cto.endpoints import _maybe_auto_merge_pr
+from bigas.resources.cto.endpoints import _ci_gate_for_pr, _maybe_auto_merge_pr
 from bigas.resources.cto.pr_review.github_client import (
     GitHubMergeNotReadyError,
     GitHubPRCommentClient,
@@ -703,3 +703,25 @@ def test_maybe_auto_merge_waits_when_tests_pending(
     assert result.get("reason") == "checks_pending"
     client.merge_pull_request.assert_not_called()
     mock_discord.assert_not_called()
+
+
+def test_ci_gate_names_clean_checks_passed(monkeypatch):
+    states = {
+        "passed": {"failed": [], "pending": []},
+        "failed": {"failed": [{"name": "test"}], "pending": []},
+        "pending": {"failed": [], "pending": ["test"]},
+    }
+
+    def fake_ci(_token, _owner, _repo, _sha):
+        payload = states[fake_ci.state]
+        return {**payload, "unavailable": False}
+
+    fake_ci.state = "passed"
+    monkeypatch.setattr(
+        "bigas.resources.cto.endpoints._ci_for_commit", fake_ci
+    )
+    pr = {"head": {"sha": "abc123"}}
+    for expected in ("passed", "failed", "pending"):
+        fake_ci.state = expected
+        gate = _ci_gate_for_pr("tok", "acme", "app", pr)
+        assert gate["state"] == expected

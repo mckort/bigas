@@ -377,7 +377,10 @@ def _pr_autofix_round_counts(
 
 
 def _ci_gate_for_pr(github_token: str, owner: str, repo_name: str, pr: dict) -> dict:
-    """Classify test checks on the PR head. Missing SHA or API errors do not block."""
+    """Classify test checks on the PR head as failed, pending, or passed.
+
+    Missing SHA or API errors do not block and are reported as passed.
+    """
     sha = pull_request_head_sha(pr if isinstance(pr, dict) else None)
     ci = _ci_for_commit(github_token, owner, repo_name, sha)
     failed = list(ci.get("failed") or [])
@@ -387,7 +390,7 @@ def _ci_gate_for_pr(github_token: str, owner: str, repo_name: str, pr: dict) -> 
     elif pending:
         state = "pending"
     else:
-        state = "none"
+        state = "passed"
     return {"state": state, "failed": failed, "pending": pending}
 
 
