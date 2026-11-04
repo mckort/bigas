@@ -935,6 +935,7 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
   )
   const isParentType = form.issue_type === 'Objective' || form.issue_type === 'Epic'
   const selectableEpics = (epics || []).filter((epic) => epic.key && epic.key !== ticket?.key)
+  const selectableReleases = (releases || []).filter((release) => !release.released)
   const parentGoal = selectableEpics.find((item) => item.key === form.parent_key)
   const parentKrs = isObjective(parentGoal) ? keyResultsOf(parentGoal) : []
   const [pendingFiles, setPendingFiles] = useState([])
@@ -1186,17 +1187,23 @@ function TicketModal({ ticket, columns, board, initialStatus, initialParentKey, 
                 className="mt-1 input-field"
               >
                 <option value="">None</option>
-                {(releases || []).map((release) => (
+                {selectableReleases.map((release) => (
                   <option key={release.release_id || release.name} value={release.name}>
                     {release.name}
-                    {release.released ? ' (released)' : ''}
-                    {release.pr_locked && !release.released ? ' (PR locked)' : ''}
+                    {release.pr_locked ? ' (PR locked)' : ''}
                     {release.is_default ? ' · default' : ''}
                   </option>
                 ))}
                 {form.fix_version &&
-                  !(releases || []).some((release) => release.name === form.fix_version) && (
-                    <option value={form.fix_version}>{form.fix_version}</option>
+                  !selectableReleases.some((release) => release.name === form.fix_version) && (
+                    <option value={form.fix_version}>
+                      {form.fix_version}
+                      {(releases || []).some(
+                        (release) => release.name === form.fix_version && release.released,
+                      )
+                        ? ' (released)'
+                        : ''}
+                    </option>
                   )}
               </select>
             </label>
