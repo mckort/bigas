@@ -282,7 +282,9 @@ def _ship_rows(
         key = _norm_key(project.get("key"))
         if not key or key in seen:
             continue
-        releases = releases_by_project.get(key, [])
+        # load_cockpit stores None for a project whose releases failed to load;
+        # a missing key means the project has no releases yet.
+        releases = releases_by_project[key] if key in releases_by_project else []
         release_error = releases is None
         release = None if release_error else _default_release(releases)
         version = (release or {}).get("name") or ""

@@ -78,6 +78,14 @@ def gh_json(args: List[str], payload: Optional[dict] = None, check: bool = False
         return None
 
 
+def _decoded(payload) -> str:
+    """Text of a GitHub contents payload; "" when it cannot be decoded (then the file is rewritten)."""
+    try:
+        return base64.b64decode(payload.get("content") or "").decode("utf-8", "replace")
+    except (ValueError, TypeError, AttributeError):
+        return ""
+
+
 def workflow_files(spec: RepoSpec, source: str) -> dict:
     files = {".github/workflows/pr-review.yml": caller_workflow(CALLER_TEMPLATE.read_text(encoding="utf-8"), source)}
     if spec.release_prefix:
@@ -134,7 +142,7 @@ def open_setup_pr(spec: RepoSpec, files: dict) -> Optional[str]:
     changed = 0
     for path, content in files.items():
         on_base = gh_json([f"repos/{repo}/contents/{path}?ref={spec.branch}"], check=False)
-        if on_base and base64.b64decode(on_base.get("content") or "").decode("utf-8", "replace") == content:
+        if on_base and _decoded(on_base) == content:
             print(f"  = {path} already up to date on {spec.branch}")
             continue
         existing = gh_json([f"repos/{repo}/contents/{path}?ref={SETUP_BRANCH}"], check=False)
