@@ -19,6 +19,9 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)** · Live instan
 - [What is Bigas?](#what-is-bigas)
 - [One founder, one project or several](#one-founder-one-project-or-several)
 - [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
+- [Set up with an AI agent](#set-up-with-an-ai-agent)
+- [Connect a GitHub repo](#connect-a-github-repo)
+- [Keep it focused: optional areas](#keep-it-focused-optional-areas)
 - [Tutorial: set up a virtual AI team in 5 minutes](docs/tutorial-set-up-a-virtual-ai-team.md)
 - [Add capabilities based on your needs](#add-capabilities-based-on-your-needs)
 - [Why Google Cloud Run?](#why-google-cloud-run)
@@ -43,26 +46,27 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)** · Live instan
 
 ## What is Bigas?
 
-**Bigas** (Latin for *team*) is an open-source virtual HQ for a solo founder or small team. You set quarterly **Objectives**, ship work on a built-in **board** with Jira-like workflows, and talk to a virtual staff in **chat** — marketing, product, engineering, and finance, without hiring anyone.
+**Bigas** (Latin for *team*) is an open-source virtual HQ for a solo founder or small team. You approve and ship from one **cockpit**, put work on a built-in **board** where AI researches, plans and implements each card as a pull request, and talk to a virtual staff in **chat** — product, engineering, DevOps, finance and (optionally) marketing — without hiring anyone.
 
 A running instance is at [bigas.me](https://bigas.me). The site is a short overview; this README is the full product and setup guide.
 
-Three surfaces, one story:
+Four surfaces, one story:
 
 | Surface | Where | Role |
 |---|---|---|
+| **Cockpit** | `/cockpit` | The start page after sign-in. **Needs you** lists cards in a manual approval column and deploys waiting for your yes, with approve and send back (swipe on a phone). **AI working** shows cards in AI columns and running deploy pipelines. **Ship** has one card per deploy target. **This week** runs the PM update, X drafts and CFO report. Reads `GET /api/cockpit`. |
 | **Objectives** | `/objectives` | The quarter's scoreboard. You name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story. |
 | **Board** | `/board` | The default work surface: tickets, columns, releases, and a human-gated AI workflow (research → plan → implement). Jira is optional — connect it only if you already run a Jira board you want to keep. |
 | **Chat** | `/` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |
 
-See the [Objectives](#walkthrough-from-quarterly-objective-to-shipped-work), [board](#walkthrough-from-jira-card-to-merged-pr), and [chat](#walkthrough-from-chat-to-production-deploy) walkthroughs for screenshots of each surface.
+Objectives is optional: switch it off with [`BIGAS_FEATURES`](#keep-it-focused-optional-areas). See the [Objectives](#walkthrough-from-quarterly-objective-to-shipped-work), [board](#walkthrough-from-jira-card-to-merged-pr), and [chat](#walkthrough-from-chat-to-production-deploy) walkthroughs for screenshots of each surface.
 
 It currently ships six specialists:
 
 | Specialist | What it does |
 |---|---|
 | **Chief of Staff** | Default chat agent: reasons through requests step by step, coordinates with specialists when their expertise adds value, takes action rather than asking you to do it |
-| **Senior Marketing Analyst** | Deep expertise in GA4 analytics, paid ads (Google/Meta/LinkedIn/Reddit), trends and cross-platform insights; reasons about marketing questions and creates tracked follow-up work |
+| **Senior Marketing Analyst** | Optional (`BIGAS_FEATURES`). Deep expertise in GA4 analytics, paid ads (Google/Meta/LinkedIn/Reddit), trends and cross-platform insights; reasons about marketing questions and creates tracked follow-up work |
 | **Product Manager** | Expertise in product planning, board/Jira workflows, release notes, and stakeholder communication; reasons about product decisions and prioritization |
 | **CTO** | Technical expertise in code review, architecture, deployment debugging, and engineering operations; reasons through technical problems and takes action |
 | **CFO** | Expertise in AI and GCP cost, usage analysis, and efficiency; reasons from numbers first (`fetch_ai_usage`, weekly `weekly_cto_ai_report`) and can file tracked follow-up work |
@@ -141,7 +145,7 @@ python scripts/setup.py          # interactive wizard → writes .env
 docker compose up --build        # or: pip install -r requirements.txt && python run_core.py
 ```
 
-Open **http://localhost:8080**, sign in with any email and dev token **`bigas-dev-token`**.
+Open **http://localhost:8080**, sign in with any email and dev token **`bigas-dev-token`**. You land on the cockpit at `/cockpit`.
 
 The setup wizard configures:
 
@@ -152,11 +156,65 @@ The setup wizard configures:
 | `CHAT_ENABLED` | `true` | Web chat UI at `/` |
 | LLM key | Gemini or OpenAI | Required — powers all agents |
 
-Optional integrations are offered during setup; skip them to explore chat, `/board`, and `/objectives` first. The **native Kanban board is the default** — Jira is never required. Re-run `python scripts/setup.py` anytime, or add keys by hand, following [Add capabilities based on your needs](#add-capabilities-based-on-your-needs).
+Optional integrations are offered during setup; skip them to explore the cockpit, chat and `/board` first. The **native Kanban board is the default** — Jira is never required. Re-run `python scripts/setup.py` anytime, or add keys by hand, following [Add capabilities based on your needs](#add-capabilities-based-on-your-needs).
 
 **Without Docker:** after `python scripts/setup.py`, build the frontend once (`cd frontend && npm install && npm run build && cd ..`), then `python run_core.py`.
 
 For production on Google Cloud Run, see [Tutorial: deploy your first Bigas server](#tutorial-deploy-your-first-bigas-server).
+
+---
+
+## Set up with an AI agent
+
+The fastest setup is to let a coding agent do it. Open your clone in Claude Code, Cursor or Codex and say:
+
+> Set up Bigas and connect my repos `owner/app` and `owner/site`.
+
+The agent reads [AGENTS.md](AGENTS.md) and follows [docs/agent-setup.md](docs/agent-setup.md): it asks you for the decisions only you can make (where Bigas runs, which repos, how each one deploys), has you paste secrets into `.env` yourself, runs the scripts below with a dry run first, and finishes when the doctor reports no failures.
+
+| Script | What it does |
+|---|---|
+| `python scripts/connect_repo.py` | Plans, then with `--apply` makes, the env and GitHub changes for one repo |
+| `python scripts/bigas_doctor.py` | Checks the instance and every connected repo. `--json` for agents, `--offline` for config only. Exit 1 on failure; every problem comes with a fix |
+
+You can run the same scripts by hand; the playbook doubles as a checklist.
+
+---
+
+## Connect a GitHub repo
+
+Each product repo becomes a board project with a short key (`ACME` → cards `ACME-1`, `ACME-2`). Connecting it means some settings on Bigas and some in the repo:
+
+```bash
+python scripts/connect_repo.py --key ACME --repo acme/shop --name "Acme Shop" --deploy deploy.yml --webhook          # plan
+python scripts/connect_repo.py --key ACME --repo acme/shop --name "Acme Shop" --deploy deploy.yml --webhook --apply  # do it
+python scripts/bigas_doctor.py                                                                                      # verify
+```
+
+| Where | What | Gives you |
+|---|---|---|
+| Bigas `.env` | `JIRA_PROJECT_KEY(S)`, `BIGAS_JIRA_PROJECT_REPO_MAP`, `BIGAS_JIRA_REPO_BASE_BRANCH_MAP`, `BIGAS_PROJECT_NAME_MAP` | An ACME board whose AI columns open PRs on `acme/shop` |
+| Bigas `.env` | `BIGAS_DEPLOY_WORKFLOW_MAP` (`--deploy`) | An ACME card under **Ship** and deploys from chat |
+| Bigas `.env` | `PROJECT_BRANCH_MAPPING` (`--versioned staging`) | Versioned releases on `staging-x.y.z` branches |
+| Repo | Actions variable `BIGAS_URL`, secret `BIGAS_API_KEY` | Workflows can call Bigas |
+| Repo (a pull request on `bigas-setup`) | `.github/workflows/pr-review.yml`, plus `cherry_pick.yml` and `rebase_release.yml` with `--versioned` | Review → autofix → merge → Final approval on every PR |
+| Repo (`--webhook`) | `workflow_run` webhook | Self-healing CI when an Actions run fails |
+
+Merge the setup pull request, restart Bigas (or `./deploy.sh`), and run the doctor. The repo needs a public Bigas URL (`BIGAS_PUBLIC_URL`), so connect repos after [deploying to Cloud Run](#tutorial-deploy-your-first-bigas-server). Release models, the staging-rehearsal setup and troubleshooting: [docs/agent-setup.md](docs/agent-setup.md).
+
+---
+
+## Keep it focused: optional areas
+
+The core loop is always on: cockpit, board, chat with Product, CTO, CFO and DevOps, deploys and the weekly update. Three areas are optional:
+
+| Area | What it adds |
+|---|---|
+| `marketing` | Marketing Analyst agent, GA4 and paid-ads reports (Google, Meta, LinkedIn, Reddit) |
+| `objectives` | `/objectives` (OKRs) and the Monday OKR pulse |
+| `outreach` | Board email outreach (also needs `ENABLE_OUTBOUND_EMAIL=true`) |
+
+`BIGAS_FEATURES` unset keeps all three on. `BIGAS_FEATURES=none` keeps only the core loop; `BIGAS_FEATURES=objectives` keeps just Objectives. A switched-off area disappears from the UI, the agent list and the tools chat agents can use. Its HTTP endpoints stay up, so scheduled jobs and MCP clients keep working.
 
 ---
 
@@ -174,7 +232,7 @@ Quickstart is chat plus Bigas's **own board** at `/board` and Objectives at `/ob
 
 - `GITHUB_TOKEN` — repo read/write (PR comments; implement fallback)
 - `CURSOR_API_KEY` — drag a card to **In Progress (AI)** and get a PR
-- In the product repo: copy [`docs/pr-review.caller.yml`](docs/pr-review.caller.yml) and set `BIGAS_URL` + `BIGAS_API_KEY`
+- In the product repo: run [`scripts/connect_repo.py`](#connect-a-github-repo), which adds [`docs/pr-review.caller.yml`](docs/pr-review.caller.yml) and sets `BIGAS_URL` + `BIGAS_API_KEY`
 
 **Optional:** `DISCORD_WEBHOOK_URL_CTO`. Map a board project to a repo with `BIGAS_JIRA_PROJECT_REPO_MAP` when you have more than one repo (the name is historical — it works for the internal board too). Examples: [Friman investments (FRI)](docs/friman-investments-board.md), [AuraLearn (AURA)](docs/auralearn-board.md), [Pass or Fund (POF)](docs/pass-or-fund-board.md).
 
@@ -397,6 +455,13 @@ From here: wire up [Jira automation](#walkthrough-from-jira-card-to-merged-pr) f
 | `JIRA_EMAIL` | Jira account email |
 | `JIRA_API_TOKEN` | Jira API token |
 | `JIRA_PROJECT_KEY` | Jira project key(s), comma-separated for the whole portfolio (e.g. `VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,FRI,AURA,POF`). Per-request override via `project_key` / `project_keys`. With `SECRET_MANAGER=true`, update this secret — Cloud Run env is overwritten at startup. GPW-PROD is the store (`store.greenpromowear.com`); GPWW is the marketing site. POF is Pass or Fund (`passorfund.com`). |
+| `JIRA_PROJECT_KEYS` | Same as `JIRA_PROJECT_KEY`; read first when both are set. Also lists the built-in board projects |
+| `BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS` | Projects whose cards may run AI steps. Unset: every project in `JIRA_PROJECT_KEY(S)` |
+| `BIGAS_PROJECT_NAME_MAP` | Display names, e.g. `ACME:Acme Shop` (cockpit, chat) |
+| `BIGAS_STAGING_ENV_MAP` | JSON staging-rehearsal environments. Format: [docs/agent-setup.md](docs/agent-setup.md#4-release-models) |
+| `BIGAS_FEATURES` | Optional areas to keep: `marketing`, `objectives`, `outreach`, `none` or `all` (default). See [Keep it focused](#keep-it-focused-optional-areas) |
+| `BIGAS_PUBLIC_URL` | Public Bigas URL. Only read by `scripts/connect_repo.py` and `scripts/bigas_doctor.py` |
+| `BIGAS_WORKFLOW_SOURCE` | Reusable review workflow repo for new repos, default `mckort/bigas@main`. Set to your fork, e.g. `you/bigas@main` |
 | `USE_INTERNAL_BOARD` | `true` (default, even if `JIRA_*` is set) uses the native `/board`; set `false` to drive external Jira |
 | `BIGAS_GA4_PROPERTY_MAP` | Optional `KEY:propertyId` map (comma-separated), e.g. `GPWW:473559548`. Chat/`ask_analytics_question` uses this per site. Unmapped projects return an error instead of querying another brand. |
 | `JIRA_AUTOMATION_WEBHOOK_SECRET` | Shared secret for `jira_status_automation` (header `X-Bigas-Webhook-Secret`). Full setup: [docs/jira-automation.md](docs/jira-automation.md) |
@@ -1156,10 +1221,12 @@ Dev chat uses `CHAT_AUTH_MODE=dev` and in-memory storage unless you point at Fir
 
 **Tests:**
 ```bash
-python tests/test_storage.py
-python tests/test_domain_extraction.py
-python tests/health_check.py
+pip install -r requirements-dev.txt
+python -m pytest tests/ -q
+python scripts/bigas_doctor.py --offline   # config sanity check
 ```
+
+Working on Bigas with an AI agent? [AGENTS.md](AGENTS.md) has the layout, commands and conventions.
 
 **API docs** (once deployed): `https://your-service-url.a.run.app/openapi.json`
 

@@ -8,6 +8,7 @@ import {
 } from 'firebase/auth'
 import { setToken } from './api'
 import { configureProductAnalytics } from './productAnalytics'
+import { setFeatures } from './features'
 
 let auth = null
 let authMode = 'dev'
@@ -16,6 +17,7 @@ export async function initAuth() {
   const res = await fetch('/api/auth/config')
   const config = await res.json()
   authMode = config.auth_mode || 'dev'
+  setFeatures(config.features)
 
   if (authMode === 'firebase' && config.firebase?.apiKey) {
     const app = initializeApp(config.firebase)

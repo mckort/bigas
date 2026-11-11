@@ -3,6 +3,7 @@ Allow: /
 Disallow: /login
 Disallow: /board
 Disallow: /objectives
+Disallow: /cockpit
 Disallow: /api/
 Disallow: /mcp/
 

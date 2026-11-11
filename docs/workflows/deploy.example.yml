@@ -1,0 +1,42 @@
+# Template: a deploy workflow Bigas DevOps can run.
+# Copy to .github/workflows/deploy.yml in the product repo and replace the
+# deploy step with your own (Cloud Run, Fly, Vercel, rsync, ...).
+#
+# Bigas needs only two things from it:
+#   1. a workflow_dispatch trigger, so DevOps can start it on the branch it ships;
+#   2. a non-zero exit when the deploy fails, so DevOps reports the failure and
+#      self-healing CI can open a fix.
+#
+# Register it on the Bigas instance:
+#   python scripts/connect_repo.py --key ACME --repo owner/repo --deploy deploy.yml --apply
+# (writes BIGAS_DEPLOY_WORKFLOW_MAP=ACME:deploy.yml)
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      # Only sent when one infra repo deploys several sites (BIGAS_DEPLOY_REPO_MAP).
+      site:
+        description: Site to deploy (shared infra repos only)
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy
+        run: |
+          echo "Replace this step with your deploy command."
+          echo "Site input: ${{ inputs.site }}"
+          exit 1

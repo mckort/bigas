@@ -4,10 +4,12 @@ import Landing from './components/Landing'
 import ChatLayout from './components/ChatLayout'
 import BoardLayout, { BOARD_URL_SYNC_EVENT } from './components/BoardLayout'
 import ObjectivesLayout from './components/ObjectivesLayout'
+import CockpitLayout from './components/CockpitLayout'
 import AgentSettings from './components/AgentSettings'
 import MobileNav from './components/MobileNav'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
+import { featureEnabled } from './lib/features'
 
 function currentPath() {
   return window.location.pathname || '/'
@@ -21,17 +23,22 @@ function isObjectivesPath(path) {
   return path === '/objectives' || path.startsWith('/objectives/')
 }
 
+function isCockpitPath(path) {
+  return path === '/cockpit' || path.startsWith('/cockpit/')
+}
+
 function isLoginPath(path) {
   return path === '/login' || path.startsWith('/login/')
 }
 
 function isAppPath(path) {
-  return isBoardPath(path) || isObjectivesPath(path)
+  return isBoardPath(path) || isObjectivesPath(path) || isCockpitPath(path)
 }
 
 function initialView(path = currentPath()) {
   if (isBoardPath(path)) return 'board'
-  if (isObjectivesPath(path)) return 'objectives'
+  if (isObjectivesPath(path)) return featureEnabled('objectives') ? 'objectives' : 'cockpit'
+  if (isCockpitPath(path)) return 'cockpit'
   return 'chat'
 }
 
@@ -41,6 +48,7 @@ export default function App() {
   const [view, setView] = useState(() => initialView())
   const [locationPath, setLocationPath] = useState(currentPath)
   const [discussContext, setDiscussContext] = useState(null)
+  const [chatAgentRequest, setChatAgentRequest] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [agentsRefreshKey, setAgentsRefreshKey] = useState(0)
   const [boardRefreshKey, setBoardRefreshKey] = useState(0)
@@ -82,15 +90,33 @@ export default function App() {
   }, [ready, user, locationPath])
 
   useEffect(() => {
-    if (user && isLoginPath(locationPath)) {
-      syncPath('/', { replace: true })
-      setView('chat')
+    if (user && isObjectivesPath(locationPath) && !featureEnabled('objectives')) {
+      syncPath('/cockpit', { replace: true })
+      setView('cockpit')
     }
   }, [user, locationPath])
 
-  const switchView = (next) => {
+  useEffect(() => {
+    if (user && isLoginPath(locationPath)) {
+      syncPath('/cockpit', { replace: true })
+      setView('cockpit')
+    }
+  }, [user, locationPath])
+
+  const switchView = (next, href) => {
+    if (href) {
+      navigateTo(href)
+      return
+    }
     setView(next)
-    const path = next === 'board' ? '/board' : next === 'objectives' ? '/objectives' : '/'
+    const path =
+      next === 'board'
+        ? '/board'
+        : next === 'objectives'
+          ? '/objectives'
+          : next === 'cockpit'
+            ? '/cockpit'
+            : '/'
     const search =
       next === 'board' && isBoardPath(window.location.pathname)
         ? window.location.search
@@ -132,6 +158,11 @@ export default function App() {
     switchView('chat')
   }
 
+  const handleOpenChat = (agentId) => {
+    setChatAgentRequest({ agentId, nonce: Date.now() })
+    switchView('chat')
+  }
+
   if (!ready) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-bg text-muted">
@@ -147,8 +178,8 @@ export default function App() {
         <Login
           onLoggedIn={() => {
             setUser({ email: 'signed-in' })
-            syncPath('/', { replace: true })
-            setView('chat')
+            syncPath('/cockpit', { replace: true })
+            setView('cockpit')
           }}
           onBack={() => syncPath('/')}
         />
@@ -170,7 +201,16 @@ export default function App() {
 
   return (
     <>
-      {view === 'objectives' ? (
+      {view === 'cockpit' || (view === 'objectives' && !featureEnabled('objectives')) ? (
+        <CockpitLayout
+          user={user}
+          onLogout={handleLogout}
+          onSwitchView={switchView}
+          onOpenSettings={openSettings}
+          onOpenChat={handleOpenChat}
+          onDiscussTicket={handleDiscussTicket}
+        />
+      ) : view === 'objectives' ? (
         <ObjectivesLayout
           user={user}
           onLogout={handleLogout}
@@ -195,10 +235,13 @@ export default function App() {
           onOpenBoard={navigateTo}
           discussContext={discussContext}
           onClearDiscussContext={() => setDiscussContext(null)}
+          agentRequest={chatAgentRequest}
+          onClearAgentRequest={() => setChatAgentRequest(null)}
           onOpenSettings={openSettings}
           agentsRefreshKey={agentsRefreshKey}
         />
       )}
+      {/* One bottom nav for every view (cockpit, chat, board, objectives); layouts do not render their own. */}
       <MobileNav activeView={view} onSwitchView={switchView} />
       <AgentSettings
         open={settingsOpen}

@@ -114,8 +114,12 @@ class JiraAutomationConfig:
     @staticmethod
     def from_env() -> "JiraAutomationConfig":
         secret = (os.environ.get("JIRA_AUTOMATION_WEBHOOK_SECRET") or "").strip()
+        # Unset: every board project (JIRA_PROJECT_KEYS / JIRA_PROJECT_KEY) may run AI steps.
+        from bigas.portfolio import jira_project_keys
+
         allowed = _parse_csv_upper(
             os.environ.get("BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS")
+            or ",".join(jira_project_keys())
             or "VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,FRI,AURA,POF"
         )
         daily_raw = (os.environ.get("BIGAS_JIRA_AI_DAILY_QUOTA") or "20").strip()

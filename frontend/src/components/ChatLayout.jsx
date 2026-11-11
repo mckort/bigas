@@ -21,6 +21,7 @@ import {
   transitionJiraIssue,
 } from '../lib/api'
 import { logout } from '../lib/auth'
+import { featureEnabled } from '../lib/features'
 import { trackWeeklyActiveFounder } from '../lib/productAnalytics'
 
 function humanizeChatContent(content) {
@@ -591,6 +592,7 @@ const STARTER_PROMPTS = [
     prompt: 'Draft a tweet about my recent Jira releases — short, founder-friendly, ready to post.',
   },
   {
+    feature: 'marketing',
     label: 'What is my GA4 traffic this week?',
     prompt: 'What is my GA4 traffic this week? Give me a quick summary of sessions, top pages, and trends.',
   },
@@ -872,7 +874,7 @@ function StarterPrompts({ onSelect, disabled }) {
     <div className="mt-6 max-w-lg mx-auto">
       <p className="text-xs font-medium text-muted uppercase tracking-wide mb-3">Try asking</p>
       <div className="flex flex-wrap gap-3 justify-center">
-        {STARTER_PROMPTS.map(({ label, prompt }) => (
+        {STARTER_PROMPTS.filter((p) => !p.feature || featureEnabled(p.feature)).map(({ label, prompt }) => (
           <button
             key={label}
             type="button"
@@ -1224,6 +1226,8 @@ export default function ChatLayout({
   onOpenBoard,
   discussContext,
   onClearDiscussContext,
+  agentRequest,
+  onClearAgentRequest,
   onOpenSettings,
   agentsRefreshKey = 0,
 }) {
@@ -1391,6 +1395,12 @@ export default function ChatLayout({
     setActiveAgentId('chief')
     onClearDiscussContext?.()
   }, [discussContext, onClearDiscussContext])
+
+  useEffect(() => {
+    if (!agentRequest?.agentId) return
+    setActiveAgentId(agentRequest.agentId)
+    onClearAgentRequest?.()
+  }, [agentRequest, onClearAgentRequest])
 
   useEffect(() => {
     let channel
@@ -1814,18 +1824,27 @@ export default function ChatLayout({
             <>
               <button
                 type="button"
+                onClick={() => onSwitchView('cockpit')}
+                className="text-sm btn-ghost px-3 py-2 hidden lg:block"
+              >
+                Cockpit
+              </button>
+              <button
+                type="button"
                 onClick={() => onSwitchView('board')}
                 className="text-sm btn-ghost px-3 py-2 hidden lg:block"
               >
                 Board
               </button>
-              <button
-                type="button"
-                onClick={() => onSwitchView('objectives')}
-                className="text-sm btn-ghost px-3 py-2 hidden lg:block"
-              >
-                Objectives
-              </button>
+              {featureEnabled('objectives') && (
+                <button
+                  type="button"
+                  onClick={() => onSwitchView('objectives')}
+                  className="text-sm btn-ghost px-3 py-2 hidden lg:block"
+                >
+                  Objectives
+                </button>
+              )}
             </>
           )}
           <button

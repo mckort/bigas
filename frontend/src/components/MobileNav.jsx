@@ -1,4 +1,18 @@
+import { featureEnabled } from '../lib/features'
+
 const TABS = [
+  {
+    id: 'cockpit',
+    label: 'Cockpit',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 15a8 8 0 1116 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        <path d="M12 15l4-5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        <circle cx="12" cy="15" r="1.5" fill="currentColor" />
+        <path d="M4 19h16" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    ),
+  },
   {
     id: 'chat',
     label: 'Chat',
@@ -39,6 +53,7 @@ const TABS = [
 
 export default function MobileNav({ activeView, onSwitchView }) {
   if (!onSwitchView) return null
+  const tabs = TABS.filter((tab) => tab.id !== 'objectives' || featureEnabled('objectives'))
 
   return (
     <nav
@@ -46,7 +61,7 @@ export default function MobileNav({ activeView, onSwitchView }) {
       aria-label="Main navigation"
     >
       <div className="flex items-stretch justify-around max-w-lg mx-auto">
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const isActive = activeView === tab.id
           return (
             <button
