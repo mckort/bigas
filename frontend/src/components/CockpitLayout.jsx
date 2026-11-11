@@ -354,7 +354,9 @@ function TicketDetail({ item, comment, setComment }) {
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 text-xs">
         <span className="chip-accent">{item.ticket.status}</span>
-        {item.ticket.fix_version && <span className="chip-accent">v{item.ticket.fix_version}</span>}
+        {item.ticket.fix_version && (
+          <span className="chip-accent">v{String(item.ticket.fix_version).replace(/^v/i, '')}</span>
+        )}
         {item.ticket.pr_url && (
           <a className="text-accent hover:underline" href={item.ticket.pr_url} target="_blank" rel="noreferrer">
             Pull request
@@ -502,7 +504,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         dropNeed(item.id)
         showToast(message || `${item.ticket.key} → ${status}`)
         closeDrawer()
-        load()
+        setTimeout(load, 500)
       } catch (err) {
         showToast(err.message || 'Could not move the card')
       } finally {
@@ -568,7 +570,12 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
 
   const copyCursor = async (ticket) => {
     try {
-      await navigator.clipboard.writeText(cursorPrompt(ticket))
+      const copied = navigator.clipboard?.writeText(cursorPrompt(ticket))
+      if (!copied) {
+        showToast('Could not copy. Your browser blocked the clipboard.')
+        return
+      }
+      await copied
       showToast('Cursor prompt copied. Paste it into Cursor.')
     } catch {
       showToast('Could not copy. Your browser blocked the clipboard.')
@@ -819,7 +826,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                   onOpenChat={onOpenChat}
                   onCommand={(r, cmd) => setDrawer({ type: 'command', row: r, cmd })}
                   onReview={(r) => {
-                    const pending = needs.find((n) => n.type === 'deploy_confirm' && n.project_key === r.key)
+                    const pending = needs.find(
+                      (n) => n.type === 'deploy_confirm' && n.project_key?.toUpperCase() === r.key?.toUpperCase(),
+                    )
                     if (pending) openNeed(pending)
                     else onOpenChat('devops')
                   }}
