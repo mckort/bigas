@@ -447,3 +447,7 @@ export async function signOffTickets(ticketIds) {
     body: JSON.stringify({ ticket_ids: ticketIds }),
   })
 }
+
+export async function fetchCockpitMoney({ refresh = false } = {}) {
+  return apiFetch(`/api/cockpit/money${refresh ? '?refresh=1' : ''}`)
+}

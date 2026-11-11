@@ -617,6 +617,16 @@ def cockpit():
     return jsonify(load_cockpit(g.chat_user["uid"]))
 
 
+@tickets_bp.route("/api/cockpit/money", methods=["GET"])
+@require_chat_auth
+def cockpit_money():
+    """Month-to-date books and AI spend for the cockpit (cached 15 minutes)."""
+    from bigas.cockpit_money import money_summary
+
+    refresh = str(request.args.get("refresh") or "").lower() in {"1", "true", "yes"}
+    return jsonify(money_summary(refresh=refresh))
+
+
 @tickets_bp.route("/api/cockpit/sign-off", methods=["POST"])
 @require_chat_auth
 def cockpit_sign_off():

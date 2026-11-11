@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { addTicketComment, fetchCockpit, fetchTicket, sendMessage, signOffTickets, updateTicket } from '../lib/api'
+import {
+  addTicketComment,
+  fetchCockpit,
+  fetchCockpitMoney,
+  fetchTicket,
+  sendMessage,
+  signOffTickets,
+  updateTicket,
+} from '../lib/api'
 import { WEEKLY_ACTIONS, cursorPrompt, sendToAgent, timeAgo } from '../lib/cockpit'
 import { featureEnabled } from '../lib/features'
 import { SettingsButton } from './AgentSettings'
@@ -59,6 +67,40 @@ function Section({ id, title, count, accent, right, children, mobileTab, classNa
       </div>
       {children}
     </section>
+  )
+}
+
+const PROJECT_COLORS = [
+  'bg-sky-500/15 text-sky-700 dark:text-sky-300',
+  'bg-violet-500/15 text-violet-700 dark:text-violet-300',
+  'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+  'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+  'bg-rose-500/15 text-rose-700 dark:text-rose-300',
+  'bg-teal-500/15 text-teal-700 dark:text-teal-300',
+  'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300',
+  'bg-orange-500/15 text-orange-700 dark:text-orange-300',
+]
+
+function projectColor(project) {
+  const text = String(project || '')
+  let hash = 0
+  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0
+  return PROJECT_COLORS[hash % PROJECT_COLORS.length]
+}
+
+export function projectOf(item) {
+  if (!item) return ''
+  if (item.type === 'ticket') return (item.ticket?.project_key || '').toUpperCase()
+  return (item.project_key || item.key || '').toUpperCase()
+}
+
+function ProjectTag({ project, label }) {
+  return (
+    <span
+      className={`inline-block font-mono text-[11px] font-semibold rounded px-1.5 py-px mr-1.5 align-[1px] ${projectColor(project)}`}
+    >
+      {label || project}
+    </span>
   )
 }
 
@@ -184,7 +226,7 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
           className="min-w-0 flex-1 text-left rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
           <span className="block truncate font-medium group-hover:text-accent transition-colors">
-            <span className="font-mono text-xs text-muted mr-1.5">{itemKey(item)}</span>
+            <ProjectTag project={projectOf(item)} label={itemKey(item)} />
             {itemTitle(item)}
           </span>
           <span className="block truncate text-xs text-muted">{itemSub(item)}</span>
@@ -221,33 +263,51 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
   )
 }
 
-function WorkingRow({ item, now, onOpenChat }) {
+function WorkingRow({ item, now, onOpenChat, onOpenTicket, onRetry, busy }) {
   const isTicket = item.type === 'ticket'
   const link = isTicket ? item.ticket.pr_url || item.ticket.agent_url : item.run_url
+  const open = () => (isTicket ? onOpenTicket(item) : onOpenChat('devops'))
   return (
     <li className="flex items-center gap-3 py-2.5 border-t border-border first:border-t-0">
-      <span className="relative flex h-2.5 w-2.5 flex-none" aria-hidden="true">
-        <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60 animate-ping" />
-        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-medium">
-          <span className="font-mono text-xs text-muted mr-1.5">{isTicket ? item.ticket.key : item.project_key}</span>
-          {isTicket ? item.ticket.title : item.version ? `${item.project_key} ${item.version}` : 'Deploy pipeline'}
-        </div>
-        <div className="truncate text-xs text-muted">{item.stage}</div>
-      </div>
+      {item.stuck ? (
+        <span className="h-2.5 w-2.5 flex-none rounded-full bg-amber-500" aria-hidden="true" />
+      ) : (
+        <span className="relative flex h-2.5 w-2.5 flex-none" aria-hidden="true">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60 animate-ping" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={open}
+        className="min-w-0 flex-1 text-left group rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        title={isTicket ? 'Open the card' : 'Open the DevOps chat'}
+      >
+        <span className="block truncate font-medium group-hover:text-accent transition-colors">
+          <ProjectTag project={projectOf(item)} label={isTicket ? item.ticket.key : item.project_key} />
+          {isTicket ? item.ticket.title : item.version ? `Version ${item.version}` : 'Deploy pipeline'}
+        </span>
+        <span className="block truncate text-xs text-muted">
+          {item.stuck ? `Stuck in ${item.stage.toLowerCase()} for ${timeAgo(item.since, now)}` : item.stage}
+        </span>
+      </button>
       {link && (
         <a href={link} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline flex-none">
           {isTicket && item.ticket.pr_url ? 'PR' : isTicket ? 'Agent' : 'Run'}
         </a>
       )}
-      {!isTicket && (
-        <button type="button" onClick={() => onOpenChat('devops')} className="text-xs text-accent hover:underline flex-none">
-          Chat
+      {item.stuck && isTicket && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onRetry(item)}
+          className="btn-secondary text-xs px-2.5 py-1 min-h-[30px] flex-none"
+          title="Move the card to To Do and back, so the AI step starts again"
+        >
+          {busy ? '…' : 'Retry'}
         </button>
       )}
-      <span className="text-[11px] text-muted w-9 text-right flex-none">{timeAgo(item.since, now)}</span>
+      {!item.stuck && <span className="text-[11px] text-muted w-9 text-right flex-none">{timeAgo(item.since, now)}</span>}
     </li>
   )
 }
@@ -258,7 +318,7 @@ const STATE_BADGE = {
   idle: 'bg-surface text-muted',
 }
 
-function ShipCard({ row, busy, onCommand, onOpenChat, onReview }) {
+function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview }) {
   const primary = row.mode === 'versioned' ? row.commands[0] : row.commands.find((c) => /prepare staging/i.test(c.prompt))
   const others = row.commands.filter((c) => c !== primary)
   return (
@@ -281,6 +341,33 @@ function ShipCard({ row, busy, onCommand, onOpenChat, onReview }) {
               : 'Deploy in progress'
           : 'Staging rehearsal, then production'}
       </p>
+      {steps.length > 0 && (
+        <div className="mt-3" aria-label={row.step == null ? 'Not started' : `Step ${row.step + 1} of ${steps.length}: ${steps[row.step]}`}>
+          <div className="flex gap-1">
+            {steps.map((label, i) => (
+              <span
+                key={label}
+                className={`h-1.5 flex-1 rounded-full ${
+                  row.step == null || i > row.step
+                    ? 'bg-surface-muted'
+                    : i < row.step
+                      ? 'bg-green-500'
+                      : row.state === 'waiting'
+                        ? 'bg-amber-500'
+                        : 'bg-accent animate-pulse'
+                }`}
+              />
+            ))}
+          </div>
+          <div className="flex text-[10px] text-muted mt-1">
+            {steps.map((label, i) => (
+              <span key={label} className={`flex-1 ${row.step === i ? 'text-text font-semibold' : ''}`}>
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <p className="text-sm mt-2 min-h-[20px]">{row.detail || ''}</p>
       <div className="flex flex-wrap gap-1.5 mt-3">
         {row.state === 'waiting' ? (
@@ -315,6 +402,91 @@ function ShipCard({ row, busy, onCommand, onOpenChat, onReview }) {
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+function formatAmount(value, currency) {
+  if (value == null) return '–'
+  const rounded = Math.round(value)
+  const text = Math.abs(rounded).toLocaleString('sv-SE')
+  const sign = rounded < 0 ? '−' : ''
+  return currency === 'USD' ? `${sign}$${text}` : `${sign}${text} kr`
+}
+
+function Tile({ label, value, sub, tone = '' }) {
+  return (
+    <div className="bg-surface rounded-lg px-3 py-2.5 min-w-0">
+      <p className="text-[11px] text-muted truncate">{label}</p>
+      <p className={`text-lg font-semibold leading-tight truncate ${tone}`}>{value}</p>
+      {sub && <p className="text-[11px] text-muted truncate">{sub}</p>}
+    </div>
+  )
+}
+
+function WeekTiles({ week, money, moneyError }) {
+  const tiles = []
+  if (week) {
+    const top = Object.entries(week.shipped_by_project || {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([k, n]) => `${k} ${n}`)
+      .join(' · ')
+    tiles.push(<Tile key="shipped" label="Cards shipped, 7 days" value={week.shipped} sub={top || 'None yet'} />)
+    tiles.push(
+      <Tile
+        key="releases"
+        label="Releases, 7 days"
+        value={week.releases.length}
+        sub={week.releases.slice(0, 3).join(' · ') || 'None'}
+      />,
+    )
+  }
+  const ai = money?.ai
+  if (ai?.configured) {
+    tiles.push(
+      <Tile
+        key="ai"
+        label="AI and cloud spend, 7 days"
+        value={ai.error ? 'Error' : formatAmount(ai.week, 'USD')}
+        tone={ai.change_pct > 20 ? 'text-red-600 dark:text-red-400' : ''}
+        sub={
+          ai.error
+            ? ai.error
+            : ai.change_pct == null
+              ? (ai.top || []).map((t) => t.name).join(' · ')
+              : `${ai.change_pct > 0 ? '+' : ''}${ai.change_pct}% vs the week before`
+        }
+      />,
+    )
+  }
+  for (const c of money?.books?.companies || []) {
+    tiles.push(
+      <Tile
+        key={`co-${c.label}`}
+        label={`${c.label}, result this month`}
+        value={c.error ? 'Error' : formatAmount(c.result, 'SEK')}
+        tone={c.result > 0 ? 'text-green-600 dark:text-green-400' : c.result < 0 ? 'text-red-600 dark:text-red-400' : ''}
+        sub={
+          c.error
+            ? c.error
+            : `Revenue ${formatAmount(c.revenue, 'SEK')} · costs ${formatAmount(c.costs, 'SEK')}${
+                c.unbooked ? ` · ${c.unbooked} unbooked` : ''
+              }`
+        }
+      />,
+    )
+  }
+  return (
+    <div className="mb-4">
+      <div className="grid gap-2 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">{tiles}</div>
+      {!money && !moneyError && <p className="text-[11px] text-muted mt-2">Loading money from Accounted and usage sources…</p>}
+      {moneyError && <p className="text-[11px] text-red-600 mt-2">{moneyError}</p>}
+      {money && !money.books?.configured && !money.ai?.configured && (
+        <p className="text-[11px] text-muted mt-2">
+          Add ACCOUNTED_API_KEY and ACCOUNTED_CFO_COMPANIES for the books, and BIGAS_USAGE_PROVIDERS for AI spend.
+        </p>
+      )}
     </div>
   )
 }
@@ -485,6 +657,10 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const [drawer, setDrawer] = useState(null)
   const [comment, setComment] = useState('')
   const [toast, setToast] = useState(null)
+  const [projectFilter, setProjectFilter] = useState('')
+  const [showStuck, setShowStuck] = useState(false)
+  const [money, setMoney] = useState(null)
+  const [moneyError, setMoneyError] = useState('')
   const toastTimer = useRef(null)
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
@@ -498,6 +674,19 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     }
     setNow(Date.now())
   }, [])
+
+  const loadMoney = useCallback(async (refresh = false) => {
+    setMoneyError('')
+    try {
+      setMoney(await fetchCockpitMoney({ refresh }))
+    } catch (err) {
+      setMoneyError(err.message || 'Could not load the numbers')
+    }
+  }, [])
+
+  useEffect(() => {
+    loadMoney()
+  }, [loadMoney])
 
   useEffect(() => {
     load()
@@ -650,11 +839,45 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     }
   }
 
-  const needs = data?.needs || []
-  const signoff = data?.signoff || []
-  const working = data?.working || []
-  const ship = data?.ship || []
+  const inProject = (project) => !projectFilter || project === projectFilter
+  const needs = (data?.needs || []).filter((i) => inProject(projectOf(i)))
+  const signoff = (data?.signoff || []).filter((i) => inProject(projectOf(i)))
+  const working = (data?.working || []).filter((i) => inProject(projectOf(i)))
+  const stuck = (data?.stuck || []).filter((i) => inProject(projectOf(i)))
+  const ship = (data?.ship || []).filter((row) => inProject((row.key || '').toUpperCase()))
   const counts = { needs: needs.length, working: working.length }
+  const projectCounts = (() => {
+    const out = {}
+    for (const item of [...(data?.needs || []), ...(data?.signoff || []), ...(data?.working || []), ...(data?.stuck || [])]) {
+      const p = projectOf(item)
+      if (p) out[p] = (out[p] || 0) + 1
+    }
+    for (const row of data?.ship || []) {
+      const p = (row.key || '').toUpperCase()
+      if (p && !(p in out)) out[p] = 0
+    }
+    return Object.entries(out).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  })()
+
+  const openTicket = (item) => {
+    setComment('')
+    setDrawer({ type: 'working', item })
+  }
+
+  const retryStuck = async (item) => {
+    const status = item.ticket.status
+    setBusy(item.id, true)
+    try {
+      await updateTicket(item.ticket.ticket_id, { status: 'To Do' })
+      await updateTicket(item.ticket.ticket_id, { status })
+      showToast(`${item.ticket.key} restarted in ${item.stage.toLowerCase()}`)
+      setTimeout(load, 500)
+    } catch (err) {
+      showToast(err.message || 'Could not restart the card')
+    } finally {
+      setBusy(item.id, false)
+    }
+  }
   const firstName = (user?.displayName || user?.email || '').split(/[ @]/)[0]
 
   let drawerTitle = ''
@@ -733,6 +956,69 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         <button type="button" disabled={busy} onClick={() => answerDeploy(item, 'yes')} className="btn-accent text-sm px-3">
           {item.action && item.action !== 'deploy' ? 'Confirm' : 'Deploy'}
         </button>
+      </>
+    )
+  } else if (drawer?.type === 'working') {
+    const { item } = drawer
+    drawerTitle = (
+      <span>
+        <ProjectTag project={projectOf(item)} label={item.ticket.key} />
+        {item.ticket.title}
+      </span>
+    )
+    drawerBody = (
+      <div className="space-y-3">
+        <p className={`text-sm rounded-lg p-3 ${item.stuck ? 'bg-amber-500/15' : 'bg-green-500/10'}`}>
+          {item.stuck
+            ? `Stuck in ${item.stage.toLowerCase()} for ${timeAgo(item.since, now)}. The AI step most likely stopped. Retry moves the card to To Do and back, which starts it again.`
+            : `The AI is ${item.stage.toLowerCase()} this card. It moves to Needs you when there is something to approve.`}
+        </p>
+        <TicketDetail item={item} comment={comment} setComment={setComment} />
+      </div>
+    )
+    drawerFooter = (
+      <>
+        <button type="button" onClick={() => copyCursor(item.ticket)} className="btn-secondary text-sm px-3">
+          Copy Cursor prompt
+        </button>
+        <button
+          type="button"
+          onClick={() => onSwitchView('board', `/board?ticket=${encodeURIComponent(item.ticket.key)}`)}
+          className="btn-ghost text-sm px-3"
+        >
+          Board
+        </button>
+        <span className="flex-1" />
+        {comment.trim() && (
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await addTicketComment(item.ticket.ticket_id, comment.trim())
+                setComment('')
+                showToast(`Comment added to ${item.ticket.key}`)
+              } catch (err) {
+                showToast(err.message || 'Could not add the comment')
+              }
+            }}
+            className="btn-secondary text-sm px-3"
+          >
+            Add comment
+          </button>
+        )}
+        {item.stuck && (
+          <button
+            type="button"
+            disabled={busyIds.has(item.id)}
+            onClick={() => {
+              closeDrawer()
+              retryStuck(item)
+            }}
+            className="btn-accent text-sm px-3"
+          >
+            Retry
+          </button>
+        )}
       </>
     )
   } else if (drawer?.type === 'signoff-all') {
@@ -871,6 +1157,36 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
             </span>
           )}
         </div>
+        {projectCounts.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto scrollbar-hide -mx-1 px-1 pb-3" role="group" aria-label="Filter by project">
+            <button
+              type="button"
+              onClick={() => setProjectFilter('')}
+              aria-pressed={!projectFilter}
+              className={`flex-none text-xs rounded-full px-3 py-1 border transition-all ${
+                !projectFilter ? 'bg-text text-bg border-text' : 'border-border text-muted hover:text-text'
+              }`}
+            >
+              All
+            </button>
+            {projectCounts.map(([project, n]) => (
+              <button
+                key={project}
+                type="button"
+                onClick={() => setProjectFilter((current) => (current === project ? '' : project))}
+                aria-pressed={projectFilter === project}
+                className={`flex-none text-xs rounded-full px-3 py-1 border font-mono transition-all ${
+                  projectFilter === project
+                    ? `${projectColor(project)} border-transparent ring-2 ring-accent/30`
+                    : 'border-border text-muted hover:text-text'
+                }`}
+              >
+                {project}
+                {n ? <span className="ml-1 opacity-70">{n}</span> : null}
+              </button>
+            ))}
+          </div>
+        )}
         {error && (
           <div className="card p-3 mb-4 text-sm text-red-600 flex items-center gap-3">
             {error}
@@ -949,13 +1265,54 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
 
           <Section id="working" title="AI working" count={data ? counts.working : null} mobileTab={tab}>
             {data && working.length === 0 && (
-              <p className="text-sm text-muted py-6 text-center">No AI work running. Approve a card to start some.</p>
+              <p className="text-sm text-muted py-6 text-center">Nothing running now. Approve a card to start some.</p>
             )}
             <ul>
               {working.map((item) => (
-                <WorkingRow key={item.id} item={item} now={now} onOpenChat={onOpenChat} />
+                <WorkingRow
+                  key={item.id}
+                  item={item}
+                  now={now}
+                  onOpenChat={onOpenChat}
+                  onOpenTicket={openTicket}
+                  onRetry={retryStuck}
+                  busy={busyIds.has(item.id)}
+                />
               ))}
             </ul>
+            {stuck.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-500" aria-hidden="true" />
+                  <span className="text-sm">
+                    <b>{stuck.length}</b> stuck: in an AI column for over a day
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowStuck((v) => !v)}
+                    aria-expanded={showStuck}
+                    className="btn-ghost text-xs px-2.5 py-1 min-h-[32px] ml-auto"
+                  >
+                    {showStuck ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                {showStuck && (
+                  <ul className="mt-1">
+                    {stuck.map((item) => (
+                      <WorkingRow
+                        key={item.id}
+                        item={item}
+                        now={now}
+                        onOpenChat={onOpenChat}
+                        onOpenTicket={openTicket}
+                        onRetry={retryStuck}
+                        busy={busyIds.has(item.id)}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </Section>
 
           <Section
@@ -973,6 +1330,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                 <ShipCard
                   key={row.key}
                   row={row}
+                  steps={data?.ship_steps || []}
                   busy={busyIds.has(`ship:${row.key}`)}
                   onOpenChat={onOpenChat}
                   onCommand={(r, cmd) => setDrawer({ type: 'command', row: r, cmd })}
@@ -988,7 +1346,18 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
             </div>
           </Section>
 
-          <Section id="week" title="This week" mobileTab={tab} className="lg:col-span-2">
+          <Section
+            id="week"
+            title="This week"
+            mobileTab={tab}
+            className="lg:col-span-2"
+            right={
+              <button type="button" onClick={() => loadMoney(true)} className="btn-ghost text-xs px-2.5 py-1 min-h-[32px]">
+                Refresh numbers
+              </button>
+            }
+          >
+            <WeekTiles week={data?.week} money={money} moneyError={moneyError} />
             <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
               {WEEKLY_ACTIONS.map((action) => {
                 const busyId = `week:${action.id}`

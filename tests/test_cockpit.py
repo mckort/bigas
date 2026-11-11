@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -85,6 +86,7 @@ def test_ai_columns_become_working_and_epics_are_skipped():
             ]
         },
         threads=[],
+        now=datetime(2026, 11, 2, 9, tzinfo=timezone.utc),
     )
     stages = {i["ticket"]["key"]: i["stage"] for i in payload["working"]}
     assert stages == {"VFA-1": "Researching", "VFA-2": "Implementing"}
@@ -215,7 +217,7 @@ def test_load_cockpit_degrades_when_board_list_fails(monkeypatch):
     assert payload["needs"] == []
     assert payload["working"] == []
     assert payload["ship"] == []
-    assert payload["counts"] == {"needs": 0, "working": 0, "signoff": 0}
+    assert payload["counts"] == {"needs": 0, "working": 0, "stuck": 0, "signoff": 0}
 
 
 @pytest.fixture
@@ -312,3 +314,128 @@ def test_sign_off_validates_input(client):
         resp = client.post("/api/cockpit/sign-off", headers=_auth(), data=json.dumps(payload))
         assert resp.status_code == 400
     assert client.post("/api/cockpit/sign-off", data=json.dumps({"ticket_ids": ["x"]})).status_code == 401
+
+
+def test_old_ai_cards_and_pipelines_are_stuck_not_working():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    recent = (now - timedelta(hours=2)).isoformat()
+    old = (now - timedelta(days=52)).isoformat()
+    payload = build_cockpit(
+        boards=[BOARD],
+        tickets_by_board={
+            "b1": [
+                _ticket("1", "In Progress (AI)", updated_at=recent),
+                _ticket("2", "Design and plan (AI)", updated_at=old),
+            ]
+        },
+        threads=[
+            {
+                "thread_id": "t9",
+                "agent_id": "devops",
+                "pending_prepare_poll": {"project_key": "VFA", "phase": "autofix", "started_at": (now - timedelta(hours=8)).isoformat()},
+            }
+        ],
+        now=now,
+    )
+    assert [i["ticket"]["key"] for i in payload["working"]] == ["VFA-1"]
+    stuck = {i.get("ticket", {}).get("key") or i["project_key"]: i for i in payload["stuck"]}
+    assert set(stuck) == {"VFA-2", "VFA"}
+    assert all(i["stuck"] for i in payload["stuck"])
+    assert payload["counts"]["stuck"] == 2
+
+
+def test_week_stats_count_recently_shipped_cards_and_releases():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    payload = build_cockpit(
+        boards=[BOARD],
+        tickets_by_board={
+            "b1": [
+                _ticket("1", "Done", updated_at=(now - timedelta(days=1)).isoformat()),
+                _ticket("2", "Final approval (manual)", updated_at=(now - timedelta(days=3)).isoformat()),
+                _ticket("3", "Done", updated_at=(now - timedelta(days=30)).isoformat()),
+                _ticket("4", "In Progress (AI)", updated_at=(now - timedelta(hours=1)).isoformat()),
+            ]
+        },
+        threads=[],
+        releases_by_project={
+            "VFA": [
+                {"name": "0.2.3", "released": True, "released_at": (now - timedelta(days=2)).isoformat()},
+                {"name": "0.2.2", "released": True, "released_at": (now - timedelta(days=20)).isoformat()},
+                {"name": "0.2.4"},
+            ]
+        },
+        now=now,
+    )
+    assert payload["week"] == {"shipped": 2, "shipped_by_project": {"VFA": 2}, "releases": ["VFA 0.2.3"]}
+
+
+def test_ship_rows_carry_their_step():
+    payload = build_cockpit(
+        boards=[BOARD],
+        tickets_by_board={"b1": []},
+        threads=[
+            {"thread_id": "t1", "agent_id": "devops", "pending_prepare_poll": {"project_key": "VFA", "phase": "wait_merge"}},
+        ],
+        projects=[{"key": "VFA", "name": "VC Field Assistant"}],
+        releases_by_project={"VFA": [{"name": "0.2.4", "is_default": True}]},
+        now=datetime(2026, 11, 11, tzinfo=timezone.utc),
+    )
+    assert payload["ship_steps"] == ["Review", "Build", "Confirm", "Deploy", "Done"]
+    assert payload["ship"][0]["step"] == 1
+
+
+def test_money_summary_reports_each_source_and_caches(monkeypatch):
+    from bigas import cockpit_money
+
+    cockpit_money.reset_cache_for_tests()
+    monkeypatch.setenv("ACCOUNTED_API_KEY", "k")
+    monkeypatch.setenv("ACCOUNTED_CFO_COMPANIES", "Green Promo Wear:uuid-1\nScaleup Advisor:uuid-2")
+    monkeypatch.setenv("BIGAS_USAGE_PROVIDERS", "cursor")
+    calls = {"books": 0}
+
+    def fake_books(company_id, *, api_key, today):
+        calls["books"] += 1
+        if company_id == "uuid-2":
+            raise RuntimeError("401 from Accounted")
+        return {
+            "month_start": today.replace(day=1),
+            "current": {"nettoomsattning": 50000, "net_result": 18400.4, "total_expenses": 31600},
+            "previous": {"total_expenses": 28000, "net_result": 9000},
+            "cash_now": 120000,
+            "unbooked": 3,
+            "inbox": 1,
+        }
+
+    monkeypatch.setattr("bigas.resources.cto.usage.accounted_books.fetch_company_books", fake_books)
+    monkeypatch.setattr(
+        "bigas.resources.cto.usage.service.fetch_ai_usage",
+        lambda days=7: {"totals": {"est_cost_usd": 138.0, "by_provider": {"cursor": 100.0, "llm_logs": 38.0}}},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.usage.service.enrich_with_prior_period",
+        lambda report: {**report, "prior_period": {"totals": {"est_cost_usd": 100.0}}},
+    )
+    out = cockpit_money.money_summary()
+    gpw, scaleup = out["books"]["companies"]
+    assert gpw["label"] == "Green Promo Wear" and gpw["result"] == 18400.4 and gpw["unbooked"] == 3
+    assert "401" in scaleup["error"]
+    assert out["ai"]["week"] == 138.0 and out["ai"]["change_pct"] == 38
+    assert out["ai"]["top"][0] == {"name": "cursor", "amount": 100.0}
+
+    cockpit_money.money_summary()
+    assert calls["books"] == 2  # cached: no second fetch
+    cockpit_money.money_summary(refresh=True)
+    assert calls["books"] == 4
+    cockpit_money.reset_cache_for_tests()
+
+
+def test_money_summary_without_config(monkeypatch):
+    from bigas import cockpit_money
+
+    cockpit_money.reset_cache_for_tests()
+    for name in ("ACCOUNTED_API_KEY", "ACCOUNTED_CFO_COMPANIES", "BIGAS_USAGE_PROVIDERS"):
+        monkeypatch.delenv(name, raising=False)
+    out = cockpit_money.money_summary()
+    assert out["books"] == {"configured": False, "companies": []}
+    assert out["ai"] == {"configured": False}
+    cockpit_money.reset_cache_for_tests()

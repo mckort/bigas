@@ -21,6 +21,7 @@ Ship
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from bigas.tickets.constants import (
@@ -226,6 +227,25 @@ def _default_release(releases: Iterable[Dict[str, Any]]) -> Optional[Dict[str, A
     return open_releases[0] if open_releases else None
 
 
+# Ship card progress: Review → Build (merge or staging) → Confirm → Deploy → Done.
+SHIP_STEPS = ("Review", "Build", "Confirm", "Deploy", "Done")
+STEP_REVIEW, STEP_BUILD, STEP_CONFIRM, STEP_DEPLOY = 0, 1, 2, 3
+PHASE_STEPS = {
+    # versioned prepare deploy (pending_prepare_poll)
+    "wait_review_workflow": STEP_REVIEW,
+    "wait_actions_review": STEP_REVIEW,
+    "autofix": STEP_REVIEW,
+    "wait_merge": STEP_BUILD,
+    # staging rehearsal (pending_deploy_poll)
+    "review_autofix": STEP_REVIEW,
+    "prepare_staging": STEP_BUILD,
+    "update_staging": STEP_BUILD,
+    "teardown": STEP_BUILD,
+    "backup": STEP_DEPLOY,
+    "deploy_production": STEP_DEPLOY,
+}
+
+
 def _ship_rows(
     *,
     boards: Iterable[Dict[str, Any]],
@@ -260,11 +280,21 @@ def _ship_rows(
     def _state(key: str) -> Dict[str, Any]:
         item = waiting_by_key.get(key)
         if item:
-            return {"state": "waiting", "detail": item["label"], "thread_id": item["thread_id"]}
+            return {
+                "state": "waiting",
+                "detail": item["label"],
+                "thread_id": item["thread_id"],
+                "step": STEP_CONFIRM,
+            }
         item = running_by_key.get(key)
         if item:
-            return {"state": "running", "detail": item["stage"], "thread_id": item["thread_id"]}
-        return {"state": "idle", "detail": "", "thread_id": ""}
+            return {
+                "state": "running",
+                "detail": item["stage"],
+                "thread_id": item["thread_id"],
+                "step": PHASE_STEPS.get(item.get("phase") or "", STEP_REVIEW),
+            }
+        return {"state": "idle", "detail": "", "thread_id": "", "step": None}
 
     rows: List[Dict[str, Any]] = []
     for group in command_groups:
@@ -316,6 +346,72 @@ def _ship_rows(
     return rows
 
 
+# A card that has sat in an AI column this long has almost certainly stopped:
+# research and planning take minutes, implement at most a couple of hours.
+STUCK_AFTER = timedelta(hours=24)
+PIPELINE_STUCK_AFTER = timedelta(hours=6)
+WEEK = timedelta(days=7)
+
+
+def _parse_time(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _split_stuck(items: List[Dict[str, Any]], now: datetime) -> tuple:
+    running, stuck = [], []
+    for item in items:
+        since = _parse_time(item.get("since"))
+        limit = PIPELINE_STUCK_AFTER if item.get("type") == "pipeline" else STUCK_AFTER
+        if since and now - since > limit:
+            stuck.append({**item, "stuck": True})
+        else:
+            running.append(item)
+    return running, stuck
+
+
+def _week_stats(
+    boards: Iterable[Dict[str, Any]],
+    tickets_by_board: Dict[str, List[Dict[str, Any]]],
+    releases_by_project: Dict[str, Optional[List[Dict[str, Any]]]],
+    now: datetime,
+) -> Dict[str, Any]:
+    """Cards that reached Final approval or Done, and releases shipped, in the last 7 days.
+
+    Tickets carry no status history, so a card counts by its last update while
+    in a shipped column. Good enough for a weekly glance.
+    """
+    since = now - WEEK
+    shipped: Dict[str, int] = {}
+    for board in boards:
+        key = (board.get("project_key") or "").strip().upper()
+        if not key:
+            continue
+        for t in tickets_by_board.get(board.get("board_id") or "", []):
+            if (t.get("issue_type") or "") in ("Epic", "Objective"):
+                continue
+            updated = _parse_time(t.get("updated_at"))
+            if updated and updated >= since and is_in_release_cut(t.get("status") or "", project_key=key):
+                shipped[key] = shipped.get(key, 0) + 1
+    releases = []
+    for key, items in (releases_by_project or {}).items():
+        for r in items or []:
+            at = _parse_time(r.get("released_at"))
+            if r.get("released") and at and at >= since:
+                releases.append(f"{key} {r.get('name') or ''}".strip())
+    return {
+        "shipped": sum(shipped.values()),
+        "shipped_by_project": shipped,
+        "releases": sorted(releases),
+    }
+
+
 def _sort_by_since(items: List[Dict[str, Any]], *, newest_first: bool) -> List[Dict[str, Any]]:
     return sorted(items, key=lambda i: str(i.get("since") or ""), reverse=newest_first)
 
@@ -328,13 +424,17 @@ def build_cockpit(
     projects: Optional[List[Dict[str, Any]]] = None,
     command_groups: Optional[List[Dict[str, Any]]] = None,
     releases_by_project: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Assemble the cockpit payload from already-loaded data (pure function)."""
+    now = now or datetime.now(timezone.utc)
     ticket_items = _ticket_items(boards, tickets_by_board)
     deploy_items = _deploy_items(threads)
     # Deploy confirms first (they hold maintenance windows), then oldest cards.
     needs = deploy_items["needs"] + _sort_by_since(ticket_items["needs"], newest_first=False)
-    working = deploy_items["working"] + _sort_by_since(ticket_items["working"], newest_first=True)
+    working, stuck = _split_stuck(
+        deploy_items["working"] + _sort_by_since(ticket_items["working"], newest_first=True), now
+    )
     ship = _ship_rows(
         boards=boards,
         tickets_by_board=tickets_by_board,
@@ -347,9 +447,17 @@ def build_cockpit(
     return {
         "needs": needs,
         "working": working,
+        "stuck": stuck,
         "signoff": signoff,
         "ship": ship,
-        "counts": {"needs": len(needs), "working": len(working), "signoff": len(signoff)},
+        "ship_steps": list(SHIP_STEPS),
+        "week": _week_stats(boards, tickets_by_board, releases_by_project or {}, now),
+        "counts": {
+            "needs": len(needs),
+            "working": len(working),
+            "stuck": len(stuck),
+            "signoff": len(signoff),
+        },
     }
 
 
