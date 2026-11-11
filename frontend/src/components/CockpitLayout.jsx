@@ -765,7 +765,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
             Log out
           </button>
         </div>
-        <div className="lg:hidden flex gap-1 px-3 pb-2" role="tablist" aria-label="Cockpit sections">
+        <div className="lg:hidden flex gap-0.5 px-2 pb-2" role="tablist" aria-label="Cockpit sections">
           {TABS.map((t) => {
             const n = t.id === 'needs' ? counts.needs : t.id === 'working' ? counts.working : null
             return (
@@ -775,7 +775,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                 role="tab"
                 aria-selected={tab === t.id}
                 onClick={() => setTab(t.id)}
-                className={`flex-1 rounded-lg text-[13px] font-medium py-1.5 min-h-[36px] transition-all ${
+                className={`flex-1 min-w-0 whitespace-nowrap rounded-lg text-[12px] min-[360px]:text-[13px] font-medium px-1 py-1.5 min-h-[36px] transition-all ${
                   tab === t.id ? 'bg-accent-muted text-accent' : 'text-muted'
                 }`}
               >

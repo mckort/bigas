@@ -79,10 +79,10 @@ def gh_json(args: List[str], payload: Optional[dict] = None, check: bool = False
 
 
 def workflow_files(spec: RepoSpec, source: str) -> dict:
-    files = {".github/workflows/pr-review.yml": caller_workflow(CALLER_TEMPLATE.read_text(), source)}
+    files = {".github/workflows/pr-review.yml": caller_workflow(CALLER_TEMPLATE.read_text(encoding="utf-8"), source)}
     if spec.release_prefix:
         for name in VERSIONED_FILES:
-            files[f".github/workflows/{name}"] = (ROOT / ".github" / "workflows" / name).read_text()
+            files[f".github/workflows/{name}"] = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
     return files
 
 
@@ -259,8 +259,8 @@ def main() -> int:
         return 2
 
     if changes:
-        text = env_path.read_text() if env_path.is_file() else ""
-        env_path.write_text(update_env_text(text, changes))
+        text = env_path.read_text(encoding="utf-8") if env_path.is_file() else ""
+        env_path.write_text(update_env_text(text, changes), encoding="utf-8")
         print(f"\n✓ Updated {env_path}")
 
     exit_code = 0
