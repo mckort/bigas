@@ -234,6 +234,7 @@ export default function App() {
           agentsRefreshKey={agentsRefreshKey}
         />
       )}
+      {/* One bottom nav for every view (cockpit, chat, board, objectives); layouts do not render their own. */}
       <MobileNav activeView={view} onSwitchView={switchView} />
       <AgentSettings
         open={settingsOpen}
