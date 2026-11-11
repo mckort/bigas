@@ -183,7 +183,7 @@ def test_deploy_project_keys_are_normalized_to_uppercase():
                 "pending_prepare_poll": {"project_key": "Big", "phase": "autofix", "version": "0.1"},
             },
         ],
-        command_groups=[{"key": "GPW-PROD", "name": "GPW", "commands": []}],
+        command_groups=[{"key": "gpw-prod", "name": "GPW", "commands": []}],
     )
     keys = [item["project_key"] for item in payload["needs"] + payload["working"]]
     assert keys == ["GPW-PROD", "VFA", "BIG"]

@@ -238,18 +238,32 @@ def _ship_rows(
                 tickets_by_board.get(board.get("board_id") or "", [])
             )
 
+    def _norm_key(value: Any) -> str:
+        return (value or "").upper()
+
+    def _index_by_key(items: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        indexed: Dict[str, Dict[str, Any]] = {}
+        for item in items:
+            item_key = _norm_key(item.get("project_key"))
+            if item_key and item_key not in indexed:
+                indexed[item_key] = item
+        return indexed
+
+    waiting_by_key = _index_by_key(deploy_items["needs"])
+    running_by_key = _index_by_key(deploy_items["working"])
+
     def _state(key: str) -> Dict[str, Any]:
-        for item in deploy_items["needs"]:
-            if (item.get("project_key") or "").upper() == key:
-                return {"state": "waiting", "detail": item["label"], "thread_id": item["thread_id"]}
-        for item in deploy_items["working"]:
-            if (item.get("project_key") or "").upper() == key:
-                return {"state": "running", "detail": item["stage"], "thread_id": item["thread_id"]}
+        item = waiting_by_key.get(key)
+        if item:
+            return {"state": "waiting", "detail": item["label"], "thread_id": item["thread_id"]}
+        item = running_by_key.get(key)
+        if item:
+            return {"state": "running", "detail": item["stage"], "thread_id": item["thread_id"]}
         return {"state": "idle", "detail": "", "thread_id": ""}
 
     rows: List[Dict[str, Any]] = []
     for group in command_groups:
-        key = (group.get("key") or "").upper()
+        key = _norm_key(group.get("key"))
         if not key:
             continue
         rows.append(
@@ -265,7 +279,7 @@ def _ship_rows(
         )
     seen = {row["key"] for row in rows}
     for project in projects:
-        key = (project.get("key") or "").upper()
+        key = _norm_key(project.get("key"))
         if not key or key in seen:
             continue
         release = _default_release(releases_by_project.get(key, []))
