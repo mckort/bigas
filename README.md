@@ -195,7 +195,7 @@ python scripts/bigas_doctor.py                                                  
 |---|---|---|
 | Bigas `.env` | `JIRA_PROJECT_KEY(S)`, `BIGAS_JIRA_PROJECT_REPO_MAP`, `BIGAS_JIRA_REPO_BASE_BRANCH_MAP`, `BIGAS_PROJECT_NAME_MAP` | An ACME board whose AI columns open PRs on `acme/shop` |
 | Bigas `.env` | `BIGAS_DEPLOY_WORKFLOW_MAP` (`--deploy`) | An ACME card under **Ship** and deploys from chat |
-| Bigas `.env` | `PROJECT_BRANCH_MAPPING` (`--versioned staging`) | Versioned releases on `staging-x.y.z` branches |
+| Bigas `.env` | `PROJECT_BRANCH_MAPPING` (`--versioned staging`) | Versioned releases on `staging-x.y.z` branches. Or later, from the cockpit: **Go to production** on the project's Ship card |
 | Repo | Actions variable `BIGAS_URL`, secret `BIGAS_API_KEY` | Workflows can call Bigas |
 | Repo (a pull request on `bigas-setup`) | `.github/workflows/pr-review.yml`, plus `cherry_pick.yml` and `rebase_release.yml` with `--versioned` | Review → autofix → merge → Final approval on every PR |
 | Repo (`--webhook`) | `workflow_run` webhook | Self-healing CI when an Actions run fails |

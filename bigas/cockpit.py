@@ -254,7 +254,15 @@ def _ship_rows(
     command_groups: Iterable[Dict[str, Any]],
     releases_by_project: Dict[str, List[Dict[str, Any]]],
     deploy_items: Dict[str, List[Dict[str, Any]]],
+    release_modes: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
+    """One row per deploy target.
+
+    ``release_modes`` maps project key → ``production`` (versioned releases) or
+    ``development`` (deploys from the production branch). Unknown keys count
+    as production, which is how every versioned row behaved before.
+    """
+    modes = release_modes or {}
     tickets_by_project: Dict[str, List[Dict[str, Any]]] = {}
     for board in boards:
         key = (board.get("project_key") or "").strip().upper()
@@ -306,6 +314,7 @@ def _ship_rows(
                 "key": key,
                 "name": group.get("name") or key,
                 "mode": "staging",
+                "release_mode": "production",
                 "version": "",
                 "cut_count": None,
                 "commands": list(group.get("commands") or []),
@@ -330,16 +339,21 @@ def _ship_rows(
             and str(t.get("fix_version") or "").lstrip("vV") == version.lstrip("vV")
             and is_in_release_cut(t.get("status") or "", project_key=key)
         ]
-        prompt = f"prepare deploy {key} {version}".strip()
+        release_mode = modes.get(key, "production")
+        if release_mode == "development":
+            commands = [{"label": "Deploy", "prompt": f"deploy {key} to production"}]
+        else:
+            commands = [{"label": "Prepare deploy", "prompt": f"prepare deploy {key} {version}".strip()}]
         rows.append(
             {
                 "key": key,
                 "name": project.get("name") or key,
                 "mode": "versioned",
+                "release_mode": release_mode,
                 "version": version,
                 "cut_count": len(cut),
                 "release_error": release_error,
-                "commands": [{"label": "Prepare deploy", "prompt": prompt}],
+                "commands": commands,
                 **_state(key),
             }
         )
@@ -425,6 +439,7 @@ def build_cockpit(
     command_groups: Optional[List[Dict[str, Any]]] = None,
     releases_by_project: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     now: Optional[datetime] = None,
+    release_modes: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Assemble the cockpit payload from already-loaded data (pure function)."""
     now = now or datetime.now(timezone.utc)
@@ -444,6 +459,7 @@ def build_cockpit(
         command_groups=command_groups or [],
         releases_by_project=releases_by_project or {},
         deploy_items=deploy_items,
+        release_modes=release_modes,
     )
     signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
     return {
@@ -578,6 +594,16 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
     projects = [p for p in projects if (p.get("key") or "").upper() in board_keys]
     command_groups = [g for g in command_groups if (g.get("key") or "").upper() in board_keys]
 
+    release_modes: Dict[str, str] = {}
+    try:
+        from bigas.go_live import release_state
+
+        for project in projects:
+            key = (project.get("key") or "").upper()
+            release_modes[key] = release_state(key)["mode"]
+    except Exception:
+        logger.warning("Cockpit could not read release modes", exc_info=True)
+
     return build_cockpit(
         boards=boards,
         tickets_by_board=tickets_by_board,
@@ -585,4 +611,5 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
         projects=projects,
         command_groups=command_groups,
         releases_by_project=releases_by_project,
+        release_modes=release_modes,
     )

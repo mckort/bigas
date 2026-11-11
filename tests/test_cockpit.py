@@ -145,6 +145,7 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
                 {"name": "0.2.4", "is_default": True},
             ]
         },
+        now=datetime(2026, 11, 11, 12, 30, tzinfo=timezone.utc),
     )
     deploy = payload["needs"][0]
     assert deploy["type"] == "deploy_confirm"

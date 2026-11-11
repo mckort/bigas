@@ -72,13 +72,25 @@ def normalize_semver_tag(version: str) -> str:
 
 
 def project_branch_mapping_from_env() -> Dict[str, str]:
+    """PROJECT_BRANCH_MAPPING plus projects switched to production in the app.
+
+    Env entries win, so a key listed in env behaves exactly as before. A
+    project switched with the cockpit's "Go to production" button gets its
+    release prefix (``staging``) here without a redeploy.
+    """
     raw = os.environ.get("PROJECT_BRANCH_MAPPING")
     if raw is None or not str(raw).strip():
         raw = os.environ.get("BIGAS_PROJECT_BRANCH_MAPPING")
     parsed = parse_project_branch_mapping(raw)
-    if parsed:
-        return parsed
-    return {"DEFAULT": "main"}
+    mapping = dict(parsed) if parsed else {"DEFAULT": "main"}
+    try:
+        from bigas.project_settings import release_branch_overrides
+
+        for key, prefix in release_branch_overrides().items():
+            mapping.setdefault(key, prefix)
+    except Exception:  # settings are best effort; env alone still works
+        pass
+    return mapping
 
 
 def active_fix_version_from_env(project_key: str) -> Optional[str]:
