@@ -538,7 +538,7 @@ function GoLivePanel({ row, onChanged, showToast }) {
       try {
         const next = await fetchProductionPlan(row.key, v)
         setPlan(next)
-        setVersion(next.version || '')
+        if (next.version) setVersion(next.version)
       } catch (err) {
         setError(err.message || 'Could not read the project')
       }
@@ -570,6 +570,7 @@ function GoLivePanel({ row, onChanged, showToast }) {
     try {
       await backToDevelopment(row.key)
       showToast(`${row.name} is back in development`)
+      setResult(null)
       onChanged()
       loadPlan()
     } catch (err) {
@@ -586,6 +587,9 @@ function GoLivePanel({ row, onChanged, showToast }) {
   const steps = result
     ? (plan.steps || []).map((st) => ({ ...st, ...(result.results || []).find((r) => r.id === st.id) }))
     : plan.steps || []
+  const versionRejected =
+    (plan.steps || []).length === 0 && String(plan.blocked || '').includes('is not a version like')
+  const showVersionInput = !result && (versionRejected || (plan.can_apply && releaseStep?.status === 'todo'))
 
   return (
     <div className="space-y-4 text-sm">
@@ -621,14 +625,22 @@ function GoLivePanel({ row, onChanged, showToast }) {
         </ol>
       )}
 
-      {!result && plan.can_apply && releaseStep?.status === 'todo' && (
+      {showVersionInput && (
         <label className="block">
           <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">First version</span>
           <input
             className="input-field mt-1 font-mono"
             value={version}
             onChange={(e) => setVersion(e.target.value)}
-            onBlur={() => version && version !== plan.version && loadPlan(version)}
+            onBlur={() => {
+              const next = version.trim()
+              if (!next || next === (plan.version || '')) return
+              if (!/^v?\d+\.\d+\.\d+$/i.test(next)) {
+                setError(`'${next}' is not a version like 0.1.0`)
+                return
+              }
+              loadPlan(next)
+            }}
             placeholder="0.1.0"
           />
         </label>
