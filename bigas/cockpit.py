@@ -597,12 +597,15 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
     release_modes: Dict[str, str] = {}
     try:
         from bigas.go_live import release_state
-
-        for project in projects:
-            key = (project.get("key") or "").upper()
-            release_modes[key] = release_state(key)["mode"]
     except Exception:
         logger.warning("Cockpit could not read release modes", exc_info=True)
+    else:
+        for project in projects:
+            key = (project.get("key") or "").upper()
+            try:
+                release_modes[key] = release_state(key)["mode"]
+            except Exception:
+                logger.warning("Cockpit could not read release mode for %s", key, exc_info=True)
 
     return build_cockpit(
         boards=boards,

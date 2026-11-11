@@ -221,6 +221,42 @@ def test_load_cockpit_degrades_when_board_list_fails(monkeypatch):
     assert payload["counts"] == {"needs": 0, "working": 0, "stuck": 0, "signoff": 0}
 
 
+def test_load_cockpit_keeps_later_release_modes_when_one_fails(monkeypatch):
+    class _Service:
+        def list_boards(self, user_id):
+            return [
+                {"board_id": "b1", "project_key": "ACME", "name": "Acme"},
+                {"board_id": "b2", "project_key": "VFA", "name": "VFA"},
+            ]
+
+        def list_tickets(self, *args, **kwargs):
+            return []
+
+    monkeypatch.setattr("bigas.tickets.service.TicketService", lambda: _Service())
+    monkeypatch.setattr(
+        "bigas.chat.db.get_chat_store",
+        lambda: type("Store", (), {"list_threads": lambda self, user_id: []})(),
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shortcut_projects",
+        lambda: [{"key": "ACME", "name": "Acme"}, {"key": "VFA", "name": "VFA"}],
+    )
+    monkeypatch.setattr("bigas.resources.devops.gpw_pipeline.list_gpw_command_shortcuts", lambda: [])
+
+    def release_state(key):
+        if key == "ACME":
+            raise RuntimeError("jira config")
+        return {"mode": "development"}
+
+    monkeypatch.setattr("bigas.go_live.release_state", release_state)
+
+    from bigas.cockpit import load_cockpit
+
+    modes = {row["key"]: row["release_mode"] for row in load_cockpit("user-1")["ship"]}
+    assert modes["ACME"] == "production"
+    assert modes["VFA"] == "development"
+
+
 @pytest.fixture
 def client(monkeypatch):
     for key in _JIRA_ENV_KEYS:

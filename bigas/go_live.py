@@ -95,8 +95,13 @@ def _client():
 
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
     if not token:
-        raise GoLiveError("GITHUB_TOKEN is not set on the Bigas server")
-    return GitHubActionsClient(token)
+        logger.warning("Go to production: GITHUB_TOKEN is not set")
+        raise GoLiveError("GitHub is not connected")
+    try:
+        return GitHubActionsClient(token)
+    except ValueError:
+        logger.warning("Go to production: GITHUB_TOKEN failed validation")
+        raise GoLiveError("GitHub is not connected") from None
 
 
 def _open_release(project_key: str) -> Optional[Dict[str, Any]]:

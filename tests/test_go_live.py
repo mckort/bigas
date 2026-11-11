@@ -122,6 +122,40 @@ def test_plan_lists_every_step_for_a_development_project():
     assert "pr-review.yml, cherry_pick.yml, rebase_release.yml" in out["steps"][0]["detail"]
 
 
+def test_plan_rejects_a_version_that_is_not_semver():
+    out = go_live.plan("ACME", version="abc", client=FakeGitHub())
+    assert out["can_apply"] is False
+    assert out["steps"] == []
+    assert "is not a version like" in out["blocked"]
+
+
+def test_plan_hides_a_missing_github_token(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    out = go_live.plan("ACME")
+    assert out["can_apply"] is False
+    assert "GITHUB_TOKEN" not in out["blocked"]
+    assert "GitHub is not connected" in out["blocked"]
+
+
+def test_firestore_settings_store_discovers_a_blank_project(monkeypatch):
+    seen = {}
+
+    class _Client:
+        def __init__(self, project=None):
+            seen["project"] = project
+
+        def collection(self, name):
+            seen["collection"] = name
+            return object()
+
+    monkeypatch.setattr("google.cloud.firestore.Client", _Client)
+    store = project_settings.FirestoreProjectSettingsStore("")
+    assert seen == {"project": None, "collection": "bigas_project_settings"}
+    assert store._col is not None
+    project_settings.FirestoreProjectSettingsStore("my-proj")
+    assert seen["project"] == "my-proj"
+
+
 def test_plan_is_blocked_when_already_in_production(monkeypatch):
     monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "ACME:staging")
     out = go_live.plan("ACME", client=FakeGitHub())

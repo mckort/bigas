@@ -19,7 +19,7 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 CACHE_SECONDS = 30
 DEFAULT_PREFIX = "staging"
@@ -49,7 +49,8 @@ class FirestoreProjectSettingsStore:
     def __init__(self, project_id: str) -> None:
         from google.cloud import firestore
 
-        self._col = firestore.Client(project=project_id).collection("bigas_project_settings")
+        # None lets the client use application default credentials when no project id is set.
+        self._col = firestore.Client(project=project_id or None).collection("bigas_project_settings")
 
     def all(self) -> Dict[str, Dict[str, Any]]:
         return {doc.id: doc.to_dict() or {} for doc in self._col.stream() if doc.exists}
@@ -122,8 +123,3 @@ def release_branch_overrides() -> Dict[str, str]:
         if (item or {}).get("release_mode") == "production":
             out[key.upper()] = (item.get("release_prefix") or DEFAULT_PREFIX).strip()
     return out
-
-
-def development_keys() -> set:
-    """Projects switched back to development in the app."""
-    return {k.upper() for k, v in all_settings().items() if (v or {}).get("release_mode") == "development"}
