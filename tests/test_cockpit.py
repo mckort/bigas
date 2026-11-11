@@ -259,4 +259,5 @@ def test_cockpit_spa_route_is_served(client, monkeypatch):
     monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_KEYS", {"secret-key"})
     monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
     assert client.get("/cockpit").status_code != 403
+    assert client.get("/chat").status_code != 403
     assert client.get("/api/cockpit", headers=_auth()).status_code == 200

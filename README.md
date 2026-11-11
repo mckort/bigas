@@ -54,10 +54,10 @@ Four surfaces, one story:
 
 | Surface | Where | Role |
 |---|---|---|
-| **Cockpit** | `/cockpit` | The start page after sign-in. **Needs you** lists cards in a manual approval column and deploys waiting for your yes, with approve and send back (swipe on a phone). **AI working** shows cards in AI columns and running deploy pipelines. **Ship** has one card per deploy target. **This week** runs the PM update, X drafts and CFO report. Reads `GET /api/cockpit`. |
+| **Cockpit** | `/` (also `/cockpit`) | The start page when you are signed in. **Needs you** lists cards in a manual approval column and deploys waiting for your yes, with approve and send back (swipe on a phone). **AI working** shows cards in AI columns and running deploy pipelines. **Ship** has one card per deploy target. **This week** runs the PM update, X drafts and CFO report. Reads `GET /api/cockpit`. |
 | **Objectives** | `/objectives` | The quarter's scoreboard. You name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story. |
 | **Board** | `/board` | The default work surface: tickets, columns, releases, and a human-gated AI workflow (research → plan → implement). Jira is optional — connect it only if you already run a Jira board you want to keep. |
-| **Chat** | `/` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |
+| **Chat** | `/chat` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |
 
 Objectives is optional: switch it off with [`BIGAS_FEATURES`](#keep-it-focused-optional-areas). See the [Objectives](#walkthrough-from-quarterly-objective-to-shipped-work), [board](#walkthrough-from-jira-card-to-merged-pr), and [chat](#walkthrough-from-chat-to-production-deploy) walkthroughs for screenshots of each surface.
 
@@ -145,7 +145,7 @@ python scripts/setup.py          # interactive wizard → writes .env
 docker compose up --build        # or: pip install -r requirements.txt && python run_core.py
 ```
 
-Open **http://localhost:8080**, sign in with any email and dev token **`bigas-dev-token`**. You land on the cockpit at `/cockpit`.
+Open **http://localhost:8080**, sign in with any email and dev token **`bigas-dev-token`**. You land on the cockpit; chat is at `/chat`.
 
 The setup wizard configures:
 
@@ -153,7 +153,7 @@ The setup wizard configures:
 |---|---|---|
 | `CHAT_STORAGE_MODE` | `memory` | No Firestore — chat history stays in-process |
 | `CHAT_AUTH_MODE` | `dev` | No Firebase — use the dev token above |
-| `CHAT_ENABLED` | `true` | Web chat UI at `/` |
+| `CHAT_ENABLED` | `true` | Web app: cockpit at `/`, chat at `/chat` |
 | LLM key | Gemini or OpenAI | Required — powers all agents |
 
 Optional integrations are offered during setup; skip them to explore the cockpit, chat and `/board` first. The **native Kanban board is the default** — Jira is never required. Re-run `python scripts/setup.py` anytime, or add keys by hand, following [Add capabilities based on your needs](#add-capabilities-based-on-your-needs).
@@ -752,7 +752,7 @@ Claude.ai / Claude Desktop: add a custom connector pointing at `https://your-ser
 
 ## Chat web interface
 
-Bigas includes a **clean, brand-aligned web chat UI** (when the frontend is built). Signed-out visitors see a one-page **marketing landing** at `/` (fork-and-run quickstart, product surfaces, FAQ); sign in at `/login`. After login, `/` is chat. Static SEO assets live in `frontend/public/` (`robots.txt`, `sitemap.xml`) and `frontend/index.html` (Open Graph, Twitter cards, SoftwareApplication JSON-LD). The interface uses the Bigas logo palette (white, `#73cdfb` blue, and black). Chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, **CFO**, and **DevOps** specialists — each with their own icon. The UI is **mobile-responsive** (phones and small tablets): use the bottom tab bar to switch between Chat, Board, and Objectives. On iOS/Android you can **Add to Home Screen** (PWA) for a standalone app experience.
+Bigas includes a **clean, brand-aligned web chat UI** (when the frontend is built). Signed-out visitors see a one-page **marketing landing** at `/` (fork-and-run quickstart, product surfaces, FAQ); sign in at `/login`. After login, `/` is the cockpit and chat is at `/chat`. Static SEO assets live in `frontend/public/` (`robots.txt`, `sitemap.xml`) and `frontend/index.html` (Open Graph, Twitter cards, SoftwareApplication JSON-LD). The interface uses the Bigas logo palette (white, `#73cdfb` blue, and black). Chat with your **Chief of Staff** agent, or talk directly to **Marketing**, **Product**, **CTO**, **CFO**, and **DevOps** specialists — each with their own icon. The UI is **mobile-responsive** (phones and small tablets): use the bottom tab bar to switch between Cockpit, Chat, Board and Objectives. On iOS/Android you can **Add to Home Screen** (PWA) for a standalone app experience.
 
 | Feature | Description |
 |---|---|
@@ -1174,7 +1174,7 @@ flowchart TB
 
 - **Providers:** `bigas/registry.py` scans `bigas/providers/**` and exposes the active set at `GET /mcp/providers`. Usage/cost sources (`cursor`, `llm_logs`, `gcp_billing`, `tavily`, or your own) are listed in `BIGAS_USAGE_PROVIDERS` — omit the var and none run. See [Plug in a usage source](#plug-in-a-usage-source).
 - **Tools:** each resource registers Flask routes under `/mcp/tools/*`; combined manifest at `GET /mcp/manifest`.
-- **Chat:** React SPA at `/`; dev mode uses in-memory storage (`CHAT_STORAGE_MODE=memory`).
+- **Chat:** React SPA (cockpit at `/`, chat at `/chat`); dev mode uses in-memory storage (`CHAT_STORAGE_MODE=memory`).
 
 ### Plug in a usage source
 

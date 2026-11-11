@@ -4,6 +4,7 @@ Disallow: /login
 Disallow: /board
 Disallow: /objectives
 Disallow: /cockpit
+Disallow: /chat
 Disallow: /api/
 Disallow: /mcp/
 
