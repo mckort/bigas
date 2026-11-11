@@ -58,9 +58,18 @@ def gh(args: List[str], *, input_text: Optional[str] = None, check: bool = True)
     return subprocess.run(["gh", *args], input=input_text, text=True, capture_output=True, check=check)
 
 
-def gh_json(args: List[str], payload: Optional[dict] = None, check: bool = True):
-    proc = gh(["api", *args, *(["--input", "-"] if payload is not None else [])],
-              input_text=json.dumps(payload) if payload is not None else None, check=check)
+def gh_json(args: List[str], payload: Optional[dict] = None, check: bool = False):
+    """Call ``gh api`` and return parsed JSON, or None on a non-zero exit.
+
+    ``check`` defaults to False so a 4xx/5xx (branch missing, write rejected,
+    pull request or webhook denied) comes back as None. Callers branch on that
+    instead of an unhandled ``CalledProcessError``.
+    """
+    try:
+        proc = gh(["api", *args, *(["--input", "-"] if payload is not None else [])],
+                  input_text=json.dumps(payload) if payload is not None else None, check=check)
+    except subprocess.CalledProcessError:
+        return None
     if proc.returncode != 0:
         return None
     try:
@@ -77,7 +86,12 @@ def workflow_files(spec: RepoSpec, source: str) -> dict:
     return files
 
 
-def open_setup_pr(spec: RepoSpec, files: dict) -> str:
+def open_setup_pr(spec: RepoSpec, files: dict) -> Optional[str]:
+    """Open the setup PR.
+
+    Returns the PR URL, ``""`` when every workflow file is already on the base
+    branch, or None when commits were pushed but the pull request was not opened.
+    """
     repo = spec.repo
     base = gh_json([f"repos/{repo}/git/ref/heads/{spec.branch}"])
     if not base:
@@ -108,8 +122,9 @@ def open_setup_pr(spec: RepoSpec, files: dict) -> str:
 
     owner = repo.split("/")[0]
     open_prs = gh_json([f"repos/{repo}/pulls?head={owner}:{SETUP_BRANCH}&state=open"], check=False) or []
-    if open_prs:
-        return open_prs[0]["html_url"]
+    if isinstance(open_prs, list) and open_prs:
+        first = open_prs[0] if isinstance(open_prs[0], dict) else {}
+        return first.get("html_url") or None
     lines = [
         "Connects this repo to Bigas.",
         "",
@@ -124,7 +139,9 @@ def open_setup_pr(spec: RepoSpec, files: dict) -> str:
         "base": spec.branch,
         "body": "\n".join(lines),
     })
-    return (pr or {}).get("html_url", "")
+    if not isinstance(pr, dict):
+        return None
+    return pr.get("html_url") or None
 
 
 def main() -> int:
@@ -214,31 +231,48 @@ def main() -> int:
         env_path.write_text(update_env_text(text, changes))
         print(f"\n✓ Updated {env_path}")
 
+    exit_code = 0
+    url = ""
     if not args.skip_github:
         gh(["variable", "set", "BIGAS_URL", "--repo", spec.repo, "--body", bigas_url])
         gh(["secret", "set", "BIGAS_API_KEY", "--repo", spec.repo], input_text=access_key)
         print(f"✓ Set BIGAS_URL and BIGAS_API_KEY on {spec.repo}")
         url = open_setup_pr(spec, files)
-        print(f"✓ Pull request: {url}" if url else "✓ Workflows already on the base branch")
+        if url is None:
+            print(f"✗ {spec.repo}: changes are on {SETUP_BRANCH}, but the pull request was not created.")
+            exit_code = 1
+        elif url:
+            print(f"✓ Pull request: {url}")
+        else:
+            print("✓ Workflows already on the base branch")
         if args.webhook:
-            hooks = gh_json([f"repos/{spec.repo}/hooks"], check=False) or []
-            if any(WEBHOOK_PATH in ((h.get("config") or {}).get("url") or "") for h in hooks):
+            hooks = gh_json([f"repos/{spec.repo}/hooks"], check=False)
+            if isinstance(hooks, list) and any(
+                WEBHOOK_PATH in ((h.get("config") or {}).get("url") or "") for h in hooks if isinstance(h, dict)
+            ):
                 print("✓ Webhook already present")
             else:
-                gh_json([f"repos/{spec.repo}/hooks", "-X", "POST"], {
+                created = gh_json([f"repos/{spec.repo}/hooks", "-X", "POST"], {
                     "name": "web",
                     "active": True,
                     "events": ["workflow_run"],
                     "config": {"url": f"{bigas_url}{WEBHOOK_PATH}", "content_type": "json", "secret": webhook_secret},
                 })
-                print("✓ Added workflow_run webhook")
+                if created is None:
+                    print(f"✗ {spec.repo}: could not add the workflow_run webhook.")
+                    exit_code = 1
+                else:
+                    print("✓ Added workflow_run webhook")
 
     print("\nNext:")
-    print("  - Merge the pull request above.")
+    if not args.skip_github and url is None:
+        print(f"  - Open a pull request from {SETUP_BRANCH} into {spec.branch} (the branch was pushed).")
+    else:
+        print("  - Merge the pull request above.")
     if changes:
         print("  - Local: restart Bigas. Cloud Run: if SECRET_MANAGER=true run `python scripts/sync_env_to_secret_manager.py`, then `./deploy.sh`.")
     print("  - Verify: python scripts/bigas_doctor.py")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

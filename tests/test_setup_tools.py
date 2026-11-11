@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 os.environ.setdefault("GA4_PROPERTY_ID", "test-property")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("CHAT_STORAGE_MODE", "memory")
 
-from bigas.setup_check import Project, github_checks, project_config_checks
+from bigas.setup_check import Check, Project, github_checks, project_config_checks, run_checks
 from bigas.setup_repo import RepoSpec, caller_workflow, plan_env_changes, update_env_text
 
 
@@ -113,3 +117,135 @@ def test_project_config_checks_flag_unmapped_repo():
     checks = project_config_checks([Project(key="ACME", name="Acme", repo="", base_branch="")])
     assert checks[0].status == "fail"
     assert "connect_repo.py --key ACME" in checks[0].fix
+
+
+def _connect_repo():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "connect_repo.py"
+    spec = importlib.util.spec_from_file_location("connect_repo_script", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_gh_json_returns_none_instead_of_raising(monkeypatch):
+    module = _connect_repo()
+
+    def fake_run(*args, **kwargs):
+        if kwargs.get("check"):
+            raise subprocess.CalledProcessError(1, args[0], stderr="missing")
+        return subprocess.CompletedProcess(args[0], 1, stdout='{"message":"Not Found"}', stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    assert module.gh_json(["repos/acme/shop/git/ref/heads/missing"]) is None
+    assert module.gh_json(["repos/acme/shop/hooks"], check=True) is None
+
+
+def test_open_setup_pr_distinguishes_no_change_from_create_failure(monkeypatch):
+    module = _connect_repo()
+    spec = RepoSpec(key="ACME", repo="acme/shop", branch="main")
+    content = "name: review\n"
+    files = {".github/workflows/pr-review.yml": content}
+    encoded = base64.b64encode(content.encode()).decode()
+
+    def unchanged(args, payload=None, check=False):
+        if args[0].endswith("/heads/main"):
+            return {"object": {"sha": "abc"}}
+        if "contents/" in args[0]:
+            return {"content": encoded}
+        return {}
+
+    monkeypatch.setattr(module, "gh_json", unchanged)
+    assert module.open_setup_pr(spec, files) == ""
+
+    def pushed(args, payload=None, check=False):
+        if args[0].endswith("/heads/main"):
+            return {"object": {"sha": "abc"}}
+        if "PUT" in args:
+            return {"content": {"sha": "def"}}
+        if "/pulls" in args[0] and "POST" in args:
+            return None
+        if "/pulls" in args[0]:
+            return []
+        return None
+
+    monkeypatch.setattr(module, "gh_json", pushed)
+    assert module.open_setup_pr(spec, files) is None
+
+    def missing_branch(args, payload=None, check=False):
+        return None
+
+    monkeypatch.setattr(module, "gh_json", missing_branch)
+    try:
+        module.open_setup_pr(spec, files)
+    except SystemExit as exc:
+        assert "branch main not found" in str(exc)
+    else:
+        raise AssertionError("missing base branch should exit")
+
+
+def test_apply_reports_pr_and_webhook_failures(monkeypatch, tmp_path, capsys):
+    module = _connect_repo()
+    env = tmp_path / ".env"
+    env.write_text(
+        "BIGAS_PUBLIC_URL=https://bigas.example\n"
+        "BIGAS_ACCESS_KEYS=secret-key\n"
+        "GITHUB_WEBHOOK_SECRET=hook-secret\n"
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "connect_repo.py",
+            "--key",
+            "ACME",
+            "--repo",
+            "acme/shop",
+            "--apply",
+            "--webhook",
+            "--skip-env",
+            "--env-file",
+            str(env),
+        ],
+    )
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "gh")
+    monkeypatch.setattr(module, "gh", lambda *args, **kwargs: None)
+
+    def fake_json(args, payload=None, check=False):
+        path = args[0]
+        if path.endswith("/heads/main"):
+            return {"object": {"sha": "abc"}}
+        if "PUT" in args:
+            return {"content": {"path": path}}
+        if path.endswith("/hooks") and "POST" in args:
+            return None
+        if path.endswith("/hooks"):
+            return {"message": "Must have admin rights to Repository"}
+        if "/pulls" in path and "POST" in args:
+            return None
+        if "/pulls" in path:
+            return []
+        return None
+
+    monkeypatch.setattr(module, "gh_json", fake_json)
+    code = module.main()
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "pull request was not created" in out
+    assert "Workflows already on the base branch" not in out
+    assert "could not add the workflow_run webhook" in out
+    assert "Added workflow_run webhook" not in out
+
+
+def test_run_checks_counts_unrecognized_status_as_failure(monkeypatch):
+    monkeypatch.setattr("bigas.setup_check.load_projects", lambda: [])
+    monkeypatch.setattr(
+        "bigas.setup_check.instance_checks",
+        lambda: [Check("custom", "skipped", "A check was skipped")],
+    )
+    monkeypatch.setattr("bigas.setup_check.project_config_checks", lambda projects: [])
+    report = run_checks(offline=True)
+    assert report["ok"] is False
+    assert report["counts"]["fail"] == 1
+    assert report["counts"]["ok"] == 0
+    assert report["checks"][0]["status"] == "fail"
+    assert "unrecognized status" in report["checks"][0]["message"]

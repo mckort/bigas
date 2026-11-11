@@ -444,7 +444,15 @@ def run_checks(*, offline: bool = False, fetch: Optional[Fetcher] = None) -> Dic
             checks += github_checks(projects, fetch, bigas_url=public_url())
         else:
             checks.append(Check("github", "info", "GitHub checks skipped: no GITHUB_TOKEN."))
-    counts = {s: sum(1 for c in checks if c.status == s) for s in ("ok", "warn", "fail", "info")}
+    # ok / warn / fail / info are the only statuses. Anything else (a new code,
+    # or a check that was skipped without an explicit result) counts as a failure
+    # so the summary and the exit code stay in agreement.
+    counts = {s: 0 for s in ("ok", "warn", "fail", "info")}
+    for check in checks:
+        if check.status not in counts:
+            check.message = f"{check.message} (unrecognized status {check.status!r} counts as a failure)"
+            check.status = "fail"
+        counts[check.status] += 1
     return {
         "ok": counts["fail"] == 0,
         "counts": counts,
