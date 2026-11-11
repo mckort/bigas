@@ -344,6 +344,27 @@ def test_old_ai_cards_and_pipelines_are_stuck_not_working():
     assert payload["counts"]["stuck"] == 2
 
 
+def test_build_cockpit_treats_naive_now_as_utc():
+    now = datetime(2026, 11, 11, 12)
+    recent = datetime(2026, 11, 11, 10, tzinfo=timezone.utc).isoformat()
+    old = datetime(2026, 11, 9, 11, tzinfo=timezone.utc).isoformat()
+    payload = build_cockpit(
+        boards=[BOARD],
+        tickets_by_board={
+            "b1": [
+                _ticket("1", "In Progress (AI)", updated_at=recent),
+                _ticket("2", "Design and plan (AI)", updated_at=old),
+                _ticket("3", "Done", updated_at=recent),
+            ]
+        },
+        threads=[],
+        now=now,
+    )
+    assert [i["ticket"]["key"] for i in payload["working"]] == ["VFA-1"]
+    assert [i["ticket"]["key"] for i in payload["stuck"]] == ["VFA-2"]
+    assert payload["week"]["shipped"] == 1
+
+
 def test_week_stats_count_recently_shipped_cards_and_releases():
     now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
     payload = build_cockpit(
@@ -426,6 +447,48 @@ def test_money_summary_reports_each_source_and_caches(monkeypatch):
     assert calls["books"] == 2  # cached: no second fetch
     cockpit_money.money_summary(refresh=True)
     assert calls["books"] == 4
+    cockpit_money.reset_cache_for_tests()
+
+
+def test_money_summary_bad_shapes_do_not_fail_the_endpoint(monkeypatch):
+    from bigas import cockpit_money
+
+    cockpit_money.reset_cache_for_tests()
+    monkeypatch.setenv("ACCOUNTED_API_KEY", "k")
+    monkeypatch.setenv("ACCOUNTED_CFO_COMPANIES", "Empty Co:uuid-1\nString Month:uuid-2")
+    monkeypatch.setenv("BIGAS_USAGE_PROVIDERS", "cursor")
+
+    def fake_books(company_id, *, api_key, today):
+        if company_id == "uuid-1":
+            return None
+        return {
+            "month_start": "2026-11-01",
+            "current": {"nettoomsattning": 10, "net_result": 2, "total_expenses": 8},
+            "previous": {"total_expenses": 4, "net_result": 1},
+            "cash_now": 3,
+            "unbooked": 0,
+            "inbox": 1,
+        }
+
+    monkeypatch.setattr("bigas.resources.cto.usage.accounted_books.fetch_company_books", fake_books)
+    monkeypatch.setattr("bigas.resources.cto.usage.service.fetch_ai_usage", lambda days=7: {})
+    monkeypatch.setattr(
+        "bigas.resources.cto.usage.service.enrich_with_prior_period",
+        lambda report: {
+            "totals": {
+                "est_cost_usd": 5,
+                "by_provider": {"cursor": None, "llm_logs": "nope", "tavily": 3},
+            },
+            "errors": ["cursor blew up", {"provider": "llm_logs"}],
+        },
+    )
+    out = cockpit_money.money_summary()
+    empty, string_month = out["books"]["companies"]
+    assert "empty" in empty["error"]
+    assert string_month["month"] == "2026-11" and string_month["result"] == 2.0
+    assert out["ai"]["week"] == 5.0
+    assert out["ai"]["top"][0] == {"name": "tavily", "amount": 3.0}
+    assert out["ai"]["errors"] == ["cursor blew up", "llm_logs"]
     cockpit_money.reset_cache_for_tests()
 
 

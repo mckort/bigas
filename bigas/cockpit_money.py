@@ -15,7 +15,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -38,23 +38,34 @@ def _company(label: str, company_id: str, api_key: str, today: date) -> Dict[str
 
     try:
         snap = fetch_company_books(company_id, api_key=api_key, today=today)
+        if not isinstance(snap, dict):
+            raise TypeError("books snapshot was empty")
+        raw_current = snap.get("current")
+        raw_previous = snap.get("previous")
+        current = raw_current if isinstance(raw_current, dict) else {}
+        previous = raw_previous if isinstance(raw_previous, dict) else {}
+        month_start = snap.get("month_start")
+        if isinstance(month_start, date):
+            month = month_start.strftime("%Y-%m")
+        elif isinstance(month_start, str) and len(month_start) >= 7 and month_start[4:5] == "-":
+            month = month_start[:7]
+        else:
+            month = ""
+        return {
+            "label": label,
+            "month": month,
+            "revenue": _num(current.get("nettoomsattning")),
+            "result": _num(current.get("net_result")),
+            "costs": _num(current.get("total_expenses")),
+            "prev_costs": _num(previous.get("total_expenses")),
+            "prev_result": _num(previous.get("net_result")),
+            "cash": _num(snap.get("cash_now")),
+            "unbooked": snap.get("unbooked"),
+            "inbox": snap.get("inbox"),
+        }
     except Exception as exc:
         logger.warning("Cockpit books failed for %s", label, exc_info=True)
         return {"label": label, "error": str(exc)[:160]}
-    current = snap.get("current") or {}
-    previous = snap.get("previous") or {}
-    return {
-        "label": label,
-        "month": snap["month_start"].strftime("%Y-%m") if snap.get("month_start") else "",
-        "revenue": _num(current.get("nettoomsattning")),
-        "result": _num(current.get("net_result")),
-        "costs": _num(current.get("total_expenses")),
-        "prev_costs": _num(previous.get("total_expenses")),
-        "prev_result": _num(previous.get("net_result")),
-        "cash": _num(snap.get("cash_now")),
-        "unbooked": snap.get("unbooked"),
-        "inbox": snap.get("inbox"),
-    }
 
 
 def _books(today: date) -> Dict[str, Any]:
@@ -78,26 +89,40 @@ def _ai_spend() -> Dict[str, Any]:
         return {"configured": False}
     try:
         report = enrich_with_prior_period(fetch_ai_usage(days=7))
+        if not isinstance(report, dict):
+            raise TypeError("AI spend report was empty")
+        raw_totals = report.get("totals")
+        totals = raw_totals if isinstance(raw_totals, dict) else {}
+        raw_prior_period = report.get("prior_period")
+        prior_period = raw_prior_period if isinstance(raw_prior_period, dict) else {}
+        raw_prior = prior_period.get("totals")
+        prior = raw_prior if isinstance(raw_prior, dict) else {}
+        week = _num(totals.get("est_cost_usd"))
+        before = _num(prior.get("est_cost_usd"))
+        change = None
+        if week is not None and before:
+            change = round((week - before) / before * 100)
+        raw_by_provider = totals.get("by_provider")
+        by_provider = raw_by_provider if isinstance(raw_by_provider, dict) else {}
+        ranked = sorted(
+            by_provider.items(),
+            key=lambda kv: -(kv[1] or 0) if isinstance(kv[1], (int, float)) else 0,
+        )
+        raw_errors = report.get("errors") or []
+        if not isinstance(raw_errors, list):
+            raw_errors = [raw_errors]
+        return {
+            "configured": True,
+            "currency": "USD",
+            "week": week,
+            "prior_week": before,
+            "change_pct": change,
+            "top": [{"name": k, "amount": _num(v)} for k, v in ranked[:3]],
+            "errors": [e.get("provider") if isinstance(e, dict) else str(e) for e in raw_errors],
+        }
     except Exception as exc:
         logger.warning("Cockpit AI spend failed", exc_info=True)
         return {"configured": True, "error": str(exc)[:160]}
-    totals = report.get("totals") or {}
-    prior = ((report.get("prior_period") or {}).get("totals") or {})
-    week = _num(totals.get("est_cost_usd"))
-    before = _num(prior.get("est_cost_usd"))
-    change = None
-    if week is not None and before:
-        change = round((week - before) / before * 100)
-    by_provider = sorted((totals.get("by_provider") or {}).items(), key=lambda kv: -kv[1])
-    return {
-        "configured": True,
-        "currency": "USD",
-        "week": week,
-        "prior_week": before,
-        "change_pct": change,
-        "top": [{"name": k, "amount": _num(v)} for k, v in by_provider[:3]],
-        "errors": [e.get("provider") for e in report.get("errors") or []],
-    }
 
 
 def money_summary(*, refresh: bool = False, today: Optional[date] = None) -> Dict[str, Any]:

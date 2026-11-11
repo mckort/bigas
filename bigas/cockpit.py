@@ -428,6 +428,8 @@ def build_cockpit(
 ) -> Dict[str, Any]:
     """Assemble the cockpit payload from already-loaded data (pure function)."""
     now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     ticket_items = _ticket_items(boards, tickets_by_board)
     deploy_items = _deploy_items(threads)
     # Deploy confirms first (they hold maintenance windows), then oldest cards.
