@@ -358,3 +358,59 @@ def test_setup_branch_that_cannot_move_stops(monkeypatch):
     monkeypatch.setattr(module, "gh_json", fake_json)
     with pytest.raises(SystemExit, match="could not be moved"):
         module.open_setup_pr(RepoSpec(key="ACME", repo="acme/shop"), {".github/workflows/pr-review.yml": "x"})
+
+
+def test_open_setup_pr_retargets_an_open_pr_on_another_base(monkeypatch):
+    module = _connect_repo()
+    calls = []
+
+    def fake_json(args, payload=None, check=False):
+        calls.append((args, payload))
+        path = args[0]
+        if path.endswith("/git/ref/heads/develop"):
+            return {"object": {"sha": "dev-sha"}}
+        if path.endswith("/git/refs") and "POST" in args:
+            return None
+        if "/pulls?head=" in path:
+            return [{"number": 7, "base": {"ref": "main"}, "html_url": "https://github.com/acme/shop/pull/7"}]
+        if path.endswith("/pulls/7") and "PATCH" in args:
+            return {"number": 7}
+        if "/contents/" in path and "PUT" in args:
+            return {"content": {}}
+        return None
+
+    monkeypatch.setattr(module, "gh_json", fake_json)
+    url = module.open_setup_pr(RepoSpec(key="ACME", repo="acme/shop", branch="develop"), {".github/workflows/pr-review.yml": "x"})
+    assert url == "https://github.com/acme/shop/pull/7"
+    assert ([f"repos/acme/shop/pulls/7", "-X", "PATCH"], {"base": "develop"}) in calls
+    assert not [a for a, _ in calls if a[0].endswith("/git/refs/heads/bigas-setup")]
+
+
+def test_unreadable_workflow_file_warns_instead_of_passing():
+    project = Project(key="ACME", name="Acme", repo="acme/shop", base_branch="main", deploy_workflows=["deploy.yml"])
+
+    def fetch(path):
+        if path in ("/repos/acme/shop", "/repos/acme/shop/branches/main"):
+            return 200, {"permissions": {"push": True}}
+        if "/contents/" in path:
+            return 200, {"content": "%%% not base64 %%%"}
+        return 404, None
+
+    checks = {(c.id, c.status) for c in github_checks([project], fetch)}
+    assert ("gh_pr_review", "warn") in checks
+    assert ("gh_deploy", "warn") in checks
+
+
+def test_release_load_error_is_not_shown_as_no_version():
+    from bigas.cockpit import build_cockpit
+
+    payload = build_cockpit(
+        boards=[{"board_id": "b1", "project_key": "VFA"}],
+        tickets_by_board={"b1": []},
+        threads=[],
+        projects=[{"key": "VFA", "name": "VC Field Assistant"}],
+        releases_by_project={"VFA": None},
+    )
+    row = payload["ship"][0]
+    assert row["release_error"] is True
+    assert row["version"] == ""

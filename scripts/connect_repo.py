@@ -106,7 +106,19 @@ def open_setup_pr(spec: RepoSpec, files: dict) -> Optional[str]:
         # new PR does not start from a stale commit.
         owner = repo.split("/")[0]
         open_prs = gh_json([f"repos/{repo}/pulls?head={owner}:{SETUP_BRANCH}&state=open"], check=False)
-        if not (isinstance(open_prs, list) and open_prs):
+        if isinstance(open_prs, list) and open_prs and isinstance(open_prs[0], dict):
+            pr = open_prs[0]
+            if ((pr.get("base") or {}).get("ref") or spec.branch) != spec.branch:
+                retargeted = gh_json(
+                    [f"repos/{repo}/pulls/{pr.get('number')}", "-X", "PATCH"], {"base": spec.branch}, check=False
+                )
+                if retargeted is None:
+                    raise SystemExit(
+                        f"✗ {repo}: the open {SETUP_BRANCH} PR targets {pr['base']['ref']} and could not be "
+                        f"moved to {spec.branch}. Close it and rerun."
+                    )
+                print(f"  ~ open {SETUP_BRANCH} PR now targets {spec.branch}")
+        else:
             moved = gh_json(
                 [f"repos/{repo}/git/refs/heads/{SETUP_BRANCH}", "-X", "PATCH"],
                 {"sha": sha, "force": True},

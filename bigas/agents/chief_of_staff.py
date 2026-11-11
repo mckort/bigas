@@ -232,7 +232,6 @@ CONSULT_SPECIALIST_TOOL = {
     },
 }
 
-DELEGATE_TOOL_DEFS = [CONSULT_SPECIALIST_TOOL]
 
 DELEGATE_MAP = {
     "consult_specialist": None,

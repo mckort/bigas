@@ -271,7 +271,9 @@ function ShipCard({ row, busy, onCommand, onOpenChat, onReview }) {
       </div>
       <p className="text-xs text-muted mt-1">
         {row.mode === 'versioned'
-          ? row.version
+          ? row.release_error
+            ? 'Could not load releases. The cockpit retries every 15 seconds.'
+            : row.version
             ? `Version ${row.version} · ${row.cut_count} card${row.cut_count === 1 ? '' : 's'} in the cut`
             : row.state === 'idle'
               ? 'No open version. Create one under Releases on the board.'
@@ -477,6 +479,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const [comment, setComment] = useState('')
   const [toast, setToast] = useState(null)
   const toastTimer = useRef(null)
+  useEffect(() => () => clearTimeout(toastTimer.current), [])
 
   const load = useCallback(async () => {
     try {

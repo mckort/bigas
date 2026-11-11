@@ -20,6 +20,7 @@ PR_REVIEW_PATH = ".github/workflows/pr-review.yml"
 VERSIONED_WORKFLOWS = ("cherry_pick.yml", "rebase_release.yml")
 WEBHOOK_PATH = "/mcp/tools/github_workflow_run"
 _PLACEHOLDER_MARKERS = ("your_", "_here", "changeme")
+UNREADABLE = "\x00unreadable\x00"  # _file() result for a file GitHub returned but we could not decode
 
 
 @dataclass
@@ -289,7 +290,9 @@ def _file(fetch: Fetcher, repo: str, path: str, ref: str) -> Optional[str]:
     try:
         return base64.b64decode(body.get("content") or "").decode("utf-8", "replace")
     except (ValueError, TypeError):
-        return ""
+        # Present but unreadable: keep it distinct from an empty file so
+        # content checks warn instead of passing on "".
+        return UNREADABLE
 
 
 def github_checks(projects: List[Project], fetch: Fetcher, *, bigas_url: str = "") -> List[Check]:
@@ -340,7 +343,11 @@ def github_checks(projects: List[Project], fetch: Fetcher, *, bigas_url: str = "
             continue
 
         caller = _file(fetch, p.repo, PR_REVIEW_PATH, p.base_branch)
-        if caller is None:
+        if caller == UNREADABLE:
+            checks.append(
+                Check("gh_pr_review", "warn", f"{p.repo}: could not read {PR_REVIEW_PATH}; check it by hand.", project=p.key)
+            )
+        elif caller is None:
             checks.append(
                 Check("gh_pr_review", "fail", f"{p.repo}: no {PR_REVIEW_PATH} on {p.base_branch}.", connect, p.key)
             )
@@ -364,7 +371,11 @@ def github_checks(projects: List[Project], fetch: Fetcher, *, bigas_url: str = "
         for wf in p.deploy_workflows:
             repo = p.deploy_repo or p.repo
             text = _file(fetch, repo, f".github/workflows/{wf}", "HEAD")
-            if text is None:
+            if text == UNREADABLE:
+                checks.append(
+                    Check("gh_deploy", "warn", f"{repo}: could not read {wf}; check it by hand.", project=p.key)
+                )
+            elif text is None:
                 checks.append(
                     Check(
                         "gh_deploy",

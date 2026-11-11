@@ -282,7 +282,9 @@ def _ship_rows(
         key = _norm_key(project.get("key"))
         if not key or key in seen:
             continue
-        release = _default_release(releases_by_project.get(key, []))
+        releases = releases_by_project.get(key, [])
+        release_error = releases is None
+        release = None if release_error else _default_release(releases)
         version = (release or {}).get("name") or ""
         cut = [
             t
@@ -299,6 +301,7 @@ def _ship_rows(
                 "mode": "versioned",
                 "version": version,
                 "cut_count": len(cut),
+                "release_error": release_error,
                 "commands": [{"label": "Prepare deploy", "prompt": prompt}],
                 **_state(key),
             }
@@ -397,6 +400,7 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
             releases_by_project[key] = list_releases(key)
         except Exception:
             logger.warning("Cockpit could not list releases for %s", key, exc_info=True)
+            releases_by_project[key] = None  # shown as an error, not as "no version"
     # Only show deploy targets the user has a board for. Built-in staging
     # environments exist for every install, so they need the same filter.
     projects = [p for p in projects if (p.get("key") or "").upper() in board_keys]
