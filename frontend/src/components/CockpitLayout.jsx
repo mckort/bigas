@@ -91,7 +91,8 @@ function itemSub(item) {
   }
   const parts = [item.label]
   if (item.risk_level) parts.push(`risk ${item.risk_level}`)
-  if (item.open_ticket_keys?.length) parts.push(`${item.open_ticket_keys.length} open cards`)
+  const open = item.open_ticket_keys?.length || 0
+  if (open) parts.push(`${open} open card${open === 1 ? '' : 's'}`)
   return parts.join(' · ')
 }
 
@@ -461,7 +462,13 @@ function DeployDetail({ item }) {
           <b>Open cards in this version:</b> {item.open_ticket_keys.join(', ')}
         </p>
       )}
-      {item.extra_commit_count > 0 && <p>{item.extra_commit_count} commits are not linked to a card.</p>}
+      {item.extra_commit_count > 0 && (
+        <p>
+          {item.extra_commit_count === 1
+            ? '1 commit is not linked to a card.'
+            : `${item.extra_commit_count} commits are not linked to a card.`}
+        </p>
+      )}
       <p className="text-muted">
         Confirming sends <b>yes</b> to the DevOps thread, exactly as typing it in chat. Open the chat to read the full risk report first.
       </p>

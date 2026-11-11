@@ -382,7 +382,7 @@ def test_open_setup_pr_retargets_an_open_pr_on_another_base(monkeypatch):
     monkeypatch.setattr(module, "gh_json", fake_json)
     url = module.open_setup_pr(RepoSpec(key="ACME", repo="acme/shop", branch="develop"), {".github/workflows/pr-review.yml": "x"})
     assert url == "https://github.com/acme/shop/pull/7"
-    assert ([f"repos/acme/shop/pulls/7", "-X", "PATCH"], {"base": "develop"}) in calls
+    assert (["repos/acme/shop/pulls/7", "-X", "PATCH"], {"base": "develop"}) in calls
     assert not [a for a, _ in calls if a[0].endswith("/git/refs/heads/bigas-setup")]
 
 
