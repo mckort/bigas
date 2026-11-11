@@ -383,8 +383,10 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
             releases_by_project[key] = list_releases(key)
         except Exception:
             logger.warning("Cockpit could not list releases for %s", key, exc_info=True)
-    # Only show versioned deploy targets the user has a board for.
+    # Only show deploy targets the user has a board for. Built-in staging
+    # environments exist for every install, so they need the same filter.
     projects = [p for p in projects if (p.get("key") or "").upper() in board_keys]
+    command_groups = [g for g in command_groups if (g.get("key") or "").upper() in board_keys]
 
     return build_cockpit(
         boards=boards,

@@ -1,3 +1,5 @@
+import { featureEnabled } from '../lib/features'
+
 const TABS = [
   {
     id: 'cockpit',
@@ -51,6 +53,7 @@ const TABS = [
 
 export default function MobileNav({ activeView, onSwitchView }) {
   if (!onSwitchView) return null
+  const tabs = TABS.filter((tab) => tab.id !== 'objectives' || featureEnabled('objectives'))
 
   return (
     <nav
@@ -58,7 +61,7 @@ export default function MobileNav({ activeView, onSwitchView }) {
       aria-label="Main navigation"
     >
       <div className="flex items-stretch justify-around max-w-lg mx-auto">
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const isActive = activeView === tab.id
           return (
             <button

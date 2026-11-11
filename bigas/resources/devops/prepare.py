@@ -2115,7 +2115,7 @@ def list_shortcut_projects() -> List[Dict[str, str]]:
     keys = jira_project_keys() or list(DEFAULT_BRAND_NAMES.keys())
 
     return [
-        {"key": key, "name": DEFAULT_BRAND_NAMES.get(key) or brand_name(key) or key}
+        {"key": key, "name": brand_name(key)}
         for key in keys
         if resolve_deploy_target(project_key=key)
     ]

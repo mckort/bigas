@@ -1,6 +1,7 @@
 """Agent chat orchestration — Chief of Staff routing and specialist agents."""
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -297,7 +298,52 @@ MUST_DELEGATE_TOOLS = {
 }
 
 
+def _active_specialist_ids() -> Tuple[str, ...]:
+    from bigas.features import hidden_agent_ids
+
+    hidden = hidden_agent_ids()
+    return tuple(s for s in SPECIALIST_IDS if s not in hidden)
+
+
+def _specialist_capabilities() -> str:
+    """SPECIALIST_CAPABILITIES without specialists whose area is switched off."""
+    from bigas.features import hidden_agent_ids
+
+    hidden = hidden_agent_ids()
+    if not hidden:
+        return SPECIALIST_CAPABILITIES
+    lines = [
+        line
+        for line in SPECIALIST_CAPABILITIES.split("\n")
+        if not any(line.startswith(f"- {agent}:") for agent in hidden)
+    ]
+    return "\n".join(lines)
+
+
+def _consult_specialist_tool() -> Dict[str, Any]:
+    """CONSULT_SPECIALIST_TOOL limited to specialists whose area is on."""
+    active = _active_specialist_ids()
+    if active == SPECIALIST_IDS:
+        return CONSULT_SPECIALIST_TOOL
+    tool = copy.deepcopy(CONSULT_SPECIALIST_TOOL)
+    fn = tool["function"]
+    fn["description"] = "\n".join(
+        line
+        for line in fn["description"].split("\n")
+        if not (line.startswith("- ") and line[2:].split(":", 1)[0] not in active)
+    )
+    fn["parameters"]["properties"]["specialist"]["enum"] = list(active)
+    return tool
+
+
 def _resolve_delegate_target(raw: Optional[str]) -> Optional[str]:
+    target = _resolve_delegate_target_any(raw)
+    if target and target not in _active_specialist_ids():
+        return None
+    return target
+
+
+def _resolve_delegate_target_any(raw: Optional[str]) -> Optional[str]:
     compact = re.sub(r"[\s\-]+", "_", (raw or "").strip().lower())
     if not compact:
         return None
@@ -324,8 +370,10 @@ def _dedupe_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _chief_callable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Chief has access to all tools - model reasons about when to delegate."""
-    return _dedupe_tools(tools)
+    """Chief has every tool of an enabled area - the model reasons about when to delegate."""
+    from bigas.features import filter_tools
+
+    return _dedupe_tools(filter_tools(tools))
 
 
 def _mcp_tool_to_openai_def(tool: Dict[str, Any]) -> Dict[str, Any]:
@@ -350,7 +398,7 @@ def _chief_native_extra() -> str:
         "2. Reason about whether you can help directly or if a specialist's expertise would add value\n"
         "3. Use tools when you need live data or to take action\n"
         "4. Synthesize results into a human-friendly reply — never paste tool JSON\n\n"
-        f"{SPECIALIST_CAPABILITIES}\n"
+        f"{_specialist_capabilities()}\n"
         "When involving specialists, use consult_specialist with clear reasoning about why their "
         "expertise matters for this task.\n\n"
         "Tool tips:\n"
@@ -487,8 +535,10 @@ def _mcp_client() -> MCPClient:
 
 
 def _filter_tools_for_agent(tools: List[Dict[str, Any]], agent_id: str) -> List[Dict[str, Any]]:
-    """Return all tools for the agent - no longer filters by domain."""
-    return _dedupe_tools(tools)
+    """Return every tool of an enabled area - no longer filters by domain."""
+    from bigas.features import filter_tools
+
+    return _dedupe_tools(filter_tools(tools))
 
 
 def _with_bookkeeping_figures(agent_id: str, message: str) -> str:
@@ -1509,7 +1559,7 @@ def handle_chat_message(
             user_message=llm_user_message,
             tools=callable_tools,
             history=history,
-            extra_openai_tools=list(DELEGATE_TOOL_DEFS),
+            extra_openai_tools=[_consult_specialist_tool()],
             user_id=user_id,
             run_tool=lambda name, args: _dispatch_chief_tool(
                 name,

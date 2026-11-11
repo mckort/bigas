@@ -268,11 +268,19 @@ def _site_to_project() -> Dict[str, str]:
     return mapping
 
 
+def project_name_map() -> Dict[str, str]:
+    """Project key → display name. ``BIGAS_PROJECT_NAME_MAP=ACME:Acme Shop,DOCS:Docs site``."""
+    out = dict(DEFAULT_BRAND_NAMES)
+    parsed = parse_csv_map(os.environ.get("BIGAS_PROJECT_NAME_MAP") or "")
+    out.update({k.strip().upper(): v.strip() for k, v in parsed.items() if v.strip()})
+    return out
+
+
 def brand_name(project_key: Optional[str]) -> str:
     key = (project_key or "").strip().upper()
     if not key:
         return "Unknown brand"
-    return DEFAULT_BRAND_NAMES.get(key) or key
+    return project_name_map().get(key) or key
 
 
 def site_urls_for_project(project_key: Optional[str]) -> List[str]:
@@ -290,6 +298,9 @@ def project_aliases(project_key: str) -> List[str]:
     key = (project_key or "").strip().upper()
     aliases = [key.lower(), key]
     aliases.extend(DEFAULT_PROJECT_ALIASES.get(key, []))
+    custom_name = project_name_map().get(key)
+    if custom_name and custom_name != key:
+        aliases.append(custom_name.lower())
     repo = repo_map().get(key) or ""
     if repo:
         aliases.append(repo.lower())

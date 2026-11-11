@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 
+from bigas.features import features_payload, filter_agents
 from flask import Blueprint, g, jsonify, request, send_file, send_from_directory
 
 from bigas.access import require_bigas_access_key
@@ -70,6 +71,7 @@ def auth_config():
                 "projectId": os.environ.get("VITE_FIREBASE_PROJECT_ID") or os.environ.get("FIREBASE_PROJECT_ID"),
             },
             "analytics": {"measurementId": measurement_id} if measurement_id else {},
+            "features": features_payload(),
         }
     )
 
@@ -78,7 +80,7 @@ def auth_config():
 @require_chat_auth
 def list_agents():
     store = get_chat_store()
-    return jsonify({"agents": store.list_agents()})
+    return jsonify({"agents": filter_agents(store.list_agents())})
 
 
 @chat_bp.route("/api/chat/projects", methods=["GET"])

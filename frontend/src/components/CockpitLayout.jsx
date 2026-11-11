@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { addTicketComment, fetchCockpit, fetchTicket, sendMessage, updateTicket } from '../lib/api'
 import { WEEKLY_ACTIONS, cursorPrompt, sendToAgent, timeAgo } from '../lib/cockpit'
+import { featureEnabled } from '../lib/features'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
 
@@ -719,9 +720,11 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           <button type="button" onClick={() => onSwitchView('chat')} className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex">
             Chat
           </button>
-          <button type="button" onClick={() => onSwitchView('objectives')} className="text-sm btn-ghost px-3 py-2 hidden lg:inline-flex">
-            Objectives
-          </button>
+          {featureEnabled('objectives') && (
+            <button type="button" onClick={() => onSwitchView('objectives')} className="text-sm btn-ghost px-3 py-2 hidden lg:inline-flex">
+              Objectives
+            </button>
+          )}
           <ThemeToggle />
           <SettingsButton onClick={onOpenSettings} />
           <button type="button" onClick={onLogout} className="hidden lg:inline-flex text-sm text-muted px-2 min-h-[44px] items-center">

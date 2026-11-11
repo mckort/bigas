@@ -9,6 +9,7 @@ import AgentSettings from './components/AgentSettings'
 import MobileNav from './components/MobileNav'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
+import { featureEnabled } from './lib/features'
 
 function currentPath() {
   return window.location.pathname || '/'
@@ -36,7 +37,7 @@ function isAppPath(path) {
 
 function initialView(path = currentPath()) {
   if (isBoardPath(path)) return 'board'
-  if (isObjectivesPath(path)) return 'objectives'
+  if (isObjectivesPath(path)) return featureEnabled('objectives') ? 'objectives' : 'cockpit'
   if (isCockpitPath(path)) return 'cockpit'
   return 'chat'
 }
@@ -193,7 +194,7 @@ export default function App() {
 
   return (
     <>
-      {view === 'cockpit' ? (
+      {view === 'cockpit' || (view === 'objectives' && !featureEnabled('objectives')) ? (
         <CockpitLayout
           user={user}
           onLogout={handleLogout}

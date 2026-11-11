@@ -45,6 +45,7 @@ import { ticketFixVersion, ticketMatchesReleaseFilter } from '../lib/releases'
 import { linkify } from '../lib/linkify'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
+import { featureEnabled } from '../lib/features'
 
 const SYSTEM_COMMENT_MARKER = '[bigas-jira-ai]'
 
@@ -2180,13 +2181,15 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
             >
               Cockpit
             </button>
-            <button
-              type="button"
-              onClick={() => onSwitchView('objectives')}
-              className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
-            >
-              Objectives
-            </button>
+            {featureEnabled('objectives') && (
+              <button
+                type="button"
+                onClick={() => onSwitchView('objectives')}
+                className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
+              >
+                Objectives
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onSwitchView('chat')}

@@ -9,6 +9,7 @@ import {
 
 import ThemeToggle from './ThemeToggle'
 import BoardEmailOutreach from './BoardEmailOutreach'
+import { featureEnabled } from '../lib/features'
 
 export function SettingsButton({ onClick }) {
   return (
@@ -284,7 +285,7 @@ export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSy
           <p className="text-[11px] text-muted leading-relaxed">
             Upload subscribers, describe the email, and generate a draft you can edit before sending.
           </p>
-          <BoardEmailOutreach boards={boards} />
+          {featureEnabled('outreach') && <BoardEmailOutreach boards={boards} />}
         </section>
       </div>
     </div>
