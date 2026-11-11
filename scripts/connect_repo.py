@@ -97,7 +97,27 @@ def open_setup_pr(spec: RepoSpec, files: dict) -> Optional[str]:
     if not base:
         raise SystemExit(f"✗ {repo}: branch {spec.branch} not found. Pass --branch <default branch>.")
     sha = base["object"]["sha"]
-    gh_json([f"repos/{repo}/git/refs", "-X", "POST"], {"ref": f"refs/heads/{SETUP_BRANCH}", "sha": sha}, check=False)
+    created = gh_json(
+        [f"repos/{repo}/git/refs", "-X", "POST"], {"ref": f"refs/heads/{SETUP_BRANCH}", "sha": sha}, check=False
+    )
+    if created is None:
+        # bigas-setup is left from an earlier run. With an open PR, keep it and
+        # update its files. Otherwise move it to the current base branch so the
+        # new PR does not start from a stale commit.
+        owner = repo.split("/")[0]
+        open_prs = gh_json([f"repos/{repo}/pulls?head={owner}:{SETUP_BRANCH}&state=open"], check=False)
+        if not (isinstance(open_prs, list) and open_prs):
+            moved = gh_json(
+                [f"repos/{repo}/git/refs/heads/{SETUP_BRANCH}", "-X", "PATCH"],
+                {"sha": sha, "force": True},
+                check=False,
+            )
+            if moved is None:
+                raise SystemExit(
+                    f"✗ {repo}: branch {SETUP_BRANCH} exists and could not be moved to {spec.branch}. "
+                    f"Delete it on GitHub and rerun."
+                )
+            print(f"  ~ {SETUP_BRANCH} reset to the tip of {spec.branch}")
 
     changed = 0
     for path, content in files.items():

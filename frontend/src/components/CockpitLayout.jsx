@@ -132,6 +132,14 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
     if (d.x0 == null) return
     d.dx = e.clientX - d.x0
     if (Math.abs(d.dx) > 8) {
+      if (!d.moved) {
+        // Capture only once it is a swipe, so taps still reach the row's buttons.
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          /* pointer already released */
+        }
+      }
       d.moved = true
       if (rowRef.current) rowRef.current.style.transform = `translateX(${d.dx}px)`
     }
@@ -309,6 +317,16 @@ function ShipCard({ row, busy, onCommand, onOpenChat, onReview }) {
 }
 
 function Drawer({ open, title, onClose, children, footer }) {
+  useEffect(() => {
+    if (!open) return undefined
+    const { body } = document
+    const previous = body.style.overflow
+    body.style.overflow = 'hidden'
+    return () => {
+      body.style.overflow = previous
+    }
+  }, [open])
+
   useEffect(() => {
     if (!open) return undefined
     const onKey = (e) => {

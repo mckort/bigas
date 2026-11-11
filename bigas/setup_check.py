@@ -268,7 +268,11 @@ def github_fetcher(token: str) -> Fetcher:
     )
 
     def fetch(path: str) -> tuple:
-        resp = session.get(f"https://api.github.com{path}", timeout=20)
+        try:
+            resp = session.get(f"https://api.github.com{path}", timeout=20)
+        except requests.RequestException as exc:
+            # Status 0 = no HTTP response; checks report it instead of crashing.
+            return 0, {"error": f"{type(exc).__name__}: {exc}"[:200]}
         try:
             body = resp.json()
         except ValueError:
@@ -296,6 +300,18 @@ def github_checks(projects: List[Project], fetch: Fetcher, *, bigas_url: str = "
             continue
         connect = f"python scripts/connect_repo.py --key {p.key} --repo {p.repo} --branch {p.base_branch} --apply"
         status, body = fetch(f"/repos/{p.repo}")
+        if status == 0:
+            error = (body or {}).get("error") or "no response"
+            checks.append(
+                Check(
+                    "gh_repo",
+                    "fail",
+                    f"{p.repo}: could not reach GitHub ({error}).",
+                    "Check the network and retry, or run with --offline for config checks only.",
+                    p.key,
+                )
+            )
+            continue
         if status != 200:
             checks.append(
                 Check(

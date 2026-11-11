@@ -162,6 +162,8 @@ def test_open_setup_pr_distinguishes_no_change_from_create_failure(monkeypatch):
     def pushed(args, payload=None, check=False):
         if args[0].endswith("/heads/main"):
             return {"object": {"sha": "abc"}}
+        if args[0].endswith("/git/refs"):
+            return {"ref": "refs/heads/bigas-setup"}
         if "PUT" in args:
             return {"content": {"sha": "def"}}
         if "/pulls" in args[0] and "POST" in args:
@@ -218,6 +220,8 @@ def test_apply_reports_pr_and_webhook_failures(monkeypatch, tmp_path, capsys):
         path = args[0]
         if path.endswith("/heads/main"):
             return {"object": {"sha": "abc"}}
+        if path.endswith("/git/refs"):
+            return {"ref": "refs/heads/bigas-setup"}
         if "PUT" in args:
             return {"content": {"path": path}}
         if path.endswith("/hooks") and "POST" in args:
@@ -281,3 +285,76 @@ def test_apply_stops_when_gh_cannot_set_the_secret(monkeypatch, tmp_path, capsys
     assert "could not set secret BIGAS_API_KEY: HTTP 403" in out
     assert "secret-key" not in out
     assert [c[:2] for c in calls] == [["variable", "set"], ["secret", "set"]]
+
+
+def test_github_fetcher_reports_network_errors(monkeypatch):
+    import requests
+
+    from bigas.setup_check import github_fetcher
+
+    def boom(self, url, timeout=None):
+        raise requests.ConnectionError("connection refused")
+
+    monkeypatch.setattr(requests.Session, "get", boom)
+    fetch = github_fetcher("token")
+    status, body = fetch("/repos/acme/shop")
+    assert status == 0
+    assert "ConnectionError" in body["error"]
+
+    project = Project(key="ACME", name="Acme", repo="acme/shop", base_branch="main")
+    checks = github_checks([project], fetch)
+    assert [(c.id, c.status) for c in checks] == [("gh_repo", "fail")]
+    assert "could not reach GitHub" in checks[0].message
+
+
+def _setup_pr_fake(open_prs, patch_result):
+    calls = []
+
+    def fake_json(args, payload=None, check=False):
+        calls.append((args, payload))
+        path = args[0]
+        if path.endswith("/git/ref/heads/main"):
+            return {"object": {"sha": "base-sha"}}
+        if path.endswith("/git/refs") and "POST" in args:
+            return None  # bigas-setup already exists
+        if "/pulls?head=" in path:
+            return open_prs
+        if path.endswith("/git/refs/heads/bigas-setup") and "PATCH" in args:
+            return patch_result
+        if "/contents/" in path and "PUT" in args:
+            return {"content": {}}
+        if "/pulls" in path and "POST" in args:
+            return {"html_url": "https://github.com/acme/shop/pull/9"}
+        return None
+
+    return calls, fake_json
+
+
+def test_existing_setup_branch_is_reset_when_no_pr_is_open(monkeypatch):
+    module = _connect_repo()
+    calls, fake_json = _setup_pr_fake(open_prs=[], patch_result={"object": {"sha": "base-sha"}})
+    monkeypatch.setattr(module, "gh_json", fake_json)
+    spec = RepoSpec(key="ACME", repo="acme/shop")
+    url = module.open_setup_pr(spec, {".github/workflows/pr-review.yml": "x"})
+    assert url == "https://github.com/acme/shop/pull/9"
+    patch = [p for a, p in calls if "PATCH" in a]
+    assert patch == [{"sha": "base-sha", "force": True}]
+
+
+def test_existing_setup_branch_with_open_pr_is_kept(monkeypatch):
+    module = _connect_repo()
+    calls, fake_json = _setup_pr_fake(
+        open_prs=[{"html_url": "https://github.com/acme/shop/pull/3"}], patch_result=None
+    )
+    monkeypatch.setattr(module, "gh_json", fake_json)
+    spec = RepoSpec(key="ACME", repo="acme/shop")
+    module.open_setup_pr(spec, {".github/workflows/pr-review.yml": "x"})
+    assert not [a for a, _ in calls if "PATCH" in a]
+
+
+def test_setup_branch_that_cannot_move_stops(monkeypatch):
+    module = _connect_repo()
+    _calls, fake_json = _setup_pr_fake(open_prs=[], patch_result=None)
+    monkeypatch.setattr(module, "gh_json", fake_json)
+    with pytest.raises(SystemExit, match="could not be moved"):
+        module.open_setup_pr(RepoSpec(key="ACME", repo="acme/shop"), {".github/workflows/pr-review.yml": "x"})
