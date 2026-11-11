@@ -6,8 +6,12 @@ already exists — board tickets and devops chat-thread state — and adds no
 new storage.
 
 Needs you
-    Tickets in a manual column (Description, Design, Final approval) and
-    devops threads waiting for a yes/no deploy confirm.
+    Tickets waiting for a description or plan approval (they block the AI)
+    and devops threads waiting for a yes/no deploy confirm.
+Sign-off
+    Tickets in Final approval: shipped, waiting to be marked done. Kept out
+    of "Needs you" because nothing is blocked on them; closed in bulk with
+    ``close_signoff``.
 AI working
     Tickets in an AI column and devops threads with a running pipeline poll.
 Ship
@@ -17,6 +21,7 @@ Ship
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from bigas.tickets.constants import (
@@ -101,6 +106,7 @@ def _ticket_items(
 ) -> Dict[str, List[Dict[str, Any]]]:
     needs: List[Dict[str, Any]] = []
     working: List[Dict[str, Any]] = []
+    signoff: List[Dict[str, Any]] = []
     for board in boards:
         project_key = (board.get("project_key") or "").strip().upper()
         if not project_key:
@@ -114,7 +120,7 @@ def _ticket_items(
             slim = _slim_ticket(ticket, board)
             if status in MANUAL_STEPS:
                 step = MANUAL_STEPS[status]
-                needs.append(
+                (signoff if step["kind"] == "final" else needs).append(
                     {
                         "id": f"ticket:{slim['ticket_id']}",
                         "type": "ticket",
@@ -136,7 +142,7 @@ def _ticket_items(
                         "ticket": slim,
                     }
                 )
-    return {"needs": needs, "working": working}
+    return {"needs": needs, "working": working, "signoff": signoff}
 
 
 def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -221,6 +227,25 @@ def _default_release(releases: Iterable[Dict[str, Any]]) -> Optional[Dict[str, A
     return open_releases[0] if open_releases else None
 
 
+# Ship card progress: Review → Build (merge or staging) → Confirm → Deploy → Done.
+SHIP_STEPS = ("Review", "Build", "Confirm", "Deploy", "Done")
+STEP_REVIEW, STEP_BUILD, STEP_CONFIRM, STEP_DEPLOY = 0, 1, 2, 3
+PHASE_STEPS = {
+    # versioned prepare deploy (pending_prepare_poll)
+    "wait_review_workflow": STEP_REVIEW,
+    "wait_actions_review": STEP_REVIEW,
+    "autofix": STEP_REVIEW,
+    "wait_merge": STEP_BUILD,
+    # staging rehearsal (pending_deploy_poll)
+    "review_autofix": STEP_REVIEW,
+    "prepare_staging": STEP_BUILD,
+    "update_staging": STEP_BUILD,
+    "teardown": STEP_BUILD,
+    "backup": STEP_DEPLOY,
+    "deploy_production": STEP_DEPLOY,
+}
+
+
 def _ship_rows(
     *,
     boards: Iterable[Dict[str, Any]],
@@ -255,11 +280,21 @@ def _ship_rows(
     def _state(key: str) -> Dict[str, Any]:
         item = waiting_by_key.get(key)
         if item:
-            return {"state": "waiting", "detail": item["label"], "thread_id": item["thread_id"]}
+            return {
+                "state": "waiting",
+                "detail": item["label"],
+                "thread_id": item["thread_id"],
+                "step": STEP_CONFIRM,
+            }
         item = running_by_key.get(key)
         if item:
-            return {"state": "running", "detail": item["stage"], "thread_id": item["thread_id"]}
-        return {"state": "idle", "detail": "", "thread_id": ""}
+            return {
+                "state": "running",
+                "detail": item["stage"],
+                "thread_id": item["thread_id"],
+                "step": PHASE_STEPS.get(item.get("phase") or "", STEP_REVIEW),
+            }
+        return {"state": "idle", "detail": "", "thread_id": "", "step": None}
 
     rows: List[Dict[str, Any]] = []
     for group in command_groups:
@@ -311,6 +346,72 @@ def _ship_rows(
     return rows
 
 
+# A card that has sat in an AI column this long has almost certainly stopped:
+# research and planning take minutes, implement at most a couple of hours.
+STUCK_AFTER = timedelta(hours=24)
+PIPELINE_STUCK_AFTER = timedelta(hours=6)
+WEEK = timedelta(days=7)
+
+
+def _parse_time(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _split_stuck(items: List[Dict[str, Any]], now: datetime) -> tuple:
+    running, stuck = [], []
+    for item in items:
+        since = _parse_time(item.get("since"))
+        limit = PIPELINE_STUCK_AFTER if item.get("type") == "pipeline" else STUCK_AFTER
+        if since and now - since > limit:
+            stuck.append({**item, "stuck": True})
+        else:
+            running.append(item)
+    return running, stuck
+
+
+def _week_stats(
+    boards: Iterable[Dict[str, Any]],
+    tickets_by_board: Dict[str, List[Dict[str, Any]]],
+    releases_by_project: Dict[str, Optional[List[Dict[str, Any]]]],
+    now: datetime,
+) -> Dict[str, Any]:
+    """Cards that reached Final approval or Done, and releases shipped, in the last 7 days.
+
+    Tickets carry no status history, so a card counts by its last update while
+    in a shipped column. Good enough for a weekly glance.
+    """
+    since = now - WEEK
+    shipped: Dict[str, int] = {}
+    for board in boards:
+        key = (board.get("project_key") or "").strip().upper()
+        if not key:
+            continue
+        for t in tickets_by_board.get(board.get("board_id") or "", []):
+            if (t.get("issue_type") or "") in ("Epic", "Objective"):
+                continue
+            updated = _parse_time(t.get("updated_at"))
+            if updated and updated >= since and is_in_release_cut(t.get("status") or "", project_key=key):
+                shipped[key] = shipped.get(key, 0) + 1
+    releases = []
+    for key, items in (releases_by_project or {}).items():
+        for r in items or []:
+            at = _parse_time(r.get("released_at"))
+            if r.get("released") and at and at >= since:
+                releases.append(f"{key} {r.get('name') or ''}".strip())
+    return {
+        "shipped": sum(shipped.values()),
+        "shipped_by_project": shipped,
+        "releases": sorted(releases),
+    }
+
+
 def _sort_by_since(items: List[Dict[str, Any]], *, newest_first: bool) -> List[Dict[str, Any]]:
     return sorted(items, key=lambda i: str(i.get("since") or ""), reverse=newest_first)
 
@@ -323,13 +424,19 @@ def build_cockpit(
     projects: Optional[List[Dict[str, Any]]] = None,
     command_groups: Optional[List[Dict[str, Any]]] = None,
     releases_by_project: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Assemble the cockpit payload from already-loaded data (pure function)."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     ticket_items = _ticket_items(boards, tickets_by_board)
     deploy_items = _deploy_items(threads)
     # Deploy confirms first (they hold maintenance windows), then oldest cards.
     needs = deploy_items["needs"] + _sort_by_since(ticket_items["needs"], newest_first=False)
-    working = deploy_items["working"] + _sort_by_since(ticket_items["working"], newest_first=True)
+    working, stuck = _split_stuck(
+        deploy_items["working"] + _sort_by_since(ticket_items["working"], newest_first=True), now
+    )
     ship = _ship_rows(
         boards=boards,
         tickets_by_board=tickets_by_board,
@@ -338,12 +445,75 @@ def build_cockpit(
         releases_by_project=releases_by_project or {},
         deploy_items=deploy_items,
     )
+    signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
     return {
         "needs": needs,
         "working": working,
+        "stuck": stuck,
+        "signoff": signoff,
         "ship": ship,
-        "counts": {"needs": len(needs), "working": len(working)},
+        "ship_steps": list(SHIP_STEPS),
+        "week": _week_stats(boards, tickets_by_board, releases_by_project or {}, now),
+        "counts": {
+            "needs": len(needs),
+            "working": len(working),
+            "stuck": len(stuck),
+            "signoff": len(signoff),
+        },
     }
+
+
+MAX_SIGNOFF_BATCH = 500
+
+
+def close_signoff(user_id: str, ticket_ids: List[str]) -> Dict[str, Any]:
+    """Move Final approval tickets to Done in one go.
+
+    Each ticket is marked ``done_processed`` first, so the per-ticket Done note
+    to the Product thread is skipped; one summary is posted instead.
+    """
+    from bigas.chat.activity import mirror_to_activity_feed, post_to_agent_thread
+    from bigas.tickets.service import TicketService
+    from bigas.tickets.store import get_ticket_store
+
+    store = get_ticket_store()
+    service = TicketService()
+    closed: List[str] = []
+    skipped: List[Dict[str, str]] = []
+    for ticket_id in list(dict.fromkeys(ticket_ids))[:MAX_SIGNOFF_BATCH]:
+        ticket = store.get_ticket(ticket_id)
+        if not ticket:
+            skipped.append({"ticket_id": ticket_id, "reason": "not found"})
+            continue
+        board = store.get_board(ticket.get("board_id") or "") or {}
+        key = ticket.get("key") or ticket_id
+        if board.get("user_id") != user_id:
+            skipped.append({"ticket_id": ticket_id, "reason": "not yours"})
+            continue
+        project_key = (board.get("project_key") or "").upper()
+        status = resolve_column_status(ticket.get("status") or "", project_key=project_key or None)
+        if status != "Final approval (manual)":
+            skipped.append({"ticket_id": ticket_id, "key": key, "reason": f"in {ticket.get('status')}"})
+            continue
+        try:
+            store.update_ticket(ticket_id, done_processed=True)
+            service.update_ticket(
+                ticket_id, user_id=user_id, previous_status=ticket.get("status"), status="Done"
+            )
+            closed.append(key)
+        except Exception as exc:  # keep going; report per ticket
+            logger.warning("Cockpit sign-off failed for %s", key, exc_info=True)
+            skipped.append({"ticket_id": ticket_id, "key": key, "reason": str(exc)[:120]})
+
+    if closed:
+        shown = ", ".join(closed[:20]) + (f" and {len(closed) - 20} more" if len(closed) > 20 else "")
+        msg = f"Marked {len(closed)} shipped card{'s' if len(closed) != 1 else ''} done from the cockpit: {shown}."
+        try:
+            mirror_to_activity_feed(msg, type_="ticket", source="product")
+            post_to_agent_thread("product", f"Progress note: {msg}")
+        except Exception:
+            logger.warning("Cockpit sign-off summary was not posted", exc_info=True)
+    return {"closed": closed, "skipped": skipped}
 
 
 def load_cockpit(user_id: str) -> Dict[str, Any]:

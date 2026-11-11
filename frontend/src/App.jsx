@@ -27,19 +27,24 @@ function isCockpitPath(path) {
   return path === '/cockpit' || path.startsWith('/cockpit/')
 }
 
+function isChatPath(path) {
+  return path === '/chat' || path.startsWith('/chat/')
+}
+
 function isLoginPath(path) {
   return path === '/login' || path.startsWith('/login/')
 }
 
 function isAppPath(path) {
-  return isBoardPath(path) || isObjectivesPath(path) || isCockpitPath(path)
+  return isBoardPath(path) || isObjectivesPath(path) || isCockpitPath(path) || isChatPath(path)
 }
 
 function initialView(path = currentPath()) {
   if (isBoardPath(path)) return 'board'
   if (isObjectivesPath(path)) return featureEnabled('objectives') ? 'objectives' : 'cockpit'
-  if (isCockpitPath(path)) return 'cockpit'
-  return 'chat'
+  if (isChatPath(path)) return 'chat'
+  // Signed in, `/` and anything unknown open the cockpit (signed out, `/` is the landing page).
+  return 'cockpit'
 }
 
 export default function App() {
@@ -116,7 +121,7 @@ export default function App() {
           ? '/objectives'
           : next === 'cockpit'
             ? '/cockpit'
-            : '/'
+            : '/chat'
     const search =
       next === 'board' && isBoardPath(window.location.pathname)
         ? window.location.search
