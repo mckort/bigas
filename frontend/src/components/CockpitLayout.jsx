@@ -9,6 +9,8 @@ import ThemeToggle from './ThemeToggle'
 
 const POLL_MS = 15000
 const SWIPE_PX = 90
+// The click that follows a touch swipe must not open the row. It arrives after pointerup.
+const SWIPE_CLICK_MS = 400
 const SYSTEM_COMMENT_MARKER = '[bigas-jira-ai]'
 
 const KIND_STYLE = {
@@ -95,16 +97,34 @@ function itemSub(item) {
 
 function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
   const rowRef = useRef(null)
-  const drag = useRef({ x0: null, dx: 0, moved: false })
+  const drag = useRef({ x0: null, dx: 0, moved: false, suppressUntil: 0 })
   const style = KIND_STYLE[item.kind] || KIND_STYLE.design
   const canSendBack = item.type === 'ticket'
 
   const reset = () => {
-    if (rowRef.current) rowRef.current.style.transform = ''
+    const moved = drag.current.moved
+    drag.current.x0 = null
+    drag.current.dx = 0
+    drag.current.moved = false
+    if (moved) drag.current.suppressUntil = Date.now() + SWIPE_CLICK_MS
+    if (rowRef.current) {
+      rowRef.current.style.transition = ''
+      rowRef.current.style.transform = ''
+    }
+  }
+  const swallowClick = () => {
+    if (drag.current.moved || Date.now() < drag.current.suppressUntil) {
+      drag.current.moved = false
+      drag.current.suppressUntil = 0
+      return true
+    }
+    return false
   }
   const onPointerDown = (e) => {
     if (e.pointerType === 'mouse' || busy) return
-    drag.current = { x0: e.clientX, dx: 0, moved: false }
+    drag.current.x0 = e.clientX
+    drag.current.dx = 0
+    drag.current.moved = false
     if (rowRef.current) rowRef.current.style.transition = 'none'
   }
   const onPointerMove = (e) => {
@@ -119,17 +139,10 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
   const onPointerEnd = () => {
     const d = drag.current
     if (d.x0 == null) return
-    d.x0 = null
-    if (rowRef.current) rowRef.current.style.transition = ''
-    if (d.dx > SWIPE_PX) {
-      reset()
-      onPrimary(item)
-    } else if (d.dx < -SWIPE_PX && canSendBack) {
-      reset()
-      onSendBack(item)
-    } else {
-      reset()
-    }
+    const dx = d.dx
+    reset()
+    if (dx > SWIPE_PX) onPrimary(item)
+    else if (dx < -SWIPE_PX && canSendBack) onSendBack(item)
   }
 
   return (
@@ -141,10 +154,7 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
       <div
         ref={rowRef}
         onClick={() => {
-          if (drag.current.moved) {
-            drag.current.moved = false
-            return
-          }
+          if (swallowClick()) return
           onOpen(item)
         }}
         onPointerDown={onPointerDown}
@@ -159,10 +169,7 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
           type="button"
           onClick={(e) => {
             e.stopPropagation()
-            if (drag.current.moved) {
-              drag.current.moved = false
-              return
-            }
+            if (swallowClick()) return
             onOpen(item)
           }}
           className="min-w-0 flex-1 text-left rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
@@ -570,13 +577,12 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   }
 
   const copyCursor = async (ticket) => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+      showToast('Could not copy. Your browser blocked the clipboard.')
+      return
+    }
     try {
-      const copied = navigator.clipboard?.writeText(cursorPrompt(ticket))
-      if (!copied) {
-        showToast('Could not copy. Your browser blocked the clipboard.')
-        return
-      }
-      await copied
+      await navigator.clipboard.writeText(cursorPrompt(ticket))
       showToast('Cursor prompt copied. Paste it into Cursor.')
     } catch {
       showToast('Could not copy. Your browser blocked the clipboard.')
