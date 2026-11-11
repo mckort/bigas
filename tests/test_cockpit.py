@@ -61,15 +61,17 @@ def test_manual_columns_become_needs_with_next_and_back_columns():
         threads=[],
     )
     by_key = {item["ticket"]["key"]: item for item in payload["needs"]}
-    assert set(by_key) == {"VFA-1", "VFA-2", "VFA-3"}
+    assert set(by_key) == {"VFA-1", "VFA-2"}
     assert by_key["VFA-1"]["approve_status"] == "Design and plan (AI)"
     assert by_key["VFA-1"]["send_back_status"] == "Research and describe (AI)"
     assert by_key["VFA-2"]["approve_status"] == "In Progress (AI)"
-    assert by_key["VFA-3"]["approve_status"] == "Done"
-    assert by_key["VFA-3"]["send_back_status"] == "In Progress (AI)"
     # Oldest waiting card first.
-    assert [i["ticket"]["key"] for i in payload["needs"]] == ["VFA-1", "VFA-2", "VFA-3"]
-    assert payload["counts"]["needs"] == 3
+    assert [i["ticket"]["key"] for i in payload["needs"]] == ["VFA-1", "VFA-2"]
+    assert payload["counts"]["needs"] == 2
+    # Final approval is shipped work: listed apart, not as something blocking.
+    assert [i["ticket"]["key"] for i in payload["signoff"]] == ["VFA-3"]
+    assert payload["signoff"][0]["approve_status"] == "Done"
+    assert payload["counts"]["signoff"] == 1
 
 
 def test_ai_columns_become_working_and_epics_are_skipped():
@@ -213,7 +215,7 @@ def test_load_cockpit_degrades_when_board_list_fails(monkeypatch):
     assert payload["needs"] == []
     assert payload["working"] == []
     assert payload["ship"] == []
-    assert payload["counts"] == {"needs": 0, "working": 0}
+    assert payload["counts"] == {"needs": 0, "working": 0, "signoff": 0}
 
 
 @pytest.fixture
@@ -261,3 +263,52 @@ def test_cockpit_spa_route_is_served(client, monkeypatch):
     assert client.get("/cockpit").status_code != 403
     assert client.get("/chat").status_code != 403
     assert client.get("/api/cockpit", headers=_auth()).status_code == 200
+
+
+def test_sign_off_closes_final_approval_cards_with_one_note(client, monkeypatch):
+    import bigas.chat.activity as activity
+
+    notes = []
+    monkeypatch.setattr(activity, "post_to_agent_thread", lambda agent, text, **kw: notes.append((agent, text)))
+    monkeypatch.setattr(activity, "mirror_to_activity_feed", lambda *a, **kw: None)
+
+    boards = client.get("/api/boards", headers=_auth()).get_json()["boards"]
+    board = next(b for b in boards if b.get("project_key"))
+    ids = []
+    for title, status in (
+        ("Shipped A", "Final approval (manual)"),
+        ("Shipped B", "Final approval (manual)"),
+        ("Still planning", "Design approval (manual)"),
+    ):
+        resp = client.post(
+            f"/api/boards/{board['board_id']}/tickets",
+            headers=_auth(),
+            data=json.dumps({"title": title, "status": status}),
+        )
+        ids.append(resp.get_json()["ticket"]["ticket_id"])
+
+    body = client.get("/api/cockpit", headers=_auth()).get_json()
+    assert body["counts"]["signoff"] == 2
+    assert all(i["ticket"]["title"] != "Shipped A" for i in body["needs"])
+
+    resp = client.post("/api/cockpit/sign-off", headers=_auth(), data=json.dumps({"ticket_ids": ids}))
+    assert resp.status_code == 200
+    result = resp.get_json()
+    assert len(result["closed"]) == 2
+    assert [s["reason"] for s in result["skipped"]] == ["in Design approval (manual)"]
+
+    for ticket_id in ids[:2]:
+        ticket = client.get(f"/api/tickets/{ticket_id}", headers=_auth()).get_json()["ticket"]
+        assert ticket["status"] == "Done"
+    # One summary note for the batch, none per card.
+    product_notes = [text for agent, text in notes if agent == "product"]
+    assert len(product_notes) == 1
+    assert "Marked 2 shipped cards done" in product_notes[0]
+    assert client.get("/api/cockpit", headers=_auth()).get_json()["counts"]["signoff"] == 0
+
+
+def test_sign_off_validates_input(client):
+    for payload in ({}, {"ticket_ids": []}, {"ticket_ids": "abc"}, {"ticket_ids": [1]}):
+        resp = client.post("/api/cockpit/sign-off", headers=_auth(), data=json.dumps(payload))
+        assert resp.status_code == 400
+    assert client.post("/api/cockpit/sign-off", data=json.dumps({"ticket_ids": ["x"]})).status_code == 401

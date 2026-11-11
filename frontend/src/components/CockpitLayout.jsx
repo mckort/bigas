@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { addTicketComment, fetchCockpit, fetchTicket, sendMessage, updateTicket } from '../lib/api'
+import { addTicketComment, fetchCockpit, fetchTicket, sendMessage, signOffTickets, updateTicket } from '../lib/api'
 import { WEEKLY_ACTIONS, cursorPrompt, sendToAgent, timeAgo } from '../lib/cockpit'
 import { featureEnabled } from '../lib/features'
 import { SettingsButton } from './AgentSettings'
@@ -522,14 +522,47 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     })
 
   const dropNeed = (id) =>
-    setData((prev) =>
-      prev ? { ...prev, needs: prev.needs.filter((n) => n.id !== id), counts: { ...prev.counts, needs: Math.max(0, (prev.counts?.needs || 1) - 1) } } : prev,
-    )
+    setData((prev) => {
+      if (!prev) return prev
+      const nextNeeds = prev.needs.filter((n) => n.id !== id)
+      const nextSignoff = (prev.signoff || []).filter((n) => n.id !== id)
+      return {
+        ...prev,
+        needs: nextNeeds,
+        signoff: nextSignoff,
+        counts: { ...prev.counts, needs: nextNeeds.length, signoff: nextSignoff.length },
+      }
+    })
+
+
 
   const closeDrawer = useCallback(() => {
     setDrawer(null)
     setComment('')
   }, [])
+
+  const [showSignoff, setShowSignoff] = useState(false)
+  const closeAllSignoff = useCallback(
+    async (items) => {
+      setBusy('signoff:all', true)
+      try {
+        const res = await signOffTickets(items.map((i) => i.ticket.ticket_id))
+        const closed = res.closed?.length || 0
+        const skipped = res.skipped?.length || 0
+        setData((prev) => (prev ? { ...prev, signoff: [], counts: { ...prev.counts, signoff: 0 } } : prev))
+        closeDrawer()
+        showToast(
+          `Marked ${closed} card${closed === 1 ? '' : 's'} done${skipped ? ` · ${skipped} skipped (moved elsewhere)` : ''}`,
+        )
+        setTimeout(load, 500)
+      } catch (err) {
+        showToast(err.message || 'Could not mark the cards done')
+      } finally {
+        setBusy('signoff:all', false)
+      }
+    },
+    [closeDrawer, load, showToast],
+  )
 
   const moveTicket = useCallback(
     async (item, status, { note = '', message }) => {
@@ -618,6 +651,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   }
 
   const needs = data?.needs || []
+  const signoff = data?.signoff || []
   const working = data?.working || []
   const ship = data?.ship || []
   const counts = { needs: needs.length, working: working.length }
@@ -698,6 +732,44 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         </button>
         <button type="button" disabled={busy} onClick={() => answerDeploy(item, 'yes')} className="btn-accent text-sm px-3">
           {item.action && item.action !== 'deploy' ? 'Confirm' : 'Deploy'}
+        </button>
+      </>
+    )
+  } else if (drawer?.type === 'signoff-all') {
+    const items = data?.signoff || []
+    drawerTitle = `Mark ${items.length} shipped card${items.length === 1 ? '' : 's'} done`
+    drawerBody = (
+      <div className="space-y-3 text-sm">
+        <p>
+          These cards are merged and in production, waiting in <b>Final approval</b>. Marking them done moves them to
+          the Done column. Nothing is deployed or reverted.
+        </p>
+        <p className="text-muted">
+          One note goes to the Product thread for the whole batch, instead of one per card. Cards still count toward their
+          release.
+        </p>
+        <p className="text-xs text-muted">
+          {items
+            .slice(0, 12)
+            .map((i) => i.ticket.key)
+            .join(', ')}
+          {items.length > 12 ? ` and ${items.length - 12} more` : ''}
+        </p>
+      </div>
+    )
+    drawerFooter = (
+      <>
+        <span className="flex-1" />
+        <button type="button" onClick={closeDrawer} className="btn-secondary text-sm px-3">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={busyIds.has('signoff:all')}
+          onClick={() => closeAllSignoff(items)}
+          className="btn-accent text-sm px-3"
+        >
+          {busyIds.has('signoff:all') ? 'Marking…' : `Mark ${items.length} done`}
         </button>
       </>
     )
@@ -831,6 +903,48 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                 />
               ))}
             </ul>
+            {signoff.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span aria-hidden="true" className="text-green-600 dark:text-green-400">✓</span>
+                  <span className="text-sm">
+                    <b>{signoff.length}</b> shipped card{signoff.length === 1 ? '' : 's'} waiting for sign-off
+                  </span>
+                  <div className="ml-auto flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowSignoff((v) => !v)}
+                      aria-expanded={showSignoff}
+                      className="btn-ghost text-xs px-2.5 py-1 min-h-[32px]"
+                    >
+                      {showSignoff ? 'Hide' : 'Show'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDrawer({ type: 'signoff-all' })}
+                      className="btn-secondary text-xs px-2.5 py-1 min-h-[32px]"
+                    >
+                      Mark all done
+                    </button>
+                  </div>
+                </div>
+                {showSignoff && (
+                  <ul className="mt-1">
+                    {signoff.map((item) => (
+                      <NeedRow
+                        key={item.id}
+                        item={item}
+                        now={now}
+                        busy={busyIds.has(item.id)}
+                        onOpen={openNeed}
+                        onPrimary={primaryNeed}
+                        onSendBack={sendBackNeed}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </Section>
 
           <Section id="working" title="AI working" count={data ? counts.working : null} mobileTab={tab}>

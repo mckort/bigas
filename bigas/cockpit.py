@@ -6,8 +6,12 @@ already exists — board tickets and devops chat-thread state — and adds no
 new storage.
 
 Needs you
-    Tickets in a manual column (Description, Design, Final approval) and
-    devops threads waiting for a yes/no deploy confirm.
+    Tickets waiting for a description or plan approval (they block the AI)
+    and devops threads waiting for a yes/no deploy confirm.
+Sign-off
+    Tickets in Final approval: shipped, waiting to be marked done. Kept out
+    of "Needs you" because nothing is blocked on them; closed in bulk with
+    ``close_signoff``.
 AI working
     Tickets in an AI column and devops threads with a running pipeline poll.
 Ship
@@ -101,6 +105,7 @@ def _ticket_items(
 ) -> Dict[str, List[Dict[str, Any]]]:
     needs: List[Dict[str, Any]] = []
     working: List[Dict[str, Any]] = []
+    signoff: List[Dict[str, Any]] = []
     for board in boards:
         project_key = (board.get("project_key") or "").strip().upper()
         if not project_key:
@@ -114,7 +119,7 @@ def _ticket_items(
             slim = _slim_ticket(ticket, board)
             if status in MANUAL_STEPS:
                 step = MANUAL_STEPS[status]
-                needs.append(
+                (signoff if step["kind"] == "final" else needs).append(
                     {
                         "id": f"ticket:{slim['ticket_id']}",
                         "type": "ticket",
@@ -136,7 +141,7 @@ def _ticket_items(
                         "ticket": slim,
                     }
                 )
-    return {"needs": needs, "working": working}
+    return {"needs": needs, "working": working, "signoff": signoff}
 
 
 def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -338,12 +343,67 @@ def build_cockpit(
         releases_by_project=releases_by_project or {},
         deploy_items=deploy_items,
     )
+    signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
     return {
         "needs": needs,
         "working": working,
+        "signoff": signoff,
         "ship": ship,
-        "counts": {"needs": len(needs), "working": len(working)},
+        "counts": {"needs": len(needs), "working": len(working), "signoff": len(signoff)},
     }
+
+
+MAX_SIGNOFF_BATCH = 500
+
+
+def close_signoff(user_id: str, ticket_ids: List[str]) -> Dict[str, Any]:
+    """Move Final approval tickets to Done in one go.
+
+    Each ticket is marked ``done_processed`` first, so the per-ticket Done note
+    to the Product thread is skipped; one summary is posted instead.
+    """
+    from bigas.chat.activity import mirror_to_activity_feed, post_to_agent_thread
+    from bigas.tickets.service import TicketService
+    from bigas.tickets.store import get_ticket_store
+
+    store = get_ticket_store()
+    service = TicketService()
+    closed: List[str] = []
+    skipped: List[Dict[str, str]] = []
+    for ticket_id in list(dict.fromkeys(ticket_ids))[:MAX_SIGNOFF_BATCH]:
+        ticket = store.get_ticket(ticket_id)
+        if not ticket:
+            skipped.append({"ticket_id": ticket_id, "reason": "not found"})
+            continue
+        board = store.get_board(ticket.get("board_id") or "") or {}
+        key = ticket.get("key") or ticket_id
+        if board.get("user_id") != user_id:
+            skipped.append({"ticket_id": ticket_id, "reason": "not yours"})
+            continue
+        project_key = (board.get("project_key") or "").upper()
+        status = resolve_column_status(ticket.get("status") or "", project_key=project_key or None)
+        if status != "Final approval (manual)":
+            skipped.append({"ticket_id": ticket_id, "key": key, "reason": f"in {ticket.get('status')}"})
+            continue
+        try:
+            store.update_ticket(ticket_id, done_processed=True)
+            service.update_ticket(
+                ticket_id, user_id=user_id, previous_status=ticket.get("status"), status="Done"
+            )
+            closed.append(key)
+        except Exception as exc:  # keep going; report per ticket
+            logger.warning("Cockpit sign-off failed for %s", key, exc_info=True)
+            skipped.append({"ticket_id": ticket_id, "key": key, "reason": str(exc)[:120]})
+
+    if closed:
+        shown = ", ".join(closed[:20]) + (f" and {len(closed) - 20} more" if len(closed) > 20 else "")
+        msg = f"Marked {len(closed)} shipped card{'s' if len(closed) != 1 else ''} done from the cockpit: {shown}."
+        try:
+            mirror_to_activity_feed(msg, type_="ticket", source="product")
+            post_to_agent_thread("product", f"Progress note: {msg}")
+        except Exception:
+            logger.warning("Cockpit sign-off summary was not posted", exc_info=True)
+    return {"closed": closed, "skipped": skipped}
 
 
 def load_cockpit(user_id: str) -> Dict[str, Any]:

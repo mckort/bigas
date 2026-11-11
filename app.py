@@ -227,6 +227,7 @@ def create_app():
             or path == "/chat"
             or path.startswith("/chat/")
             or path == "/api/cockpit"
+            or path.startswith("/api/cockpit/")
             or path.startswith("/api/x-posts")
             or path.startswith("/api/qa-proposals")
             or path.startswith("/eval/reports/")

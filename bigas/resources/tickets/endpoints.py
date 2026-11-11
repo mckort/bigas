@@ -615,3 +615,18 @@ def cockpit():
     from bigas.cockpit import load_cockpit
 
     return jsonify(load_cockpit(g.chat_user["uid"]))
+
+
+@tickets_bp.route("/api/cockpit/sign-off", methods=["POST"])
+@require_chat_auth
+def cockpit_sign_off():
+    """Mark Final approval tickets done in bulk (one summary note, not one per card)."""
+    from bigas.cockpit import MAX_SIGNOFF_BATCH, close_signoff
+
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ticket_ids")
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i for i in ids):
+        return jsonify({"error": "ticket_ids must be a non-empty list of ids"}), 400
+    if len(ids) > MAX_SIGNOFF_BATCH:
+        return jsonify({"error": f"at most {MAX_SIGNOFF_BATCH} tickets per call"}), 400
+    return jsonify(close_signoff(g.chat_user["uid"], ids))
