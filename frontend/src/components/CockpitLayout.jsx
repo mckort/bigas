@@ -738,7 +738,19 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         const res = await signOffTickets(items.map((i) => i.ticket.ticket_id))
         const closed = res.closed?.length || 0
         const skipped = res.skipped?.length || 0
-        setData((prev) => (prev ? { ...prev, signoff: [], counts: { ...prev.counts, signoff: 0 } } : prev))
+        const closedIds = new Set(Array.isArray(res.closed) ? res.closed : [])
+        setData((prev) => {
+          if (!prev) return prev
+          const nextSignoff = (prev.signoff || []).filter((item) => {
+            const ticket = item.ticket || {}
+            return !closedIds.has(ticket.key) && !closedIds.has(ticket.ticket_id)
+          })
+          return {
+            ...prev,
+            signoff: nextSignoff,
+            counts: { ...prev.counts, signoff: nextSignoff.length },
+          }
+        })
         closeDrawer()
         showToast(
           `Marked ${closed} card${closed === 1 ? '' : 's'} done${skipped ? ` · ${skipped} skipped (moved elsewhere)` : ''}`,
@@ -866,14 +878,27 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
 
   const retryStuck = async (item) => {
     const status = item.ticket.status
+    const column = String(status || 'its column').replace(' (AI)', '')
     setBusy(item.id, true)
+    let movedToTodo = false
     try {
       await updateTicket(item.ticket.ticket_id, { status: 'To Do' })
+      movedToTodo = true
       await updateTicket(item.ticket.ticket_id, { status })
       showToast(`${item.ticket.key} restarted in ${item.stage.toLowerCase()}`)
       setTimeout(load, 500)
     } catch (err) {
-      showToast(err.message || 'Could not restart the card')
+      if (!movedToTodo) {
+        showToast(err.message || 'Could not restart the card')
+      } else {
+        try {
+          await updateTicket(item.ticket.ticket_id, { status })
+          showToast(`${item.ticket.key} restarted in ${item.stage.toLowerCase()}`)
+          setTimeout(load, 500)
+        } catch {
+          showToast(`${item.ticket.key} stayed in To Do. Move it back to ${column}.`)
+        }
+      }
     } finally {
       setBusy(item.id, false)
     }
@@ -1022,7 +1047,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       </>
     )
   } else if (drawer?.type === 'signoff-all') {
-    const items = data?.signoff || []
+    const items = drawer.items || signoff
     drawerTitle = `Mark ${items.length} shipped card${items.length === 1 ? '' : 's'} done`
     drawerBody = (
       <div className="space-y-3 text-sm">
@@ -1237,7 +1262,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDrawer({ type: 'signoff-all' })}
+                      onClick={() => setDrawer({ type: 'signoff-all', items: signoff })}
                       className="btn-secondary text-xs px-2.5 py-1 min-h-[32px]"
                     >
                       Mark all done
