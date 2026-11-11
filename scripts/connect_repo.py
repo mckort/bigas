@@ -234,8 +234,16 @@ def main() -> int:
     exit_code = 0
     url = ""
     if not args.skip_github:
-        gh(["variable", "set", "BIGAS_URL", "--repo", spec.repo, "--body", bigas_url])
-        gh(["secret", "set", "BIGAS_API_KEY", "--repo", spec.repo], input_text=access_key)
+        for label, cmd, stdin in (
+            ("variable BIGAS_URL", ["variable", "set", "BIGAS_URL", "--repo", spec.repo, "--body", bigas_url], None),
+            ("secret BIGAS_API_KEY", ["secret", "set", "BIGAS_API_KEY", "--repo", spec.repo], access_key),
+        ):
+            proc = gh(cmd, input_text=stdin, check=False)
+            if proc.returncode != 0:
+                reason = (proc.stderr or proc.stdout or "").strip().splitlines()[-1:] or ["unknown error"]
+                print(f"✗ {spec.repo}: could not set {label}: {reason[0]}")
+                print("  The gh account needs admin on the repo (gh auth status). Nothing else was changed on GitHub.")
+                return 1
         print(f"✓ Set BIGAS_URL and BIGAS_API_KEY on {spec.repo}")
         url = open_setup_pr(spec, files)
         if url is None:

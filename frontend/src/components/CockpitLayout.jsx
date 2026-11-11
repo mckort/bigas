@@ -611,7 +611,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     drawerFooter = (
       <>
         <button type="button" onClick={() => copyCursor(item.ticket)} className="btn-secondary text-sm px-3">
-          Open in Cursor
+          Copy Cursor prompt
         </button>
         <button
           type="button"

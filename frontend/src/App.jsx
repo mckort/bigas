@@ -90,6 +90,13 @@ export default function App() {
   }, [ready, user, locationPath])
 
   useEffect(() => {
+    if (user && isObjectivesPath(locationPath) && !featureEnabled('objectives')) {
+      syncPath('/cockpit', { replace: true })
+      setView('cockpit')
+    }
+  }, [user, locationPath])
+
+  useEffect(() => {
     if (user && isLoginPath(locationPath)) {
       syncPath('/cockpit', { replace: true })
       setView('cockpit')

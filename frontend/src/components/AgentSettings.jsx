@@ -280,13 +280,15 @@ export default function AgentSettings({ open, onClose, onAgentsUpdated, onJiraSy
           {syncMessage && <p className="text-sm text-muted">{syncMessage}</p>}
         </section>
 
-        <section className="mt-8 pt-6 border-t border-border space-y-3">
-          <h3 className="text-sm font-medium">Marketing email outreach</h3>
-          <p className="text-[11px] text-muted leading-relaxed">
-            Upload subscribers, describe the email, and generate a draft you can edit before sending.
-          </p>
-          {featureEnabled('outreach') && <BoardEmailOutreach boards={boards} />}
-        </section>
+        {featureEnabled('outreach') && (
+          <section className="mt-8 pt-6 border-t border-border space-y-3">
+            <h3 className="text-sm font-medium">Marketing email outreach</h3>
+            <p className="text-[11px] text-muted leading-relaxed">
+              Upload subscribers, describe the email, and generate a draft you can edit before sending.
+            </p>
+            <BoardEmailOutreach boards={boards} />
+          </section>
+        )}
       </div>
     </div>
   )

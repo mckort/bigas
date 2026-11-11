@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 os.environ.setdefault("GA4_PROPERTY_ID", "test-property")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("CHAT_STORAGE_MODE", "memory")
@@ -208,7 +210,9 @@ def test_apply_reports_pr_and_webhook_failures(monkeypatch, tmp_path, capsys):
         ],
     )
     monkeypatch.setattr(module.shutil, "which", lambda _name: "gh")
-    monkeypatch.setattr(module, "gh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module, "gh", lambda args, **kwargs: subprocess.CompletedProcess(["gh", *args], 0, "", "")
+    )
 
     def fake_json(args, payload=None, check=False):
         path = args[0]
@@ -249,3 +253,31 @@ def test_run_checks_counts_unrecognized_status_as_failure(monkeypatch):
     assert report["counts"]["ok"] == 0
     assert report["checks"][0]["status"] == "fail"
     assert "unrecognized status" in report["checks"][0]["message"]
+
+
+def test_apply_stops_when_gh_cannot_set_the_secret(monkeypatch, tmp_path, capsys):
+    module = _connect_repo()
+    env = tmp_path / ".env"
+    env.write_text("BIGAS_PUBLIC_URL=https://bigas.example\nBIGAS_ACCESS_KEYS=secret-key\n")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["connect_repo.py", "--key", "ACME", "--repo", "acme/shop", "--apply", "--skip-env", "--env-file", str(env)],
+    )
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "gh")
+    calls = []
+
+    def fake_gh(args, **kwargs):
+        calls.append(args)
+        failed = args[:2] == ["secret", "set"]
+        return subprocess.CompletedProcess(
+            ["gh", *args], 1 if failed else 0, "", "HTTP 403: Resource not accessible by integration" if failed else ""
+        )
+
+    monkeypatch.setattr(module, "gh", fake_gh)
+    monkeypatch.setattr(module, "gh_json", lambda *a, **k: pytest.fail("no API calls after a failed secret"))
+    assert module.main() == 1
+    out = capsys.readouterr().out
+    assert "could not set secret BIGAS_API_KEY: HTTP 403" in out
+    assert "secret-key" not in out
+    assert [c[:2] for c in calls] == [["variable", "set"], ["secret", "set"]]
