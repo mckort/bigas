@@ -153,7 +153,7 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
             kind = pending.get("kind") or "deploy"
             action = pending.get("action") or "deploy"
             version = pending.get("version") or ""
-            target = pending.get("project_key")
+            target = (pending.get("project_key") or "").upper()
             title = f"Version {version}" if version else "Production deploy"
             if kind == "gpw" and action != "deploy":
                 label = f"Confirm {action.replace('_', ' ')}"
@@ -185,7 +185,7 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
                 {
                     "id": f"pipeline:{thread_id}:deploy",
                     "type": "pipeline",
-                    "project_key": poll.get("project_key"),
+                    "project_key": (poll.get("project_key") or "").upper(),
                     "stage": _GPW_PHASE_LABELS.get(phase, phase.replace("_", " ") or "Running"),
                     "phase": phase,
                     "thread_id": thread_id,
@@ -201,7 +201,7 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
                 {
                     "id": f"pipeline:{thread_id}:prepare",
                     "type": "pipeline",
-                    "project_key": prep.get("project_key"),
+                    "project_key": (prep.get("project_key") or "").upper(),
                     "version": prep.get("version") or "",
                     "stage": _PREPARE_PHASE_LABELS.get(phase, phase.replace("_", " ") or "Preparing"),
                     "phase": phase,
@@ -334,7 +334,11 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
     from bigas.tickets.service import TicketService
 
     service = TicketService()
-    boards = service.list_boards(user_id)
+    try:
+        boards = service.list_boards(user_id)
+    except Exception:
+        logger.warning("Cockpit could not list boards", exc_info=True)
+        boards = []
     tickets_by_board: Dict[str, List[Dict[str, Any]]] = {}
     for board in boards:
         if not (board.get("project_key") or "").strip():

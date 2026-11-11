@@ -162,6 +162,60 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
     assert ship["VFA"]["commands"][0]["prompt"] == "prepare deploy VFA 0.2.4"
 
 
+def test_deploy_project_keys_are_normalized_to_uppercase():
+    payload = build_cockpit(
+        boards=[BOARD],
+        tickets_by_board={"b1": []},
+        threads=[
+            {
+                "thread_id": "t1",
+                "agent_id": "devops",
+                "pending_deploy": {"project_key": "gpw-prod", "version": "1.0"},
+            },
+            {
+                "thread_id": "t2",
+                "agent_id": "devops",
+                "pending_deploy_poll": {"project_key": "vfa", "phase": "backup"},
+            },
+            {
+                "thread_id": "t3",
+                "agent_id": "devops",
+                "pending_prepare_poll": {"project_key": "Big", "phase": "autofix", "version": "0.1"},
+            },
+        ],
+        command_groups=[{"key": "GPW-PROD", "name": "GPW", "commands": []}],
+    )
+    keys = [item["project_key"] for item in payload["needs"] + payload["working"]]
+    assert keys == ["GPW-PROD", "VFA", "BIG"]
+    ship = {row["key"]: row for row in payload["ship"]}
+    assert ship["GPW-PROD"]["state"] == "waiting"
+
+
+def test_load_cockpit_degrades_when_board_list_fails(monkeypatch):
+    class _Service:
+        def list_boards(self, user_id):
+            raise RuntimeError("jira down")
+
+        def list_tickets(self, *args, **kwargs):
+            raise AssertionError("tickets should not be listed")
+
+    monkeypatch.setattr("bigas.tickets.service.TicketService", lambda: _Service())
+    monkeypatch.setattr(
+        "bigas.chat.db.get_chat_store",
+        lambda: type("Store", (), {"list_threads": lambda self, user_id: []})(),
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.list_shortcut_projects", lambda: [])
+    monkeypatch.setattr("bigas.resources.devops.gpw_pipeline.list_gpw_command_shortcuts", lambda: [])
+
+    from bigas.cockpit import load_cockpit
+
+    payload = load_cockpit("user-1")
+    assert payload["needs"] == []
+    assert payload["working"] == []
+    assert payload["ship"] == []
+    assert payload["counts"] == {"needs": 0, "working": 0}
+
+
 @pytest.fixture
 def client(monkeypatch):
     for key in _JIRA_ENV_KEYS:
