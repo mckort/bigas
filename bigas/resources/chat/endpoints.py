@@ -523,7 +523,7 @@ def serve_robots():
         if path.is_file():
             return send_from_directory(folder, "robots.txt", mimetype="text/plain")
     return (
-        "User-agent: *\nAllow: /\nDisallow: /login\nDisallow: /board\nDisallow: /objectives\n",
+        "User-agent: *\nAllow: /\nDisallow: /login\nDisallow: /board\nDisallow: /objectives\nDisallow: /cockpit\n",
         200,
         {"Content-Type": "text/plain; charset=utf-8"},
     )

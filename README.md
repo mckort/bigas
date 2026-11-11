@@ -47,10 +47,11 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)** · Live instan
 
 A running instance is at [bigas.me](https://bigas.me). The site is a short overview; this README is the full product and setup guide.
 
-Three surfaces, one story:
+Four surfaces, one story:
 
 | Surface | Where | Role |
 |---|---|---|
+| **Cockpit** | `/cockpit` | The start page after sign-in. **Needs you** lists cards in a manual approval column and deploys waiting for your yes, with approve and send back (swipe on a phone). **AI working** shows cards in AI columns and running deploy pipelines. **Ship** has one card per deploy target. **This week** runs the PM update, X drafts and CFO report. Reads `GET /api/cockpit`. |
 | **Objectives** | `/objectives` | The quarter's scoreboard. You name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story. |
 | **Board** | `/board` | The default work surface: tickets, columns, releases, and a human-gated AI workflow (research → plan → implement). Jira is optional — connect it only if you already run a Jira board you want to keep. |
 | **Chat** | `/` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |

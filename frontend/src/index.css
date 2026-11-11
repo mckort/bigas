@@ -290,3 +290,26 @@ body {
 .progress-fill {
   @apply absolute inset-y-0 left-0 bg-accent rounded-full transition-all duration-150;
 }
+
+.cockpit-md h1,
+.cockpit-md h2,
+.cockpit-md h3,
+.cockpit-md h4 {
+  font-weight: 600;
+  margin: 0.75rem 0 0.35rem;
+}
+.cockpit-md h1:first-child,
+.cockpit-md h2:first-child,
+.cockpit-md h3:first-child {
+  margin-top: 0;
+}
+.cockpit-md ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+  margin: 0.25rem 0 0.5rem;
+}
+.cockpit-md ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+  margin: 0.25rem 0 0.5rem;
+}

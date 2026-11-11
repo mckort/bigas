@@ -1,5 +1,17 @@
 const TABS = [
   {
+    id: 'cockpit',
+    label: 'Cockpit',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 15a8 8 0 1116 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        <path d="M12 15l4-5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        <circle cx="12" cy="15" r="1.5" fill="currentColor" />
+        <path d="M4 19h16" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     id: 'chat',
     label: 'Chat',
     icon: (

@@ -471,6 +471,13 @@ export default function ObjectivesLayout({ user, onLogout, onSwitchView, onDiscu
         </div>
         <button
           type="button"
+          onClick={() => onSwitchView('cockpit')}
+          className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
+        >
+          Cockpit
+        </button>
+        <button
+          type="button"
           onClick={() => onSwitchView('chat')}
           className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
         >

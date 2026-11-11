@@ -436,3 +436,7 @@ export async function pollBoardCampaign(
   }
   return latest
 }
+
+export async function fetchCockpit() {
+  return apiFetch('/api/cockpit')
+}

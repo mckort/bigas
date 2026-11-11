@@ -606,3 +606,12 @@ def project_release_mark_released(project_key: str, release_id: str):
     except ReleaseError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(result)
+
+
+@tickets_bp.route("/api/cockpit", methods=["GET"])
+@require_chat_auth
+def cockpit():
+    """Start-page read model: what needs you, what the AI is doing, what can ship."""
+    from bigas.cockpit import load_cockpit
+
+    return jsonify(load_cockpit(g.chat_user["uid"]))

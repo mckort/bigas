@@ -1224,6 +1224,8 @@ export default function ChatLayout({
   onOpenBoard,
   discussContext,
   onClearDiscussContext,
+  agentRequest,
+  onClearAgentRequest,
   onOpenSettings,
   agentsRefreshKey = 0,
 }) {
@@ -1391,6 +1393,12 @@ export default function ChatLayout({
     setActiveAgentId('chief')
     onClearDiscussContext?.()
   }, [discussContext, onClearDiscussContext])
+
+  useEffect(() => {
+    if (!agentRequest?.agentId) return
+    setActiveAgentId(agentRequest.agentId)
+    onClearAgentRequest?.()
+  }, [agentRequest, onClearAgentRequest])
 
   useEffect(() => {
     let channel
@@ -1812,6 +1820,13 @@ export default function ChatLayout({
           </button>
           {onSwitchView && (
             <>
+              <button
+                type="button"
+                onClick={() => onSwitchView('cockpit')}
+                className="text-sm btn-ghost px-3 py-2 hidden lg:block"
+              >
+                Cockpit
+              </button>
               <button
                 type="button"
                 onClick={() => onSwitchView('board')}

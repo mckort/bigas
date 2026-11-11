@@ -2175,6 +2175,13 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
             )}
             <button
               type="button"
+              onClick={() => onSwitchView('cockpit')}
+              className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
+            >
+              Cockpit
+            </button>
+            <button
+              type="button"
               onClick={() => onSwitchView('objectives')}
               className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex"
             >
