@@ -2128,9 +2128,20 @@ def test_parse_automation_payload_flat_and_nested():
     assert nested["to_status"] == "Design and plan (AI)"
 
 
+def test_allowed_projects_default_to_board_projects(monkeypatch):
+    monkeypatch.delenv("BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS", raising=False)
+    monkeypatch.delenv("JIRA_PROJECT_KEYS", raising=False)
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "ACME,BIG")
+    assert JiraAutomationConfig.from_env().allowed_projects == ("ACME", "BIG")
+    monkeypatch.setenv("BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS", "BIG")
+    assert JiraAutomationConfig.from_env().allowed_projects == ("BIG",)
+
+
 def test_config_defaults(monkeypatch):
     monkeypatch.setenv("JIRA_AUTOMATION_WEBHOOK_SECRET", "abc")
     monkeypatch.delenv("BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS", raising=False)
+    monkeypatch.delenv("JIRA_PROJECT_KEYS", raising=False)
+    monkeypatch.delenv("JIRA_PROJECT_KEY", raising=False)
     cfg = JiraAutomationConfig.from_env()
     assert cfg.webhook_secret == "abc"
     assert cfg.allowed_projects == (
