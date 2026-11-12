@@ -32,9 +32,31 @@ def empty_ci(*, unavailable: bool = False) -> dict[str, Any]:
     return {"failed": [], "pending": [], "unavailable": unavailable}
 
 
-def is_bigas_review_check(name: str) -> bool:
+# Job ids of .github/workflows/pr-review.yml when this repo runs that file
+# directly. Product repos call it as job `bigas`, so GitHub names those checks
+# `bigas / review`. Bare `gate` and `review` are common job names elsewhere;
+# they count as this workflow only on the repo that runs it directly.
+# The merge wait runs inside `review`, so treating that check as pending
+# deadlocks.
+_IN_REPO_REVIEW_JOBS = frozenset({"gate", "review", "notify_merged"})
+_DIRECT_REVIEW_REPO = "mckort/bigas"
+
+
+def _direct_review_repo() -> str:
+    """owner/repo that triggers pr-review.yml itself, not via workflow_call."""
+    from bigas.portfolio import repo_map
+
+    mapped = (repo_map().get("BIG") or _DIRECT_REVIEW_REPO).strip().lower()
+    return mapped or _DIRECT_REVIEW_REPO
+
+
+def is_bigas_review_check(name: str, *, repo: str = "") -> bool:
     lowered = (name or "").strip().lower()
-    return lowered.startswith("bigas /") or lowered.startswith("bigas/")
+    if lowered.startswith("bigas /") or lowered.startswith("bigas/"):
+        return True
+    if lowered not in _IN_REPO_REVIEW_JOBS:
+        return False
+    return (repo or "").strip().lower() == _direct_review_repo()
 
 
 def is_infrastructure_failure(text: str) -> bool:
@@ -151,7 +173,7 @@ def fetch_head_ci(client: Any, owner: str, repo: str, sha: str) -> dict[str, Any
         if not isinstance(run, dict):
             continue
         name = str(run.get("name") or "check")
-        if is_bigas_review_check(name):
+        if is_bigas_review_check(name, repo=f"{owner}/{repo}"):
             continue
         status = str(run.get("status") or "").strip().lower()
         conclusion = str(run.get("conclusion") or "").strip().lower()

@@ -15,6 +15,8 @@ def test_canonical_workflow_is_reusable_and_moves_tickets_on_merge():
     assert "github.token" in WORKFLOW
     assert "retrying with GH_PAT_FOR_BIGAS" in WORKFLOW
     assert "permissions:" in WORKFLOW
+    # A job `name:` is prefixed by the caller job (`bigas / bigas / review`).
+    assert "name: bigas /" not in WORKFLOW
 
 
 def test_product_repos_should_call_canonical_workflow_not_copy_it():
