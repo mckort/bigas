@@ -32,8 +32,17 @@ def empty_ci(*, unavailable: bool = False) -> dict[str, Any]:
     return {"failed": [], "pending": [], "unavailable": unavailable}
 
 
+# Job ids of .github/workflows/pr-review.yml. In this repo the workflow runs
+# directly, so GitHub names the checks `review`, `gate`, and `notify_merged`.
+# Product repos call it as job `bigas`, so their checks are `bigas / review`.
+# The merge wait runs inside `review`, so treating that check as pending deadlocks.
+_IN_REPO_REVIEW_JOBS = frozenset({"gate", "review", "notify_merged"})
+
+
 def is_bigas_review_check(name: str) -> bool:
     lowered = (name or "").strip().lower()
+    if lowered in _IN_REPO_REVIEW_JOBS:
+        return True
     return lowered.startswith("bigas /") or lowered.startswith("bigas/")
 
 

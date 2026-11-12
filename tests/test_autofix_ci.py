@@ -17,6 +17,9 @@ _CLEAN = (
 
 def test_ignores_bigas_review_jobs_and_billing_failures():
     assert is_bigas_review_check("bigas / review") is True
+    assert is_bigas_review_check("review") is True
+    assert is_bigas_review_check("gate") is True
+    assert is_bigas_review_check("notify_merged") is True
     assert is_bigas_review_check("test") is False
     assert is_infrastructure_failure(
         "The job was not started because your spending limit needs to be increased."

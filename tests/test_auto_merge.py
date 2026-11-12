@@ -705,6 +705,42 @@ def test_maybe_auto_merge_waits_when_tests_pending(
     mock_discord.assert_not_called()
 
 
+@patch("bigas.resources.cto.endpoints._post_to_discord_cto")
+@patch("bigas.resources.cto.endpoints.GitHubPRCommentClient")
+def test_maybe_auto_merge_ignores_its_own_review_check(
+    mock_client_cls, mock_discord, monkeypatch
+):
+    """The in-repo review job is named `review`. Waiting on it deadlocks."""
+    monkeypatch.setenv("BIGAS_CTO_AUTO_MERGE", "true")
+    client = MagicMock()
+    client.get_pull_request.return_value = {
+        "merged": False,
+        "node_id": "PR_x",
+        "title": "BIG-171: Ignore the review check",
+        "head": {"sha": "abc123"},
+    }
+    client.list_commit_check_runs.return_value = [
+        {"name": "review", "status": "in_progress"},
+        {"name": "gate", "status": "completed", "conclusion": "success"},
+    ]
+    client.merge_pull_request.return_value = {
+        "merged": True,
+        "sha": "abc123",
+        "message": "Pull Request successfully merged",
+    }
+    mock_client_cls.return_value = client
+
+    result = _maybe_auto_merge_pr(
+        repo="acme/app",
+        pr_number=12,
+        pr_url="https://github.com/acme/app/pull/12",
+        github_token="tok",
+    )
+
+    assert result.get("merged") is True
+    client.merge_pull_request.assert_called_once()
+
+
 def test_ci_gate_names_clean_checks_passed(monkeypatch):
     states = {
         "passed": {"failed": [], "pending": []},
