@@ -662,7 +662,7 @@ function GoLivePanel({ row, onChanged, showToast }) {
       </div>
       {plan.mode === 'production' && plan.source === 'app' && (
         <p className="text-xs text-muted">
-          Back to development only changes where new AI work goes. The ruleset, workflows, release branches and versions stay.
+          Back to development only changes where new AI work goes. The workflows, release branches and versions stay.
         </p>
       )}
     </div>

@@ -53,7 +53,7 @@ const MODES = [
     points: [
       'Work for each version lands on its own release branch (staging-0.2.0).',
       'Prepare deploy reviews the cut, merges it to main through a PR, deploys and tags v0.2.0.',
-      'main is locked: changes only through a pull request. Hotfixes still go straight to main.',
+      'Once a version is merged to main, new cards move to the next version. Hotfixes still go straight to main.',
     ],
   },
 ]
@@ -130,7 +130,7 @@ const FAQ = [
   },
   {
     q: 'How do I move a project from development to production?',
-    a: 'Click Go to production on its Ship card. Bigas previews the steps, then adds the release workflows, locks main, creates version 0.1.0 and its release branch, and sends new work there.',
+    a: 'Click Go to production on its Ship card. Bigas previews the steps, then adds the release workflows, creates version 0.1.0 and its staging branch, and sends new work there. Prepare deploy merges that branch to main.',
   },
   {
     q: 'Do I need Jira or Google Cloud?',
@@ -359,8 +359,9 @@ export default function Landing({ onSignIn }) {
               ))}
             </div>
             <p className="mt-6 text-sm text-muted max-w-3xl">
-              Go to production adds the release workflows to your repo, locks main, creates version 0.1.0 and its
-              release branch, and sends new work there. It shows every step before it runs.
+              Go to production adds the release workflows to your repo, creates version 0.1.0 and its
+              release branch, and sends new work there. Prepare deploy merges that branch to main. It shows
+              every step before it runs.
             </p>
           </div>
         </section>
