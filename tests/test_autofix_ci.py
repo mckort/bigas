@@ -17,9 +17,15 @@ _CLEAN = (
 
 def test_ignores_bigas_review_jobs_and_billing_failures():
     assert is_bigas_review_check("bigas / review") is True
-    assert is_bigas_review_check("review") is True
-    assert is_bigas_review_check("gate") is True
-    assert is_bigas_review_check("notify_merged") is True
+    assert is_bigas_review_check("bigas / gate") is True
+    assert is_bigas_review_check("bigas/notify_merged") is True
+    assert is_bigas_review_check("review", repo="mckort/bigas") is True
+    assert is_bigas_review_check("gate", repo="mckort/bigas") is True
+    assert is_bigas_review_check("notify_merged", repo="mckort/bigas") is True
+    assert is_bigas_review_check("review") is False
+    assert is_bigas_review_check("gate", repo="acme/app") is False
+    assert is_bigas_review_check("review", repo="acme/app") is False
+    assert is_bigas_review_check("notify_merged", repo="acme/app") is False
     assert is_bigas_review_check("test") is False
     assert is_infrastructure_failure(
         "The job was not started because your spending limit needs to be increased."
@@ -167,6 +173,37 @@ class _CheckRuns:
 
     def get_actions_job_log(self, *args, **kwargs):
         return self.log
+
+
+def test_fetch_head_ci_keeps_foreign_gate_and_review_checks():
+    foreign = fetch_head_ci(
+        _CheckRuns(
+            [
+                {"id": 1, "name": "gate", "status": "completed", "conclusion": "failure"},
+                {"id": 2, "name": "review", "status": "in_progress"},
+            ]
+        ),
+        "acme",
+        "app",
+        "abc",
+    )
+    assert [item["name"] for item in foreign["failed"]] == ["gate"]
+    assert foreign["pending"] == ["review"]
+
+    own = fetch_head_ci(
+        _CheckRuns(
+            [
+                {"id": 3, "name": "gate", "status": "completed", "conclusion": "failure"},
+                {"id": 4, "name": "review", "status": "in_progress"},
+                {"id": 5, "name": "notify_merged", "status": "completed", "conclusion": "failure"},
+            ]
+        ),
+        "mckort",
+        "bigas",
+        "abc",
+    )
+    assert own["failed"] == []
+    assert own["pending"] == []
 
 
 def test_fetch_head_ci_treats_timeout_cancel_and_action_required_as_failures():

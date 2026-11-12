@@ -50,10 +50,10 @@ permissions:
 
 jobs:
   # Human merge, delayed GitHub auto-merge, or any other merge path.
-  # `name` matches the product-repo check (`bigas / …`) so auto-merge ignores
-  # this workflow's own jobs. The job id alone (`notify_merged`) is also ignored.
+  # Leave the job id as the check name. Callers use job `bigas`, so GitHub
+  # reports `bigas / notify_merged`. A job `name:` is prefixed again
+  # (`bigas / bigas / notify_merged`) and required status checks never pass.
   notify_merged:
-    name: bigas / notify_merged
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -97,8 +97,8 @@ jobs:
 
   # Gate runs without concurrency so an autofix push does not cancel the
   # in-flight review/autofix job that owns re-review + merge.
+  # No job `name:` — callers already report this id as `bigas / gate`.
   gate:
-    name: bigas / gate
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     outputs:
@@ -129,10 +129,11 @@ jobs:
           fi
           echo "continue=true" >> "$GITHUB_OUTPUT"
 
-  # Check name must be `bigas / review` (or the job id `review`). Auto-merge
-  # ignores both. Waiting here for this check never finishes: the wait is this job.
+  # Callers see `bigas / review`. This repo runs the file directly, so the
+  # check is `review`. Auto-merge ignores that bare id only on this repo.
+  # Waiting on this check never finishes: the wait is this job.
+  # Do not set `name:`; callers would see `bigas / bigas / review`.
   review:
-    name: bigas / review
     needs: gate
     if: needs.gate.outputs.continue == 'true'
     runs-on: ubuntu-latest
