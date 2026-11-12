@@ -30,7 +30,7 @@ function rememberConsent(value) {
 }
 
 function loadGtag() {
-  if (gtagReady || !measurementId || typeof window === 'undefined') return
+  if (gtagReady || !measurementId || typeof window === 'undefined' || isLocalHost()) return
   window.dataLayer = window.dataLayer || []
   function gtag() {
     window.dataLayer.push(arguments)
@@ -49,7 +49,6 @@ function loadGtag() {
   document.head.appendChild(script)
   gtag('config', measurementId, { send_page_view: false })
   gtagReady = true
-  trackPageView()
 }
 
 export function isoWeekKey(date = new Date()) {
@@ -62,9 +61,11 @@ export function isoWeekKey(date = new Date()) {
 
 export function configureProductAnalytics({ measurementId: id } = {}) {
   const next = (id || '').trim()
-  if (!next || typeof window === 'undefined' || isLocalHost()) return
+  if (!next || typeof window === 'undefined') return
   const previousId = measurementId
   measurementId = next
+  // Keep the id so the consent banner can be exercised on localhost, but do not inject the tag.
+  if (isLocalHost()) return
   if (gtagReady) {
     if (previousId !== next && typeof window.gtag === 'function') {
       window.gtag('config', measurementId, { send_page_view: false })
@@ -77,6 +78,8 @@ export function configureProductAnalytics({ measurementId: id } = {}) {
 export function grantAnalyticsConsent() {
   rememberConsent('granted')
   loadGtag()
+  // First acceptance: App already ran its page-view effect before the tag existed.
+  trackPageView()
 }
 
 export function denyAnalyticsConsent() {
@@ -89,7 +92,7 @@ export function analyticsConsentPending() {
 
 export function trackPageView(path) {
   try {
-    if (!gtagReady || typeof window.gtag !== 'function') return
+    if (isLocalHost() || !gtagReady || typeof window.gtag !== 'function') return
     const pagePath = path || `${window.location.pathname}${window.location.search}`
     window.gtag('event', 'page_view', {
       page_path: pagePath,
