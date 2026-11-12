@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -679,7 +681,11 @@ def test_deploy_freshness_compares_the_production_branch_to_the_last_success(mon
         },
     )
     assert same["ahead"] is False
-    assert same["latest"] == {"version": "v1.4.0", "released_at": "2026-11-02T08:00:00Z"}
+    assert same["latest"] == {
+        "version": "v1.4.0",
+        "tag": "v1.4.0",
+        "released_at": "2026-11-02T08:00:00Z",
+    }
 
     git.branch = "sha-new"
     moved = fetch_deploy_freshness(
@@ -707,6 +713,176 @@ def test_deploy_freshness_compares_the_production_branch_to_the_last_success(mon
         },
     )
     assert cut["ahead"] is True
+
+
+def test_newest_successful_sha_keeps_the_successful_run_timestamp():
+    from bigas.cockpit_freshness import newest_successful_sha
+
+    sha, at = newest_successful_sha(
+        [
+            {"conclusion": "failure", "head_sha": "abc", "updated_at": "2026-11-12T15:00:00Z"},
+            {"conclusion": "success", "head_sha": "abc", "updated_at": "2026-11-12T08:00:00Z"},
+        ]
+    )
+    assert (sha, at) == ("abc", "2026-11-12T08:00:00Z")
+    assert newest_successful_sha([]) == ("", "")
+
+
+def test_workflow_ahead_ignores_a_failed_run_on_the_same_sha(monkeypatch):
+    from types import SimpleNamespace
+
+    from bigas.cockpit_freshness import fetch_deploy_freshness, reset_cache_for_tests
+
+    reset_cache_for_tests()
+
+    class Git:
+        def list_workflow_runs(self, owner, name, workflow, branch=None, limit=10):
+            if workflow == "api.yml":
+                return [
+                    {
+                        "conclusion": "success",
+                        "head_sha": "sha-api",
+                        "updated_at": "2026-11-12T10:00:00Z",
+                    }
+                ]
+            return [
+                {
+                    "conclusion": "failure",
+                    "head_sha": "sha-web",
+                    "updated_at": "2026-11-12T15:00:00Z",
+                },
+                {
+                    "conclusion": "success",
+                    "head_sha": "sha-web",
+                    "updated_at": "2026-11-12T08:00:00Z",
+                },
+            ]
+
+        def get_ref_sha(self, owner, name, ref):
+            return "sha-api"
+
+    target = SimpleNamespace(
+        repo="mckort/app",
+        dispatch_repo="mckort/app",
+        workflows=["web.yml", "api.yml"],
+    )
+    monkeypatch.setattr("bigas.resources.devops.config.resolve_deploy_target", lambda **kwargs: target)
+
+    class Cfg:
+        def base_branch_for_repo(self, repo):
+            return "main"
+
+    monkeypatch.setattr(
+        "bigas.resources.product.jira_automation.config.JiraAutomationConfig.from_env",
+        lambda: Cfg(),
+    )
+
+    result = fetch_deploy_freshness(
+        Git(),
+        {
+            "key": "APP",
+            "mode": "versioned",
+            "release_mode": "development",
+            "version": "",
+            "need_latest": False,
+        },
+    )
+    assert result["ahead"] is False
+
+
+def test_tag_ahead_compares_the_raw_git_tag(monkeypatch):
+    from types import SimpleNamespace
+
+    from bigas.cockpit_freshness import fetch_deploy_freshness, reset_cache_for_tests
+
+    reset_cache_for_tests()
+
+    class Git:
+        def __init__(self):
+            self.bases = []
+
+        def list_releases(self, owner, name, limit=20):
+            return [
+                {
+                    "tag_name": "1.2.3",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-11-02T08:00:00Z",
+                }
+            ]
+
+        def compare_refs(self, owner, name, base, head):
+            self.bases.append((base, head))
+            return {"ahead_by": 2}
+
+    target = SimpleNamespace(
+        repo="acme/mobile",
+        dispatch_repo="acme/deploy",
+        workflows=["deploy.yml"],
+    )
+    monkeypatch.setattr("bigas.resources.devops.config.resolve_deploy_target", lambda **kwargs: target)
+
+    class Cfg:
+        def base_branch_for_repo(self, repo):
+            return "main"
+
+    monkeypatch.setattr(
+        "bigas.resources.product.jira_automation.config.JiraAutomationConfig.from_env",
+        lambda: Cfg(),
+    )
+
+    git = Git()
+    result = fetch_deploy_freshness(
+        git,
+        {
+            "key": "APP",
+            "mode": "versioned",
+            "release_mode": "development",
+            "version": "",
+            "need_latest": True,
+        },
+    )
+    assert git.bases == [("1.2.3", "main")]
+    assert result["ahead"] is True
+    assert result["latest"] == {
+        "version": "v1.2.3",
+        "tag": "1.2.3",
+        "released_at": "2026-11-02T08:00:00Z",
+    }
+
+
+def test_lookup_deploy_freshness_does_not_wait_out_a_hung_worker(monkeypatch):
+    from bigas.cockpit_freshness import lookup_deploy_freshness, reset_cache_for_tests
+
+    reset_cache_for_tests()
+    started = threading.Event()
+    release = threading.Event()
+
+    def fetch(client, spec):
+        if spec.get("key") == "SLOW":
+            started.set()
+            release.wait(20)
+            return {"ahead": True, "latest": None}
+        return {"ahead": False, "latest": None}
+
+    monkeypatch.setattr("bigas.cockpit_freshness.fetch_deploy_freshness", fetch)
+    monkeypatch.setattr("bigas.cockpit_freshness._client", lambda: object())
+
+    specs = [
+        {"key": "FAST", "mode": "versioned", "release_mode": "development", "version": ""},
+        {"key": "SLOW", "mode": "versioned", "release_mode": "development", "version": ""},
+    ]
+    try:
+        t0 = time.monotonic()
+        out = lookup_deploy_freshness(specs)
+        elapsed = time.monotonic() - t0
+    finally:
+        release.set()
+    assert elapsed < 14, elapsed
+    assert started.is_set()
+    assert out["FAST"]["ahead"] is False
+    assert out["SLOW"]["ahead"] is None
+    reset_cache_for_tests()
 
 
 def test_money_summary_without_config(monkeypatch):

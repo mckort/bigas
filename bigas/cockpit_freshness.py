@@ -12,7 +12,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def reset_cache_for_tests() -> None:
 
 
 def lookup_deploy_freshness(specs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """``{PROJECT: {ahead: bool|None, latest: {version, released_at}|None}}``."""
+    """``{PROJECT: {ahead: bool|None, latest: {version, tag, released_at}|None}}``."""
     if not specs:
         return {}
     client = _client()
@@ -56,23 +56,27 @@ def lookup_deploy_freshness(specs: List[Dict[str, Any]]) -> Dict[str, Dict[str, 
             logger.warning("Deploy freshness failed for %s", spec.get("key"), exc_info=True)
             return {"ahead": None, "latest": None}
 
-    with ThreadPoolExecutor(max_workers=min(8, len(missing))) as pool:
+    pool = ThreadPoolExecutor(max_workers=min(8, len(missing)))
+    try:
         futures = {pool.submit(_one, spec): spec for spec in missing}
-        try:
-            for future in as_completed(futures, timeout=8):
-                spec = futures[future]
-                key = (spec.get("key") or "").upper()
-                try:
-                    value = future.result()
-                except Exception:
-                    logger.warning("Deploy freshness failed for %s", key, exc_info=True)
-                    value = {"ahead": None, "latest": None}
-                if not isinstance(value, dict):
-                    value = {"ahead": None, "latest": None}
-                _cache_set(_cache_key(spec), value)
-                out[key] = value
-        except FuturesTimeout:
-            logger.warning("Deploy freshness timed out; ship cards keep the board signal")
+        for future in as_completed(futures, timeout=8):
+            spec = futures[future]
+            key = (spec.get("key") or "").upper()
+            try:
+                value = future.result()
+            except Exception:
+                logger.warning("Deploy freshness failed for %s", key, exc_info=True)
+                value = {"ahead": None, "latest": None}
+            if not isinstance(value, dict):
+                value = {"ahead": None, "latest": None}
+            _cache_set(_cache_key(spec), value)
+            out[key] = value
+    except FuturesTimeout:
+        logger.warning("Deploy freshness timed out; ship cards keep the board signal")
+    finally:
+        # A context-manager shutdown waits for running workers. A hung GitHub
+        # call would then stall the 15-second cockpit poll past this timeout.
+        pool.shutdown(wait=False, cancel_futures=True)
     for spec in missing:
         key = (spec.get("key") or "").upper()
         if key in out:
@@ -116,20 +120,28 @@ def latest_github_release(client: Any, repo: str) -> Optional[Dict[str, str]]:
         label = tag if tag.lower().startswith("v") else f"v{tag}"
         return {
             "version": label,
+            "tag": tag,
             "released_at": str(rel.get("published_at") or rel.get("created_at") or "").strip(),
         }
     return None
 
 
-def newest_successful_sha(runs: List[Dict[str, Any]]) -> str:
-    """Head sha of the first successful run. GitHub lists newest first. Empty if none."""
+def newest_successful_sha(runs: List[Dict[str, Any]]) -> Tuple[str, str]:
+    """Sha and timestamp of the newest successful run. GitHub lists newest first.
+
+    The timestamp is that run's own ``updated_at`` (or ``created_at``). A failed
+    run that shares the sha is ignored, so it cannot win a comparison across
+    workflows. ``("", "")`` when nothing succeeded.
+    """
     for run in runs or []:
         if not isinstance(run, dict):
             continue
         if (run.get("conclusion") or "").lower() != "success":
             continue
-        return str(run.get("head_sha") or "").strip()
-    return ""
+        sha = str(run.get("head_sha") or "").strip()
+        at = str(run.get("updated_at") or run.get("created_at") or "")
+        return sha, at
+    return "", ""
 
 
 def _app_ahead(client: Any, spec: Dict[str, Any]) -> tuple:
@@ -210,16 +222,10 @@ def _workflow_ahead(
             logger.warning("Could not list %s runs for %s/%s", workflow, owner, name, exc_info=True)
             continue
         saw = True
-        sha = newest_successful_sha(runs if isinstance(runs, list) else [])
+        sha, at = newest_successful_sha(runs if isinstance(runs, list) else [])
         if not sha:
             continue
-        # The list is newest first, so the first success is this workflow's latest.
-        at = ""
-        for run in runs:
-            if isinstance(run, dict) and (run.get("head_sha") or "").strip() == sha:
-                at = str(run.get("updated_at") or run.get("created_at") or "")
-                break
-        if sha and at >= newest_at:
+        if at >= newest_at:
             newest_at = at
             newest_sha = sha
     if not saw:
@@ -239,12 +245,15 @@ def _tag_ahead(client: Any, owner: str, name: str, production: str) -> Optional[
     from bigas.resources.devops.prepare import compare_ahead_count
 
     latest = latest_github_release(client, f"{owner}/{name}")
-    if not latest or not latest.get("version"):
+    if not latest:
+        return None
+    ref = str(latest.get("tag") or latest.get("version") or "").strip()
+    if not ref:
         return None
     try:
-        compare = client.compare_refs(owner, name, latest["version"], production)
+        compare = client.compare_refs(owner, name, ref, production)
     except Exception:
-        logger.warning("Could not compare %s to %s", latest["version"], production, exc_info=True)
+        logger.warning("Could not compare %s to %s", ref, production, exc_info=True)
         return None
     return compare_ahead_count(compare) > 0
 
