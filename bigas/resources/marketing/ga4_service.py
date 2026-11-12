@@ -7,6 +7,7 @@ from google.analytics.data_v1beta.types import (
     Dimension,
     Filter,
     FilterExpression,
+    FilterExpressionList,
     OrderBy,
 )
 import logging
@@ -152,6 +153,25 @@ class GA4Service:
             metrics=[Metric(name=metric) for metric in metrics],
             dimensions=[Dimension(name=dim) for dim in dimensions]
         )
+        host_name = (query_params.get("host_name") or "").strip().lower()
+        if host_name:
+            hosts = [host_name, host_name[4:] if host_name.startswith("www.") else f"www.{host_name}"]
+            request.dimension_filter = FilterExpression(
+                or_group=FilterExpressionList(
+                    expressions=[
+                        FilterExpression(
+                            filter=Filter(
+                                field_name="hostName",
+                                string_filter=Filter.StringFilter(
+                                    value=host,
+                                    match_type=Filter.StringFilter.MatchType.EXACT,
+                                ),
+                            )
+                        )
+                        for host in hosts
+                    ]
+                )
+            )
         
         # Add ordering if specified, using the mapped field names
         if order_by_fields:

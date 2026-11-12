@@ -21,11 +21,13 @@ class MarketingAnalyticsService:
         self.storage_service = StorageService()
         logger.info("MarketingAnalyticsService initialized successfully")
     
-    def answer_question(self, property_id: str, question: str) -> str:
+    def answer_question(self, property_id: str, question: str, host_name: Optional[str] = None) -> str:
         """Process a natural language question about analytics data and return a formatted answer."""
         try:
             # Parse the question into structured query parameters
             query_params = self.marketing_llm_service.parse_query(question)
+            if host_name:
+                query_params["host_name"] = host_name
             
             # Build and execute the analytics request
             request = self.ga4_service.build_report_request(property_id, query_params)

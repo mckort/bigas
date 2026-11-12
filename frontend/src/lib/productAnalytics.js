@@ -1,10 +1,56 @@
-/** Product GA4 events for in-app engagement (chat / board), not marketing site sessions. */
+/** GA4 page views and in-app engagement. The tag loads only after consent. */
 
 export const WEEKLY_ACTIVE_EVENT = 'weekly_active_founder'
 const STORAGE_PREFIX = 'bigas_ga4_weekly_active'
+const CONSENT_KEY = 'bigas_ga4_consent'
 
 let measurementId = ''
 let gtagReady = false
+
+function isLocalHost() {
+  if (typeof window === 'undefined') return true
+  const host = window.location.hostname
+  return host === 'localhost' || host === '127.0.0.1'
+}
+
+export function storedAnalyticsConsent() {
+  try {
+    return localStorage.getItem(CONSENT_KEY)
+  } catch (_) {
+    return null
+  }
+}
+
+function rememberConsent(value) {
+  try {
+    localStorage.setItem(CONSENT_KEY, value)
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function loadGtag() {
+  if (gtagReady || !measurementId || typeof window === 'undefined') return
+  window.dataLayer = window.dataLayer || []
+  function gtag() {
+    window.dataLayer.push(arguments)
+  }
+  window.gtag = gtag
+  gtag('consent', 'default', {
+    analytics_storage: 'granted',
+    ad_storage: 'denied',
+    ad_user_data: 'denied',
+    ad_personalization: 'denied',
+  })
+  gtag('js', new Date())
+  const script = document.createElement('script')
+  script.async = true
+  script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(measurementId)}`
+  document.head.appendChild(script)
+  gtag('config', measurementId, { send_page_view: false })
+  gtagReady = true
+  trackPageView()
+}
 
 export function isoWeekKey(date = new Date()) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -16,7 +62,7 @@ export function isoWeekKey(date = new Date()) {
 
 export function configureProductAnalytics({ measurementId: id } = {}) {
   const next = (id || '').trim()
-  if (!next || typeof window === 'undefined') return
+  if (!next || typeof window === 'undefined' || isLocalHost()) return
   const previousId = measurementId
   measurementId = next
   if (gtagReady) {
@@ -25,20 +71,34 @@ export function configureProductAnalytics({ measurementId: id } = {}) {
     }
     return
   }
+  if (storedAnalyticsConsent() === 'granted') loadGtag()
+}
 
-  window.dataLayer = window.dataLayer || []
-  function gtag() {
-    window.dataLayer.push(arguments)
+export function grantAnalyticsConsent() {
+  rememberConsent('granted')
+  loadGtag()
+}
+
+export function denyAnalyticsConsent() {
+  rememberConsent('denied')
+}
+
+export function analyticsConsentPending() {
+  return Boolean(measurementId) && !gtagReady && storedAnalyticsConsent() !== 'denied' && storedAnalyticsConsent() !== 'granted'
+}
+
+export function trackPageView(path) {
+  try {
+    if (!gtagReady || typeof window.gtag !== 'function') return
+    const pagePath = path || `${window.location.pathname}${window.location.search}`
+    window.gtag('event', 'page_view', {
+      page_path: pagePath,
+      page_location: window.location.href,
+      page_title: document.title,
+    })
+  } catch (_) {
+    /* ignore */
   }
-  window.gtag = gtag
-  gtag('js', new Date())
-
-  const script = document.createElement('script')
-  script.async = true
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(measurementId)}`
-  document.head.appendChild(script)
-  gtag('config', measurementId, { send_page_view: false })
-  gtagReady = true
 }
 
 /** Fire at most once per ISO week when the founder uses chat or the board. */
