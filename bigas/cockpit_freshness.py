@@ -63,7 +63,7 @@ def lookup_deploy_freshness(specs: List[Dict[str, Any]]) -> Dict[str, Dict[str, 
             return fetch_deploy_freshness(client, spec)
         except Exception:
             logger.warning("Deploy freshness failed for %s", spec.get("key"), exc_info=True)
-            return {"ahead": None, "latest": None}
+            return {"ahead": None, "latest": None, "pending": [], "pending_count": 0}
 
     pool = ThreadPoolExecutor(max_workers=min(8, len(missing)))
     try:
@@ -75,9 +75,9 @@ def lookup_deploy_freshness(specs: List[Dict[str, Any]]) -> Dict[str, Dict[str, 
                 value = future.result()
             except Exception:
                 logger.warning("Deploy freshness failed for %s", key, exc_info=True)
-                value = {"ahead": None, "latest": None}
+                value = {"ahead": None, "latest": None, "pending": [], "pending_count": 0}
             if not isinstance(value, dict):
-                value = {"ahead": None, "latest": None}
+                value = {"ahead": None, "latest": None, "pending": [], "pending_count": 0}
             _cache_set(_cache_key(spec), value)
             out[key] = value
     except FuturesTimeout:
@@ -90,20 +90,28 @@ def lookup_deploy_freshness(specs: List[Dict[str, Any]]) -> Dict[str, Dict[str, 
         key = (spec.get("key") or "").upper()
         if key in out:
             continue
-        value = {"ahead": None, "latest": None}
+        value = {"ahead": None, "latest": None, "pending": [], "pending_count": 0}
         _cache_set(_cache_key(spec), value)
         out[key] = value
     return out
 
 
 def _commit_subject(message: str) -> str:
-    """First line of a commit, or the pull-request title under a merge subject."""
+    """First line of a commit, or the pull-request title under a merge subject.
+
+    Git leaves conflict notes (``# Conflicts:``) in a merge message. Those
+    lines are not a title. The next line that does not start with ``#`` is
+    used, and the merge line stays when that is all the body has.
+    """
     lines = [line.strip() for line in str(message or "").splitlines() if line.strip()]
     if not lines:
         return ""
     first = lines[0]
-    if first.lower().startswith("merge ") and len(lines) > 1:
-        return lines[1]
+    if first.lower().startswith("merge "):
+        for line in lines[1:]:
+            if line.startswith("#"):
+                continue
+            return line
     return first
 
 

@@ -281,6 +281,41 @@ def test_pending_from_compare_skips_blank_subjects_and_keeps_the_full_count():
     assert pending_from_compare({"ahead_by": 0, "commits": []}) == {"items": [], "count": 0}
 
 
+def test_pending_from_compare_skips_conflict_notes_on_merge_commits():
+    from bigas.cockpit_freshness import pending_from_compare
+
+    out = pending_from_compare(
+        {
+            "ahead_by": 2,
+            "commits": [
+                {
+                    "sha": "1",
+                    "html_url": "https://github.com/c/1",
+                    "commit": {
+                        "message": "Merge branch 'main' into feature\n\n# Conflicts:\n#\tbigas/cockpit.py\n"
+                    },
+                },
+                {
+                    "sha": "2",
+                    "html_url": "https://github.com/c/2",
+                    "commit": {
+                        "message": (
+                            "Merge branch 'main' into feature\n\n"
+                            "Ship the cockpit card\n\n"
+                            "# Conflicts:\n"
+                            "#\tbigas/cockpit.py\n"
+                        )
+                    },
+                },
+            ],
+        }
+    )
+    assert [item["title"] for item in out["items"]] == [
+        "Ship the cockpit card",
+        "Merge branch 'main' into feature",
+    ]
+
+
 def test_deploy_project_keys_are_normalized_to_uppercase():
     payload = build_cockpit(
         boards=[BOARD],
@@ -1047,7 +1082,31 @@ def test_lookup_deploy_freshness_does_not_wait_out_a_hung_worker(monkeypatch):
     assert elapsed < 14, elapsed
     assert started.is_set()
     assert out["FAST"]["ahead"] is False
-    assert out["SLOW"]["ahead"] is None
+    assert out["SLOW"] == {"ahead": None, "latest": None, "pending": [], "pending_count": 0}
+    reset_cache_for_tests()
+
+
+def test_lookup_deploy_freshness_error_payload_includes_an_empty_pending_list(monkeypatch):
+    from bigas.cockpit_freshness import lookup_deploy_freshness, reset_cache_for_tests
+
+    reset_cache_for_tests()
+
+    def fetch(client, spec):
+        if spec.get("key") == "BAD":
+            return "nope"
+        raise RuntimeError("github down")
+
+    monkeypatch.setattr("bigas.cockpit_freshness.fetch_deploy_freshness", fetch)
+    monkeypatch.setattr("bigas.cockpit_freshness._client", lambda: object())
+    empty = {"ahead": None, "latest": None, "pending": [], "pending_count": 0}
+    out = lookup_deploy_freshness(
+        [
+            {"key": "DOWN", "mode": "versioned", "release_mode": "development", "version": ""},
+            {"key": "BAD", "mode": "versioned", "release_mode": "development", "version": ""},
+        ]
+    )
+    assert out["DOWN"] == empty
+    assert out["BAD"] == empty
     reset_cache_for_tests()
 
 
