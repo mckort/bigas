@@ -451,3 +451,19 @@ export async function signOffTickets(ticketIds) {
 export async function fetchCockpitMoney({ refresh = false } = {}) {
   return apiFetch(`/api/cockpit/money${refresh ? '?refresh=1' : ''}`)
 }
+
+export async function fetchProductionPlan(projectKey, version = '') {
+  const qs = version ? `?version=${encodeURIComponent(version)}` : ''
+  return apiFetch(`/api/projects/${encodeURIComponent(projectKey)}/production${qs}`)
+}
+
+export async function goToProduction(projectKey, version) {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectKey)}/production`, {
+    method: 'POST',
+    body: JSON.stringify({ version }),
+  })
+}
+
+export async function backToDevelopment(projectKey) {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectKey)}/production`, { method: 'DELETE' })
+}

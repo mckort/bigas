@@ -168,3 +168,34 @@ def first_access_key(env: Dict[str, str]) -> Optional[str]:
         if part.strip():
             return part.strip()
     return None
+
+
+# Same text as docs/pr-review.caller.yml (docs/ is not in the Docker image, and
+# the app needs it for "Go to production"). tests/test_go_live.py keeps them equal.
+PR_REVIEW_CALLER_TEMPLATE = """# Thin caller for product repos (VFA, WAYW, GPWW, FYDA, MYL, REM, FRI / frimaninvestments, AURA / auralearn, …).
+# Copy this file to `.github/workflows/pr-review.yml` in the product repo.
+# The implementation lives in mckort/bigas so every project follows the same
+# review → autofix → merge → Final approval flow.
+name: Bigas PR review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bigas:
+    uses: mckort/bigas/.github/workflows/pr-review.yml@main
+    with:
+      bigas_url: ${{ vars.BIGAS_URL }}
+      auto_fix: ${{ vars.BIGAS_AUTO_FIX || 'true' }}
+      # Optional. Seconds to wait before every review (including one commit).
+      # Overrides repository variable BIGAS_REVIEW_SETTLE_SECONDS. Default 120.
+      # settle_seconds: ${{ vars.BIGAS_REVIEW_SETTLE_SECONDS || '120' }}
+    secrets:
+      BIGAS_API_KEY: ${{ secrets.BIGAS_API_KEY }}
+      GH_PAT_FOR_BIGAS: ${{ secrets.GH_PAT_FOR_BIGAS }}
+"""

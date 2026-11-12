@@ -640,3 +640,25 @@ def cockpit_sign_off():
     if len(ids) > MAX_SIGNOFF_BATCH:
         return jsonify({"error": f"at most {MAX_SIGNOFF_BATCH} tickets per call"}), 400
     return jsonify(close_signoff(g.chat_user["uid"], ids))
+
+
+@tickets_bp.route("/api/projects/<project_key>/production", methods=["GET", "POST", "DELETE"])
+@require_chat_auth
+def project_production(project_key: str):
+    """Go to production (versioned releases): GET plan, POST apply, DELETE back to development."""
+    from bigas.go_live import GoLiveError, apply, back_to_development, plan
+
+    user = g.chat_user
+    proj = (project_key or "").strip().upper()
+    if not _user_can_access_project(user["uid"], proj):
+        return jsonify({"error": "Board not found"}), 404
+    try:
+        if request.method == "GET":
+            return jsonify(plan(proj, version=(request.args.get("version") or "").strip()))
+        by = user.get("email") or user.get("uid") or ""
+        if request.method == "DELETE":
+            return jsonify(back_to_development(proj, by=by))
+        body = request.get_json(silent=True) or {}
+        return jsonify(apply(proj, version=str(body.get("version") or "").strip(), by=by))
+    except GoLiveError as exc:
+        return jsonify({"error": str(exc)}), 400

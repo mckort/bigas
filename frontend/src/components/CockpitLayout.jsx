@@ -4,14 +4,18 @@ import remarkGfm from 'remark-gfm'
 import {
   addTicketComment,
   fetchCockpit,
+  backToDevelopment,
   fetchCockpitMoney,
+  fetchProductionPlan,
   fetchTicket,
+  goToProduction,
   sendMessage,
   signOffTickets,
   updateTicket,
 } from '../lib/api'
 import { WEEKLY_ACTIONS, cursorPrompt, sendToAgent, timeAgo } from '../lib/cockpit'
 import { featureEnabled } from '../lib/features'
+import { linkify } from '../lib/linkify'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
 
@@ -318,7 +322,8 @@ const STATE_BADGE = {
   idle: 'bg-surface text-muted',
 }
 
-function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview }) {
+function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onReleaseMode }) {
+  const isDev = row.release_mode === 'development'
   const primary = row.mode === 'versioned' ? row.commands[0] : row.commands.find((c) => /prepare staging/i.test(c.prompt))
   const others = row.commands.filter((c) => c !== primary)
   return (
@@ -326,12 +331,22 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview }) {
       <div className="flex items-center gap-2 min-w-0">
         <span className="font-semibold truncate">{row.name}</span>
         <span className="font-mono text-[11px] text-muted truncate">{row.key}</span>
-        <span className={`ml-auto text-[11px] rounded-md px-2 py-0.5 flex-none ${STATE_BADGE[row.state] || STATE_BADGE.idle}`}>
+        <span
+          className={`ml-auto text-[11px] rounded-md px-2 py-0.5 flex-none ${
+            isDev ? 'bg-surface-muted text-muted' : 'bg-green-500/15 text-green-700 dark:text-green-300'
+          }`}
+          title={isDev ? 'Work merges straight to the production branch' : 'Versioned releases'}
+        >
+          {isDev ? 'Development' : 'Production'}
+        </span>
+        <span className={`text-[11px] rounded-md px-2 py-0.5 flex-none ${STATE_BADGE[row.state] || STATE_BADGE.idle}`}>
           {row.state === 'idle' ? 'Idle' : row.state === 'running' ? 'Running' : 'Waiting for you'}
         </span>
       </div>
       <p className="text-xs text-muted mt-1">
-        {row.mode === 'versioned'
+        {isDev
+          ? 'Work merges straight to the production branch. Deploy ships it as is.'
+          : row.mode === 'versioned'
           ? row.release_error
             ? 'Could not load releases. The cockpit retries every 15 seconds.'
             : row.version
@@ -341,7 +356,7 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview }) {
               : 'Deploy in progress'
           : 'Staging rehearsal, then production'}
       </p>
-      {steps.length > 0 && (
+      {steps.length > 0 && !isDev && (
         <div className="mt-3" aria-label={row.step == null ? 'Not started' : `Step ${row.step + 1} of ${steps.length}: ${steps[row.step]}`}>
           <div className="flex gap-1">
             {steps.map((label, i) => (
@@ -382,7 +397,7 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview }) {
           primary && (
             <button
               type="button"
-              disabled={busy || (row.mode === 'versioned' && !row.version)}
+              disabled={busy || (row.mode === 'versioned' && !isDev && !row.version)}
               onClick={() => onCommand(row, primary)}
               className="btn-accent text-xs px-3 py-1 min-h-[34px]"
             >
@@ -401,6 +416,15 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview }) {
             {cmd.label}
           </button>
         ))}
+        {row.mode === 'versioned' && (
+          <button
+            type="button"
+            onClick={() => onReleaseMode(row)}
+            className={`${isDev ? 'btn-secondary' : 'btn-ghost'} text-xs px-2.5 py-1 min-h-[34px] ${isDev ? '' : 'ml-auto'}`}
+          >
+            {isDev ? 'Go to production' : 'Release mode'}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -485,6 +509,160 @@ function WeekTiles({ week, money, moneyError }) {
       {money && !money.books?.configured && !money.ai?.configured && (
         <p className="text-[11px] text-muted mt-2">
           Add ACCOUNTED_API_KEY and ACCOUNTED_CFO_COMPANIES for the books, and BIGAS_USAGE_PROVIDERS for AI spend.
+        </p>
+      )}
+    </div>
+  )
+}
+
+const STEP_ICON = { done: '✓', todo: '○', pending: '…', ok: '✓', skipped: '–', error: '✗' }
+const STEP_TONE = {
+  done: 'text-green-600 dark:text-green-400',
+  ok: 'text-green-600 dark:text-green-400',
+  todo: 'text-muted',
+  pending: 'text-amber-600 dark:text-amber-400',
+  skipped: 'text-muted',
+  error: 'text-red-600 dark:text-red-400',
+}
+
+function GoLivePanel({ row, onChanged, showToast }) {
+  const [plan, setPlan] = useState(null)
+  const [error, setError] = useState('')
+  const [version, setVersion] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+
+  const loadPlan = useCallback(
+    async (v = '') => {
+      setError('')
+      try {
+        const next = await fetchProductionPlan(row.key, v)
+        setPlan(next)
+        if (next.version) setVersion(next.version)
+      } catch (err) {
+        setError(err.message || 'Could not read the project')
+      }
+    },
+    [row.key],
+  )
+
+  useEffect(() => {
+    loadPlan()
+  }, [loadPlan])
+
+  const apply = async () => {
+    setBusy(true)
+    try {
+      const res = await goToProduction(row.key, version)
+      setResult(res)
+      if (res.in_production) setPlan((prev) => (prev ? { ...prev, mode: 'production', source: 'app' } : prev))
+      showToast(res.in_production ? `${row.name} is in production` : `${row.name}: some steps failed`)
+      onChanged()
+    } catch (err) {
+      setError(err.message || 'Could not go to production')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const back = async () => {
+    setBusy(true)
+    try {
+      await backToDevelopment(row.key)
+      showToast(`${row.name} is back in development`)
+      setResult(null)
+      onChanged()
+      loadPlan()
+    } catch (err) {
+      setError(err.message || 'Could not switch back')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (error && !plan) return <p className="text-sm text-red-600">{error}</p>
+  if (!plan) return <p className="text-sm text-muted">Checking {row.name} on GitHub…</p>
+
+  const releaseStep = plan.steps?.find((st) => st.id === 'release')
+  const steps = result
+    ? (plan.steps || []).map((st) => ({ ...st, ...(result.results || []).find((r) => r.id === st.id) }))
+    : plan.steps || []
+  const versionRejected =
+    (plan.steps || []).length === 0 && String(plan.blocked || '').includes('is not a version like')
+  const showVersionInput = !result && (versionRejected || (plan.can_apply && releaseStep?.status === 'todo'))
+
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="rounded-lg bg-surface p-3 space-y-1">
+        <p>
+          <b>{plan.mode === 'production' ? 'Production' : 'Development'}</b> · {plan.repo || 'no repo'} · production branch{' '}
+          <code className="font-mono">{plan.production_branch}</code>
+        </p>
+        <p className="text-muted">
+          {plan.mode === 'production'
+            ? 'Work for each version lands on its own release branch. Prepare deploy reviews the cut and merges it to the production branch through a pull request.'
+            : 'Today pull requests merge straight to the production branch. In production, work for version x.y.z lands on a release branch first, and Prepare deploy reviews and merges it.'}
+        </p>
+      </div>
+
+      {plan.blocked && <p className="rounded-lg bg-amber-500/15 p-3">{plan.blocked}</p>}
+
+      {steps.length > 0 && (
+        <ol className="space-y-2">
+          {steps.map((st) => (
+            <li key={st.id} className="flex gap-2.5">
+              <span className={`w-4 flex-none text-center ${STEP_TONE[st.status] || ''}`} aria-hidden="true">
+                {STEP_ICON[st.status] || '○'}
+              </span>
+              <div className="min-w-0">
+                <p className="font-medium">{st.title}</p>
+                <p className={`text-xs ${st.status === 'error' ? 'text-red-600 dark:text-red-400' : 'text-muted'} break-words`}>
+                  {linkify(st.detail || '', 'text-accent hover:underline')}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {showVersionInput && (
+        <label className="block">
+          <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">First version</span>
+          <input
+            className="input-field mt-1 font-mono"
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+            onBlur={() => {
+              const next = version.trim()
+              if (!next || next === (plan.version || '')) return
+              if (!/^v?\d+\.\d+\.\d+$/i.test(next)) {
+                setError(`'${next}' is not a version like 0.1.0`)
+                return
+              }
+              loadPlan(next)
+            }}
+            placeholder="0.1.0"
+          />
+        </label>
+      )}
+
+      {error && <p className="text-red-600">{error}</p>}
+
+      <div className="flex gap-2 pt-1">
+        {!result && plan.can_apply && (
+          <button type="button" disabled={busy} onClick={apply} className="btn-accent text-sm px-4">
+            {busy ? 'Working…' : 'Go to production'}
+          </button>
+        )}
+        {plan.mode === 'production' && plan.source === 'app' && (
+          <button type="button" disabled={busy} onClick={back} className="btn-secondary text-sm px-3">
+            Back to development
+          </button>
+        )}
+      </div>
+      {plan.mode === 'production' && plan.source === 'app' && (
+        <p className="text-xs text-muted">
+          Back to development only changes where new AI work goes. The ruleset, workflows, release branches and versions stay.
         </p>
       )}
     </div>
@@ -1046,6 +1224,11 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         )}
       </>
     )
+  } else if (drawer?.type === 'go-live') {
+    const { row } = drawer
+    drawerTitle = `${row.release_mode === 'development' ? 'Go to production' : 'Release mode'} · ${row.name}`
+    drawerBody = <GoLivePanel key={row.key} row={row} onChanged={load} showToast={showToast} />
+    drawerFooter = null
   } else if (drawer?.type === 'signoff-all') {
     const items = drawer.items || signoff
     drawerTitle = `Mark ${items.length} shipped card${items.length === 1 ? '' : 's'} done`
@@ -1356,6 +1539,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                   key={row.key}
                   row={row}
                   steps={data?.ship_steps || []}
+                  onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
                   busy={busyIds.has(`ship:${row.key}`)}
                   onOpenChat={onOpenChat}
                   onCommand={(r, cmd) => setDrawer({ type: 'command', row: r, cmd })}

@@ -64,7 +64,7 @@ Follow the [README deploy tutorial](../README.md#tutorial-deploy-your-first-biga
 | `CHAT_STORAGE_MODE=firestore`, `CHAT_AUTH_MODE=firebase` + Firebase vars | Persistent chat and real sign-in ([README: Chat setup](../README.md#setup)) |
 | `BIGAS_ACCESS_KEYS` | Random string(s). GitHub workflows send one as `BIGAS_API_KEY`. `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `BIGAS_PUBLIC_URL` | The Cloud Run URL. Only read by the setup scripts (written to each repo as `BIGAS_URL`). |
-| `GITHUB_TOKEN` | Fine-grained PAT on the product repos: **Contents**, **Pull requests**, **Actions**, **Workflows** read/write; **Administration**, **Variables**, **Secrets**, **Webhooks** read so the doctor can verify. |
+| `GITHUB_TOKEN` | Fine-grained PAT on the product repos: **Contents**, **Pull requests**, **Actions**, **Workflows** read/write; **Administration** read/write (write only for the *Go to production* ruleset), **Variables**, **Secrets**, **Webhooks** read so the doctor can verify. |
 | `CURSOR_API_KEY` | Cards → pull requests, and review autofix. Cursor dashboard → Integrations. |
 | `GITHUB_WEBHOOK_SECRET` | Random string. Signs the `workflow_run` webhook (self-healing CI, deploy post-checks). |
 
@@ -112,7 +112,17 @@ Then:
 
 **Direct** (default). PRs merge to the base branch; **Ship → Deploy** dispatches the deploy workflow on it.
 
-**Versioned** (`--versioned staging`). Work for version `0.3.0` lands on `staging-0.3.0`. Create the version under **Releases** on the board. **Prepare deploy** in the cockpit reviews the cut, merges it to the production branch, asks for your yes, deploys, tags `v0.3.0` and rebases the next release branch. Needs `cherry_pick.yml` and `rebase_release.yml` in the repo (added by `--versioned`).
+**Versioned.** The easy way: **Go to production** on the project's Ship card in the cockpit. It previews and then runs every step below, and the project shows *Production* from then on. **Release mode → Back to development** undoes the switch (the ruleset, workflows, branches and versions stay):
+
+1. a pull request in the repo adding `pr-review.yml`, `cherry_pick.yml` and `rebase_release.yml` (merge it);
+2. a GitHub ruleset on the production branch: pull request required, no force pushes or deletion, admins can bypass;
+3. version `0.1.0` on the board (or the open version, if there is one);
+4. branch `staging-0.1.0` from the production branch;
+5. the project setting that sends new AI work to that branch (stored in the app; no redeploy).
+
+`GITHUB_TOKEN` needs **Administration: write** on the repo for the ruleset. The setup-script way is `--versioned staging`, which writes the env instead.
+
+Work for version `0.3.0` lands on `staging-0.3.0`. Create the version under **Releases** on the board. **Prepare deploy** in the cockpit reviews the cut, merges it to the production branch, asks for your yes, deploys, tags `v0.3.0` and rebases the next release branch. Needs `cherry_pick.yml` and `rebase_release.yml` in the repo (added by `--versioned`).
 
 **Staging rehearsal.** Bigas builds a real staging stack from production, rehearses the deploy, then deploys to production. The repo needs five `workflow_dispatch` workflows, and Bigas needs a JSON entry in `BIGAS_STAGING_ENV_MAP` (one line in `.env`):
 

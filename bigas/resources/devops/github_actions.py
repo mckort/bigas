@@ -698,6 +698,79 @@ class GitHubActionsClient:
         resp.raise_for_status()
         return resp.json() or {}
 
+    def get_file_text(self, owner: str, repo: str, path: str, ref: str) -> Optional[str]:
+        """Text of ``path`` at ``ref``, or None when the file does not exist there."""
+        import base64
+
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        resp = requests.get(url, headers=self._headers, params={"ref": ref}, timeout=30)
+        if resp.status_code == 404:
+            return None
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        data = resp.json() or {}
+        if not isinstance(data, dict):
+            return None
+        try:
+            return base64.b64decode(data.get("content") or "").decode("utf-8", "replace")
+        except (ValueError, TypeError):
+            return ""
+
+    def upsert_protect_branch_ruleset(self, owner: str, repo: str, branch: str) -> Dict[str, Any]:
+        """Require a pull request for ``branch``; block force pushes and deletion.
+
+        No approving reviews are required: the Bigas review runs on the PR and
+        Bigas merges through the API. Repository admins can bypass.
+        """
+        name = f"Bigas: protect {branch}"
+        payload: Dict[str, Any] = {
+            "name": name,
+            "target": "branch",
+            "enforcement": "active",
+            "bypass_actors": [
+                {
+                    "actor_id": GITHUB_RULESET_REPOSITORY_ADMIN_ROLE_ACTOR_ID,
+                    "actor_type": "RepositoryRole",
+                    "bypass_mode": "always",
+                }
+            ],
+            "conditions": {"ref_name": {"include": [f"refs/heads/{branch}"], "exclude": []}},
+            "rules": [
+                {
+                    "type": "pull_request",
+                    "parameters": {
+                        "required_approving_review_count": 0,
+                        "dismiss_stale_reviews_on_push": False,
+                        "require_code_owner_review": False,
+                        "require_last_push_approval": False,
+                        "required_review_thread_resolution": False,
+                    },
+                },
+                {"type": "deletion"},
+                {"type": "non_fast_forward"},
+            ],
+        }
+        existing_id = None
+        for item in self.list_repo_rulesets(owner, repo):
+            if isinstance(item, dict) and (item.get("name") or "") == name:
+                existing_id = item.get("id")
+                break
+        if existing_id:
+            url = f"https://api.github.com/repos/{owner}/{repo}/rulesets/{existing_id}"
+            resp = requests.put(url, headers=self._headers, json=payload, timeout=30)
+        else:
+            url = f"https://api.github.com/repos/{owner}/{repo}/rulesets"
+            resp = requests.post(url, headers=self._headers, json=payload, timeout=30)
+        if resp.status_code in (401, 403):
+            raise GitHubActionsError(
+                f"GitHub auth failed ({resp.status_code}): {_github_error_detail(resp)}"
+            )
+        resp.raise_for_status()
+        return resp.json() or {}
+
     def list_repo_rulesets(self, owner: str, repo: str) -> List[Dict[str, Any]]:
         url = f"https://api.github.com/repos/{owner}/{repo}/rulesets"
         resp = requests.get(url, headers=self._headers, timeout=30)

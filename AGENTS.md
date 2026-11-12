@@ -36,6 +36,7 @@ Never print or commit secret values. Ask the human for credentials and for the d
 | `bigas/portfolio.py` | Project key → repo, name, site; env maps |
 | `bigas/cockpit.py` | `GET /api/cockpit` read model |
 | `bigas/features.py` | `BIGAS_FEATURES` optional areas |
+| `bigas/go_live.py`, `bigas/project_settings.py` | "Go to production": development → versioned releases per project; app-side release mode merged into `project_branch_mapping_from_env()` |
 | `bigas/setup_check.py`, `bigas/setup_repo.py` | Logic behind the doctor and connect scripts |
 | `frontend/src/components/` | `CockpitLayout`, `BoardLayout`, `ChatLayout`, `ObjectivesLayout` |
 | `docs/pr-review.caller.yml` | The workflow product repos copy |
