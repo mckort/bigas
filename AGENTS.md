@@ -21,6 +21,8 @@ python scripts/connect_repo.py --key ACME --repo owner/repo --apply    # env + G
 python scripts/bigas_doctor.py --json                                  # verify; fix every "fail"
 ```
 
+To add one more project to a running Bigas, use the **Add a project (checklist)** section of the playbook. It lists what each mode needs (tokens, repo workflows, settings), and when to use the cockpit's **Go to production** button instead of env.
+
 Never print or commit secret values. Ask the human for credentials and for the decisions listed in step 0 of the playbook.
 
 ## Layout

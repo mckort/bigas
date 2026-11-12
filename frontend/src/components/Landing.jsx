@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { Fragment, useEffect } from 'react'
 import ThemeToggle from './ThemeToggle'
 
 const GITHUB_REPO_URL = 'https://github.com/mckort/bigas'
@@ -8,34 +8,77 @@ const TUTORIAL_URL =
 const X_URL = 'https://x.com/bigasmyaiteam'
 
 const NAV_LINKS = [
+  { href: '#how-it-works', label: 'How it works' },
+  { href: '#modes', label: 'Dev → prod' },
   { href: '#surfaces', label: 'Surfaces' },
   { href: '#team', label: 'Team' },
-  { href: '#how-it-works', label: 'How it works' },
   { href: '#quickstart', label: 'Quickstart' },
   { href: '#faq', label: 'FAQ' },
 ]
 
+const HOW_IT_WORKS = [
+  {
+    title: 'Write a card',
+    body: 'On the built-in, Jira-like board: a title, a short brief, maybe a screenshot. One board per GitHub repo.',
+  },
+  {
+    title: 'The AI researches and plans; you approve',
+    body: 'Product writes the description, the CTO writes the plan. Each waits in the cockpit for your approve or send back.',
+  },
+  {
+    title: 'The AI implements; Bigas reviews the pull request',
+    body: 'A Cursor agent opens the PR. Bigas reviews every PR and autofixes its own findings until it is ready to merge.',
+  },
+  {
+    title: 'You ship',
+    body: 'Deploy from the cockpit: straight from main while you build, or as a reviewed version once the project is in production.',
+  },
+]
+
+const MODES = [
+  {
+    id: 'development',
+    title: 'Development',
+    tagline: 'While you build',
+    points: [
+      'Pull requests merge straight into main.',
+      'Deploy ships main as it is, after a risk check.',
+      'No versions, no extra branches.',
+    ],
+  },
+  {
+    id: 'production',
+    title: 'Production',
+    tagline: 'Once you have users',
+    points: [
+      'Work for each version lands on its own release branch (staging-0.2.0).',
+      'Prepare deploy reviews the cut, merges it to main through a PR, deploys and tags v0.2.0.',
+      'main is locked: changes only through a pull request. Hotfixes still go straight to main.',
+    ],
+  },
+]
+
 const SURFACES = [
   {
-    id: 'chat',
-    title: 'Chat',
+    id: 'cockpit',
+    title: 'Cockpit',
     path: '/',
-    summary: 'Your control plane.',
-    body: 'Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action — file a card, review a PR, draft copy — instead of handing you a checklist.',
+    summary: 'What needs you.',
+    body: 'Approvals and deploy confirms, what the AI is working on, one Ship card per project, and the week in numbers. Built for desktop and phone.',
   },
   {
     id: 'board',
     title: 'Board',
     path: '/board',
     summary: 'Where work ships.',
-    body: 'Kanban tickets, columns, releases, and a human-gated AI workflow (research → plan → implement). Jira is optional if you already run a board you want to keep.',
+    body: 'Jira-like and built in: tickets, AI columns, releases. Connect real Jira only if you already run a board you want to keep.',
   },
   {
-    id: 'objectives',
-    title: 'Objectives',
-    path: '/objectives',
-    summary: 'The quarter’s scoreboard.',
-    body: 'Name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story.',
+    id: 'chat',
+    title: 'Chat',
+    path: '/chat',
+    summary: 'Ask the team.',
+    body: 'Chief of Staff or any specialist. Agents use tools and take action — file a card, review a PR, run a deploy — instead of handing you a checklist.',
   },
 ]
 
@@ -46,44 +89,29 @@ const SPECIALISTS = [
     detail: 'Reasons through requests step by step, coordinates specialists, and takes action rather than asking you to do it.',
   },
   {
-    name: 'Marketing',
-    role: 'Senior Marketing Analyst',
-    detail: 'GA4, paid ads (Google, Meta, LinkedIn, Reddit), trends, and cross-platform insights; creates tracked follow-up work.',
-  },
-  {
     name: 'Product',
     role: 'Product Manager',
-    detail: 'Planning, board and Jira workflows, release notes, and stakeholder communication.',
+    detail: 'Researches cards, writes release notes and the weekly update, and keeps the board moving.',
   },
   {
     name: 'CTO',
     role: 'Engineering lead',
-    detail: 'Code review, architecture, deployment debugging, and engineering operations.',
-  },
-  {
-    name: 'CFO',
-    role: 'Cost and usage',
-    detail: 'AI and GCP spend, usage analysis, and efficiency — numbers first, with tracked follow-ups.',
+    detail: 'Plans the work, reviews every pull request, and autofixes findings.',
   },
   {
     name: 'DevOps',
     role: 'Operations',
-    detail: 'Deployments, site health, incident response, and CI/CD with safety-first reasoning.',
-  },
-]
-
-const HOW_IT_WORKS = [
-  {
-    title: 'Set the quarter',
-    body: 'Open Objectives — the shared scoreboard. Key Results are the numbers; board cards link to a KR so shipping and metrics stay aligned.',
+    detail: 'Deploys, prepares versioned releases, watches site health, and opens a fix when CI fails.',
   },
   {
-    title: 'Ship during the week',
-    body: 'Drag cards on the built-in board. Humans approve and sign off; agents research, plan, and implement the work you put in front of them.',
+    name: 'CFO',
+    role: 'Cost and books',
+    detail: 'AI and cloud spend plus month-to-date books, with anything unusual flagged.',
   },
   {
-    title: 'Steer from chat',
-    body: 'Ask in any specialist thread: draft release notes, review a PR, run analytics, or debug a failed deploy. Results land in chat (and optionally Discord).',
+    name: 'Marketing',
+    role: 'Optional',
+    detail: 'GA4 and paid ads (Google, Meta, LinkedIn, Reddit) when you switch it on.',
   },
 ]
 
@@ -94,15 +122,23 @@ const FAQ = [
   },
   {
     q: 'What do I need to try it locally?',
-    a: 'An LLM API key is enough for the MVP. The setup wizard writes .env; Docker Compose or pip gets you to http://localhost:8080 in about five minutes.',
+    a: 'An LLM API key is enough. The setup wizard writes .env; Docker Compose or pip gets you to http://localhost:8080 in about five minutes, with the board and chat working.',
+  },
+  {
+    q: 'What does it take to connect a repo?',
+    a: 'A GitHub token, a Cursor API key, and Bigas running where GitHub can reach it (Cloud Run). One script adds the review workflow to your repo. A coding agent can do the whole setup with you: the repo has instructions for it.',
+  },
+  {
+    q: 'How do I move a project from development to production?',
+    a: 'Click Go to production on its Ship card. Bigas previews the steps, then adds the release workflows, locks main, creates version 0.1.0 and its release branch, and sends new work there.',
   },
   {
     q: 'Do I need Jira or Google Cloud?',
-    a: 'No for local chat and the built-in board. Connect Jira, GA4, Firebase, and Cloud Run when you want those integrations in production.',
+    a: 'Not for local use: the board is built in. Production runs on Google Cloud Run. Jira is optional.',
   },
   {
     q: 'Do agents auto-start work?',
-    a: 'No. You drag cards and approve steps. Agents do not start tasks because a Key Result is off track — you stay in control.',
+    a: 'No. You drag cards and approve each step. Nothing reaches production without your yes.',
   },
 ]
 
@@ -185,13 +221,13 @@ export default function Landing({ onSignIn }) {
             <div className="max-w-3xl">
               <p className="text-sm font-medium text-accent mb-3">Open source · fork and run</p>
               <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-balance leading-tight">
-                A virtual AI team for solo founders
+                From a card on the board to production, with an AI team
               </h1>
               <p className="mt-4 text-base sm:text-lg text-muted leading-relaxed max-w-2xl">
                 <strong className="font-semibold text-text">Bigas</strong> (Latin for{' '}
-                <em>team</em>) is your virtual HQ: chat with specialists, ship on a Kanban board, and
-                track quarterly objectives — marketing, product, engineering, and finance without hiring
-                a staff.
+                <em>team</em>) is a virtual HQ for solo founders. Write a card on the built-in board; the
+                AI researches, plans and opens a reviewed pull request; you approve each step and ship.
+                Straight from main while you build, as versioned releases once you have users.
               </p>
               <p className="mt-3 text-sm text-muted max-w-2xl">
                 <strong className="font-medium text-text/90">bigas.me</strong> is one running instance,
@@ -247,15 +283,85 @@ export default function Landing({ onSignIn }) {
             />
             <ul className="space-y-4 text-sm sm:text-base text-text/90 leading-relaxed">
               <li className="card p-4 sm:p-5">
-                Context lives in ten tabs: analytics, ads, GitHub, Jira, and the roadmap in your head.
+                Context lives in ten tabs: GitHub, the issue tracker, deploys, costs, and the roadmap in your head.
               </li>
               <li className="card p-4 sm:p-5">
-                Generic chatbots give checklists; they do not file tickets, review PRs, or draft release notes.
+                Coding agents write code, but nobody reviews it, versions it, or ships it safely for you.
               </li>
               <li className="card p-4 sm:p-5">
-                You need one place where goals, work, and conversation stay tied together — with you approving every move.
+                You need one place where every card goes from idea to production — with you approving every move.
               </li>
             </ul>
+          </div>
+        </section>
+
+        {/* How it works */}
+        <section className="py-12 sm:py-16 border-b border-border">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6">
+            <SectionHeading
+              id="how-it-works"
+              eyebrow="How it works"
+              title="One loop for every card"
+              lead="Humans decide. Agents do the work you put in front of them. Cards never move on their own."
+            />
+            <ol className="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {HOW_IT_WORKS.map(({ title, body }, index) => (
+                <li key={title} className="card p-5 flex flex-col gap-3">
+                  <span
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-muted text-accent text-sm font-semibold border border-accent/20"
+                    aria-hidden="true"
+                  >
+                    {index + 1}
+                  </span>
+                  <h3 className="font-semibold">{title}</h3>
+                  <p className="text-sm text-muted leading-relaxed">{body}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        {/* Development and production */}
+        <section className="py-12 sm:py-16 border-b border-border bg-surface/40" aria-labelledby="modes-heading">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6">
+            <SectionHeading
+              id="modes"
+              headingId="modes-heading"
+              eyebrow="Development → production"
+              title="Start fast. Get strict when users arrive."
+              lead="Every project runs in one of two modes. Switching is one button in the cockpit: Go to production."
+            />
+            <div className="mt-10 grid md:grid-cols-[1fr_auto_1fr] gap-4 items-stretch">
+              {MODES.map(({ id, title, tagline, points }, i) => (
+                <Fragment key={id}>
+                  {i === 1 && (
+                    <div className="hidden md:flex items-center justify-center text-accent text-sm font-semibold px-2">
+                      <span className="rounded-full border border-accent/30 bg-accent-muted px-3 py-1.5 whitespace-nowrap">
+                        Go to production →
+                      </span>
+                    </div>
+                  )}
+                  <article className={`card p-5 sm:p-6 ${id === 'production' ? 'border-accent/40' : ''}`}>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted">{tagline}</p>
+                    <h3 className="mt-1 text-xl font-semibold">{title}</h3>
+                    <ul className="mt-4 space-y-2 text-sm text-muted leading-relaxed">
+                      {points.map((point) => (
+                        <li key={point} className="flex gap-2">
+                          <span className="text-accent" aria-hidden="true">
+                            ✓
+                          </span>
+                          <span>{point}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                </Fragment>
+              ))}
+            </div>
+            <p className="mt-6 text-sm text-muted max-w-3xl">
+              Go to production adds the release workflows to your repo, locks main, creates version 0.1.0 and its
+              release branch, and sends new work there. It shows every step before it runs.
+            </p>
           </div>
         </section>
 
@@ -266,8 +372,8 @@ export default function Landing({ onSignIn }) {
               id="surfaces"
               headingId="surfaces-heading"
               eyebrow="Three surfaces"
-              title="Chat, board, and objectives — one story"
-              lead="After you sign in to an instance, these are the main places work lives."
+              title="Cockpit, board and chat"
+              lead="After you sign in, these are the places work lives. Objectives (OKRs) and marketing reports are optional."
             />
             <div className="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
               {SURFACES.map(({ id, title, path, summary, body }) => (
@@ -290,7 +396,7 @@ export default function Landing({ onSignIn }) {
             <SectionHeading
               id="team"
               eyebrow="Specialist team"
-              title="Six agents, one coordinated staff"
+              title="A small staff that ships"
               lead="Each specialist keeps a thread so you can jump in without reconstructing context. Chief of Staff sees what you have connected."
             />
             <ul className="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -302,34 +408,6 @@ export default function Landing({ onSignIn }) {
                 </li>
               ))}
             </ul>
-          </div>
-        </section>
-
-        {/* How work moves */}
-        <section className="py-12 sm:py-16 border-b border-border">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6">
-            <SectionHeading
-              id="how-it-works"
-              eyebrow="How work moves"
-              title="Goals → board → chat — you stay in control"
-              lead="Humans decide. Agents execute the work you put in front of them. Cards do not auto-advance."
-            />
-            <ol className="mt-10 space-y-6 max-w-3xl">
-              {HOW_IT_WORKS.map(({ title, body }, index) => (
-                <li key={title} className="flex gap-4">
-                  <span
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-muted text-accent text-sm font-semibold border border-accent/20"
-                    aria-hidden="true"
-                  >
-                    {index + 1}
-                  </span>
-                  <div>
-                    <h3 className="font-semibold">{title}</h3>
-                    <p className="mt-1 text-sm sm:text-base text-muted leading-relaxed">{body}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
           </div>
         </section>
 
@@ -349,7 +427,7 @@ cd bigas
 python scripts/setup.py          # wizard → .env
 docker compose up --build        # or: pip install -r requirements.txt && python run_core.py
 
-# Open http://localhost:8080
+# Open http://localhost:8080 → the cockpit
 # Dev sign-in: any email + token bigas-dev-token`}</code>
               </pre>
               <div className="lg:w-72 shrink-0 flex flex-col gap-3">

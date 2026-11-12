@@ -17,7 +17,7 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)** · Live instan
 ## Table of contents
 
 - [What is Bigas?](#what-is-bigas)
-- [One founder, one project or several](#one-founder-one-project-or-several)
+- [Getting started: from first card to production](#getting-started-from-first-card-to-production)
 - [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
 - [Set up with an AI agent](#set-up-with-an-ai-agent)
 - [Connect a GitHub repo](#connect-a-github-repo)
@@ -50,13 +50,13 @@ Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)** · Live instan
 
 A running instance is at [bigas.me](https://bigas.me). The site is a short overview; this README is the full product and setup guide.
 
-Four surfaces, one story:
+Four surfaces, one loop ([Getting started](#getting-started-from-first-card-to-production) walks through it):
 
 | Surface | Where | Role |
 |---|---|---|
 | **Cockpit** | `/` (also `/cockpit`) | The start page when you are signed in. **Needs you** lists cards in a manual approval column and deploys waiting for your yes, with approve and send back (swipe on a phone). **AI working** shows cards in AI columns and running deploy pipelines. **Ship** has one card per deploy target. **This week** runs the PM update, X drafts and CFO report. Reads `GET /api/cockpit`. |
-| **Objectives** | `/objectives` | The quarter's scoreboard. You name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story. |
-| **Board** | `/board` | The default work surface: tickets, columns, releases, and a human-gated AI workflow (research → plan → implement). Jira is optional — connect it only if you already run a Jira board you want to keep. |
+| **Board** | `/board` | The built-in, Jira-like work surface: tickets, columns, releases, and a human-gated AI workflow (research → plan → implement → reviewed PR). Jira is optional — connect it only if you already run a Jira board you want to keep. |
+| **Objectives** (optional) | `/objectives` | The quarter's scoreboard. You name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story. |
 | **Chat** | `/chat` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |
 
 Objectives is optional: switch it off with [`BIGAS_FEATURES`](#keep-it-focused-optional-areas). See the [Objectives](#walkthrough-from-quarterly-objective-to-shipped-work), [board](#walkthrough-from-jira-card-to-merged-pr), and [chat](#walkthrough-from-chat-to-production-deploy) walkthroughs for screenshots of each surface.
@@ -87,48 +87,65 @@ When chat is enabled, open the app URL in a browser. Firebase Auth and Firestore
 
 ---
 
-## One founder, one project or several
+## Getting started: from first card to production
 
-Bigas is for the person who is product, marketing, and engineering at once — on a single product or across a whole portfolio. You do not pick a role. You connect the tools you already use; the virtual team covers the rest of the week.
+Bigas is built around one loop: **a card on the built-in board becomes a reviewed pull request, and the pull request reaches production.** Every project runs that loop in one of two modes: **development** first, **production** once real users depend on it. You switch a project with one button.
 
-Chat is the control plane. Chief of Staff sees everything you have connected; Marketing, Product, CTO, CFO, and DevOps each keep their own thread so you can jump in without reconstructing context.
+### The board loop (both modes)
 
-That control plane is a **goal-oriented engine**. You set the quarter's Objectives; Key Results are the scoreboard; the board is where you and the AI team work side by side until those numbers move.
+The board at `/board` is Jira-like and built in. No Jira account needed. Each GitHub repo is one board project with a short key (`ACME` → cards `ACME-1`, `ACME-2`). AI columns run on their own; manual columns wait for you, and those cards show up under **Needs you** in the cockpit.
 
-**This quarter you set the aim**
+| Column | Who | What happens |
+|---|---|---|
+| To Do | You | Write a title and a short brief. A screenshot helps. |
+| Research and describe (AI) | AI | Product researches and writes the description. |
+| Description approval (manual) | You | Approve, or send back with a comment. |
+| Design and plan (AI) | AI | CTO writes the implementation plan. |
+| Design approval (manual) | You | Approve, or send back with a comment. |
+| In Progress (AI) | AI | A Cursor agent implements it and opens a pull request. Bigas reviews it and autofixes findings until it is ready to merge. You merge (or set `BIGAS_CTO_AUTO_MERGE=true` and Bigas merges clean PRs). |
+| Final approval (manual) | You | The PR is merged. Check it, then mark it done (or **Mark all done** in the cockpit). |
+| Done | | |
 
-1. Open **Objectives** at `/objectives` — not a report, the shared scoreboard the team works toward.
-2. Each Objective has Key Results you own. Tasks on the board link to a KR, so shipping a card and moving a number are the same story.
-3. You approve, drag, and sign off `current`. Agents research, plan, and implement the work you put in front of them. Nobody auto-starts an AI task because a KR is off track.
+Small cards can go straight from To Do to In Progress (AI). Nothing moves without you: AI columns start when you drag a card in, and every manual column waits.
 
-**During the week you ship**
+### Development and production
 
-Work lives on Bigas's native Kanban board at `/board` by default. Jira is optional — connect it only if you already have a Jira board you want to keep.
+| | **Development** | **Production** |
+|---|---|---|
+| For | New projects, prototypes, internal tools | Projects with users |
+| Pull requests merge into | The production branch (`main`/`master`) | A release branch per version: `staging-0.1.0`, `staging-0.2.0`, … |
+| Versions | None | Board **Releases** (`0.1.0`, …); each card belongs to one |
+| You ship with | **Deploy** on the Ship card: deploys the production branch as it is | **Prepare deploy**: reviews the version's cut, merges the release branch to `main` through a PR, asks for your yes, deploys, tags `v0.1.0`, rolls leftover cards to the next version |
+| `main` | Open | Locked by a GitHub ruleset: changes only through a pull request; admins can bypass |
+| Hotfixes | Just another card | Label a card `hotfix`: its PR goes straight to `main`. A fix already merged on a release branch: `@bigas hotfix KEY-123` cherry-picks it onto `main` |
+| Extra repo workflows | `pr-review.yml` | `pr-review.yml`, `cherry_pick.yml`, `rebase_release.yml` |
 
-1. Drag a card to **Done** → Product posts a progress update.
-2. Assign tickets to a **board Release** (e.g. `0.9.0`) → Ship or a versioned prod deploy cuts GitHub `v0.9.0` and leftover open cards move to the next minor. Then `create_release_notes` drafts blog/social copy for that version.
-3. Ask in chat: *"Draft a tweet about this week's shipped work"* → edit and approve from the Product thread.
-4. Optional: weekly git activity → X draft with Discord approve/decline links.
+Each Ship card in the cockpit shows the project's mode. **Go to production** on a development project previews and then does the switch:
 
-**While that ships, you keep the code moving**
+1. opens one PR in the repo adding the release workflows (you merge it);
+2. locks the production branch with a ruleset;
+3. creates version `0.1.0` on the board, or uses the open version;
+4. creates `staging-0.1.0` from the production branch;
+5. sends new AI work for the project to that branch. It's stored in the app, so there's no redeploy.
 
-1. Open a PR → `review_and_comment_pr` (or ask the CTO agent). Bigas reads the diff and posts an architecture-focused review on the PR.
-2. Failed CI? Self-healing can open a hotfix PR; add `CURSOR_API_KEY` for autonomous autofix.
-3. Ask: *"Summarize my open PRs and flag blockers"* from the CTO thread.
+**Release mode → Back to development** undoes step 5. The other changes stay.
 
-**Once a week you look across your site — or every site**
+A third mode exists for apps that need a full rehearsal: a **staging environment** built from production plus a database copy, then deployed. It is configured per project in `BIGAS_STAGING_ENV_MAP` ([how](docs/agent-setup.md#4-release-models)).
 
-1. Schedule `weekly_analytics_report` and portfolio reports via Cloud Scheduler (or ask in chat).
-2. Ask: *"Run a cross-platform marketing analysis"* → spend compared across Google, Meta, LinkedIn, and Reddit.
-3. Reports land in Discord **and** the Marketing Analyst thread for async review.
+### Step by step
 
-**Once a week you look at spend**
+| Step | You do | You need |
+|---|---|---|
+| 1. Run locally | [MVP Quickstart](#mvp-quickstart-under-5-minutes): open `/board` and `/chat` | One LLM key |
+| 2. Deploy | [Deploy to Cloud Run](#tutorial-deploy-your-first-bigas-server). GitHub has to reach Bigas for reviews and deploys | Google Cloud project, Firebase for sign-in |
+| 3. Connect a repo | [`scripts/connect_repo.py`](#connect-a-github-repo), or ask a coding agent: [Set up with an AI agent](#set-up-with-an-ai-agent) | `GITHUB_TOKEN`, `CURSOR_API_KEY`, `BIGAS_ACCESS_KEYS`; a deploy workflow in the repo for the Ship card |
+| 4. Work in development | Cards → PRs → merged to `main`; **Deploy** on the Ship card | |
+| 5. Go to production | **Go to production** on the Ship card; merge the PR it opens | `GITHUB_TOKEN` with **Administration: write** on the repo (for the ruleset) |
+| 6. Ship versions | Cards land on `staging-x.y.z`; **Prepare deploy** when the version is ready | |
 
-1. Schedule `weekly_cto_ai_report` (or ask the CFO agent). Bigas rolls up whatever usage providers you enabled.
-2. Ask: *"What did we spend on AI last week?"* from the CFO thread.
-3. The briefing lands in the CFO chat thread (full message via `post_long_to_discord`), and optionally Discord via `DISCORD_WEBHOOK_URL_CFO`. The report opens with list-price, GCP invoice status, week-over-week, and top drivers, then area/feature detail and a short CFO analysis.
+Run `python scripts/bigas_doctor.py` at any step. It checks the instance and every connected repo, and gives a fix for each problem.
 
-Keys for each capability: [Add capabilities based on your needs](#add-capabilities-based-on-your-needs). Chat needs only an LLM key. The board is built in. Jira is optional.
+**Around the loop:** the cockpit (`/`) collects what needs you, what the AI is doing, every Ship card and the week's numbers. Chat (`/chat`) has Chief of Staff plus Product, CTO, CFO and DevOps. Objectives, Marketing and email outreach are optional ([`BIGAS_FEATURES`](#keep-it-focused-optional-areas)). Jira is optional too: connect it only if you already run a Jira board you want to keep.
 
 ---
 
@@ -199,6 +216,8 @@ python scripts/bigas_doctor.py                                                  
 | Repo | Actions variable `BIGAS_URL`, secret `BIGAS_API_KEY` | Workflows can call Bigas |
 | Repo (a pull request on `bigas-setup`) | `.github/workflows/pr-review.yml`, plus `cherry_pick.yml` and `rebase_release.yml` with `--versioned` | Review → autofix → merge → Final approval on every PR |
 | Repo (`--webhook`) | `workflow_run` webhook | Self-healing CI when an Actions run fails |
+
+New projects start in [development](#development-and-production). Switch to production later with **Go to production** on the project's Ship card. The full checklist for one more project, with what each mode needs, is in [docs/agent-setup.md](docs/agent-setup.md#add-a-project-checklist).
 
 Merge the setup pull request, restart Bigas (or `./deploy.sh`), and run the doctor. The repo needs a public Bigas URL (`BIGAS_PUBLIC_URL`), so connect repos after [deploying to Cloud Run](#tutorial-deploy-your-first-bigas-server). Release models, the staging-rehearsal setup and troubleshooting: [docs/agent-setup.md](docs/agent-setup.md).
 

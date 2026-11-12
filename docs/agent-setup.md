@@ -5,7 +5,7 @@ This is the procedure for an AI coding agent (Claude Code, Cursor, Codex, …) w
 The goal: Bigas runs, and each of the human's GitHub repos is wired so that
 
 - a card dragged to **In Progress (AI)** on `/board` becomes a pull request,
-- every pull request gets a Bigas review, autofix and merge,
+- every pull request gets a Bigas review and autofix, and is merged when clean,
 - the merged card moves to **Final approval**,
 - **Ship** on `/cockpit` can deploy the repo,
 - a failed GitHub Actions run reaches Bigas (self-healing CI).
@@ -32,7 +32,7 @@ Two scripts do the work, and both are safe to rerun:
 | Where Bigas runs | Local (laptop) or Google Cloud Run | Local first, then Cloud Run. GitHub Actions cannot reach a laptop, so PR review and deploy callbacks need Cloud Run. |
 | Board | Built-in `/board` or an existing Jira | Built-in. Jira: see [jira-automation.md](jira-automation.md). |
 | Repos | For each: a project key (`ACME`), `owner/repo`, the branch work starts from | Key = short uppercase name. Branch = the repo's default branch. |
-| Release model per repo | Direct, versioned or staging rehearsal (see step 4) | Direct |
+| Release mode per repo | **Development** (PRs merge to main; Deploy button), **production** (versioned releases; switched later with the Go to production button), or a staging rehearsal (see step 4) | Development. Switch when the project has users. |
 | Deploy per repo | Workflow file name(s), or none | None. Add later. |
 | Optional areas | `BIGAS_FEATURES`: `marketing`, `objectives`, `outreach`, `none`, `all` | Unset (all on). For the core loop only: `BIGAS_FEATURES=none`. |
 
@@ -110,9 +110,9 @@ Then:
 
 ## 4. Release models
 
-**Direct** (default). PRs merge to the base branch; **Ship → Deploy** dispatches the deploy workflow on it.
+**Development** (default). PRs merge to the production branch; **Deploy** on the Ship card dispatches the deploy workflow on it.
 
-**Versioned.** The easy way: **Go to production** on the project's Ship card in the cockpit. It previews and then runs every step below, and the project shows *Production* from then on. **Release mode → Back to development** undoes the switch (the ruleset, workflows, branches and versions stay):
+**Production (versioned).** The easy way: **Go to production** on the project's Ship card in the cockpit. It previews and then runs every step below, and the project shows *Production* from then on. **Release mode → Back to development** undoes the switch (the ruleset, workflows, branches and versions stay):
 
 1. a pull request in the repo adding `pr-review.yml`, `cherry_pick.yml` and `rebase_release.yml` (merge it);
 2. a GitHub ruleset on the production branch: pull request required, no force pushes or deletion, admins can bypass;
@@ -147,9 +147,44 @@ Then a smoke test with the human:
 3. On that PR, the **Bigas PR review** check runs and posts a review.
 4. After merge the card is in **Final approval**, and shows under **Needs you** in the cockpit.
 
-## Add another repo later
+## Add a project (checklist)
 
-Step 3 again with the new key. Nothing else changes.
+Use this when the human says "add my repo X" or "set up project Y". Steps 1 and 2 (Bigas running on Cloud Run) only happen once.
+
+**Ask the human:**
+
+1. A project key: 2–8 uppercase letters (`ACME`), and a display name.
+2. The GitHub repo (`owner/repo`) and the branch work starts from (look it up: `gh repo view owner/repo --json defaultBranchRef`).
+3. How it deploys: a workflow file in the repo (`ls .github/workflows`), or none yet.
+4. Development or production. Default: development. Switching later is one button.
+
+**What has to exist:**
+
+| Where | Development | Production adds |
+|---|---|---|
+| Bigas env (`.env` / Secret Manager) | `GITHUB_TOKEN` (Contents, Pull requests, Actions, Workflows: read/write), `CURSOR_API_KEY`, `BIGAS_ACCESS_KEYS`, `BIGAS_PUBLIC_URL`, `GITHUB_WEBHOOK_SECRET`; the project in `JIRA_PROJECT_KEY(S)` and the repo maps | `GITHUB_TOKEN` with **Administration: write** on the repo (ruleset) |
+| Repo workflows | `.github/workflows/pr-review.yml` (calls the Bigas review); a deploy workflow with `workflow_dispatch` for the Ship card | `cherry_pick.yml`, `rebase_release.yml` |
+| Repo settings | Actions variable `BIGAS_URL`, secret `BIGAS_API_KEY`; `workflow_run` webhook (self-healing CI) | Ruleset on the production branch |
+| Board | The project board (created from the key) | A version (`0.1.0`) and its `staging-0.1.0` branch |
+
+**Do it:**
+
+```bash
+# Development: everything in the left column
+python scripts/connect_repo.py --key ACME --repo owner/repo --branch main \
+  --name "Acme Shop" --deploy deploy.yml --webhook            # plan; show the human
+python scripts/connect_repo.py ... --apply                    # same flags + --apply
+# then: merge the bigas-setup PR, sync secrets if SECRET_MANAGER=true, ./deploy.sh
+python scripts/bigas_doctor.py --json                         # fix every "fail"
+```
+
+Production, now or later: the human opens the cockpit, clicks **Go to production** on the project's Ship card, checks the preview and applies it, then merges the `bigas-production` PR it opens. This is the right path for a project that already runs on Bigas. Do not do these steps by hand.
+
+Prefer the button even for a project that should be in production from day one: connect it as development, deploy, then click **Go to production**. The `--versioned staging` flag on `connect_repo.py` is the env-only route. It writes `PROJECT_BRANCH_MAPPING` and adds the two release workflows to the setup PR, but it does not lock `main` or create the first version. The cockpit then shows the project as production from env, so the button is not offered.
+
+If the repo has no deploy workflow, start from [workflows/deploy.example.yml](workflows/deploy.example.yml). Without one the project works fine but has no Ship card.
+
+Finish with the smoke test in step 5.
 
 ## Remove a repo
 
