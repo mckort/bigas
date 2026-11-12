@@ -346,7 +346,12 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onRe
   const primary = row.mode === 'versioned' ? row.commands[0] : row.commands.find((c) => /prepare staging/i.test(c.prompt))
   const others = row.commands.filter((c) => c !== primary)
   const deployClass = row.deploy_ready ? 'btn-accent' : 'btn-secondary'
-  const deployTitle = row.deploy_ready ? undefined : 'No new changes since the latest deploy'
+  const missingVersion = row.mode === 'versioned' && !isDev && !row.version
+  const deployTitle = missingVersion
+    ? 'No open version. Create one under Releases on the board.'
+    : row.deploy_ready
+      ? undefined
+      : 'No new changes since the latest deploy'
   return (
     <div className="border border-border rounded-xl p-3.5 bg-bg min-w-0 flex flex-col">
       <div className="flex items-center gap-2 min-w-0">
@@ -418,7 +423,7 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onRe
           primary && (
             <button
               type="button"
-              disabled={busy || (row.mode === 'versioned' && !isDev && !row.version)}
+              disabled={busy || missingVersion}
               onClick={() => onCommand(row, primary)}
               title={deployTitle}
               className={`${deployClass} text-xs px-3 py-1 min-h-[34px]`}
