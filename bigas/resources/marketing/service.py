@@ -26,8 +26,8 @@ class MarketingAnalyticsService:
         try:
             # Parse the question into structured query parameters
             query_params = self.marketing_llm_service.parse_query(question)
-            if host_name:
-                query_params["host_name"] = host_name
+            # None clears a host the model invented.
+            query_params["host_name"] = host_name
             
             # Build and execute the analytics request
             request = self.ga4_service.build_report_request(property_id, query_params)

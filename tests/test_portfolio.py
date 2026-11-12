@@ -102,6 +102,21 @@ def test_passorfund_resolves_and_shared_property_filters_host(monkeypatch):
     assert ga4_hostname_constraint("GPWW") is None
 
 
+def test_ga4_hostname_constraint_strips_path_port_slash(monkeypatch):
+    monkeypatch.setenv("BIGAS_GA4_PROPERTY_MAP", "POF:563992699,FYDA:563992699")
+
+    def fake_urls(key):
+        if key == "POF":
+            return ["https://passorfund.com:443/pricing/"]
+        if key == "FYDA":
+            return ["http://fyda.today/"]
+        return []
+
+    monkeypatch.setattr("bigas.portfolio.site_urls_for_project", fake_urls)
+    assert ga4_hostname_constraint("POF") == "passorfund.com"
+    assert ga4_hostname_constraint("FYDA") == "fyda.today"
+
+
 def test_scrub_brand_from_analytics_question(portfolio_env):
     out = scrub_analytics_question(
         "How is the inbound traffic to greenpromowear going recently?",

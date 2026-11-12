@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 DEFAULT_PROJECT_ALIASES: Dict[str, List[str]] = {
     "VFA": ["vcfieldassistant", "vc field assistant", "vcfield"],
@@ -354,7 +355,12 @@ def ga4_hostname_constraint(project_key: Optional[str]) -> Optional[str]:
     urls = site_urls_for_project(key)
     if not urls:
         return None
-    return urls[0].removeprefix("https://").removeprefix("http://")
+    raw = (urls[0] or "").strip()
+    if not raw:
+        return None
+    # hostName is the hostname only: no scheme, port, path, or slash.
+    parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
+    return parsed.hostname or None
 
 
 def ga4_property_for_project(project_key: Optional[str]) -> Optional[str]:
