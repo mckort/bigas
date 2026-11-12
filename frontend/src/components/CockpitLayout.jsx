@@ -322,10 +322,31 @@ const STATE_BADGE = {
   idle: 'bg-surface text-muted',
 }
 
+function latestDeployLine(latest) {
+  if (!latest || (!latest.version && !latest.released_at)) return 'No deploy yet'
+  const raw = String(latest.version || '').trim()
+  const version = raw ? (raw.toLowerCase().startsWith('v') ? raw : `v${raw}`) : ''
+  let when = ''
+  if (latest.released_at) {
+    const d = new Date(latest.released_at)
+    if (!Number.isNaN(d.getTime())) {
+      const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+      when = `${date}, ${time}`
+    }
+  }
+  if (version && when) return `Latest deploy: ${version}, ${when}`
+  if (version) return `Latest deploy: ${version}`
+  if (when) return `Latest deploy: ${when}`
+  return 'No deploy yet'
+}
+
 function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onReleaseMode }) {
   const isDev = row.release_mode === 'development'
   const primary = row.mode === 'versioned' ? row.commands[0] : row.commands.find((c) => /prepare staging/i.test(c.prompt))
   const others = row.commands.filter((c) => c !== primary)
+  const deployClass = row.deploy_ready ? 'btn-accent' : 'btn-secondary'
+  const deployTitle = row.deploy_ready ? undefined : 'No new changes since the latest deploy'
   return (
     <div className="border border-border rounded-xl p-3.5 bg-bg min-w-0 flex flex-col">
       <div className="flex items-center gap-2 min-w-0">
@@ -386,7 +407,7 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onRe
       <p className="text-sm mt-2 min-h-[20px]">{row.detail || ''}</p>
       <div className="flex flex-wrap gap-1.5 mt-3">
         {row.state === 'waiting' ? (
-          <button type="button" onClick={() => onReview(row)} className="btn-accent text-xs px-3 py-1 min-h-[34px]">
+          <button type="button" onClick={() => onReview(row)} className={`${deployClass} text-xs px-3 py-1 min-h-[34px]`}>
             Review deploy
           </button>
         ) : row.state === 'running' ? (
@@ -399,7 +420,8 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onRe
               type="button"
               disabled={busy || (row.mode === 'versioned' && !isDev && !row.version)}
               onClick={() => onCommand(row, primary)}
-              className="btn-accent text-xs px-3 py-1 min-h-[34px]"
+              title={deployTitle}
+              className={`${deployClass} text-xs px-3 py-1 min-h-[34px]`}
             >
               {primary.label}
             </button>
@@ -426,6 +448,7 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onRe
           </button>
         )}
       </div>
+      <p className="text-[11px] text-muted mt-2">{latestDeployLine(row.latest_deploy)}</p>
     </div>
   )
 }

@@ -165,6 +165,9 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
     assert ship["VFA"]["cut_count"] == 2
     assert ship["VFA"]["state"] == "waiting"
     assert ship["VFA"]["commands"][0]["prompt"] == "prepare deploy VFA 0.2.4"
+    assert ship["VFA"]["deploy_ready"] is True
+    assert ship["VFA"]["latest_deploy"]["version"] == "v0.2.3"
+    assert ship["GPW-PROD"]["deploy_ready"] is False
 
 
 def test_deploy_project_keys_are_normalized_to_uppercase():
@@ -249,6 +252,7 @@ def test_load_cockpit_keeps_later_release_modes_when_one_fails(monkeypatch):
         return {"mode": "development"}
 
     monkeypatch.setattr("bigas.go_live.release_state", release_state)
+    monkeypatch.setattr("bigas.cockpit_freshness.lookup_deploy_freshness", lambda specs: {})
 
     from bigas.cockpit import load_cockpit
 
@@ -527,6 +531,182 @@ def test_money_summary_bad_shapes_do_not_fail_the_endpoint(monkeypatch):
     assert out["ai"]["top"][0] == {"name": "tavily", "amount": 3.0}
     assert out["ai"]["errors"] == ["cursor blew up", "llm_logs"]
     cockpit_money.reset_cache_for_tests()
+
+
+def test_ship_card_is_blue_only_when_something_new_can_deploy():
+    from bigas.cockpit import latest_released_deploy
+
+    released = latest_released_deploy(
+        [
+            {"name": "0.9.0", "released": True, "released_at": "2026-01-01T00:00:00+00:00"},
+            {"name": "0.8.0", "released": True, "released_at": "2026-11-12T10:15:00+00:00"},
+            {"name": "1.0.0", "is_default": True},
+        ]
+    )
+    assert released == {"version": "v0.8.0", "released_at": "2026-11-12T10:15:00+00:00"}
+
+    payload = build_cockpit(
+        boards=[BOARD, {"board_id": "b2", "project_key": "BIG", "name": "Bigas"}],
+        tickets_by_board={
+            "b1": [_ticket("1", "Done", fix_version="0.2.4")],
+            "b2": [],
+        },
+        threads=[],
+        projects=[
+            {"key": "VFA", "name": "VC Field Assistant"},
+            {"key": "BIG", "name": "Bigas"},
+            {"key": "AURA", "name": "Aura"},
+            {"key": "FRI", "name": "Friman"},
+            {"key": "POF", "name": "Pass or Fund"},
+        ],
+        command_groups=[{"key": "GPW-PROD", "name": "Store", "commands": []}],
+        releases_by_project={
+            "VFA": [
+                {"name": "0.2.3", "released": True, "released_at": "2026-11-01T15:04:00+00:00"},
+                {"name": "0.2.4", "is_default": True},
+            ],
+            "BIG": [
+                {"name": "1.8.0", "released": True, "released_at": "2026-10-02T08:00:00+00:00"},
+            ],
+            "FRI": [
+                {"name": "0.3.0", "released": True, "released_at": "2026-09-01T08:00:00+00:00"},
+                {"name": "0.4.0", "is_default": True},
+            ],
+            "POF": [
+                {"name": "0.1.0", "released": True, "released_at": "2026-08-01T08:00:00+00:00"},
+            ],
+        },
+        release_modes={
+            "VFA": "production",
+            "BIG": "development",
+            "AURA": "development",
+            "FRI": "production",
+            "POF": "production",
+        },
+        deploy_freshness={
+            "VFA": {"ahead": False},
+            "BIG": {"ahead": False},
+            "AURA": {
+                "ahead": True,
+                "latest": {"version": "v0.4.1", "released_at": "2026-11-10T09:30:00+00:00"},
+            },
+            "FRI": {"ahead": False},
+            "POF": {"ahead": True},
+            "GPW-PROD": {
+                "ahead": True,
+                "latest": {"version": "v2.0.0", "released_at": "2026-11-08T12:00:00+00:00"},
+            },
+        },
+    )
+    ship = {row["key"]: row for row in payload["ship"]}
+    assert ship["VFA"]["deploy_ready"] is True
+    assert ship["VFA"]["latest_deploy"]["version"] == "v0.2.3"
+    assert ship["BIG"]["deploy_ready"] is False
+    assert ship["BIG"]["latest_deploy"]["version"] == "v1.8.0"
+    assert ship["AURA"]["deploy_ready"] is True
+    assert ship["AURA"]["latest_deploy"]["version"] == "v0.4.1"
+    assert ship["FRI"]["deploy_ready"] is False
+    assert ship["POF"]["deploy_ready"] is False
+    assert ship["POF"]["latest_deploy"]["version"] == "v0.1.0"
+    assert ship["GPW-PROD"]["deploy_ready"] is True
+    assert ship["GPW-PROD"]["latest_deploy"]["version"] == "v2.0.0"
+
+
+def test_deploy_freshness_compares_the_production_branch_to_the_last_success(monkeypatch):
+    from types import SimpleNamespace
+
+    from bigas.cockpit_freshness import fetch_deploy_freshness, reset_cache_for_tests
+
+    reset_cache_for_tests()
+
+    class Git:
+        def __init__(self):
+            self.branch = "sha-now"
+            self.runs = [
+                {"conclusion": "failure", "head_sha": "sha-failed", "updated_at": "2026-11-12T12:00:00Z"},
+                {"conclusion": "success", "head_sha": "sha-now", "updated_at": "2026-11-12T09:00:00Z"},
+            ]
+
+        def list_workflow_runs(self, owner, name, workflow, branch=None, limit=10):
+            return list(self.runs)
+
+        def get_ref_sha(self, owner, name, ref):
+            return self.branch
+
+        def list_releases(self, owner, name, limit=20):
+            return [
+                {
+                    "tag_name": "deploy-backend-20261112",
+                    "prerelease": True,
+                    "draft": False,
+                    "published_at": "2026-11-12T09:00:00Z",
+                },
+                {
+                    "tag_name": "v1.4.0",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-11-02T08:00:00Z",
+                },
+            ]
+
+        def branch_exists(self, owner, name, branch):
+            return branch == "staging-0.4.0"
+
+        def compare_refs(self, owner, name, base, head):
+            return {"ahead_by": 4 if head == "staging-0.4.0" else 0}
+
+    target = SimpleNamespace(repo="mckort/bigas", dispatch_repo="mckort/bigas", workflows=["deploy.yml", "eas-preview-ios.yml"])
+    monkeypatch.setattr("bigas.resources.devops.config.resolve_deploy_target", lambda **kwargs: target)
+
+    class Cfg:
+        def base_branch_for_repo(self, repo):
+            return "main"
+
+    monkeypatch.setattr(
+        "bigas.resources.product.jira_automation.config.JiraAutomationConfig.from_env",
+        lambda: Cfg(),
+    )
+
+    git = Git()
+    same = fetch_deploy_freshness(
+        git,
+        {
+            "key": "BIG",
+            "mode": "versioned",
+            "release_mode": "development",
+            "version": "",
+            "need_latest": True,
+        },
+    )
+    assert same["ahead"] is False
+    assert same["latest"] == {"version": "v1.4.0", "released_at": "2026-11-02T08:00:00Z"}
+
+    git.branch = "sha-new"
+    moved = fetch_deploy_freshness(
+        git,
+        {
+            "key": "BIG",
+            "mode": "versioned",
+            "release_mode": "development",
+            "version": "",
+            "need_latest": False,
+        },
+    )
+    assert moved["ahead"] is True
+    assert moved["latest"] is None
+
+    cut = fetch_deploy_freshness(
+        git,
+        {
+            "key": "VFA",
+            "mode": "versioned",
+            "release_mode": "production",
+            "version": "0.4.0",
+            "release_prefix": "staging",
+            "need_latest": False,
+        },
+    )
+    assert cut["ahead"] is True
 
 
 def test_money_summary_without_config(monkeypatch):
