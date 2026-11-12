@@ -326,6 +326,29 @@ def test_gemini_maps_timeout_to_request_options():
     assert kwargs["generation_config"]["temperature"] == 0.7
 
 
+def test_gemini_4_carbon_omits_temperature():
+    from unittest.mock import MagicMock, patch
+
+    from bigas.llm.gemini_client import GeminiLLMClient
+
+    model = MagicMock()
+    model.generate_content.return_value = _fake_gemini_text_response("done")
+
+    with patch("bigas.llm.gemini_client.genai") as genai:
+        genai.GenerativeModel.return_value = model
+        client = GeminiLLMClient(api_key="test-key", model="gemini-4-carbon")
+
+    client.complete_detailed(
+        [{"role": "user", "content": "analyze this page"}],
+        max_tokens=800,
+        temperature=0.2,
+    )
+
+    kwargs = model.generate_content.call_args.kwargs
+    assert "temperature" not in kwargs["generation_config"]
+    assert kwargs["generation_config"]["max_output_tokens"] == 800
+
+
 def test_gemini_4_argon_omits_temperature():
     from unittest.mock import MagicMock, patch
 

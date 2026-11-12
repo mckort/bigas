@@ -806,7 +806,10 @@ class VFAPackEvaluatorTests(unittest.TestCase):
     def test_pack_exposes_baseline_model(self):
         pack = load_pack("vfa-living-analysis")
         self.assertEqual(pack.baseline_model, "gemini:gemini-3.1-pro-preview")
-        self.assertEqual(pack.extra_models, ("gemini:gemini-4-argon",))
+        self.assertEqual(
+            pack.extra_models,
+            ("gemini:gemini-4-argon", "gemini:gemini-4-carbon"),
+        )
         self.assertEqual(len(pack.fixtures), 2)
         self.assertEqual(pack.fixtures[1].get("company") or pack.fixtures[1].get("company_name"), "Stripe")
 
