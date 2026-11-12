@@ -231,3 +231,41 @@ def test_answer_question_filtered_empty_is_finding(monkeypatch):
     assert "Failed to process analytics question" not in answer
     assert "outbound_store_click" in answer
     assert "valid finding" in answer.lower()
+
+
+def test_answer_question_overrides_llm_host_name(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.marketing.marketing_llm_service.get_llm_client",
+        lambda **k: (_FakeLLM(""), "gemini-test"),
+    )
+    from bigas.resources.marketing.service import MarketingAnalyticsService
+
+    captured = {}
+
+    def build_report_request(property_id, query_params):
+        captured["query_params"] = dict(query_params)
+        return object()
+
+    svc = MarketingAnalyticsService.__new__(MarketingAnalyticsService)
+    svc.marketing_llm_service = MarketingLLMService("sk-test")
+    svc.ga4_service = type(
+        "GA4",
+        (),
+        {
+            "build_report_request": staticmethod(build_report_request),
+            "run_report": lambda *a, **k: _FakeGa4Response(),
+        },
+    )()
+    svc.marketing_llm_service.parse_query = lambda q: {
+        "metrics": ["sessions"],
+        "dimensions": ["hostName"],
+        "host_name": "hallucinated.example",
+        "filters": [{"field": "eventName", "operator": "equals", "value": "page_view"}],
+        "date_range": {"start_date": "7daysAgo", "end_date": "today"},
+    }
+
+    svc.answer_question("123", "How many visitors?", host_name=None)
+    assert captured["query_params"]["host_name"] is None
+
+    svc.answer_question("123", "How many visitors?", host_name="passorfund.com")
+    assert captured["query_params"]["host_name"] == "passorfund.com"

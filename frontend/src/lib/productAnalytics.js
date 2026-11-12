@@ -1,10 +1,55 @@
-/** Product GA4 events for in-app engagement (chat / board), not marketing site sessions. */
+/** GA4 page views and in-app engagement. The tag loads only after consent. */
 
 export const WEEKLY_ACTIVE_EVENT = 'weekly_active_founder'
 const STORAGE_PREFIX = 'bigas_ga4_weekly_active'
+const CONSENT_KEY = 'bigas_ga4_consent'
 
 let measurementId = ''
 let gtagReady = false
+
+function isLocalHost() {
+  if (typeof window === 'undefined') return true
+  const host = window.location.hostname
+  return host === 'localhost' || host === '127.0.0.1'
+}
+
+export function storedAnalyticsConsent() {
+  try {
+    return localStorage.getItem(CONSENT_KEY)
+  } catch (_) {
+    return null
+  }
+}
+
+function rememberConsent(value) {
+  try {
+    localStorage.setItem(CONSENT_KEY, value)
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function loadGtag() {
+  if (gtagReady || !measurementId || typeof window === 'undefined' || isLocalHost()) return
+  window.dataLayer = window.dataLayer || []
+  function gtag() {
+    window.dataLayer.push(arguments)
+  }
+  window.gtag = gtag
+  gtag('consent', 'default', {
+    analytics_storage: 'granted',
+    ad_storage: 'denied',
+    ad_user_data: 'denied',
+    ad_personalization: 'denied',
+  })
+  gtag('js', new Date())
+  const script = document.createElement('script')
+  script.async = true
+  script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(measurementId)}`
+  document.head.appendChild(script)
+  gtag('config', measurementId, { send_page_view: false })
+  gtagReady = true
+}
 
 export function isoWeekKey(date = new Date()) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -19,26 +64,44 @@ export function configureProductAnalytics({ measurementId: id } = {}) {
   if (!next || typeof window === 'undefined') return
   const previousId = measurementId
   measurementId = next
+  // Keep the id so the consent banner can be exercised on localhost, but do not inject the tag.
+  if (isLocalHost()) return
   if (gtagReady) {
     if (previousId !== next && typeof window.gtag === 'function') {
       window.gtag('config', measurementId, { send_page_view: false })
     }
     return
   }
+  if (storedAnalyticsConsent() === 'granted') loadGtag()
+}
 
-  window.dataLayer = window.dataLayer || []
-  function gtag() {
-    window.dataLayer.push(arguments)
+export function grantAnalyticsConsent() {
+  rememberConsent('granted')
+  loadGtag()
+  // First acceptance: App already ran its page-view effect before the tag existed.
+  trackPageView()
+}
+
+export function denyAnalyticsConsent() {
+  rememberConsent('denied')
+}
+
+export function analyticsConsentPending() {
+  return Boolean(measurementId) && !gtagReady && storedAnalyticsConsent() !== 'denied' && storedAnalyticsConsent() !== 'granted'
+}
+
+export function trackPageView(path) {
+  try {
+    if (isLocalHost() || !gtagReady || typeof window.gtag !== 'function') return
+    const pagePath = path || `${window.location.pathname}${window.location.search}`
+    window.gtag('event', 'page_view', {
+      page_path: pagePath,
+      page_location: window.location.href,
+      page_title: document.title,
+    })
+  } catch (_) {
+    /* ignore */
   }
-  window.gtag = gtag
-  gtag('js', new Date())
-
-  const script = document.createElement('script')
-  script.async = true
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(measurementId)}`
-  document.head.appendChild(script)
-  gtag('config', measurementId, { send_page_view: false })
-  gtagReady = true
 }
 
 /** Fire at most once per ISO week when the founder uses chat or the board. */

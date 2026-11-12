@@ -12,6 +12,7 @@ from bigas.github_refs import (
 )
 from bigas.portfolio import (
     board_name_for_project,
+    ga4_hostname_constraint,
     ga4_property_for_project,
     local_path_for_project,
     normalize_project_key,
@@ -85,6 +86,35 @@ def test_ga4_only_configured_for_gpww(portfolio_env):
     assert prop is None
     assert key == "VFA"
     assert err and "No GA4 property" in err
+
+
+def test_passorfund_resolves_and_shared_property_filters_host(monkeypatch):
+    monkeypatch.setenv("GA4_PROPERTY_ID", "473559548")
+    monkeypatch.setenv(
+        "BIGAS_GA4_PROPERTY_MAP",
+        "GPWW:473559548,VFA:538663350,POF:563992699,FYDA:563992699",
+    )
+    assert resolve_project("visitors on passorfund.com") == "POF"
+    assert ga4_property_for_project("POF") == "563992699"
+    assert ga4_hostname_constraint("POF") == "passorfund.com"
+    assert ga4_hostname_constraint("FYDA") == "fyda.today"
+    assert ga4_hostname_constraint("VFA") is None
+    assert ga4_hostname_constraint("GPWW") is None
+
+
+def test_ga4_hostname_constraint_strips_path_port_slash(monkeypatch):
+    monkeypatch.setenv("BIGAS_GA4_PROPERTY_MAP", "POF:563992699,FYDA:563992699")
+
+    def fake_urls(key):
+        if key == "POF":
+            return ["https://passorfund.com:443/pricing/"]
+        if key == "FYDA":
+            return ["http://fyda.today/"]
+        return []
+
+    monkeypatch.setattr("bigas.portfolio.site_urls_for_project", fake_urls)
+    assert ga4_hostname_constraint("POF") == "passorfund.com"
+    assert ga4_hostname_constraint("FYDA") == "fyda.today"
 
 
 def test_scrub_brand_from_analytics_question(portfolio_env):

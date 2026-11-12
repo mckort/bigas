@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 DEFAULT_PROJECT_ALIASES: Dict[str, List[str]] = {
     "VFA": ["vcfieldassistant", "vc field assistant", "vcfield"],
@@ -336,6 +337,32 @@ def resolve_project(text: str) -> Optional[str]:
     return None
 
 
+def ga4_hostname_constraint(project_key: Optional[str]) -> Optional[str]:
+    """Apex hostname when several brands share one GA4 property, else None.
+
+    A dedicated property (VC Field Assistant, Green Promo Wear) needs no host
+    filter. Pass or Fund and the other sites on the shared portfolio property do.
+    """
+    key = (project_key or "").strip().upper()
+    if not key:
+        return None
+    prop = ga4_property_for_project(key)
+    if not prop:
+        return None
+    sharers = [name for name, value in ga4_property_map().items() if name.isupper() and value == prop]
+    if len(sharers) < 2:
+        return None
+    urls = site_urls_for_project(key)
+    if not urls:
+        return None
+    raw = (urls[0] or "").strip()
+    if not raw:
+        return None
+    # hostName is the hostname only: no scheme, port, path, or slash.
+    parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
+    return parsed.hostname or None
+
+
 def ga4_property_for_project(project_key: Optional[str]) -> Optional[str]:
     if not project_key:
         default = (os.environ.get("GA4_PROPERTY_ID") or "").replace("properties/", "").strip()
@@ -413,7 +440,7 @@ def prompt_block() -> str:
         [
             "",
             "When the user names a product, site, repo, or Jira key, use that project.",
-            "For analytics, pass project_key to ask_analytics_question. Never treat the brand name as a GA4 hostname filter.",
+            "For analytics, pass project_key to ask_analytics_question. Shared properties are filtered to that site's hostname. Never treat the brand name as a GA4 hostname filter.",
             "If GA4 is not configured for that project, say so — do not query another property.",
             "For new development work, ask the user to create/drag a Jira issue in that project "
             "(Research → Design → In Progress AI) so Bigas can open a PR on the mapped repo.",

@@ -12,7 +12,7 @@ from google.analytics.data_v1beta.types import (
 )
 import os
 from bigas.llm.factory import get_llm_client
-from bigas.portfolio import resolve_ga4_property, scrub_analytics_question
+from bigas.portfolio import ga4_hostname_constraint, resolve_ga4_property, scrub_analytics_question
 from datetime import date, datetime, timedelta
 import time
 import logging
@@ -1300,7 +1300,11 @@ def ask_analytics_question():
     
     try:
         service = MarketingAnalyticsService(OPENAI_API_KEY)
-        answer = service.answer_question(property_id, analytics_question)
+        answer = service.answer_question(
+            property_id,
+            analytics_question,
+            host_name=ga4_hostname_constraint(project_key),
+        )
         return jsonify({"answer": answer, "project_key": project_key, "ga4_property_id": property_id})
     except Exception as e:
         logger.error(f"Error in ask_analytics_question: {traceback.format_exc()}")

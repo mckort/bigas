@@ -148,9 +148,21 @@ body {
   padding-bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
 }
 
+.analytics-consent {
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
+
+.analytics-consent-above-nav {
+  bottom: calc(3.5rem + 16px + env(safe-area-inset-bottom, 0px));
+}
+
 @media (min-width: 1024px) {
   .mobile-nav-offset {
     padding-bottom: 0;
+  }
+
+  .analytics-consent-above-nav {
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   }
 }
 

@@ -10,6 +10,8 @@ import MobileNav from './components/MobileNav'
 import { initAuth, subscribeAuth, logout } from './lib/auth'
 import { verifyAuth } from './lib/api'
 import { featureEnabled } from './lib/features'
+import AnalyticsConsent from './components/AnalyticsConsent'
+import { trackPageView } from './lib/productAnalytics'
 
 function currentPath() {
   return window.location.pathname || '/'
@@ -158,6 +160,11 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
+  useEffect(() => {
+    if (!ready) return
+    trackPageView(locationPath)
+  }, [ready, locationPath])
+
   const handleDiscussTicket = (ticket) => {
     setDiscussContext(ticket)
     switchView('chat')
@@ -180,17 +187,25 @@ export default function App() {
   if (!user) {
     if (isLoginPath(locationPath) || isAppPath(locationPath)) {
       return (
-        <Login
-          onLoggedIn={() => {
-            setUser({ email: 'signed-in' })
-            syncPath('/cockpit', { replace: true })
-            setView('cockpit')
-          }}
-          onBack={() => syncPath('/')}
-        />
+        <>
+          <Login
+            onLoggedIn={() => {
+              setUser({ email: 'signed-in' })
+              syncPath('/cockpit', { replace: true })
+              setView('cockpit')
+            }}
+            onBack={() => syncPath('/')}
+          />
+          <AnalyticsConsent />
+        </>
       )
     }
-    return <Landing onSignIn={() => syncPath('/login')} />
+    return (
+      <>
+        <Landing onSignIn={() => syncPath('/login')} />
+        <AnalyticsConsent />
+      </>
+    )
   }
 
   const openSettings = () => setSettingsOpen(true)
@@ -254,6 +269,7 @@ export default function App() {
         onAgentsUpdated={() => setAgentsRefreshKey((key) => key + 1)}
         onJiraSyncComplete={() => setBoardRefreshKey((key) => key + 1)}
       />
+      <AnalyticsConsent aboveNav />
     </>
   )
 }
