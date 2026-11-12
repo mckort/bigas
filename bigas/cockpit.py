@@ -15,8 +15,9 @@ Sign-off
 AI working
     Tickets in an AI column and devops threads with a running pipeline poll.
 Ship
-    One row per deploy target with its default unreleased version and how
-    many tickets are in that cut.
+    One row per deploy target with its default unreleased version, how
+    many tickets are in that cut, whether new changes are ready to deploy,
+    and the latest shipped version.
 """
 from __future__ import annotations
 
@@ -219,6 +220,66 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
     return {"needs": needs, "working": working}
 
 
+def latest_released_deploy(releases: Optional[Iterable[Dict[str, Any]]]) -> Optional[Dict[str, str]]:
+    """Newest shipped board version, as ``vX.Y.Z`` plus ``released_at`` when known."""
+    from bigas.tickets.semver import SemverError, parse_semver
+
+    released = [
+        item
+        for item in (releases or [])
+        if item and item.get("released") and str(item.get("name") or "").strip()
+    ]
+    if not released:
+        return None
+
+    def _sort_key(item: Dict[str, Any]) -> tuple:
+        at = _parse_time(item.get("released_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        name = str(item.get("name") or "")
+        try:
+            parsed = parse_semver(name)
+        except SemverError:
+            parsed = (0, 0, 0)
+        return (at, parsed)
+
+    latest = max(released, key=_sort_key)
+    name = str(latest.get("name") or "").strip()
+    label = name if name.lower().startswith("v") else f"v{name}"
+    return {
+        "version": label,
+        "released_at": str(latest.get("released_at") or "").strip(),
+    }
+
+
+def ship_deploy_ready(
+    *,
+    state: str,
+    mode: str,
+    release_mode: str,
+    cut_count: Optional[int],
+    ahead: Optional[bool],
+    version: str = "",
+) -> bool:
+    """True when the ship card's deploy action should be the blue button.
+
+    A confirm that is already waiting is ready. A versioned production cut
+    with an open version and cards in it is ready. Otherwise only a positive
+    git check counts: the production branch, the open version branch, or the
+    staging candidate is ahead of what is already deployed. Unknown
+    (``ahead is None``) stays quiet, and a versioned card with no open
+    version stays quiet, so an idle card is not blue with nothing to ship.
+    """
+    if state == "waiting":
+        return True
+    if state == "running":
+        return False
+    if mode == "versioned" and release_mode != "development":
+        if not version:
+            return False
+        if cut_count:
+            return True
+    return ahead is True
+
+
 def _default_release(releases: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     open_releases = [r for r in releases if not r.get("released")]
     for release in open_releases:
@@ -255,6 +316,7 @@ def _ship_rows(
     releases_by_project: Dict[str, List[Dict[str, Any]]],
     deploy_items: Dict[str, List[Dict[str, Any]]],
     release_modes: Optional[Dict[str, str]] = None,
+    deploy_freshness: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """One row per deploy target.
 
@@ -263,6 +325,26 @@ def _ship_rows(
     as production, which is how every versioned row behaved before.
     """
     modes = release_modes or {}
+    freshness = deploy_freshness or {}
+
+    def _with_deploy_cue(row: Dict[str, Any], *, cut_count: Optional[int]) -> Dict[str, Any]:
+        key = row["key"]
+        releases = releases_by_project[key] if key in releases_by_project else []
+        release_error = releases is None
+        fresh = freshness.get(key) or {}
+        board_latest = None if release_error else latest_released_deploy(releases or [])
+        github_latest = fresh.get("latest") if isinstance(fresh.get("latest"), dict) else None
+        ahead = fresh.get("ahead") if key in freshness else None
+        row["latest_deploy"] = board_latest or github_latest or None
+        row["deploy_ready"] = ship_deploy_ready(
+            state=row["state"],
+            mode=row["mode"],
+            release_mode=row["release_mode"],
+            cut_count=cut_count,
+            ahead=ahead if isinstance(ahead, bool) else None,
+            version=str(row.get("version") or ""),
+        )
+        return row
     tickets_by_project: Dict[str, List[Dict[str, Any]]] = {}
     for board in boards:
         key = (board.get("project_key") or "").strip().upper()
@@ -310,16 +392,19 @@ def _ship_rows(
         if not key:
             continue
         rows.append(
-            {
-                "key": key,
-                "name": group.get("name") or key,
-                "mode": "staging",
-                "release_mode": "production",
-                "version": "",
-                "cut_count": None,
-                "commands": list(group.get("commands") or []),
-                **_state(key),
-            }
+            _with_deploy_cue(
+                {
+                    "key": key,
+                    "name": group.get("name") or key,
+                    "mode": "staging",
+                    "release_mode": "production",
+                    "version": "",
+                    "cut_count": None,
+                    "commands": list(group.get("commands") or []),
+                    **_state(key),
+                },
+                cut_count=None,
+            )
         )
     seen = {row["key"] for row in rows}
     for project in projects:
@@ -345,17 +430,20 @@ def _ship_rows(
         else:
             commands = [{"label": "Prepare deploy", "prompt": f"prepare deploy {key} {version}".strip()}]
         rows.append(
-            {
-                "key": key,
-                "name": project.get("name") or key,
-                "mode": "versioned",
-                "release_mode": release_mode,
-                "version": version,
-                "cut_count": len(cut),
-                "release_error": release_error,
-                "commands": commands,
-                **_state(key),
-            }
+            _with_deploy_cue(
+                {
+                    "key": key,
+                    "name": project.get("name") or key,
+                    "mode": "versioned",
+                    "release_mode": release_mode,
+                    "version": version,
+                    "cut_count": len(cut),
+                    "release_error": release_error,
+                    "commands": commands,
+                    **_state(key),
+                },
+                cut_count=len(cut),
+            )
         )
     return rows
 
@@ -440,6 +528,7 @@ def build_cockpit(
     releases_by_project: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     now: Optional[datetime] = None,
     release_modes: Optional[Dict[str, str]] = None,
+    deploy_freshness: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Assemble the cockpit payload from already-loaded data (pure function)."""
     now = now or datetime.now(timezone.utc)
@@ -460,6 +549,7 @@ def build_cockpit(
         releases_by_project=releases_by_project or {},
         deploy_items=deploy_items,
         release_modes=release_modes,
+        deploy_freshness=deploy_freshness,
     )
     signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
     return {
@@ -580,8 +670,12 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
         (b.get("project_key") or "").strip().upper() for b in boards if b.get("project_key")
     }
     releases_by_project: Dict[str, List[Dict[str, Any]]] = {}
-    for project in projects:
-        key = (project.get("key") or "").upper()
+    release_keys = {
+        (item.get("key") or "").upper()
+        for item in list(projects) + list(command_groups)
+        if (item.get("key") or "").strip()
+    }
+    for key in release_keys:
         if key not in board_keys:
             continue
         try:
@@ -595,6 +689,7 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
     command_groups = [g for g in command_groups if (g.get("key") or "").upper() in board_keys]
 
     release_modes: Dict[str, str] = {}
+    release_prefixes: Dict[str, str] = {}
     try:
         from bigas.go_live import release_state
     except Exception:
@@ -603,9 +698,28 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
         for project in projects:
             key = (project.get("key") or "").upper()
             try:
-                release_modes[key] = release_state(key)["mode"]
+                state = release_state(key)
             except Exception:
                 logger.warning("Cockpit could not read release mode for %s", key, exc_info=True)
+                continue
+            release_modes[key] = state["mode"]
+            release_prefixes[key] = (state.get("release_prefix") or "").strip()
+
+    freshness: Dict[str, Dict[str, Any]] = {}
+    try:
+        from bigas.cockpit_freshness import lookup_deploy_freshness
+
+        freshness = lookup_deploy_freshness(
+            _freshness_specs(
+                projects,
+                command_groups,
+                release_modes,
+                release_prefixes,
+                releases_by_project,
+            )
+        )
+    except Exception:
+        logger.warning("Cockpit could not check for undeployed changes", exc_info=True)
 
     return build_cockpit(
         boards=boards,
@@ -615,4 +729,49 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
         command_groups=command_groups,
         releases_by_project=releases_by_project,
         release_modes=release_modes,
+        deploy_freshness=freshness,
     )
+
+
+def _freshness_specs(
+    projects: Iterable[Dict[str, Any]],
+    command_groups: Iterable[Dict[str, Any]],
+    release_modes: Dict[str, str],
+    release_prefixes: Dict[str, str],
+    releases_by_project: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """What each ship card needs from git: ahead-of-deploy, and a version if the board has none."""
+    specs: List[Dict[str, Any]] = []
+    for group in command_groups:
+        key = (group.get("key") or "").upper()
+        if not key:
+            continue
+        releases = releases_by_project.get(key)
+        specs.append(
+            {
+                "key": key,
+                "mode": "staging",
+                "release_mode": "production",
+                "version": "",
+                "release_prefix": "",
+                "need_latest": not latest_released_deploy(releases or []),
+            }
+        )
+    seen = {spec["key"] for spec in specs}
+    for project in projects:
+        key = (project.get("key") or "").upper()
+        if not key or key in seen:
+            continue
+        releases = releases_by_project.get(key)
+        release = None if releases is None else _default_release(releases or [])
+        specs.append(
+            {
+                "key": key,
+                "mode": "versioned",
+                "release_mode": release_modes.get(key, "production"),
+                "version": (release or {}).get("name") or "",
+                "release_prefix": release_prefixes.get(key) or "staging",
+                "need_latest": releases is not None and not latest_released_deploy(releases or []),
+            }
+        )
+    return specs
