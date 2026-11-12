@@ -66,16 +66,27 @@ _MODEL_PRICE_USD_PER_MTOK: Tuple[Tuple[str, float, float], ...] = (
     ("gpt-4o", 2.50, 10.00),
 )
 
-# Gemini 4 Argon list price steps up on this date (USD / 1M tokens).
-_GEMINI_4_ARGON_PRICE_CHANGE = date(2026, 12, 1)
+# Gemini 4 Argon and Carbon list price steps up on this date (USD / 1M tokens).
+_GEMINI_4_INTRO_PRICE_END = date(2026, 12, 1)
+_GEMINI_4_PUBLIC_STEMS = ("gemini-4-argon", "gemini-4-carbon")
 
 
-def _gemini_4_argon_price(today: Optional[date] = None) -> Tuple[float, float]:
-    """Intro rate through 30 Nov 2026, then the standard list rate."""
+def _gemini_4_public_price(today: Optional[date] = None) -> Tuple[float, float]:
+    """Intro rate through 30 Nov 2026, then the standard list rate.
+
+    Argon and Carbon share this schedule. Cyber variants are not this price.
+    """
     stamp = today or date.today()
-    if stamp < _GEMINI_4_ARGON_PRICE_CHANGE:
+    if stamp < _GEMINI_4_INTRO_PRICE_END:
         return 2.00, 10.00
     return 4.00, 20.00
+
+
+def _is_public_gemini_4(name: str) -> bool:
+    for stem in _GEMINI_4_PUBLIC_STEMS:
+        if name == stem or (name.startswith(f"{stem}-") and "cyber" not in name):
+            return True
+    return False
 
 
 def resolve_model_price_usd_per_mtok(model: str) -> Optional[Tuple[float, float]]:
@@ -85,10 +96,8 @@ def resolve_model_price_usd_per_mtok(model: str) -> Optional[Tuple[float, float]
     name = name.removeprefix("models/")
     if not name:
         return None
-    if name == "gemini-4-argon" or (
-        name.startswith("gemini-4-argon-") and "cyber" not in name
-    ):
-        return _gemini_4_argon_price()
+    if _is_public_gemini_4(name):
+        return _gemini_4_public_price()
     for prefix, inp, out in _MODEL_PRICE_USD_PER_MTOK:
         if name == prefix or name.startswith(prefix):
             return inp, out

@@ -65,8 +65,13 @@ class TokenUsageTests(unittest.TestCase):
         with patch("bigas.llm.usage.date") as mock_date:
             mock_date.today.return_value = date(2026, 10, 16)
             self.assertEqual(resolve_model_price_usd_per_mtok("gemini-4-argon"), (2.00, 10.00))
+            self.assertEqual(resolve_model_price_usd_per_mtok("gemini-4-carbon"), (2.00, 10.00))
             self.assertEqual(
                 resolve_model_price_usd_per_mtok("models/gemini-4-argon"),
+                (2.00, 10.00),
+            )
+            self.assertEqual(
+                resolve_model_price_usd_per_mtok("models/gemini-4-carbon"),
                 (2.00, 10.00),
             )
 
@@ -74,6 +79,7 @@ class TokenUsageTests(unittest.TestCase):
         with patch("bigas.llm.usage.date") as mock_date:
             mock_date.today.return_value = date(2026, 12, 1)
             self.assertEqual(resolve_model_price_usd_per_mtok("gemini-4-argon"), (4.00, 20.00))
+            self.assertEqual(resolve_model_price_usd_per_mtok("gemini-4-carbon"), (4.00, 20.00))
 
     def test_flash_estimate_does_not_double_count_thoughts(self):
         # Realistic Gemini shape: candidates already includes thoughts.

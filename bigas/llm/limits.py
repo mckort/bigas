@@ -68,7 +68,10 @@ def supports_temperature(model: str) -> bool:
     if name.startswith(("claude-fable-5", "claude-opus-5", "claude-sonnet-5")):
         return False
     # Gemini 4 Argon rejects temperature, top_p, and top_k.
+    # Gemini 4 Carbon ignores those sampling parameters.
     if name == "gemini-4-argon" or name.startswith("gemini-4-argon-"):
+        return False
+    if name == "gemini-4-carbon" or name.startswith("gemini-4-carbon-"):
         return False
     return True
 
