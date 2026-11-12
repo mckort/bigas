@@ -169,7 +169,151 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
     assert ship["VFA"]["commands"][0]["prompt"] == "prepare deploy VFA 0.2.4"
     assert ship["VFA"]["deploy_ready"] is True
     assert ship["VFA"]["latest_deploy"]["version"] == "v0.2.3"
+    assert [item["key"] for item in ship["VFA"]["pending"]] == ["VFA-2", "VFA-1"]
+    assert ship["VFA"]["pending_count"] == 2
     assert ship["GPW-PROD"]["deploy_ready"] is False
+    assert ship["GPW-PROD"]["pending"] == []
+    assert ship["GPW-PROD"]["pending_count"] == 0
+
+
+def test_ship_card_names_the_cut_or_the_undeployed_commits():
+    payload = build_cockpit(
+        boards=[
+            BOARD,
+            {"board_id": "b2", "project_key": "BIG", "name": "Bigas"},
+            {"board_id": "b3", "project_key": "AURA", "name": "AuraLearn"},
+        ],
+        tickets_by_board={
+            "b1": [
+                _ticket(
+                    "1",
+                    "Done",
+                    fix_version="0.2.4",
+                    title="In the cut",
+                    url="https://board/VFA-1",
+                ),
+                _ticket("9", "To Do", fix_version="0.2.4", title="Still open"),
+            ],
+            "b2": [
+                _ticket(
+                    "4",
+                    "Done",
+                    fix_version="0.3.0",
+                    title="Not what this deploy ships",
+                    board_id="b2",
+                    key="BIG-4",
+                )
+            ],
+            "b3": [],
+        },
+        threads=[],
+        projects=[
+            {"key": "VFA", "name": "VC Field Assistant"},
+            {"key": "BIG", "name": "Bigas"},
+            {"key": "AURA", "name": "AuraLearn"},
+        ],
+        command_groups=[{"key": "GPW-PROD", "name": "Store", "commands": []}],
+        releases_by_project={
+            "VFA": [{"name": "0.2.4", "is_default": True}],
+            "BIG": [{"name": "0.3.0", "is_default": True}],
+            "AURA": [{"name": "0.5.0", "is_default": True}],
+        },
+        release_modes={"BIG": "development", "VFA": "production", "AURA": "production"},
+        deploy_freshness={
+            "VFA": {
+                "ahead": True,
+                "pending": [{"key": "", "title": "commit the cut already names", "url": ""}],
+                "pending_count": 1,
+            },
+            "BIG": {
+                "ahead": True,
+                "pending": [
+                    {
+                        "key": "",
+                        "title": "BIG-171: Do not wait on the review job",
+                        "url": "https://github.com/commit/1",
+                    }
+                ],
+                "pending_count": 1,
+            },
+            "AURA": {
+                "ahead": True,
+                "pending": [
+                    {"key": "", "title": "Fix the lesson player", "url": "https://github.com/commit/2"}
+                ],
+                "pending_count": 1,
+            },
+            "GPW-PROD": {
+                "ahead": True,
+                "pending": [{"key": "", "title": "Update the storefront", "url": "https://github.com/commit/3"}],
+                "pending_count": 3,
+            },
+        },
+    )
+    ship = {row["key"]: row for row in payload["ship"]}
+    assert ship["VFA"]["pending"] == [
+        {"key": "VFA-1", "title": "In the cut", "url": "https://board/VFA-1"}
+    ]
+    assert ship["VFA"]["pending_count"] == 1
+    assert ship["BIG"]["pending"][0]["title"] == "BIG-171: Do not wait on the review job"
+    assert ship["BIG"]["pending_count"] == 1
+    assert ship["AURA"]["cut_count"] == 0
+    assert ship["AURA"]["pending"][0]["title"] == "Fix the lesson player"
+    assert ship["GPW-PROD"]["pending"][0]["title"] == "Update the storefront"
+    assert ship["GPW-PROD"]["pending_count"] == 3
+
+
+def test_pending_from_compare_skips_blank_subjects_and_keeps_the_full_count():
+    from bigas.cockpit_freshness import pending_from_compare
+
+    out = pending_from_compare(
+        {
+            "ahead_by": 5,
+            "total_commits": 4,
+            "commits": [
+                {"sha": "1", "commit": {"message": "   "}},
+                {"sha": "2", "html_url": "https://github.com/c/2", "commit": {"message": "kept"}},
+            ],
+        }
+    )
+    assert out["items"] == [{"key": "", "title": "kept", "url": "https://github.com/c/2"}]
+    assert out["count"] == 5
+    assert pending_from_compare({"ahead_by": 0, "commits": []}) == {"items": [], "count": 0}
+
+
+def test_pending_from_compare_skips_conflict_notes_on_merge_commits():
+    from bigas.cockpit_freshness import pending_from_compare
+
+    out = pending_from_compare(
+        {
+            "ahead_by": 2,
+            "commits": [
+                {
+                    "sha": "1",
+                    "html_url": "https://github.com/c/1",
+                    "commit": {
+                        "message": "Merge branch 'main' into feature\n\n# Conflicts:\n#\tbigas/cockpit.py\n"
+                    },
+                },
+                {
+                    "sha": "2",
+                    "html_url": "https://github.com/c/2",
+                    "commit": {
+                        "message": (
+                            "Merge branch 'main' into feature\n\n"
+                            "Ship the cockpit card\n\n"
+                            "# Conflicts:\n"
+                            "#\tbigas/cockpit.py\n"
+                        )
+                    },
+                },
+            ],
+        }
+    )
+    assert [item["title"] for item in out["items"]] == [
+        "Ship the cockpit card",
+        "Merge branch 'main' into feature",
+    ]
 
 
 def test_deploy_project_keys_are_normalized_to_uppercase():
@@ -655,7 +799,36 @@ def test_deploy_freshness_compares_the_production_branch_to_the_last_success(mon
             return branch == "staging-0.4.0"
 
         def compare_refs(self, owner, name, base, head):
-            return {"ahead_by": 4 if head == "staging-0.4.0" else 0}
+            if base == "sha-now" and head == "main":
+                return {
+                    "ahead_by": 1,
+                    "total_commits": 1,
+                    "commits": [
+                        {
+                            "sha": "ccc",
+                            "html_url": "https://github.com/mckort/bigas/commit/ccc",
+                            "commit": {"message": "BIG-171: Do not wait on the review job"},
+                        }
+                    ],
+                }
+            if head != "staging-0.4.0":
+                return {"ahead_by": 0, "commits": []}
+            return {
+                "ahead_by": 2,
+                "total_commits": 2,
+                "commits": [
+                    {
+                        "sha": "aaa",
+                        "html_url": "https://github.com/mckort/app/commit/aaa",
+                        "commit": {"message": "older change"},
+                    },
+                    {
+                        "sha": "bbb",
+                        "html_url": "https://github.com/mckort/app/commit/bbb",
+                        "commit": {"message": "VFA-9: newest change\n\nDetails."},
+                    },
+                ],
+            }
 
     target = SimpleNamespace(repo="mckort/bigas", dispatch_repo="mckort/bigas", workflows=["deploy.yml", "eas-preview-ios.yml"])
     monkeypatch.setattr("bigas.resources.devops.config.resolve_deploy_target", lambda **kwargs: target)
@@ -681,6 +854,7 @@ def test_deploy_freshness_compares_the_production_branch_to_the_last_success(mon
         },
     )
     assert same["ahead"] is False
+    assert same["pending"] == []
     assert same["latest"] == {
         "version": "v1.4.0",
         "tag": "v1.4.0",
@@ -700,6 +874,14 @@ def test_deploy_freshness_compares_the_production_branch_to_the_last_success(mon
     )
     assert moved["ahead"] is True
     assert moved["latest"] is None
+    assert moved["pending"] == [
+        {
+            "key": "",
+            "title": "BIG-171: Do not wait on the review job",
+            "url": "https://github.com/mckort/bigas/commit/ccc",
+        }
+    ]
+    assert moved["pending_count"] == 1
 
     cut = fetch_deploy_freshness(
         git,
@@ -713,6 +895,8 @@ def test_deploy_freshness_compares_the_production_branch_to_the_last_success(mon
         },
     )
     assert cut["ahead"] is True
+    assert [item["title"] for item in cut["pending"]] == ["VFA-9: newest change", "older change"]
+    assert cut["pending_count"] == 2
 
 
 def test_newest_successful_sha_keeps_the_successful_run_timestamp():
@@ -813,7 +997,16 @@ def test_tag_ahead_compares_the_raw_git_tag(monkeypatch):
 
         def compare_refs(self, owner, name, base, head):
             self.bases.append((base, head))
-            return {"ahead_by": 2}
+            return {
+                "ahead_by": 2,
+                "commits": [
+                    {
+                        "sha": "abc",
+                        "html_url": "https://github.com/acme/mobile/commit/abc",
+                        "commit": {"message": "Merge pull request #4 from acme/ios\n\nShip the iOS build"},
+                    }
+                ],
+            }
 
     target = SimpleNamespace(
         repo="acme/mobile",
@@ -844,6 +1037,14 @@ def test_tag_ahead_compares_the_raw_git_tag(monkeypatch):
     )
     assert git.bases == [("1.2.3", "main")]
     assert result["ahead"] is True
+    assert result["pending"] == [
+        {
+            "key": "",
+            "title": "Ship the iOS build",
+            "url": "https://github.com/acme/mobile/commit/abc",
+        }
+    ]
+    assert result["pending_count"] == 2
     assert result["latest"] == {
         "version": "v1.2.3",
         "tag": "1.2.3",
@@ -881,7 +1082,31 @@ def test_lookup_deploy_freshness_does_not_wait_out_a_hung_worker(monkeypatch):
     assert elapsed < 14, elapsed
     assert started.is_set()
     assert out["FAST"]["ahead"] is False
-    assert out["SLOW"]["ahead"] is None
+    assert out["SLOW"] == {"ahead": None, "latest": None, "pending": [], "pending_count": 0}
+    reset_cache_for_tests()
+
+
+def test_lookup_deploy_freshness_error_payload_includes_an_empty_pending_list(monkeypatch):
+    from bigas.cockpit_freshness import lookup_deploy_freshness, reset_cache_for_tests
+
+    reset_cache_for_tests()
+
+    def fetch(client, spec):
+        if spec.get("key") == "BAD":
+            return "nope"
+        raise RuntimeError("github down")
+
+    monkeypatch.setattr("bigas.cockpit_freshness.fetch_deploy_freshness", fetch)
+    monkeypatch.setattr("bigas.cockpit_freshness._client", lambda: object())
+    empty = {"ahead": None, "latest": None, "pending": [], "pending_count": 0}
+    out = lookup_deploy_freshness(
+        [
+            {"key": "DOWN", "mode": "versioned", "release_mode": "development", "version": ""},
+            {"key": "BAD", "mode": "versioned", "release_mode": "development", "version": ""},
+        ]
+    )
+    assert out["DOWN"] == empty
+    assert out["BAD"] == empty
     reset_cache_for_tests()
 
 

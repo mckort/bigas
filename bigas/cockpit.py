@@ -16,8 +16,9 @@ AI working
     Tickets in an AI column and devops threads with a running pipeline poll.
 Ship
     One row per deploy target with its default unreleased version, how
-    many tickets are in that cut, whether new changes are ready to deploy,
-    and the latest shipped version.
+    many tickets are in that cut, the changes the next prepare deploy or
+    deploy will ship, whether those changes are ready, and the latest
+    shipped version.
 """
 from __future__ import annotations
 
@@ -290,6 +291,8 @@ def _default_release(releases: Iterable[Dict[str, Any]]) -> Optional[Dict[str, A
 
 # Ship card progress: Review → Build (merge or staging) → Confirm → Deploy → Done.
 SHIP_STEPS = ("Review", "Build", "Confirm", "Deploy", "Done")
+# Enough to name what is waiting. The card shows the first few and a count.
+_PENDING_CAP = 20
 STEP_REVIEW, STEP_BUILD, STEP_CONFIRM, STEP_DEPLOY = 0, 1, 2, 3
 PHASE_STEPS = {
     # versioned prepare deploy (pending_prepare_poll)
@@ -305,6 +308,52 @@ PHASE_STEPS = {
     "backup": STEP_DEPLOY,
     "deploy_production": STEP_DEPLOY,
 }
+
+
+def _pending_from_tickets(tickets: List[Dict[str, Any]]) -> tuple:
+    """Newest cut cards first. ``(items, count)``; items stop at ``_PENDING_CAP``."""
+    ordered = sorted(tickets, key=lambda ticket: str(ticket.get("updated_at") or ""), reverse=True)
+    items: List[Dict[str, str]] = []
+    count = 0
+    for ticket in ordered:
+        key = str(ticket.get("key") or "").strip()
+        title = str(ticket.get("title") or ticket.get("summary") or "").strip()
+        if not key and not title:
+            continue
+        count += 1
+        if len(items) >= _PENDING_CAP:
+            continue
+        items.append(
+            {
+                "key": key,
+                "title": title,
+                "url": str(ticket.get("url") or "").strip(),
+            }
+        )
+    return items, count
+
+
+def _pending_from_freshness(fresh: Dict[str, Any]) -> tuple:
+    """Commits the git check already found, in the same shape as cut cards."""
+    raw = fresh.get("pending") if isinstance(fresh.get("pending"), list) else []
+    items: List[Dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not key and not title:
+            continue
+        items.append({"key": key, "title": title, "url": str(item.get("url") or "").strip()})
+        if len(items) >= _PENDING_CAP:
+            break
+    try:
+        count = int(fresh.get("pending_count") or 0)
+    except (TypeError, ValueError):
+        count = 0
+    if count < len(items):
+        count = len(items)
+    return items, count
 
 
 def _ship_rows(
@@ -327,7 +376,12 @@ def _ship_rows(
     modes = release_modes or {}
     freshness = deploy_freshness or {}
 
-    def _with_deploy_cue(row: Dict[str, Any], *, cut_count: Optional[int]) -> Dict[str, Any]:
+    def _with_deploy_cue(
+        row: Dict[str, Any],
+        *,
+        cut_count: Optional[int],
+        pending: Optional[tuple] = None,
+    ) -> Dict[str, Any]:
         key = row["key"]
         releases = releases_by_project[key] if key in releases_by_project else []
         release_error = releases is None
@@ -344,6 +398,15 @@ def _ship_rows(
             ahead=ahead if isinstance(ahead, bool) else None,
             version=str(row.get("version") or ""),
         )
+        # A versioned production cut is the prepare-deploy list. Development
+        # and staging ship whatever git says is not deployed yet. An empty
+        # cut still falls through to those commits.
+        if pending is None:
+            items, count = _pending_from_freshness(fresh if isinstance(fresh, dict) else {})
+        else:
+            items, count = pending
+        row["pending"] = items
+        row["pending_count"] = count
         return row
     tickets_by_project: Dict[str, List[Dict[str, Any]]] = {}
     for board in boards:
@@ -429,6 +492,7 @@ def _ship_rows(
             commands = [{"label": "Deploy", "prompt": f"deploy {key} to production"}]
         else:
             commands = [{"label": "Prepare deploy", "prompt": f"prepare deploy {key} {version}".strip()}]
+        cut_pending = _pending_from_tickets(cut) if release_mode != "development" and cut else None
         rows.append(
             _with_deploy_cue(
                 {
@@ -443,6 +507,7 @@ def _ship_rows(
                     **_state(key),
                 },
                 cut_count=len(cut),
+                pending=cut_pending,
             )
         )
     return rows

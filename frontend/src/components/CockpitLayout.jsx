@@ -341,6 +341,69 @@ function latestDeployLine(latest) {
   return 'No deploy yet'
 }
 
+const PENDING_SHOWN = 4
+
+function pendingParts(item) {
+  const key = String(item?.key || '').trim()
+  let title = String(item?.title || '').trim()
+  if (key && title.toLowerCase().startsWith(key.toLowerCase())) {
+    title = title.slice(key.length).replace(/^[\s:—-]+/, '')
+  }
+  return { key, title }
+}
+
+function pendingHref(url) {
+  const raw = String(url || '').trim()
+  if (raw.startsWith('https://') || raw.startsWith('http://')) return raw
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw
+  return ''
+}
+
+function PendingChanges({ items, count }) {
+  const list = (Array.isArray(items) ? items : []).filter((item) => {
+    const parts = pendingParts(item)
+    return parts.key || parts.title
+  })
+  if (!list.length) return null
+  const shown = list.slice(0, PENDING_SHOWN)
+  const total = Math.max(Number(count) || 0, list.length)
+  const more = total - shown.length
+  return (
+    <div className="mt-2.5 min-w-0">
+      <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">Next deploy</p>
+      <ul className="mt-1 space-y-0.5" aria-label="Changes in the next deploy">
+        {shown.map((item, i) => {
+          const { key, title } = pendingParts(item)
+          const href = pendingHref(item?.url)
+          const label = (
+            <>
+              {key ? <span className="font-mono text-text">{key}</span> : null}
+              {key && title ? ' ' : null}
+              {title ? <span>{title}</span> : null}
+            </>
+          )
+          return (
+            <li key={`${key || href || 'change'}-${i}`} className="min-w-0">
+              {href ? (
+                <a
+                  href={href}
+                  {...(href.startsWith('http') ? { target: '_blank', rel: 'noreferrer' } : {})}
+                  className="block truncate text-[11px] leading-4 text-muted hover:text-accent hover:underline"
+                >
+                  {label}
+                </a>
+              ) : (
+                <span className="block truncate text-[11px] leading-4 text-muted">{label}</span>
+              )}
+            </li>
+          )
+        })}
+        {more > 0 && <li className="text-[11px] text-muted">+{more} more</li>}
+      </ul>
+    </div>
+  )
+}
+
 function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onReleaseMode }) {
   const isDev = row.release_mode === 'development'
   const primary = row.mode === 'versioned' ? row.commands[0] : row.commands.find((c) => /prepare staging/i.test(c.prompt))
@@ -453,7 +516,8 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onRe
           </button>
         )}
       </div>
-      <p className="text-[11px] text-muted mt-2">{latestDeployLine(row.latest_deploy)}</p>
+      <PendingChanges items={row.pending} count={row.pending_count} />
+      <p className="text-[11px] text-muted mt-auto pt-3">{latestDeployLine(row.latest_deploy)}</p>
     </div>
   )
 }
