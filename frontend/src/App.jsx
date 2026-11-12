@@ -269,7 +269,7 @@ export default function App() {
         onAgentsUpdated={() => setAgentsRefreshKey((key) => key + 1)}
         onJiraSyncComplete={() => setBoardRefreshKey((key) => key + 1)}
       />
-      <AnalyticsConsent />
+      <AnalyticsConsent aboveNav />
     </>
   )
 }

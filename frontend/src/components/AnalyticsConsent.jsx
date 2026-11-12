@@ -6,7 +6,7 @@ import {
 } from '../lib/productAnalytics'
 
 /** Shown until the visitor accepts or declines Google Analytics. */
-export default function AnalyticsConsent() {
+export default function AnalyticsConsent({ aboveNav = false }) {
   const [visible, setVisible] = useState(() => analyticsConsentPending())
   if (!visible) return null
 
@@ -14,11 +14,11 @@ export default function AnalyticsConsent() {
     <div
       role="dialog"
       aria-label="Cookie consent"
+      className={aboveNav ? 'analytics-consent analytics-consent-above-nav' : 'analytics-consent'}
       style={{
         position: 'fixed',
         left: 16,
         right: 16,
-        bottom: 16,
         zIndex: 80,
         display: 'flex',
         flexWrap: 'wrap',
