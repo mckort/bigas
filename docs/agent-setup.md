@@ -64,7 +64,7 @@ Follow the [README deploy tutorial](../README.md#tutorial-deploy-your-first-biga
 | `CHAT_STORAGE_MODE=firestore`, `CHAT_AUTH_MODE=firebase` + Firebase vars | Persistent chat and real sign-in ([README: Chat setup](../README.md#setup)) |
 | `BIGAS_ACCESS_KEYS` | Random string(s). GitHub workflows send one as `BIGAS_API_KEY`. `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `BIGAS_PUBLIC_URL` | The Cloud Run URL. Only read by the setup scripts (written to each repo as `BIGAS_URL`). |
-| `GITHUB_TOKEN` | Fine-grained PAT on the product repos: **Contents**, **Pull requests**, **Actions**, **Workflows** read/write; **Administration** read/write (write only for the *Go to production* ruleset), **Variables**, **Secrets**, **Webhooks** read so the doctor can verify. |
+| `GITHUB_TOKEN` | Fine-grained PAT on the product repos: **Contents**, **Pull requests**, **Actions**, **Workflows** read/write; **Variables**, **Secrets**, **Webhooks** read so the doctor can verify. |
 | `CURSOR_API_KEY` | Cards → pull requests, and review autofix. Cursor dashboard → Integrations. |
 | `GITHUB_WEBHOOK_SECRET` | Random string. Signs the `workflow_run` webhook (self-healing CI, deploy post-checks). |
 
@@ -112,15 +112,14 @@ Then:
 
 **Development** (default). PRs merge to the production branch; **Deploy** on the Ship card dispatches the deploy workflow on it.
 
-**Production (versioned).** The easy way: **Go to production** on the project's Ship card in the cockpit. It previews and then runs every step below, and the project shows *Production* from then on. **Release mode → Back to development** undoes the switch (the ruleset, workflows, branches and versions stay):
+**Production (versioned).** The easy way: **Go to production** on the project's Ship card in the cockpit. It previews and then runs every step below, and the project shows *Production* from then on. New work targets `staging-x.y.z` and **Prepare deploy** merges that branch to the production branch, the same path as `PROJECT_BRANCH_MAPPING=KEY:staging` (VC Field Assistant). **Release mode → Back to development** undoes the switch (the workflows, branches and versions stay):
 
 1. a pull request in the repo adding `pr-review.yml`, `cherry_pick.yml` and `rebase_release.yml` (merge it);
-2. a GitHub ruleset on the production branch: pull request required, no force pushes or deletion, admins can bypass;
-3. version `0.1.0` on the board (or the open version, if there is one);
-4. branch `staging-0.1.0` from the production branch;
-5. the project setting that sends new AI work to that branch (stored in the app; no redeploy).
+2. version `0.1.0` on the board (or the open version, if there is one);
+3. branch `staging-0.1.0` from the production branch;
+4. the project setting that sends new AI work to that branch (stored in the app; no redeploy).
 
-`GITHUB_TOKEN` needs **Administration: write** on the repo for the ruleset. The setup-script way is `--versioned staging`, which writes the env instead.
+The setup-script way is `--versioned staging`, which writes the env instead.
 
 Work for version `0.3.0` lands on `staging-0.3.0`. Create the version under **Releases** on the board. **Prepare deploy** in the cockpit reviews the cut, merges it to the production branch, asks for your yes, deploys, tags `v0.3.0` and rebases the next release branch. Needs `cherry_pick.yml` and `rebase_release.yml` in the repo (added by `--versioned`).
 
@@ -162,9 +161,9 @@ Use this when the human says "add my repo X" or "set up project Y". Steps 1 and 
 
 | Where | Development | Production adds |
 |---|---|---|
-| Bigas env (`.env` / Secret Manager) | `GITHUB_TOKEN` (Contents, Pull requests, Actions, Workflows: read/write), `CURSOR_API_KEY`, `BIGAS_ACCESS_KEYS`, `BIGAS_PUBLIC_URL`, `GITHUB_WEBHOOK_SECRET`; the project in `JIRA_PROJECT_KEY(S)` and the repo maps | `GITHUB_TOKEN` with **Administration: write** on the repo (ruleset) |
+| Bigas env (`.env` / Secret Manager) | `GITHUB_TOKEN` (Contents, Pull requests, Actions, Workflows: read/write), `CURSOR_API_KEY`, `BIGAS_ACCESS_KEYS`, `BIGAS_PUBLIC_URL`, `GITHUB_WEBHOOK_SECRET`; the project in `JIRA_PROJECT_KEY(S)` and the repo maps | Same token. The switch is stored in the app |
 | Repo workflows | `.github/workflows/pr-review.yml` (calls the Bigas review); a deploy workflow with `workflow_dispatch` for the Ship card | `cherry_pick.yml`, `rebase_release.yml` |
-| Repo settings | Actions variable `BIGAS_URL`, secret `BIGAS_API_KEY`; `workflow_run` webhook (self-healing CI) | Ruleset on the production branch |
+| Repo settings | Actions variable `BIGAS_URL`, secret `BIGAS_API_KEY`; `workflow_run` webhook (self-healing CI) | Nothing further. `main` stays open; new pull requests target `staging-x.y.z` |
 | Board | The project board (created from the key) | A version (`0.1.0`) and its `staging-0.1.0` branch |
 
 **Do it:**
@@ -180,7 +179,7 @@ python scripts/bigas_doctor.py --json                         # fix every "fail"
 
 Production, now or later: the human opens the cockpit, clicks **Go to production** on the project's Ship card, checks the preview and applies it, then merges the `bigas-production` PR it opens. This is the right path for a project that already runs on Bigas. Do not do these steps by hand.
 
-Prefer the button even for a project that should be in production from day one: connect it as development, deploy, then click **Go to production**. The `--versioned staging` flag on `connect_repo.py` is the env-only route. It writes `PROJECT_BRANCH_MAPPING` and adds the two release workflows to the setup PR, but it does not lock `main` or create the first version. The cockpit then shows the project as production from env, so the button is not offered.
+Prefer the button even for a project that should be in production from day one: connect it as development, deploy, then click **Go to production**. The `--versioned staging` flag on `connect_repo.py` is the env-only route. It writes `PROJECT_BRANCH_MAPPING` and adds the two release workflows to the setup PR, but it does not create the first version. The cockpit then shows the project as production from env, so the button is not offered.
 
 If the repo has no deploy workflow, start from [workflows/deploy.example.yml](workflows/deploy.example.yml). Without one the project works fine but has no Ship card.
 

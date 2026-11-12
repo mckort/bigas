@@ -19,10 +19,9 @@ from bigas.tickets.release_store import reset_release_store_for_tests
 
 
 class FakeGitHub:
-    def __init__(self, files=None, branches=("main",), rulesets=None, open_pr=None):
+    def __init__(self, files=None, branches=("main",), open_pr=None):
         self.files = dict(files or {})
         self.branches = set(branches)
-        self.rulesets = list(rulesets or [])
         self.open_pr = open_pr
         self.calls = []
 
@@ -36,7 +35,9 @@ class FakeGitHub:
         return self.open_pr
 
     def list_repo_rulesets(self, owner, repo):
-        return self.rulesets
+        raise RuntimeError(
+            "GitHub auth failed (403): Upgrade to GitHub Pro or make this repository public to enable this feature."
+        )
 
     def get_ref_sha(self, owner, repo, ref):
         return f"sha-{ref}"
@@ -66,10 +67,6 @@ class FakeGitHub:
     def create_pull_request(self, owner, repo, *, title, body, head, base):
         self.calls.append(("pr", head, base))
         return {"html_url": "https://github.com/acme/shop/pull/1"}
-
-    def upsert_protect_branch_ruleset(self, owner, repo, branch):
-        self.calls.append(("protect", branch))
-        return {}
 
     def ensure_branch_from_ref(self, owner, repo, branch, source):
         self.calls.append(("release_branch", branch, source))
@@ -118,7 +115,9 @@ def test_plan_lists_every_step_for_a_development_project():
     out = go_live.plan("ACME", client=gh)
     assert out["can_apply"] and out["version"] == "0.1.0" and out["release_branch"] == "staging-0.1.0"
     status = {s["id"]: s["status"] for s in out["steps"]}
-    assert status == {"workflows": "todo", "protect": "todo", "release": "todo", "branch": "todo", "mode": "todo"}
+    assert status == {"workflows": "todo", "release": "todo", "branch": "todo", "mode": "todo"}
+    assert "Prepare deploy" in out["steps"][-1]["detail"]
+    assert "staging-0.1.0" in out["steps"][-1]["detail"]
     assert "pr-review.yml, cherry_pick.yml, rebase_release.yml" in out["steps"][0]["detail"]
 
 
@@ -172,16 +171,15 @@ def test_apply_wires_the_repo_and_switches_the_project():
 
     gh = FakeGitHub()
     out = go_live.apply("ACME", by="marcus@example.com", client=gh)
-    assert [r["status"] for r in out["results"]] == ["ok"] * 5
+    assert [r["status"] for r in out["results"]] == ["ok"] * 4
     assert out["in_production"] is True
 
     kinds = [c[0] for c in gh.calls]
     assert ("create_branch", "bigas-production", "sha-main") in gh.calls
     assert ("tree", [".github/workflows/pr-review.yml", ".github/workflows/cherry_pick.yml", ".github/workflows/rebase_release.yml"]) in gh.calls
     assert ("pr", "bigas-production", "main") in gh.calls
-    assert ("protect", "main") in gh.calls
     assert ("release_branch", "staging-0.1.0", "main") in gh.calls
-    assert kinds.index("pr") < kinds.index("protect")
+    assert "protect" not in kinds
 
     releases = list_releases("ACME")
     assert [(r["name"], r["is_default"]) for r in releases] == [("0.1.0", True)]
@@ -200,14 +198,13 @@ def test_apply_skips_done_steps_and_keeps_an_open_version():
     create_release("ACME", name="0.4.0", is_default=True)
     gh = FakeGitHub(
         files={p: c for p, c in go_live.wanted_files().items()},
-        rulesets=[{"name": "Bigas: protect main"}],
         branches=("main", "staging-0.4.0"),
     )
     out = go_live.apply("ACME", version="0.1.0", client=gh)
     assert out["version"] == "0.4.0"
     by_id = {r["id"]: r["status"] for r in out["results"]}
-    assert by_id == {"workflows": "skipped", "protect": "skipped", "release": "skipped", "branch": "skipped", "mode": "ok"}
-    assert not [c for c in gh.calls if c[0] in ("pr", "protect", "release_branch")]
+    assert by_id == {"workflows": "skipped", "release": "skipped", "branch": "skipped", "mode": "ok"}
+    assert not [c for c in gh.calls if c[0] in ("pr", "release_branch")]
 
 
 def test_apply_does_not_switch_when_the_branch_fails():

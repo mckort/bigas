@@ -116,19 +116,18 @@ Small cards can go straight from To Do to In Progress (AI). Nothing moves withou
 | Pull requests merge into | The production branch (`main`/`master`) | A release branch per version: `staging-0.1.0`, `staging-0.2.0`, … |
 | Versions | None | Board **Releases** (`0.1.0`, …); each card belongs to one |
 | You ship with | **Deploy** on the Ship card: deploys the production branch as it is | **Prepare deploy**: reviews the version's cut, merges the release branch to `main` through a PR, asks for your yes, deploys, tags `v0.1.0`, rolls leftover cards to the next version |
-| `main` | Open | Locked by a GitHub ruleset: changes only through a pull request; admins can bypass |
+| `main` | Where pull requests merge | Where Prepare deploy merges the release branch. New work stays on `staging-x.y.z` |
 | Hotfixes | Just another card | Label a card `hotfix`: its PR goes straight to `main`. A fix already merged on a release branch: `@bigas hotfix KEY-123` cherry-picks it onto `main` |
 | Extra repo workflows | `pr-review.yml` | `pr-review.yml`, `cherry_pick.yml`, `rebase_release.yml` |
 
 Each Ship card in the cockpit shows the project's mode. **Go to production** on a development project previews and then does the switch:
 
 1. opens one PR in the repo adding the release workflows (you merge it);
-2. locks the production branch with a ruleset;
-3. creates version `0.1.0` on the board, or uses the open version;
-4. creates `staging-0.1.0` from the production branch;
-5. sends new AI work for the project to that branch. It's stored in the app, so there's no redeploy.
+2. creates version `0.1.0` on the board, or uses the open version;
+3. creates `staging-0.1.0` from the production branch;
+4. sends new AI work for the project to that branch, the same way as `PROJECT_BRANCH_MAPPING=KEY:staging`. It's stored in the app, so there's no redeploy.
 
-**Release mode → Back to development** undoes step 5. The other changes stay.
+**Prepare deploy** then reviews that cut and merges `staging-0.1.0` to `main` through a pull request. **Release mode → Back to development** undoes step 4. The other changes stay.
 
 A third mode exists for apps that need a full rehearsal: a **staging environment** built from production plus a database copy, then deployed. It is configured per project in `BIGAS_STAGING_ENV_MAP` ([how](docs/agent-setup.md#4-release-models)).
 
@@ -140,7 +139,7 @@ A third mode exists for apps that need a full rehearsal: a **staging environment
 | 2. Deploy | [Deploy to Cloud Run](#tutorial-deploy-your-first-bigas-server). GitHub has to reach Bigas for reviews and deploys | Google Cloud project, Firebase for sign-in |
 | 3. Connect a repo | [`scripts/connect_repo.py`](#connect-a-github-repo), or ask a coding agent: [Set up with an AI agent](#set-up-with-an-ai-agent) | `GITHUB_TOKEN`, `CURSOR_API_KEY`, `BIGAS_ACCESS_KEYS`; a deploy workflow in the repo for the Ship card |
 | 4. Work in development | Cards → PRs → merged to `main`; **Deploy** on the Ship card | |
-| 5. Go to production | **Go to production** on the Ship card; merge the PR it opens | `GITHUB_TOKEN` with **Administration: write** on the repo (for the ruleset) |
+| 5. Go to production | **Go to production** on the Ship card; merge the PR it opens | The same GitHub token as development |
 | 6. Ship versions | Cards land on `staging-x.y.z`; **Prepare deploy** when the version is ready | |
 
 Run `python scripts/bigas_doctor.py` at any step. It checks the instance and every connected repo, and gives a fix for each problem.
@@ -617,7 +616,7 @@ Deleting a release on the board (including a released one) only removes the boar
 
 ### Staging branch, fix versions, and hotfixes (BIG-42)
 
-Some products (e.g. VC Field Assistant) accumulate features on **versioned staging branches** while **`main`** stays production-ready. `PROJECT_BRANCH_MAPPING=VFA:staging` is a prefix: a ticket on board release `0.2.3` opens its PR against **`staging-0.2.3`**. The first ticket on a new version creates that branch from **`main`**. `prepare deploy VFA 0.2.3` merges only `staging-0.2.3` → `main`, so later work on `0.3.0` stays off the cut. As soon as that merge lands (or the branch is already on `main`), Bigas **locks the cut for new PRs**: GitHub ruleset on `staging-0.2.3`, `pr_locked` on the board release, and `lookup_board_releases` treats it like a released cut for `pr_base` / `forbidden_pr_bases`. The board cut stays unreleased until deploy succeeds. After that deploy is green, Bigas rebases newer `staging-*` branches onto the new `main` (`rebase_release.yml`). Conflicts open a `bigas-rebase/*` PR and launch Cursor to resolve them.
+Some products (e.g. VC Field Assistant) accumulate features on **versioned staging branches** while **`main`** stays production-ready. `PROJECT_BRANCH_MAPPING=VFA:staging` is a prefix: a ticket on board release `0.2.3` opens its PR against **`staging-0.2.3`**. The first ticket on a new version creates that branch from **`main`**. `prepare deploy VFA 0.2.3` merges only `staging-0.2.3` → `main`, so later work on `0.3.0` stays off the cut. As soon as that merge lands (or the branch is already on `main`), Bigas **locks the cut for new PRs** with `pr_locked` on the board release, and `lookup_board_releases` treats it like a released cut for `pr_base` / `forbidden_pr_bases`. A GitHub ruleset on `staging-0.2.3` is added only when the repository plan allows rulesets. The board cut stays unreleased until deploy succeeds. After that deploy is green, Bigas rebases newer `staging-*` branches onto the new `main` (`rebase_release.yml`). Conflicts open a `bigas-rebase/*` PR and launch Cursor to resolve them.
 
 | Setting | Purpose |
 |---|---|

@@ -11,12 +11,13 @@ a PR, deploys, tags and opens the next version.
 1. ``workflows``: one PR (branch ``bigas-production``) adding what the repo
    lacks: the Bigas PR review caller, ``cherry_pick.yml`` (hotfixes) and
    ``rebase_release.yml`` (rebase newer release branches after a ship).
-2. ``protect``: a GitHub ruleset on the production branch: pull request
-   required, no force pushes or deletion; repository admins can bypass.
-3. ``release``: the first board version (default ``0.1.0``) when the project
+2. ``release``: the first board version (default ``0.1.0``) when the project
    has no open version.
-4. ``branch``: ``staging-<version>`` from the production branch.
-5. ``mode``: the project setting that makes AI work target that branch.
+3. ``branch``: ``staging-<version>`` from the production branch.
+4. ``mode``: the same setting as ``PROJECT_BRANCH_MAPPING=KEY:staging``.
+   New work targets ``staging-<version>``. Prepare deploy reviews that cut
+   and merges it to the production branch. No GitHub ruleset: private repos
+   on a free account cannot have one, and VC Field Assistant does not use one.
 
 Projects with a staging-rehearsal environment (GPW-PROD) or a versioned
 ``PROJECT_BRANCH_MAPPING`` entry in env are already in production.
@@ -159,10 +160,6 @@ def plan(project_key: str, *, version: str = "", client=None) -> Dict[str, Any]:
             raise GoLiveError(f"Branch {state['production_branch']} not found on {state['repo']}")
         missing = _missing_files(gh, owner, name, state["production_branch"])
         open_pr = gh.find_open_pull_request(owner, name, head=SETUP_BRANCH, base=state["production_branch"])
-        rulesets = gh.list_repo_rulesets(owner, name)
-        protected = any(
-            (r or {}).get("name") == f"Bigas: protect {state['production_branch']}" for r in rulesets
-        )
         branch_exists = gh.branch_exists(owner, name, branch)
     except Exception as exc:
         return {
@@ -181,18 +178,6 @@ def plan(project_key: str, *, version: str = "", client=None) -> Dict[str, Any]:
     else:
         wf = {"status": "todo", "detail": "Open a pull request adding " + ", ".join(p.rsplit("/", 1)[-1] for p in missing) + "."}
     steps.append({"id": "workflows", "title": "Add the release workflows", **wf})
-    steps.append(
-        {
-            "id": "protect",
-            "title": f"Protect {state['production_branch']}",
-            "status": "done" if protected else "todo",
-            "detail": (
-                f"Ruleset in place: changes reach {state['production_branch']} only through a pull request."
-                if protected
-                else f"Add a ruleset: pull request required on {state['production_branch']}, no force pushes or deletion. Admins can bypass."
-            ),
-        }
-    )
     steps.append(
         {
             "id": "release",
@@ -214,7 +199,10 @@ def plan(project_key: str, *, version: str = "", client=None) -> Dict[str, Any]:
             "id": "mode",
             "title": "Switch to versioned releases",
             "status": "todo",
-            "detail": f"New AI work on {key} targets {branch}. Cards already in progress keep their branch.",
+            "detail": (
+                f"New work on {key} targets {branch}. Prepare deploy reviews that cut and merges it to "
+                f"{state['production_branch']}. Cards already in progress keep their branch."
+            ),
         }
     )
     return {**state, "version": wanted, "release_branch": branch, "steps": steps, "can_apply": True, "blocked": ""}
@@ -291,10 +279,6 @@ def apply(project_key: str, *, version: str = "", by: str = "", client=None) -> 
         url = _open_workflow_pr(gh, state, _missing_files(gh, owner, name, state["production_branch"]))
         return f"Pull request opened: {url}" if url else "Pull request opened"
 
-    def protect() -> str:
-        gh.upsert_protect_branch_ruleset(owner, name, state["production_branch"])
-        return f"{state['production_branch']} now needs a pull request"
-
     def release() -> str:
         create_release(state["project_key"], name=current["version"], is_default=True)
         return f"Version {current['version']} created on the board"
@@ -310,7 +294,6 @@ def apply(project_key: str, *, version: str = "", by: str = "", client=None) -> 
         return f"{current['release_branch']} created from {state['production_branch']}"
 
     run("workflows", workflows)
-    run("protect", protect)
     ok_release = run("release", release)
     ok_branch = run("branch", branch)
     if ok_release and ok_branch:
@@ -333,7 +316,7 @@ def apply(project_key: str, *, version: str = "", by: str = "", client=None) -> 
 
 
 def back_to_development(project_key: str, *, by: str = "") -> Dict[str, Any]:
-    """Undo the app setting. Leaves the ruleset, workflows, branches and versions in place."""
+    """Undo the app setting. Leaves the workflows, branches and versions in place."""
     from bigas.project_settings import set_release_mode
 
     state = release_state(project_key)
