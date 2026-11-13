@@ -578,16 +578,27 @@ def _issues_on_version(
     project: str,
     version: str,
 ) -> List[Dict[str, Any]]:
-    """Board cards tagged with this fix version. Epics are not release contents."""
+    """Board cards tagged with this fix version. Epics are not release contents.
+
+    A project can list the same card on more than one board. Count each key once.
+    """
     name = (version or "").strip()
     if not name:
         return []
-    issues = [
-        _week_card(ticket, project)
-        for ticket in tickets
-        if (ticket.get("issue_type") or "") not in _WEEK_SKIP_TYPES
-        and versions_match(str(ticket.get("fix_version") or ""), name)
-    ]
+    seen = set()
+    issues: List[Dict[str, Any]] = []
+    for ticket in tickets:
+        if (ticket.get("issue_type") or "") in _WEEK_SKIP_TYPES:
+            continue
+        if not versions_match(str(ticket.get("fix_version") or ""), name):
+            continue
+        card = _week_card(ticket, project)
+        card_key = card.get("key")
+        if card_key:
+            if card_key in seen:
+                continue
+            seen.add(card_key)
+        issues.append(card)
     issues.sort(key=lambda card: _issue_sort_key(str(card.get("key") or "")), reverse=True)
     return issues
 
