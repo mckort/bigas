@@ -42,6 +42,10 @@ const TABS = [
   { id: 'needs', label: 'Needs you' },
 ]
 
+// Phone: one column. From sm, add columns as the viewport grows so a card stays about 18rem and the row uses the screen.
+const CARD_GRID =
+  'grid gap-3 grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))]'
+
 function greeting() {
   const h = new Date().getHours()
   if (h < 10) return 'Good morning'
@@ -1002,7 +1006,7 @@ function WeekTiles({ week, money, moneyError, onOpen }) {
   }
   return (
     <div className="mb-4">
-      <div className="grid gap-2 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">{tiles}</div>
+      <div className="grid gap-2 grid-cols-2 md:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(min(100%,12.5rem),1fr))]">{tiles}</div>
       {!money && !moneyError && <p className="text-[11px] text-muted mt-2">Loading money from Accounted and usage sources…</p>}
       {moneyError && <p className="text-[11px] text-red-600 mt-2">{moneyError}</p>}
       {money && !money.books?.configured && !money.ai?.configured && (
@@ -2058,7 +2062,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   return (
     <div className="min-h-screen-safe bg-bg mobile-nav-offset">
       <header className="header-bar">
-        <div className="max-w-[1320px] mx-auto flex items-center gap-3 px-4 lg:px-6 py-2.5">
+        <div className="flex items-center gap-3 px-4 lg:px-6 py-2.5">
           <img src="/bigas-logo.png" alt="" className="h-9 w-9 rounded-lg object-cover" />
           <div className="min-w-0 flex-1">
             <h1 className="font-bold leading-tight">Cockpit</h1>
@@ -2109,7 +2113,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         </div>
       </header>
 
-      <main className="max-w-[1320px] mx-auto px-3 lg:px-6 py-4 lg:py-6">
+      <main className="px-3 lg:px-6 py-4 lg:py-6">
         <div className="hidden lg:flex items-baseline gap-3 mb-4">
           <h2 className="text-xl font-bold">
             {greeting()}
@@ -2249,7 +2253,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
             {data && ship.length === 0 && (
               <p className="text-sm text-muted py-4">No deploy targets configured. See the README section on DevOps.</p>
             )}
-            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+            <div className={CARD_GRID}>
               {ship.map((row) => (
                 <ShipCard
                   key={row.key}
@@ -2278,7 +2282,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           <Section id="needs" title="Needs you" count={counts.needs} mobileTab={tab}>
             <p className="text-xs text-muted mb-2 lg:hidden">Swipe right to approve, left to send back.</p>
             {!needsReady && !error && (
-              <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3" aria-hidden="true">
+              <div className={CARD_GRID} aria-hidden="true">
                 {[0, 1, 2].map((i) => (
                   <div key={i} className="border border-border rounded-xl p-3.5 bg-bg animate-pulse">
                     <div className="h-4 w-28 rounded bg-surface-muted" />
@@ -2295,7 +2299,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
               </div>
             )}
             {needsReady && needGroups.length > 0 && (
-              <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+              <div className={CARD_GRID}>
                 {needGroups.map((group) => (
                   <NeedProjectCard
                     key={group.key}
@@ -2354,7 +2358,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           </Section>
 
           <Section id="weekly" title="Weekly" pane="week" mobileTab={tab}>
-            <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
+            <div className={CARD_GRID}>
               {WEEKLY_ACTIONS.map((action) => {
                 const busyId = `week:${action.id}`
                 return (
