@@ -5,11 +5,12 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
-from setup import MVP_DEFAULTS, build_env_lines, write_env_file  # noqa: E402
+from setup import MVP_DEFAULTS, answers_from_env, build_env_lines, main, write_env_file  # noqa: E402
 
 
 class TestSetupScript(unittest.TestCase):
@@ -39,6 +40,51 @@ class TestSetupScript(unittest.TestCase):
         text = "\n".join(lines)
         self.assertIn("GITHUB_TOKEN=ghp_test", text)
         self.assertIn("GitHub (CTO agent", text)
+
+    def test_anthropic_provider(self):
+        lines = build_env_lines({"llm_provider": "anthropic", "anthropic_api_key": "sk-ant"})
+        text = "\n".join(lines)
+        self.assertIn("ANTHROPIC_API_KEY=sk-ant", text)
+        self.assertIn("LLM_MODEL=claude-sonnet-5", text)
+        self.assertNotIn("GEMINI_API_KEY=", text)
+
+    def test_noninteractive_prefers_gemini_and_copies_named_secrets(self):
+        answers = answers_from_env(
+            environ={
+                "GEMINI_API_KEY": "gem",
+                "OPENAI_API_KEY": "sk",
+                "GITHUB_TOKEN": "ghp",
+                "CURSOR_API_KEY": "cur",
+                "BIGAS_FEATURES": "none",
+            }
+        )
+        self.assertEqual(answers["llm_provider"], "gemini")
+        self.assertEqual(answers["gemini_api_key"], "gem")
+        self.assertTrue(answers["enable_github"])
+        self.assertEqual(answers["cursor_api_key"], "cur")
+        self.assertEqual(answers["bigas_features"], "none")
+        text = "\n".join(build_env_lines(answers))
+        self.assertIn("BIGAS_FEATURES=none", text)
+        self.assertNotIn("OPENAI_API_KEY=", text)
+
+    def test_noninteractive_main_refuses_without_a_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, ".env")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                code = main(["--noninteractive", "--env-file", path])
+            self.assertEqual(code, 2)
+            self.assertFalse(os.path.exists(path))
+
+    def test_noninteractive_main_leaves_an_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, ".env")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("KEEP=1\n")
+            with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "gem"}, clear=True):
+                code = main(["--noninteractive", "--env-file", path])
+            self.assertEqual(code, 0)
+            with open(path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "KEEP=1\n")
 
     def test_write_env_file_refuses_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:

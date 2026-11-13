@@ -10,6 +10,7 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from datetime import datetime, timezone
@@ -32,6 +33,14 @@ MVP_DEFAULTS = {
 LLM_MODELS = {
     "gemini": "gemini-3.1-pro-preview",
     "openai": "gpt-4o",
+    "anthropic": "claude-sonnet-5",
+}
+
+# answer field → env var written into .env
+_LLM_KEYS = {
+    "gemini": ("gemini_api_key", "GEMINI_API_KEY"),
+    "openai": ("openai_api_key", "OPENAI_API_KEY"),
+    "anthropic": ("anthropic_api_key", "ANTHROPIC_API_KEY"),
 }
 
 
@@ -104,10 +113,8 @@ def build_env_lines(answers: dict) -> list[str]:
             f"LLM_MODEL={answers.get('llm_model', LLM_MODELS[provider])}",
         ]
     )
-    if provider == "openai":
-        lines.append(f"OPENAI_API_KEY={answers['openai_api_key']}")
-    else:
-        lines.append(f"GEMINI_API_KEY={answers['gemini_api_key']}")
+    answer_field, env_name = _LLM_KEYS.get(provider, _LLM_KEYS["gemini"])
+    lines.append(f"{env_name}={answers[answer_field]}")
 
     optional_sections: list[tuple[str, list[str]]] = []
 
@@ -164,6 +171,18 @@ def build_env_lines(answers: dict) -> list[str]:
             )
         )
 
+    carried = []
+    for field, env_name in (
+        ("bigas_access_keys", "BIGAS_ACCESS_KEYS"),
+        ("github_webhook_secret", "GITHUB_WEBHOOK_SECRET"),
+        ("bigas_public_url", "BIGAS_PUBLIC_URL"),
+        ("bigas_features", "BIGAS_FEATURES"),
+    ):
+        if answers.get(field):
+            carried.append(f"{env_name}={answers[field]}")
+    if carried:
+        optional_sections.append(("Copied from the environment", carried))
+
     for title, section_lines in optional_sections:
         lines.extend(["", f"# --- {title} ---", *section_lines])
 
@@ -205,16 +224,19 @@ def run_wizard() -> dict:
             sys.exit(0)
 
     print("\n--- Step 1: LLM provider (required) ---")
-    provider = _prompt("Provider: gemini or openai", "gemini").lower()
+    provider = _prompt("Provider: gemini, openai, or anthropic", "gemini").lower()
     if provider not in LLM_MODELS:
         print(f"  Unknown provider '{provider}', using gemini.")
         provider = "gemini"
 
     answers: dict = {"llm_provider": provider}
-    if provider == "openai":
-        answers["openai_api_key"] = _prompt_secret("OpenAI API key")
-    else:
-        answers["gemini_api_key"] = _prompt_secret("Gemini API key")
+    _secret_prompts = {
+        "openai": "OpenAI API key",
+        "anthropic": "Anthropic API key",
+        "gemini": "Gemini API key",
+    }
+    field, _env_name = _LLM_KEYS[provider]
+    answers[field] = _prompt_secret(_secret_prompts[provider])
 
     custom_model = _prompt("LLM model (leave default to skip)", LLM_MODELS[provider])
     if custom_model != LLM_MODELS[provider]:
@@ -260,25 +282,127 @@ def run_wizard() -> dict:
     return answers
 
 
-def main() -> None:
-    answers = run_wizard()
-    lines = build_env_lines(answers)
-    write_env_file(ENV_PATH, lines, overwrite=True)
+def answers_from_env(provider: str = "", model: str = "", environ=None) -> dict:
+    """Build wizard answers from the process environment. No prompts.
 
+    Returns {} when no LLM key is set, or {"missing": provider} when --provider
+    names a key that is empty. Never includes a key that was not set.
+    """
+    env = environ if environ is not None else os.environ
+    present = {
+        name: (env.get(env_name) or "").strip()
+        for name, (_field, env_name) in _LLM_KEYS.items()
+    }
+    provider = (provider or "").strip().lower()
+    if provider and provider not in LLM_MODELS:
+        raise ValueError(f"Unknown provider {provider!r}. Use gemini, openai, or anthropic.")
+    if provider and not present[provider]:
+        return {"missing": provider}
+    if not provider:
+        if present["gemini"]:
+            provider = "gemini"
+        else:
+            provider = next((name for name, value in present.items() if value), "")
+    if not provider:
+        return {}
+    field, _env_name = _LLM_KEYS[provider]
+    answers: dict = {"llm_provider": provider, field: present[provider]}
+    if model.strip():
+        answers["llm_model"] = model.strip()
+    github = (env.get("GITHUB_TOKEN") or "").strip()
+    if github:
+        answers["enable_github"] = True
+        answers["github_token"] = github
+    cursor = (env.get("CURSOR_API_KEY") or "").strip()
+    if cursor:
+        answers["enable_cursor"] = True
+        answers["cursor_api_key"] = cursor
+    for field_name, env_name in (
+        ("bigas_access_keys", "BIGAS_ACCESS_KEYS"),
+        ("github_webhook_secret", "GITHUB_WEBHOOK_SECRET"),
+        ("bigas_public_url", "BIGAS_PUBLIC_URL"),
+        ("bigas_features", "BIGAS_FEATURES"),
+    ):
+        value = (env.get(env_name) or "").strip()
+        if value:
+            answers[field_name] = value
+    return answers
+
+
+def _print_wrote(path: str, answers: dict) -> None:
     print()
     print("=" * 60)
-    print(f"  Wrote {ENV_PATH}")
+    print(f"  Wrote {path}")
     print("=" * 60)
     print()
+    copied = []
+    if answers.get("enable_github"):
+        copied.append("GITHUB_TOKEN")
+    if answers.get("enable_cursor"):
+        copied.append("CURSOR_API_KEY")
+    for field_name, env_name in (
+        ("bigas_access_keys", "BIGAS_ACCESS_KEYS"),
+        ("github_webhook_secret", "GITHUB_WEBHOOK_SECRET"),
+        ("bigas_public_url", "BIGAS_PUBLIC_URL"),
+        ("bigas_features", "BIGAS_FEATURES"),
+    ):
+        if answers.get(field_name):
+            copied.append(env_name)
+    if copied:
+        print("Also copied from the environment (values not shown): " + ", ".join(copied))
+        print()
     print("Next steps:")
     print("  1. docker compose up --build")
     print("     # or: python run_core.py  (after pip install -r requirements.txt)")
     print("  2. Open http://localhost:8080")
     print("  3. Sign in with any email and token: bigas-dev-token")
     print()
-    print("Production deploy: see README → Tutorial: deploy your first Bigas server")
+    print("Portfolio: python scripts/discover_portfolio.py")
+    print("Cloud Run: python scripts/setup_cloud.py --project YOUR_PROJECT_ID")
     print()
 
 
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--noninteractive",
+        action="store_true",
+        help="Write .env from the environment. No prompts. Needs GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.",
+    )
+    parser.add_argument("--provider", default="", help="gemini, openai, or anthropic (default: gemini if that key is set)")
+    parser.add_argument("--model", default="", help="LLM_MODEL override")
+    parser.add_argument("--force", action="store_true", help="Overwrite an existing .env")
+    parser.add_argument("--env-file", default=ENV_PATH, help="Where to write (default: .env)")
+    args = parser.parse_args(argv)
+
+    if not args.noninteractive:
+        answers = run_wizard()
+        lines = build_env_lines(answers)
+        write_env_file(ENV_PATH, lines, overwrite=True)
+        _print_wrote(ENV_PATH, answers)
+        return 0
+
+    if os.path.exists(args.env_file) and not args.force:
+        print(f"{args.env_file} already exists. Left it alone. Pass --force to rewrite it.")
+        return 0
+    try:
+        answers = answers_from_env(args.provider, args.model)
+    except ValueError as exc:
+        print(f"✗ {exc}")
+        return 2
+    if not answers or answers.get("missing"):
+        which = answers.get("missing") if answers else ""
+        print("No LLM key in the environment. Export one and rerun. Do not commit it.")
+        print("  GEMINI_API_KEY=... python scripts/setup.py --noninteractive")
+        print("  # or OPENAI_API_KEY, or ANTHROPIC_API_KEY")
+        if which:
+            print(f"  --provider {which} is set, but that key is empty.")
+        return 2
+    lines = build_env_lines(answers)
+    write_env_file(args.env_file, lines, overwrite=True)
+    _print_wrote(args.env_file, answers)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

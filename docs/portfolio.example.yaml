@@ -1,0 +1,36 @@
+# Example only. scripts/discover_portfolio.py writes bigas.portfolio.yaml from a
+# folder of clones. Edit keys before apply. Cards are named KEY-1, KEY-2.
+#
+# branch is the GitHub default branch. deploy lists workflow_dispatch files.
+# deploy_repo is set when those files live in a different repository.
+# release: staging turns on versioned releases (staging-x.y.z). Omit it for development.
+projects:
+  - key: ACME
+    repo: acme/shop
+    branch: main
+    name: Acme Shop
+    path: shop
+    deploy: [deploy.yml]
+
+  - key: AURA
+    repo: acme/learn
+    branch: master
+    name: Acme Learn
+    path: learn
+    deploy: [deploy.yml]
+
+  - key: SITE
+    repo: acme/marketing
+    branch: main
+    name: Acme Marketing
+    path: marketing
+    deploy: [deploy.yml]
+    deploy_repo: acme/infra
+
+  - key: VFA
+    repo: acme/product
+    branch: main
+    name: Acme Product
+    path: product
+    deploy: [deploy-backend.yml, deploy-web.yml]
+    release: staging

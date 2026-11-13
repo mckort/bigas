@@ -184,18 +184,22 @@ For production on Google Cloud Run, see [Tutorial: deploy your first Bigas serve
 
 ## Set up with an AI agent
 
-The fastest setup is to let a coding agent do it. Open your clone in Claude Code, Cursor or Codex and say:
+The fastest setup is to let a coding agent do it. Clone each product repo as a subfolder of one parent folder (scratch folders that are not git repos are fine next to them), open the Bigas clone in Claude Code, Cursor or Codex, and say:
 
-> Set up Bigas and connect my repos `owner/app` and `owner/site`.
+> Set up Bigas. My repos are cloned under `~/Code`.
 
-The agent reads [AGENTS.md](AGENTS.md) and follows [docs/agent-setup.md](docs/agent-setup.md): it asks you for the decisions only you can make (where Bigas runs, which repos, how each one deploys), has you paste secrets into `.env` yourself, runs the scripts below with a dry run first, and finishes when the doctor reports no failures.
+The agent reads [AGENTS.md](AGENTS.md) and follows [docs/agent-setup.md](docs/agent-setup.md). It drafts `bigas.portfolio.yaml` from that folder (GitHub remote, branch, deploy workflow), shows you the file so you can fix keys and drop repos, then plans every project in one pass. You paste secrets yourself. Cloud Run is a script too: billing, `gcloud auth login`, and the Firebase web app stay yours.
 
 | Script | What it does |
 |---|---|
-| `python scripts/connect_repo.py` | Plans, then with `--apply` makes, the env and GitHub changes for one repo |
+| `python scripts/setup.py --noninteractive` | Writes a local `.env` from an LLM key already in the environment. No prompts |
+| `python scripts/discover_portfolio.py` | Drafts `bigas.portfolio.yaml` from a folder of clones. Default folder: the parent of this repo |
+| `python scripts/apply_portfolio.py` | Plans, then with `--apply` connects every project in that file |
+| `python scripts/connect_repo.py` | The same plan or apply for one repo |
+| `python scripts/setup_cloud.py --project PROJECT_ID` | Plans the Cloud Run plumbing. `--apply` creates it. `--deploy` runs `./deploy.sh` |
 | `python scripts/bigas_doctor.py` | Checks the instance and every connected repo. `--json` for agents, `--offline` for config only. Exit 1 on failure; every problem comes with a fix |
 
-You can run the same scripts by hand; the playbook doubles as a checklist.
+You can run the same scripts by hand. An example portfolio is [docs/portfolio.example.yaml](docs/portfolio.example.yaml). The playbook doubles as a checklist.
 
 ---
 
@@ -342,6 +346,8 @@ None of this is required — the Flask app runs equally well on Fly.io, Render, 
 ---
 
 ## Tutorial: deploy your first Bigas server
+
+An agent (or you) can run the same steps with `python scripts/setup_cloud.py --project acme-bigas` (add `--apply` to create them, `--apply --deploy` to run `./deploy.sh`). Billing, `gcloud auth login`, and the Firebase web app stay manual. The rest of this section is the long form.
 
 This walks through a real first deploy, end to end, using `acme-bigas` as a stand-in for your Google Cloud project ID — swap it for your own throughout.
 
