@@ -34,8 +34,8 @@ const KIND_STYLE = {
 
 const TABS = [
   { id: 'week', label: 'Week' },
-  { id: 'ship', label: 'Ship' },
   { id: 'working', label: 'Working' },
+  { id: 'ship', label: 'Ship' },
   { id: 'needs', label: 'Needs you' },
 ]
 
@@ -46,12 +46,13 @@ function greeting() {
   return 'Good evening'
 }
 
-function Section({ id, title, count, accent, right, children, mobileTab, className = '' }) {
+function Section({ id, title, count, accent, right, children, mobileTab, className = '', pane }) {
+  const tabId = pane || id
   return (
     <section
       aria-labelledby={`cockpit-${id}`}
       className={`card p-4 lg:p-5 min-w-0 ${accent ? 'border-accent/40 ring-2 ring-accent/10' : ''} ${
-        mobileTab === id ? '' : 'hidden'
+        mobileTab === tabId ? '' : 'hidden'
       } lg:block ${className}`}
     >
       <div className="flex items-center gap-2 mb-3">
@@ -216,27 +217,35 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack, embedded = fa
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
         onPointerCancel={onPointerEnd}
-        className={`relative ${embedded ? 'bg-bg' : 'bg-elevated'} flex items-center gap-3 py-2.5 cursor-pointer transition-transform duration-200 group`}
+        className={`relative ${embedded ? 'bg-bg' : 'bg-elevated'} py-2.5 cursor-pointer transition-transform duration-200 group ${
+          embedded ? '' : 'flex items-center gap-3'
+        }`}
         style={{ touchAction: 'pan-y' }}
       >
-        <KindIcon kind={item.kind} />
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            if (swallowClick()) return
-            onOpen(item)
-          }}
-          className="min-w-0 flex-1 text-left rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
-          <span className="block truncate font-medium group-hover:text-accent transition-colors">
-            <ProjectTag project={projectOf(item)} label={itemKey(item)} />
-            {itemTitle(item)}
-          </span>
-          <span className="block truncate text-xs text-muted">{itemSub(item)}</span>
-        </button>
-        <span className="text-[11px] text-muted w-9 text-right flex-none">{timeAgo(item.since, now)}</span>
-        <div className="hidden sm:flex gap-1.5 flex-none">
+        <div className={embedded ? 'flex items-start gap-3' : 'contents'}>
+          <KindIcon kind={item.kind} />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (swallowClick()) return
+              onOpen(item)
+            }}
+            className="min-w-0 flex-1 text-left rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          >
+            <span
+              className={`block font-medium group-hover:text-accent transition-colors ${
+                embedded ? 'line-clamp-2' : 'truncate'
+              }`}
+            >
+              <ProjectTag project={projectOf(item)} label={itemKey(item)} />
+              {itemTitle(item)}
+            </span>
+            <span className="block truncate text-xs text-muted">{itemSub(item)}</span>
+          </button>
+          <span className="text-[11px] text-muted w-9 text-right flex-none">{timeAgo(item.since, now)}</span>
+        </div>
+        <div className={embedded ? 'hidden sm:flex gap-1.5 mt-2 pl-12' : 'hidden sm:flex gap-1.5 flex-none'}>
           {canSendBack && item.kind !== 'final' && (
             <button
               type="button"
@@ -1951,64 +1960,6 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
               moneyError={moneyError}
               onOpen={(kind, company) => setDrawer({ type: 'breakdown', kind, company })}
             />
-            <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
-              {WEEKLY_ACTIONS.map((action) => {
-                const busyId = `week:${action.id}`
-                return (
-                  <div key={action.id} className="border border-border rounded-xl p-3.5 bg-bg flex flex-col">
-                    <h3 className="font-semibold">{action.title}</h3>
-                    <p className="text-xs text-muted mt-1 flex-1">{action.body}</p>
-                    <div className="flex gap-1.5 mt-3">
-                      <button
-                        type="button"
-                        disabled={busyIds.has(busyId)}
-                        onClick={() =>
-                          runAgentPrompt(busyId, action.agentId, action.prompt, `${action.title}: asked ${action.agentId === 'cfo' ? 'CFO' : 'Product'}`)
-                        }
-                        className="btn-accent text-xs px-3 py-1 min-h-[34px]"
-                      >
-                        {busyIds.has(busyId) ? 'Sending…' : action.button}
-                      </button>
-                      <button type="button" onClick={() => onOpenChat(action.agentId)} className="btn-ghost text-xs px-2.5 py-1 min-h-[34px]">
-                        Last result
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </Section>
-
-          <Section
-            id="ship"
-            title="Ship"
-            mobileTab={tab}
-            right={<span className="text-xs text-muted hidden sm:inline">Versioned releases and staging rehearsals</span>}
-          >
-            {!data && !error && <p className="text-sm text-muted py-4">Loading…</p>}
-            {data && ship.length === 0 && (
-              <p className="text-sm text-muted py-4">No deploy targets configured. See the README section on DevOps.</p>
-            )}
-            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-              {ship.map((row) => (
-                <ShipCard
-                  key={row.key}
-                  row={row}
-                  steps={data?.ship_steps || []}
-                  onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
-                  busy={busyIds.has(`ship:${row.key}`)}
-                  onOpenChat={onOpenChat}
-                  onCommand={(r, cmd) => setDrawer({ type: 'command', row: r, cmd })}
-                  onReview={(r) => {
-                    const pending = needs.find(
-                      (n) => n.type === 'deploy_confirm' && n.project_key?.toUpperCase() === r.key?.toUpperCase(),
-                    )
-                    if (pending) openNeed(pending)
-                    else onOpenChat('devops')
-                  }}
-                />
-              ))}
-            </div>
           </Section>
 
           <Section id="working" title="AI working" count={counts.working} mobileTab={tab}>
@@ -2065,6 +2016,38 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                 )}
               </div>
             )}
+          </Section>
+
+          <Section
+            id="ship"
+            title="Ship"
+            mobileTab={tab}
+            right={<span className="text-xs text-muted hidden sm:inline">Versioned releases and staging rehearsals</span>}
+          >
+            {!data && !error && <p className="text-sm text-muted py-4">Loading…</p>}
+            {data && ship.length === 0 && (
+              <p className="text-sm text-muted py-4">No deploy targets configured. See the README section on DevOps.</p>
+            )}
+            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+              {ship.map((row) => (
+                <ShipCard
+                  key={row.key}
+                  row={row}
+                  steps={data?.ship_steps || []}
+                  onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
+                  busy={busyIds.has(`ship:${row.key}`)}
+                  onOpenChat={onOpenChat}
+                  onCommand={(r, cmd) => setDrawer({ type: 'command', row: r, cmd })}
+                  onReview={(r) => {
+                    const pending = needs.find(
+                      (n) => n.type === 'deploy_confirm' && n.project_key?.toUpperCase() === r.key?.toUpperCase(),
+                    )
+                    if (pending) openNeed(pending)
+                    else onOpenChat('devops')
+                  }}
+                />
+              ))}
+            </div>
           </Section>
 
           <Section id="needs" title="Needs you" count={counts.needs} mobileTab={tab}>
@@ -2143,6 +2126,35 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                 )}
               </div>
             )}
+          </Section>
+
+          <Section id="weekly" title="Weekly" pane="week" mobileTab={tab}>
+            <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
+              {WEEKLY_ACTIONS.map((action) => {
+                const busyId = `week:${action.id}`
+                return (
+                  <div key={action.id} className="border border-border rounded-xl p-3.5 bg-bg flex flex-col">
+                    <h3 className="font-semibold">{action.title}</h3>
+                    <p className="text-xs text-muted mt-1 flex-1">{action.body}</p>
+                    <div className="flex gap-1.5 mt-3">
+                      <button
+                        type="button"
+                        disabled={busyIds.has(busyId)}
+                        onClick={() =>
+                          runAgentPrompt(busyId, action.agentId, action.prompt, `${action.title}: asked ${action.agentId === 'cfo' ? 'CFO' : 'Product'}`)
+                        }
+                        className="btn-accent text-xs px-3 py-1 min-h-[34px]"
+                      >
+                        {busyIds.has(busyId) ? 'Sending…' : action.button}
+                      </button>
+                      <button type="button" onClick={() => onOpenChat(action.agentId)} className="btn-ghost text-xs px-2.5 py-1 min-h-[34px]">
+                        Last result
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </Section>
         </div>
       </main>

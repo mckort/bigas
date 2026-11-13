@@ -54,7 +54,7 @@ Four surfaces, one loop ([Getting started](#getting-started-from-first-card-to-p
 
 | Surface | Where | Role |
 |---|---|---|
-| **Cockpit** | `/` (also `/cockpit`) | The start page when you are signed in. **This week** is the summary and the weekly PM, X, and CFO actions. **Ship** has one card per deploy target. **AI working** shows cards in AI columns and running deploy pipelines. **Needs you** is one card per project for manual approvals and deploys waiting for your yes (swipe on a phone). The page paints from `GET /api/cockpit?part=shell` and fills Needs you from `GET /api/cockpit?part=needs`. |
+| **Cockpit** | `/` (also `/cockpit`) | The start page when you are signed in. **This week** is the summary. **AI working** shows cards in AI columns and running deploy pipelines. **Ship** has one card per deploy target. **Needs you** is one card per project for manual approvals and deploys waiting for your yes (swipe on a phone). **Weekly** holds the PM update, X posts, and CFO report. The page paints from `GET /api/cockpit?part=shell` and fills Needs you from `GET /api/cockpit?part=needs`. |
 | **Board** | `/board` | The built-in, Jira-like work surface: tickets, columns, releases, and a human-gated AI workflow (research → plan → implement → reviewed PR). Jira is optional — connect it only if you already run a Jira board you want to keep. |
 | **Objectives** (optional) | `/objectives` | The quarter's scoreboard. You name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story. |
 | **Chat** | `/chat` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |
