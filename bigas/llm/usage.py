@@ -70,6 +70,9 @@ _MODEL_PRICE_USD_PER_MTOK: Tuple[Tuple[str, float, float], ...] = (
 _GEMINI_4_INTRO_PRICE_END = date(2026, 12, 1)
 _GEMINI_4_PUBLIC_STEMS = ("gemini-4-argon", "gemini-4-carbon")
 
+# Gemini 3.8 Flash intro price runs through 31 Dec 2026 (USD / 1M tokens).
+_GEMINI_38_FLASH_INTRO_PRICE_END = date(2027, 1, 1)
+
 
 def _gemini_4_public_price(today: Optional[date] = None) -> Tuple[float, float]:
     """Intro rate through 30 Nov 2026, then the standard list rate.
@@ -89,6 +92,25 @@ def _is_public_gemini_4(name: str) -> bool:
     return False
 
 
+def _gemini_38_flash_price(today: Optional[date] = None) -> Tuple[float, float]:
+    """Intro rate through 31 Dec 2026, then the standard list rate.
+
+    The generic Flash fallback is the 2027 rate ($1.50 / $7.50). Using it
+    before this date doubles the list-price estimate versus the invoice.
+    """
+    stamp = today or date.today()
+    if stamp < _GEMINI_38_FLASH_INTRO_PRICE_END:
+        return 0.75, 3.75
+    return 1.50, 7.50
+
+
+def _is_gemini_38_flash(name: str) -> bool:
+    if "lite" in name:
+        return False
+    stem = "gemini-3.8-flash"
+    return name == stem or name.startswith(f"{stem}-") or name.startswith(f"{stem}@")
+
+
 def resolve_model_price_usd_per_mtok(model: str) -> Optional[Tuple[float, float]]:
     """Return (input, output) USD per 1M tokens, or None if unknown."""
     name = (model or "").strip().lower()
@@ -98,6 +120,8 @@ def resolve_model_price_usd_per_mtok(model: str) -> Optional[Tuple[float, float]
         return None
     if _is_public_gemini_4(name):
         return _gemini_4_public_price()
+    if _is_gemini_38_flash(name):
+        return _gemini_38_flash_price()
     for prefix, inp, out in _MODEL_PRICE_USD_PER_MTOK:
         if name == prefix or name.startswith(prefix):
             return inp, out

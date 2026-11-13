@@ -1,7 +1,11 @@
 """GCP invoice costs from Cloud Billing export to BigQuery.
 
-One event per project per service in the window. Gemini on the invoice is
+One event per project, service, and SKU in the window. Gemini on the invoice is
 ``gcp.gemini_invoice`` so it is not mixed with ``llm_logs`` list-price.
+
+Export ``cost`` is the billing-account currency. ``currency_conversion_rate``
+is USD to that currency, so amounts are divided by the rate before they are
+reported as USD.
 """
 from __future__ import annotations
 
@@ -93,6 +97,28 @@ def invoice_feature(service: str, sku: str = "") -> str:
     return matched_service_feature(sku) or service_feature(service)
 
 
+def _usd_amount_sql(amount_expr: str) -> str:
+    """SQL that converts one billing-currency amount to USD.
+
+    A missing or zero ``currency_conversion_rate`` leaves the amount unchanged.
+    A USD export uses rate 1, so the division is a no-op there.
+    """
+    return (
+        "IF(currency_conversion_rate IS NULL OR currency_conversion_rate = 0, "
+        f"{amount_expr}, {amount_expr} / currency_conversion_rate)"
+    )
+
+
+def _net_cost_usd_sql() -> str:
+    """Net invoice cost in USD, after credits, for one grouped row."""
+    cost = _usd_amount_sql("cost")
+    credit = _usd_amount_sql("c.amount")
+    return (
+        f"SUM({cost}) + SUM((SELECT IFNULL(SUM({credit}), 0) "
+        "FROM UNNEST(credits) AS c))"
+    )
+
+
 def _feature_matches(feature: str, prefix: Optional[str]) -> bool:
     if not prefix:
         return True
@@ -177,8 +203,7 @@ class GcpBillingUsageProvider(UsageProvider):
         sql = (
             f"SELECT project.id AS project_id, service.description AS service, "
             f"IFNULL(sku.description, '') AS sku, "
-            f"SUM(cost) + SUM((SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) "
-            f"AS net_cost "
+            f"{_net_cost_usd_sql()} AS net_cost "
             f"FROM `{table}` "
             f"WHERE DATE(usage_start_time) >= @start_date "
             f"AND DATE(usage_start_time) <= @end_date "
