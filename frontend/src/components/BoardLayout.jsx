@@ -1857,6 +1857,12 @@ export default function BoardLayout({ user, onLogout, onDiscussTicket, onSwitchV
         const data = await fetchTicketByKey(pendingTicketKey)
         if (cancelled || !data.ticket) return
         if (data.ticket.board_id && data.ticket.board_id !== activeBoardId) {
+          // Write the ticket's board before switching, so the board-id sync
+          // does not drop ?ticket= while the right board is still loading.
+          replaceBoardLocation((params) => {
+            params.set('board', String(data.ticket.board_id))
+            params.set('ticket', pendingTicketKey)
+          })
           setActiveBoardId(data.ticket.board_id)
           return
         }

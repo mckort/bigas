@@ -621,12 +621,98 @@ def test_week_stats_count_recently_shipped_cards_and_releases():
     assert payload["week"]["shipped"] == 2
     assert payload["week"]["shipped_by_project"] == {"VFA": 2}
     assert payload["week"]["releases"] == [
-        {"project_key": "VFA", "name": "0.2.3", "released_at": released_at},
+        {"project_key": "VFA", "name": "0.2.3", "released_at": released_at, "issues": []},
     ]
     assert [(card["key"], card["status"], card["title"]) for card in payload["week"]["cards"]] == [
         ("VFA-1", "Done", "Ticket 1"),
         ("VFA-2", "Final approval (manual)", "Ticket 2"),
     ]
+
+
+def test_week_release_lists_cards_tagged_with_that_version():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    released_at = (now - timedelta(days=1)).isoformat()
+    payload = build_cockpit(
+        boards=[BOARD],
+        tickets_by_board={
+            "b1": [
+                _ticket("12", "Done", fix_version="0.115.0", title="Open the release"),
+                _ticket("4", "In Progress (AI)", fix_version="v0.115.0", title="Still open"),
+                _ticket("9", "Done", fix_version="0.115.0", issue_type="Epic", title="The epic"),
+                _ticket("3", "Done", fix_version="0.114.0", title="Previous cut"),
+                _ticket("8", "Done", title="No version"),
+            ]
+        },
+        threads=[],
+        releases_by_project={
+            "VFA": [
+                {"name": "0.115.0", "released": True, "released_at": released_at},
+            ]
+        },
+        now=now,
+    )
+    release = payload["week"]["releases"][0]
+    assert [(card["key"], card["title"], card["status"]) for card in release["issues"]] == [
+        ("VFA-12", "Open the release", "Done"),
+        ("VFA-4", "Still open", "In Progress (AI)"),
+    ]
+
+
+def test_week_release_counts_a_card_once_when_it_sits_on_two_boards():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    released_at = (now - timedelta(days=1)).isoformat()
+    shared = _ticket("12", "Done", fix_version="0.115.0", title="Open the release")
+    payload = build_cockpit(
+        boards=[
+            {**BOARD, "name": "Scrum"},
+            {**BOARD, "board_id": "b2", "name": "Kanban"},
+        ],
+        tickets_by_board={
+            "b1": [
+                shared,
+                _ticket("4", "In Progress (AI)", fix_version="0.115.0", title="Only scrum"),
+            ],
+            "b2": [
+                dict(shared),
+                _ticket("7", "Done", fix_version="0.115.0", title="Only kanban"),
+            ],
+        },
+        threads=[],
+        releases_by_project={
+            "VFA": [
+                {"name": "0.115.0", "released": True, "released_at": released_at},
+            ]
+        },
+        now=now,
+    )
+    release = payload["week"]["releases"][0]
+    assert [(card["key"], card["title"]) for card in release["issues"]] == [
+        ("VFA-12", "Open the release"),
+        ("VFA-7", "Only kanban"),
+        ("VFA-4", "Only scrum"),
+    ]
+
+
+def test_week_shell_leaves_release_cards_unloaded():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    payload = build_cockpit(
+        boards=[BOARD],
+        tickets_by_board={
+            "b1": [_ticket("1", "Done", fix_version="0.115.0")],
+        },
+        threads=[],
+        releases_by_project={
+            "VFA": [
+                {"name": "0.115.0", "released": True, "released_at": (now - timedelta(days=1)).isoformat()},
+            ]
+        },
+        now=now,
+        tickets_loaded=False,
+    )
+    assert payload["partial"] is True
+    assert payload["week"]["cards"] is None
+    assert payload["week"]["releases"][0]["issues"] is None
+    assert payload["week"]["releases"][0]["name"] == "0.115.0"
 
 
 def test_ship_rows_carry_their_step():

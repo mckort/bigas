@@ -32,6 +32,7 @@ from bigas.tickets.constants import (
     is_in_release_cut,
     resolve_column_status,
 )
+from bigas.tickets.semver import versions_match
 
 logger = logging.getLogger(__name__)
 
@@ -550,6 +551,58 @@ def _split_stuck(items: List[Dict[str, Any]], now: datetime) -> tuple:
     return running, stuck
 
 
+_WEEK_SKIP_TYPES = ("Epic", "Objective")
+
+
+def _week_card(ticket: Dict[str, Any], project: str) -> Dict[str, Any]:
+    status = ticket.get("status") or ""
+    return {
+        "key": ticket.get("key") or "",
+        "title": ticket.get("title") or ticket.get("summary") or "",
+        "project_key": project,
+        "status": resolve_column_status(status, project_key=project) or status,
+        "updated_at": ticket.get("updated_at") or "",
+    }
+
+
+def _issue_sort_key(key: str) -> tuple:
+    text = str(key or "")
+    head, sep, tail = text.rpartition("-")
+    if sep and tail.isdigit():
+        return (head, int(tail))
+    return (text, 0)
+
+
+def _issues_on_version(
+    tickets: Iterable[Dict[str, Any]],
+    project: str,
+    version: str,
+) -> List[Dict[str, Any]]:
+    """Board cards tagged with this fix version. Epics are not release contents.
+
+    A project can list the same card on more than one board. Count each key once.
+    """
+    name = (version or "").strip()
+    if not name:
+        return []
+    seen = set()
+    issues: List[Dict[str, Any]] = []
+    for ticket in tickets:
+        if (ticket.get("issue_type") or "") in _WEEK_SKIP_TYPES:
+            continue
+        if not versions_match(str(ticket.get("fix_version") or ""), name):
+            continue
+        card = _week_card(ticket, project)
+        card_key = card.get("key")
+        if card_key:
+            if card_key in seen:
+                continue
+            seen.add(card_key)
+        issues.append(card)
+    issues.sort(key=lambda card: _issue_sort_key(str(card.get("key") or "")), reverse=True)
+    return issues
+
+
 def _week_stats(
     boards: Iterable[Dict[str, Any]],
     tickets_by_board: Dict[str, List[Dict[str, Any]]],
@@ -559,42 +612,39 @@ def _week_stats(
     """Cards that reached Final approval or Done, and releases shipped, in the last 7 days.
 
     Tickets carry no status history, so a card counts by its last update while
-    in a shipped column. Good enough for a weekly glance.
+    in a shipped column. Good enough for a weekly glance. Each release also
+    lists the cards tagged with that version, including ones last touched earlier.
     """
     since = now - WEEK
     shipped: Dict[str, int] = {}
     cards: List[Dict[str, Any]] = []
+    tickets_by_project: Dict[str, List[Dict[str, Any]]] = {}
     for board in boards:
         key = (board.get("project_key") or "").strip().upper()
         if not key:
             continue
-        for t in tickets_by_board.get(board.get("board_id") or "", []):
-            if (t.get("issue_type") or "") in ("Epic", "Objective"):
+        tickets = list(tickets_by_board.get(board.get("board_id") or "", []) or [])
+        tickets_by_project.setdefault(key, []).extend(tickets)
+        for t in tickets:
+            if (t.get("issue_type") or "") in _WEEK_SKIP_TYPES:
                 continue
             updated = _parse_time(t.get("updated_at"))
             if updated and updated >= since and is_in_release_cut(t.get("status") or "", project_key=key):
                 shipped[key] = shipped.get(key, 0) + 1
-                cards.append(
-                    {
-                        "key": t.get("key") or "",
-                        "title": t.get("title") or t.get("summary") or "",
-                        "project_key": key,
-                        "status": resolve_column_status(t.get("status") or "", project_key=key)
-                        or (t.get("status") or ""),
-                        "updated_at": t.get("updated_at") or "",
-                    }
-                )
+                cards.append(_week_card(t, key))
     releases = []
     for key, items in (releases_by_project or {}).items():
         project = str(key or "").strip().upper()
         for r in items or []:
             at = _parse_time(r.get("released_at"))
             if r.get("released") and at and at >= since:
+                name = str(r.get("name") or "").strip()
                 releases.append(
                     {
                         "project_key": project,
-                        "name": str(r.get("name") or "").strip(),
+                        "name": name,
                         "released_at": r.get("released_at") or "",
+                        "issues": _issues_on_version(tickets_by_project.get(project, []), project, name),
                     }
                 )
     cards.sort(key=lambda card: str(card.get("updated_at") or ""), reverse=True)
@@ -658,7 +708,15 @@ def build_cockpit(
     signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
     week = _week_stats(boards, tickets_by_board, releases_by_project or {}, now)
     if not tickets_loaded:
-        week = {**week, "shipped": None, "shipped_by_project": None, "cards": None}
+        # Issues stay unset until the board scan finishes, so the drawer does
+        # not show an empty release while the cards are still loading.
+        week = {
+            **week,
+            "shipped": None,
+            "shipped_by_project": None,
+            "cards": None,
+            "releases": [{**item, "issues": None} for item in (week.get("releases") or [])],
+        }
         needs_out = None
         signoff_out = None
         needs_count = None
