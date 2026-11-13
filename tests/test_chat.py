@@ -1886,6 +1886,22 @@ def test_robots_txt_hides_app_routes():
     assert "Disallow: /objectives" in body
 
 
+def test_cockpit_landing_image_bypasses_restricted_access(client, monkeypatch):
+    """The public landing page loads this screenshot with no access key."""
+    monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_MODE", "restricted")
+    monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_KEYS", {"secret-key"})
+    monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
+
+    image = client.get("/marketing/cockpit.png")
+    assert image.status_code != 401
+    body = image.get_json(silent=True) or {}
+    detail = body.get("detail", "") if isinstance(body, dict) else ""
+    assert "access key" not in str(detail).lower()
+
+    blocked = client.get("/mcp/tools/fetch_analytics_report")
+    assert blocked.status_code == 401
+
+
 def test_logo_bypasses_restricted_access():
     from flask import Flask, jsonify, request
 
