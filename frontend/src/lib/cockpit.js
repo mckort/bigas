@@ -1,7 +1,7 @@
 import { createThread, fetchThreads, sendMessage } from './api'
 
-/** Post a message to an agent's most recent thread (or a new one). */
-export async function sendToAgent(agentId, content) {
+/** The agent's most recent thread, creating one when none exists. */
+export async function openAgentThread(agentId) {
   let threadId = ''
   try {
     const listed = await fetchThreads()
@@ -15,6 +15,12 @@ export async function sendToAgent(agentId, content) {
     threadId = created.thread?.thread_id || ''
   }
   if (!threadId) throw new Error('Could not open a chat thread')
+  return threadId
+}
+
+/** Post a message to an agent's most recent thread (or a new one). */
+export async function sendToAgent(agentId, content) {
+  const threadId = await openAgentThread(agentId)
   await sendMessage(threadId, content, `cockpit-${Date.now()}`)
   return threadId
 }

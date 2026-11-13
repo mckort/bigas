@@ -7,13 +7,16 @@ import {
   backToDevelopment,
   fetchCockpitMoney,
   fetchProductionPlan,
+  fetchMessages,
   fetchTicket,
   goToProduction,
+  pollDeployPostcheck,
   sendMessage,
   signOffTickets,
   updateTicket,
 } from '../lib/api'
-import { WEEKLY_ACTIONS, cursorPrompt, sendToAgent, timeAgo } from '../lib/cockpit'
+import { applyDeployUpdate, deployProgressLines } from '../lib/deployProgress'
+import { WEEKLY_ACTIONS, cursorPrompt, openAgentThread, sendToAgent, timeAgo } from '../lib/cockpit'
 import { featureEnabled } from '../lib/features'
 import { linkify } from '../lib/linkify'
 import { SettingsButton } from './AgentSettings'
@@ -1322,6 +1325,54 @@ function DeployDetail({ item }) {
   )
 }
 
+function CommandProgress({ prompt, run }) {
+  const endRef = useRef(null)
+  const lines = deployProgressLines(run?.messages)
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' })
+  }, [lines.length, run?.phase])
+
+  const working = run?.phase === 'working'
+  return (
+    <div className="space-y-3" aria-live="polite">
+      {lines.length > 0 && (
+        <ol className="space-y-2">
+          {lines.map((line) => (
+            <li key={line.id} className="rounded-lg bg-surface px-3 py-2">
+              <div className="markdown-body cockpit-md text-sm max-w-none">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    a: ({ href, children }) => (
+                      <a href={href} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                        {children}
+                      </a>
+                    ),
+                  }}
+                >
+                  {line.text}
+                </ReactMarkdown>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      {working && (
+        <div className="space-y-1">
+          <p className="text-sm text-muted flex items-center gap-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-accent animate-pulse" aria-hidden="true" />
+            {lines.length === 0 ? `Sending “${prompt}” to DevOps…` : 'DevOps is working…'}
+          </p>
+          <p className="text-xs text-muted">Closing this panel leaves DevOps running.</p>
+        </div>
+      )}
+      {run?.phase === 'error' && <p className="text-sm text-red-500">{run.error || 'Could not reach DevOps'}</p>}
+      {run?.phase === 'done' && <p className="text-sm text-muted">Finished.</p>}
+      <div ref={endRef} />
+    </div>
+  )
+}
+
 export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOpenChat, onDiscussTicket, onLogout }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
@@ -1337,6 +1388,8 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const [moneyError, setMoneyError] = useState('')
   const fullReady = useRef(false)
   const toastTimer = useRef(null)
+  const commandRunToken = useRef(0)
+  const commandRun = useRef(null)
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
   const loadShell = useCallback(async () => {
@@ -1413,6 +1466,8 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
 
 
   const closeDrawer = useCallback(() => {
+    commandRunToken.current += 1
+    commandRun.current = null
     setDrawer(null)
     setComment('')
   }, [])
@@ -1508,6 +1563,129 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     },
     [closeDrawer, load, onOpenChat, showToast],
   )
+
+  const publishCommandRun = useCallback((next) => {
+    commandRun.current = next
+    setDrawer((current) => (current?.type === 'command' ? { ...current, run: next } : current))
+  }, [])
+
+  const beginCommand = useCallback(
+    async (row, cmd, text) => {
+      const prompt = (text || cmd?.prompt || '').trim()
+      if (!prompt) return
+      const token = commandRunToken.current + 1
+      commandRunToken.current = token
+      const previous = commandRun.current
+      const since = previous?.since || new Date(Date.now() - 5000).toISOString()
+      const base = {
+        phase: 'working',
+        pendingSend: true,
+        threadId: previous?.threadId || '',
+        since,
+        prompt: previous?.prompt || prompt,
+        messages: previous?.messages || [],
+        error: '',
+        deployPoll: false,
+        token,
+      }
+      publishCommandRun(base)
+      setBusy(`ship:${row.key}`, true)
+      try {
+        let threadId = base.threadId
+        if (!threadId) {
+          threadId = await openAgentThread('devops')
+          if (commandRunToken.current !== token) return
+          publishCommandRun({ ...commandRun.current, threadId })
+        }
+        const res = await sendMessage(threadId, prompt, `cockpit-${Date.now()}`)
+        if (commandRunToken.current !== token) return
+        const incoming = Array.isArray(res.messages) ? res.messages : res.message ? [res.message] : []
+        const deployPoll = Boolean(res.deploy_poll_active) || res.status === 'in_progress'
+        publishCommandRun(
+          applyDeployUpdate(
+            { ...commandRun.current, threadId },
+            incoming,
+            { pendingSend: false, deployPoll },
+          ),
+        )
+        setTimeout(load, 500)
+      } catch (err) {
+        if (commandRunToken.current !== token) return
+        publishCommandRun(
+          applyDeployUpdate(commandRun.current, [], {
+            pendingSend: false,
+            error: err.message || 'Could not reach DevOps',
+          }),
+        )
+      } finally {
+        setBusy(`ship:${row.key}`, false)
+      }
+    },
+    [load, publishCommandRun],
+  )
+
+  const commandThreadId = drawer?.type === 'command' ? drawer.run?.threadId || '' : ''
+  const commandPhase = drawer?.type === 'command' ? drawer.run?.phase || '' : ''
+  const commandSince = drawer?.type === 'command' ? drawer.run?.since || '' : ''
+
+  useEffect(() => {
+    if (!commandThreadId || commandPhase !== 'working') return undefined
+    let cancelled = false
+    let lastPostcheck = 0
+    const threadId = commandThreadId
+    const since = commandSince
+
+    async function tick() {
+      try {
+        const res = await fetchMessages(threadId, { since })
+        if (cancelled) return
+        let incoming = res.messages || []
+        let deployPoll = res.deploy_poll_active !== undefined
+          ? Boolean(res.deploy_poll_active)
+          : Boolean(commandRun.current?.deployPoll)
+        const nowMs = Date.now()
+        if (deployPoll && nowMs - lastPostcheck > 8000) {
+          lastPostcheck = nowMs
+          const polled = await pollDeployPostcheck(threadId, since)
+          if (cancelled) return
+          if (polled.messages?.length) incoming = [...incoming, ...polled.messages]
+          if (polled.status === 'complete' || polled.active === false) deployPoll = false
+        }
+        if (commandRunToken.current !== commandRun.current?.token) return
+        const wasWorking = commandRun.current?.phase === 'working'
+        const next = applyDeployUpdate(commandRun.current, incoming, {
+          pendingSend: Boolean(commandRun.current?.pendingSend),
+          deployPoll,
+        })
+        const previousMessages = commandRun.current?.messages || []
+        const unchanged =
+          commandRun.current?.phase === next.phase &&
+          commandRun.current?.deployPoll === next.deployPoll &&
+          previousMessages.length === next.messages.length &&
+          previousMessages.every((message, index) => {
+            const other = next.messages[index]
+            return (
+              message?.message_id === other?.message_id &&
+              message?.content === other?.content &&
+              (message?.metadata?.status || '') === (other?.metadata?.status || '')
+            )
+          })
+        if (unchanged) return
+        publishCommandRun(next)
+        if (wasWorking && (next.phase === 'done' || next.phase === 'confirm')) setTimeout(load, 500)
+      } catch {
+        /* keep the last lines on screen */
+      }
+    }
+
+    const first = setTimeout(tick, 600)
+    const id = setInterval(tick, 2000)
+    return () => {
+      cancelled = true
+      clearTimeout(first)
+      clearInterval(id)
+    }
+  }, [commandThreadId, commandPhase, commandSince, load, publishCommandRun])
 
   const openNeed = (item) => {
     setComment('')
@@ -1779,24 +1957,67 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       </>
     )
   } else if (drawer?.type === 'command') {
-    const { row, cmd } = drawer
+    const { row, cmd, run } = drawer
     const busyId = `ship:${row.key}`
+    const running = Boolean(run)
     drawerTitle = `${cmd.label} · ${row.name}`
-    drawerBody = (
+    drawerBody = running ? (
+      <CommandProgress prompt={cmd.prompt} run={run} />
+    ) : (
       <div className="space-y-3 text-sm">
         <p>
           Sends <code className="font-mono bg-surface px-1.5 py-0.5 rounded">{cmd.prompt}</code> to DevOps.
         </p>
         <p className="text-muted">
           {/teardown/i.test(cmd.prompt)
-            ? 'DevOps asks you to confirm before it destroys the staging stack.'
+            ? 'DevOps asks you to confirm before it destroys the staging stack. The steps show here.'
             : /prepare deploy/i.test(cmd.prompt)
-              ? 'DevOps reviews and autofixes the cut, then comes back here and asks before anything reaches production.'
-              : 'Progress shows under AI working. DevOps asks before anything reaches production.'}
+              ? 'DevOps reviews and autofixes the cut. The steps show here, and it asks before anything reaches production.'
+              : 'The steps show here. DevOps asks before anything reaches production.'}
         </p>
       </div>
     )
-    drawerFooter = (
+    drawerFooter = running ? (
+      <>
+        <button type="button" onClick={() => onOpenChat('devops')} className="btn-ghost text-sm px-3">
+          Open chat
+        </button>
+        <span className="flex-1" />
+        {run.phase === 'confirm' ? (
+          <>
+            <button
+              type="button"
+              disabled={busyIds.has(busyId)}
+              onClick={() => beginCommand(row, cmd, 'no')}
+              className="btn-secondary text-sm px-3"
+            >
+              Stop
+            </button>
+            <button
+              type="button"
+              disabled={busyIds.has(busyId)}
+              onClick={() => beginCommand(row, cmd, 'yes')}
+              className="btn-accent text-sm px-3"
+            >
+              {/teardown/i.test(cmd.prompt) ? 'Confirm' : 'Deploy'}
+            </button>
+          </>
+        ) : run.phase === 'working' ? (
+          <>
+            <button type="button" onClick={closeDrawer} className="btn-secondary text-sm px-3">
+              Close
+            </button>
+            <button type="button" disabled className="btn-accent text-sm px-3" aria-busy="true">
+              Working…
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={closeDrawer} className="btn-secondary text-sm px-3">
+            Close
+          </button>
+        )}
+      </>
+    ) : (
       <>
         <span className="flex-1" />
         <button type="button" onClick={closeDrawer} className="btn-secondary text-sm px-3">
@@ -1805,7 +2026,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         <button
           type="button"
           disabled={busyIds.has(busyId)}
-          onClick={() => runAgentPrompt(busyId, 'devops', cmd.prompt, `Sent “${cmd.prompt}” to DevOps`)}
+          onClick={() => beginCommand(row, cmd)}
           className="btn-accent text-sm px-3"
         >
           {cmd.label}
@@ -2037,7 +2258,11 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                   onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
                   busy={busyIds.has(`ship:${row.key}`)}
                   onOpenChat={onOpenChat}
-                  onCommand={(r, cmd) => setDrawer({ type: 'command', row: r, cmd })}
+                  onCommand={(r, cmd) => {
+                    commandRunToken.current += 1
+                    commandRun.current = null
+                    setDrawer({ type: 'command', row: r, cmd })
+                  }}
                   onReview={(r) => {
                     const pending = needs.find(
                       (n) => n.type === 'deploy_confirm' && n.project_key?.toUpperCase() === r.key?.toUpperCase(),
