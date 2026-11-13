@@ -607,17 +607,323 @@ function formatAmount(value, currency) {
   return currency === 'USD' ? `${sign}$${text}` : `${sign}${text} kr`
 }
 
-function Tile({ label, value, sub, tone = '' }) {
+function formatMoney(value, currency) {
+  if (value == null || Number.isNaN(Number(value))) return '–'
+  const n = Number(value)
+  if (currency === 'USD') {
+    const sign = n < 0 ? '−' : ''
+    return `${sign}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+  return formatAmount(n, 'SEK')
+}
+
+function shareLabel(amount, total) {
+  const whole = Number(total)
+  const part = Number(amount)
+  if (!whole || Number.isNaN(part)) return ''
+  return `${Math.round((Math.abs(part) / Math.abs(whole)) * 100)}%`
+}
+
+function shortWhen(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+
+function releaseLabel(item) {
+  if (!item) return ''
+  if (typeof item === 'string') return item
+  return `${item.project_key || ''} ${item.name || ''}`.trim()
+}
+
+function statusLabel(status) {
+  if (status === 'Final approval (manual)') return 'Final approval'
+  return status || ''
+}
+
+function prLabel(url) {
+  const match = String(url || '').match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i)
+  if (match) return `${match[1]}#${match[2]}`
+  return url
+}
+
+function Tile({ label, value, sub, tone = '', onClick }) {
+  const className = `bg-surface rounded-lg px-3 py-2.5 min-w-0 text-left w-full border-0 ${
+    onClick ? 'hover:bg-surface-muted transition-colors cursor-pointer' : ''
+  }`
+  const body = (
+    <>
+      <span className="block text-[11px] text-muted truncate">{label}</span>
+      <span className={`block text-lg font-semibold leading-tight truncate ${tone}`}>{value}</span>
+      {sub && <span className="block text-[11px] text-muted truncate">{sub}</span>}
+    </>
+  )
+  if (!onClick) {
+    return <div className={className}>{body}</div>
+  }
   return (
-    <div className="bg-surface rounded-lg px-3 py-2.5 min-w-0">
-      <p className="text-[11px] text-muted truncate">{label}</p>
-      <p className={`text-lg font-semibold leading-tight truncate ${tone}`}>{value}</p>
-      {sub && <p className="text-[11px] text-muted truncate">{sub}</p>}
+    <button type="button" onClick={onClick} className={className} aria-label={`Show breakdown of ${label}`}>
+      {body}
+    </button>
+  )
+}
+
+function BreakdownSection({ title, children }) {
+  return (
+    <section className="mb-5">
+      <h4 className="text-sm font-semibold mb-2">{title}</h4>
+      {children}
+    </section>
+  )
+}
+
+function AmountRows({ rows, currency, total, empty = 'Nothing in this group.' }) {
+  if (!rows?.length) return <p className="text-sm text-muted">{empty}</p>
+  const peak = Math.max(...rows.map((row) => Math.abs(Number(row.amount) || 0)), 0)
+  return (
+    <ul className="space-y-2.5">
+      {rows.map((row) => {
+        const width = peak > 0 ? Math.max(4, Math.round((Math.abs(Number(row.amount) || 0) / peak) * 100)) : 0
+        const extra = [row.calls ? `${row.calls} call${row.calls === 1 ? '' : 's'}` : '', row.project || '', shareLabel(row.amount, total)]
+          .filter(Boolean)
+          .join(' · ')
+        return (
+          <li key={`${row.name || row.label}-${row.project || ''}`}>
+            <div className="flex items-baseline gap-3 text-sm">
+              <span className="flex-1 min-w-0 truncate">{row.label || row.name}</span>
+              {extra && <span className="text-[11px] text-muted flex-none">{extra}</span>}
+              <span className="font-medium tabular-nums flex-none">{formatMoney(row.amount, currency)}</span>
+            </div>
+            <div className="mt-1 h-1 rounded-full bg-surface-muted overflow-hidden">
+              <div className="h-full rounded-full bg-accent/80" style={{ width: `${width}%` }} />
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function ShippedBreakdown({ week, onOpenCard }) {
+  const cards = Array.isArray(week?.cards) ? week.cards : null
+  if (!cards) return <p className="text-sm text-muted">Still loading the cards.</p>
+  if (!cards.length) return <p className="text-sm text-muted">Nothing shipped in the last 7 days.</p>
+  const groups = []
+  const index = new Map()
+  for (const card of cards) {
+    const project = card.project_key || 'Other'
+    if (!index.has(project)) {
+      const group = { project, cards: [] }
+      index.set(project, group)
+      groups.push(group)
+    }
+    index.get(project).cards.push(card)
+  }
+  groups.sort((a, b) => b.cards.length - a.cards.length)
+  return (
+    <div>
+      <p className="text-sm text-muted mb-3">
+        {week.shipped} card{week.shipped === 1 ? '' : 's'} reached Done or Final approval in the last 7 days.
+      </p>
+      {groups.map((group) => (
+        <section key={group.project} className="mb-4">
+          <div className="flex items-center gap-2 mb-1">
+            <ProjectTag project={group.project} />
+            <span className="text-xs text-muted">{group.cards.length}</span>
+          </div>
+          <ul>
+            {group.cards.map((card) => (
+              <li key={card.key || `${card.title}-${card.updated_at}`}>
+                <button
+                  type="button"
+                  disabled={!card.key}
+                  onClick={() => onOpenCard(card)}
+                  className="w-full text-left py-1.5 px-1 -mx-1 rounded flex gap-2 items-baseline hover:bg-surface disabled:cursor-default"
+                >
+                  <span className="font-mono text-xs flex-none">{card.key}</span>
+                  <span className="text-sm truncate flex-1">{card.title || 'Untitled'}</span>
+                  <span className="text-[11px] text-muted flex-none">{statusLabel(card.status)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </div>
   )
 }
 
-function WeekTiles({ week, money, moneyError }) {
+function ReleasesBreakdown({ week }) {
+  const items = week?.releases || []
+  if (!items.length) return <p className="text-sm text-muted">No releases in the last 7 days.</p>
+  return (
+    <ul>
+      {items.map((item) => {
+        if (typeof item === 'string') {
+          return (
+            <li key={item} className="text-sm py-1.5">
+              {item}
+            </li>
+          )
+        }
+        return (
+          <li key={`${item.project_key}-${item.name}-${item.released_at}`} className="flex items-baseline gap-2 py-1.5">
+            <ProjectTag project={item.project_key} />
+            <span className="text-sm font-medium">{item.name || 'Release'}</span>
+            <span className="text-xs text-muted ml-auto">{shortWhen(item.released_at)}</span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function SpendBreakdown({ money }) {
+  const ai = money?.ai
+  if (!ai) return <p className="text-sm text-muted">Still loading spend.</p>
+  if (ai.error) return <p className="text-sm text-red-600">{ai.error}</p>
+  const breakdown = ai.breakdown || {}
+  const providers = breakdown.providers?.length ? breakdown.providers : ai.top || []
+  const invoice = breakdown.invoice || {}
+  const change =
+    ai.change_pct == null
+      ? ''
+      : `${ai.change_pct > 0 ? '+' : ''}${ai.change_pct}% vs ${formatMoney(ai.prior_week, 'USD')} the week before`
+  return (
+    <div>
+      <p className="text-2xl font-semibold">{formatMoney(ai.week, 'USD')}</p>
+      {change && <p className="text-sm text-muted mt-1">{change}</p>}
+      <p className="text-xs text-muted mt-2 mb-4">
+        This total is list price for AI tools. The cloud invoice is separate and is not added in.
+      </p>
+      <BreakdownSection title="By provider">
+        <AmountRows rows={providers} currency="USD" total={ai.week} empty="No provider totals." />
+      </BreakdownSection>
+      {breakdown.apps?.length > 0 && (
+        <BreakdownSection title="By product">
+          <AmountRows rows={breakdown.apps} currency="USD" total={ai.week} />
+        </BreakdownSection>
+      )}
+      {(breakdown.features?.length > 0 || breakdown.features_more?.count) && (
+        <BreakdownSection title="By feature">
+          <AmountRows rows={breakdown.features} currency="USD" total={ai.week} empty="No feature totals." />
+          {breakdown.features_more?.count > 0 && (
+            <p className="text-xs text-muted mt-2">
+              {breakdown.features_more.count} more {breakdown.features_more.count === 1 ? 'feature' : 'features'},{' '}
+              {formatMoney(breakdown.features_more.amount, 'USD')}
+            </p>
+          )}
+        </BreakdownSection>
+      )}
+      {breakdown.model_tiers?.length > 0 && (
+        <BreakdownSection title="By model">
+          <AmountRows rows={breakdown.model_tiers} currency="USD" total={ai.week} />
+        </BreakdownSection>
+      )}
+      <BreakdownSection title="Cloud invoice">
+        {invoice.amount == null ? (
+          <p className="text-sm text-muted">Cloud billing is not set up.</p>
+        ) : (
+          <>
+            <p className="text-sm mb-2">{formatMoney(invoice.amount, 'USD')} this week, not included above.</p>
+            {invoice.lines?.length > 0 && <AmountRows rows={invoice.lines} currency="USD" total={invoice.amount} />}
+          </>
+        )}
+      </BreakdownSection>
+      {breakdown.pull_requests?.length > 0 && (
+        <BreakdownSection title="Largest pull requests">
+          <ul className="space-y-1.5">
+            {breakdown.pull_requests.map((pr) => (
+              <li key={pr.url} className="flex items-baseline gap-3 text-sm">
+                <a href={pr.url} target="_blank" rel="noreferrer" className="text-accent truncate flex-1">
+                  {prLabel(pr.url)}
+                </a>
+                <span className="font-medium tabular-nums flex-none">{formatMoney(pr.amount, 'USD')}</span>
+              </li>
+            ))}
+          </ul>
+        </BreakdownSection>
+      )}
+      {ai.errors?.length > 0 && <p className="text-xs text-red-600">Could not read: {ai.errors.join(', ')}</p>}
+    </div>
+  )
+}
+
+function CompanyBreakdown({ company }) {
+  if (!company) return <p className="text-sm text-muted">These numbers are no longer loaded.</p>
+  if (company.error) return <p className="text-sm text-red-600">{company.error}</p>
+  const lines = (company.cost_lines || []).map((line) => ({
+    name: `${line.account || ''} ${line.name || ''}`.trim(),
+    label: `${line.account || ''} ${line.name || ''}`.trim(),
+    amount: line.amount,
+  }))
+  return (
+    <div>
+      <div className="grid grid-cols-3 gap-2 mb-4">
+        {[
+          ['Result', company.result],
+          ['Revenue', company.revenue],
+          ['Costs', company.costs],
+        ].map(([label, value]) => (
+          <div key={label} className="bg-surface rounded-lg px-3 py-2 min-w-0">
+            <p className="text-[11px] text-muted">{label}</p>
+            <p className="font-semibold truncate">{formatAmount(value, 'SEK')}</p>
+          </div>
+        ))}
+      </div>
+      {(company.prev_result != null || company.prev_costs != null) && (
+        <p className="text-sm text-muted mb-4">
+          Previous month: result {formatAmount(company.prev_result, 'SEK')}, costs {formatAmount(company.prev_costs, 'SEK')}
+          {company.prev_revenue != null ? `, revenue ${formatAmount(company.prev_revenue, 'SEK')}` : ''}
+        </p>
+      )}
+      <BreakdownSection title="Largest costs">
+        <AmountRows rows={lines} currency="SEK" total={company.costs} empty="No cost accounts this month." />
+      </BreakdownSection>
+      <BreakdownSection title="Cash and balances">
+        <ul className="text-sm space-y-1">
+          {[
+            ['Cash', company.cash],
+            ['Receivables', company.receivables],
+            ['Payables', company.payables],
+          ].map(([label, value]) => (
+            <li key={label} className="flex justify-between gap-3">
+              <span>{label}</span>
+              <span className="tabular-nums">{formatAmount(value, 'SEK')}</span>
+            </li>
+          ))}
+        </ul>
+      </BreakdownSection>
+      {(company.unbooked || company.inbox) ? (
+        <p className="text-sm text-muted">
+          {company.unbooked || 0} unbooked bank {company.unbooked === 1 ? 'row' : 'rows'}
+          {' · '}
+          {company.inbox || 0} inbox {company.inbox === 1 ? 'item' : 'items'}
+        </p>
+      ) : null}
+      {company.year_result != null && (
+        <p className="text-sm text-muted mt-3">
+          Year to date: result {formatAmount(company.year_result, 'SEK')}, revenue {formatAmount(company.year_revenue, 'SEK')}, costs{' '}
+          {formatAmount(company.year_costs, 'SEK')}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function WeekBreakdown({ kind, companyLabel, week, money, onOpenCard }) {
+  if (kind === 'shipped') return <ShippedBreakdown week={week} onOpenCard={onOpenCard} />
+  if (kind === 'releases') return <ReleasesBreakdown week={week} />
+  if (kind === 'ai') return <SpendBreakdown money={money} />
+  if (kind === 'company') {
+    const company = (money?.books?.companies || []).find((row) => row.label === companyLabel)
+    return <CompanyBreakdown company={company} />
+  }
+  return null
+}
+
+function WeekTiles({ week, money, moneyError, onOpen }) {
   const tiles = []
   if (week) {
     const top = Object.entries(week.shipped_by_project || {})
@@ -625,20 +931,23 @@ function WeekTiles({ week, money, moneyError }) {
       .slice(0, 3)
       .map(([k, n]) => `${k} ${n}`)
       .join(' · ')
+    const releaseSub = (week.releases || []).slice(0, 3).map(releaseLabel).filter(Boolean).join(' · ')
     tiles.push(
       <Tile
         key="shipped"
         label="Cards shipped, 7 days"
         value={week.shipped == null ? '…' : week.shipped}
         sub={week.shipped == null ? 'Loading…' : top || 'None yet'}
+        onClick={week.shipped == null ? undefined : () => onOpen('shipped')}
       />,
     )
     tiles.push(
       <Tile
         key="releases"
         label="Releases, 7 days"
-        value={week.releases.length}
-        sub={week.releases.slice(0, 3).join(' · ') || 'None'}
+        value={(week.releases || []).length}
+        sub={releaseSub || 'None'}
+        onClick={() => onOpen('releases')}
       />,
     )
   }
@@ -657,6 +966,7 @@ function WeekTiles({ week, money, moneyError }) {
               ? (ai.top || []).map((t) => t.name).join(' · ')
               : `${ai.change_pct > 0 ? '+' : ''}${ai.change_pct}% vs the week before`
         }
+        onClick={() => onOpen('ai')}
       />,
     )
   }
@@ -667,6 +977,7 @@ function WeekTiles({ week, money, moneyError }) {
         label={`${c.label}, result this month`}
         value={c.error ? 'Error' : formatAmount(c.result, 'SEK')}
         tone={c.result > 0 ? 'text-green-600 dark:text-green-400' : c.result < 0 ? 'text-red-600 dark:text-red-400' : ''}
+        onClick={() => onOpen('company', c.label)}
         sub={
           c.error
             ? c.error
@@ -1492,6 +1803,26 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         </button>
       </>
     )
+  } else if (drawer?.type === 'breakdown') {
+    const titles = {
+      shipped: 'Cards shipped, 7 days',
+      releases: 'Releases, 7 days',
+      ai: 'AI and cloud spend, 7 days',
+    }
+    drawerTitle = drawer.kind === 'company' ? `${drawer.company}, this month` : titles[drawer.kind] || 'Details'
+    drawerBody = (
+      <WeekBreakdown
+        kind={drawer.kind}
+        companyLabel={drawer.company}
+        week={data?.week}
+        money={money}
+        onOpenCard={(card) => {
+          if (!card?.key) return
+          closeDrawer()
+          onSwitchView('board', `/board?ticket=${encodeURIComponent(card.key)}`)
+        }}
+      />
+    )
   }
 
   return (
@@ -1614,7 +1945,12 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
               </button>
             }
           >
-            <WeekTiles week={data?.week} money={money} moneyError={moneyError} />
+            <WeekTiles
+              week={data?.week}
+              money={money}
+              moneyError={moneyError}
+              onOpen={(kind, company) => setDrawer({ type: 'breakdown', kind, company })}
+            />
             <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
               {WEEKLY_ACTIONS.map((action) => {
                 const busyId = `week:${action.id}`
