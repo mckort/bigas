@@ -89,7 +89,8 @@ python scripts/connect_repo.py --key ACME --repo acme/shop --branch main \
 |---|---|---|
 | `.env` | `JIRA_PROJECT_KEY(S)` += `ACME` | Creates the ACME board; allows AI steps for it |
 | `.env` | `BIGAS_JIRA_PROJECT_REPO_MAP` += `ACME:acme/shop` | Card → repo for Cursor, PRs, releases |
-| `.env` | `BIGAS_JIRA_REPO_BASE_BRANCH_MAP` += `acme/shop:main` | Branch Cursor starts from |
+| `.env` | `BIGAS_JIRA_REPO_BASE_BRANCH_MAP` += `acme/shop:main` | Production branch for deploys and hotfixes |
+| `.env` | `PROJECT_BRANCH_MAPPING` += `ACME:master` when `--branch` is not `main` | Branch Cursor starts from. Required for every repo whose default is not `main`. `DEFAULT:main` does not fill this in |
 | `.env` | `BIGAS_PROJECT_NAME_MAP` += `ACME:Acme Shop` | Display name in the cockpit and chat |
 | `.env` | `BIGAS_DEPLOY_WORKFLOW_MAP` += `ACME:deploy.yml` | Ship card and DevOps deploy |
 | `.env` | `PROJECT_BRANCH_MAPPING` += `ACME:staging` (with `--versioned staging`) | Versioned release branches |
@@ -110,7 +111,7 @@ Then:
 
 ## 4. Release models
 
-**Development** (default). PRs merge to the production branch; **Deploy** on the Ship card dispatches the deploy workflow on it.
+**Development** (default). PRs merge to the production branch; **Deploy** on the Ship card dispatches the deploy workflow on it. That branch has to be the one in `PROJECT_BRANCH_MAPPING`. Pass the GitHub default as `--branch` (`master` for AuraLearn and Fulfil Your Dream Adventure). `connect_repo.py` writes `KEY:master` when the branch is not `main`. A project left only on `DEFAULT:main` makes **In Progress (AI)** start Cursor from `main`. If the repo has no `main`, no agent starts.
 
 **Production (versioned).** The easy way: **Go to production** on the project's Ship card in the cockpit. It previews and then runs every step below, and the project shows *Production* from then on. New work targets `staging-x.y.z` and **Prepare deploy** merges that branch to the production branch, the same path as `PROJECT_BRANCH_MAPPING=KEY:staging` (VC Field Assistant). **Release mode → Back to development** undoes the switch (the workflows, branches and versions stay):
 
@@ -153,7 +154,7 @@ Use this when the human says "add my repo X" or "set up project Y". Steps 1 and 
 **Ask the human:**
 
 1. A project key: 2–8 uppercase letters (`ACME`), and a display name.
-2. The GitHub repo (`owner/repo`) and the branch work starts from (look it up: `gh repo view owner/repo --json defaultBranchRef`).
+2. The GitHub repo (`owner/repo`) and the branch work starts from (look it up: `gh repo view owner/repo --json defaultBranchRef`). Pass that exact name as `--branch`. If it is not `main`, the plan must show `PROJECT_BRANCH_MAPPING=KEY:<that branch>` (`AURA:master`, `FYDA:master`). Do not leave it to `DEFAULT:main`.
 3. How it deploys: a workflow file in the repo (`ls .github/workflows`), or none yet.
 4. Development or production. Default: development. Switching later is one button.
 
@@ -161,7 +162,7 @@ Use this when the human says "add my repo X" or "set up project Y". Steps 1 and 
 
 | Where | Development | Production adds |
 |---|---|---|
-| Bigas env (`.env` / Secret Manager) | `GITHUB_TOKEN` (Contents, Pull requests, Actions, Workflows: read/write), `CURSOR_API_KEY`, `BIGAS_ACCESS_KEYS`, `BIGAS_PUBLIC_URL`, `GITHUB_WEBHOOK_SECRET`; the project in `JIRA_PROJECT_KEY(S)` and the repo maps | Same token. The switch is stored in the app |
+| Bigas env (`.env` / Secret Manager) | `GITHUB_TOKEN` (Contents, Pull requests, Actions, Workflows: read/write), `CURSOR_API_KEY`, `BIGAS_ACCESS_KEYS`, `BIGAS_PUBLIC_URL`, `GITHUB_WEBHOOK_SECRET`; the project in `JIRA_PROJECT_KEY(S)` and the repo maps; `PROJECT_BRANCH_MAPPING=KEY:<default branch>` whenever that branch is not `main` | Same token. The switch is stored in the app |
 | Repo workflows | `.github/workflows/pr-review.yml` (calls the Bigas review); a deploy workflow with `workflow_dispatch` for the Ship card | `cherry_pick.yml`, `rebase_release.yml` |
 | Repo settings | Actions variable `BIGAS_URL`, secret `BIGAS_API_KEY`; `workflow_run` webhook (self-healing CI) | Nothing further. `main` stays open; new pull requests target `staging-x.y.z` |
 | Board | The project board (created from the key) | A version (`0.1.0`) and its `staging-0.1.0` branch |
