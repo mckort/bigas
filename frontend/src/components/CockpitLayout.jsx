@@ -28,6 +28,14 @@ const SWIPE_PX = 90
 const SWIPE_CLICK_MS = 400
 const SYSTEM_COMMENT_MARKER = '[bigas-jira-ai]'
 
+function isSystemComment(comment) {
+  return (comment?.body || '').includes(SYSTEM_COMMENT_MARKER)
+}
+
+function commentText(comment) {
+  return (comment?.body || '').replaceAll(SYSTEM_COMMENT_MARKER, '').trim()
+}
+
 const KIND_STYLE = {
   description: { icon: '✎', cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', verb: 'Approve' },
   design: { icon: '◇', cls: 'bg-accent-muted text-accent', verb: 'Approve' },
@@ -1211,16 +1219,25 @@ function Drawer({ open, title, onClose, children, footer }) {
   )
 }
 
-function TicketDetail({ item, comment, setComment }) {
+function TicketDetail({ item, comment, setComment, reloadKey = 0 }) {
   const [full, setFull] = useState(null)
   const [error, setError] = useState('')
+  const seenTicket = useRef(item.ticket.ticket_id)
   useEffect(() => {
     let cancelled = false
-    setFull(null)
-    setError('')
-    fetchTicket(item.ticket.ticket_id)
+    const ticketId = item.ticket.ticket_id
+    const switching = seenTicket.current !== ticketId
+    seenTicket.current = ticketId
+    if (switching) {
+      setFull(null)
+      setError('')
+    }
+    fetchTicket(ticketId)
       .then((res) => {
-        if (!cancelled) setFull(res.ticket)
+        if (!cancelled) {
+          setFull(res.ticket)
+          setError('')
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err.message || 'Could not load the card')
@@ -1228,10 +1245,11 @@ function TicketDetail({ item, comment, setComment }) {
     return () => {
       cancelled = true
     }
-  }, [item.ticket.ticket_id])
+  }, [item.ticket.ticket_id, reloadKey])
 
   const comments = full?.comments || []
-  const lastAi = [...comments].reverse().find((c) => (c.body || '').includes(SYSTEM_COMMENT_MARKER))
+  const lastAi = [...comments].reverse().find((c) => isSystemComment(c))
+  const human = comments.filter((c) => !isSystemComment(c) && commentText(c))
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 text-xs">
@@ -1265,9 +1283,19 @@ function TicketDetail({ item, comment, setComment }) {
         <div>
           <h4 className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">Latest AI note</h4>
           <div className="markdown-body cockpit-md text-sm bg-surface rounded-lg p-3">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {(lastAi.body || '').replace(SYSTEM_COMMENT_MARKER, '').trim()}
-            </ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{commentText(lastAi)}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+      {human.length > 0 && (
+        <div>
+          <h4 className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">Saved for the AI</h4>
+          <div className="space-y-2">
+            {human.map((entry, idx) => (
+              <p key={entry.id || idx} className="text-sm bg-surface rounded-lg p-3 whitespace-pre-wrap break-words">
+                {commentText(entry)}
+              </p>
+            ))}
           </div>
         </div>
       )}
@@ -1280,7 +1308,7 @@ function TicketDetail({ item, comment, setComment }) {
           rows={3}
           value={comment}
           onChange={(e) => setComment(e.target.value)}
-          placeholder="Answers to open questions or what to change. Posted on the card before it moves."
+          placeholder="What the next AI step should follow. Save it here, or it posts when you approve or send the card back."
           className="input-field mt-1 text-sm"
         />
       </div>
@@ -1385,6 +1413,8 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const [busyIds, setBusyIds] = useState(() => new Set())
   const [drawer, setDrawer] = useState(null)
   const [comment, setComment] = useState('')
+  const [commentReload, setCommentReload] = useState(0)
+  const [savingComment, setSavingComment] = useState(false)
   const [toast, setToast] = useState(null)
   const [projectFilter, setProjectFilter] = useState('')
   const [showStuck, setShowStuck] = useState(false)
@@ -1445,6 +1475,25 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToast(null), 4000)
   }, [])
+
+  const saveComment = useCallback(
+    async (item) => {
+      const body = comment.trim()
+      if (!body || savingComment) return
+      setSavingComment(true)
+      try {
+        await addTicketComment(item.ticket.ticket_id, body)
+        setComment('')
+        setCommentReload((n) => n + 1)
+        showToast(`Comment saved on ${item.ticket.key}`)
+      } catch (err) {
+        showToast(err.message || 'Could not save the comment')
+      } finally {
+        setSavingComment(false)
+      }
+    },
+    [comment, savingComment, showToast],
+  )
 
   const setBusy = (id, on) =>
     setBusyIds((prev) => {
@@ -1788,7 +1837,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         {item.ticket.title}
       </span>
     )
-    drawerBody = <TicketDetail item={item} comment={comment} setComment={setComment} />
+    drawerBody = (
+      <TicketDetail item={item} comment={comment} setComment={setComment} reloadKey={commentReload} />
+    )
     drawerFooter = (
       <>
         <button type="button" onClick={() => copyCursor(item.ticket)} className="btn-secondary text-sm px-3">
@@ -1805,9 +1856,19 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           Discuss
         </button>
         <span className="flex-1" />
+        {comment.trim() && (
+          <button
+            type="button"
+            disabled={busy || savingComment}
+            onClick={() => saveComment(item)}
+            className="btn-secondary text-sm px-3"
+          >
+            {savingComment ? 'Saving…' : 'Save comment'}
+          </button>
+        )}
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || savingComment}
           onClick={() =>
             moveTicket(item, item.send_back_status, {
               note: comment,
@@ -1821,7 +1882,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         {!drawer.focusSendBack && (
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || savingComment}
             onClick={() =>
               moveTicket(item, item.approve_status, {
                 note: comment,
@@ -1856,6 +1917,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     )
   } else if (drawer?.type === 'working') {
     const { item } = drawer
+    const busy = busyIds.has(item.id)
     drawerTitle = (
       <span>
         <ProjectTag project={projectOf(item)} label={item.ticket.key} />
@@ -1869,7 +1931,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
             ? `Stuck in ${item.stage.toLowerCase()} for ${timeAgo(item.since, now)}. The AI step most likely stopped. Retry moves the card to To Do and back, which starts it again.`
             : `The AI is ${item.stage.toLowerCase()} this card. It moves to Needs you when there is something to approve.`}
         </p>
-        <TicketDetail item={item} comment={comment} setComment={setComment} />
+        <TicketDetail item={item} comment={comment} setComment={setComment} reloadKey={commentReload} />
       </div>
     )
     drawerFooter = (
@@ -1888,18 +1950,11 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         {comment.trim() && (
           <button
             type="button"
-            onClick={async () => {
-              try {
-                await addTicketComment(item.ticket.ticket_id, comment.trim())
-                setComment('')
-                showToast(`Comment added to ${item.ticket.key}`)
-              } catch (err) {
-                showToast(err.message || 'Could not add the comment')
-              }
-            }}
+            disabled={busy || savingComment}
+            onClick={() => saveComment(item)}
             className="btn-secondary text-sm px-3"
           >
-            Add comment
+            {savingComment ? 'Saving…' : 'Save comment'}
           </button>
         )}
         {item.stuck && (
