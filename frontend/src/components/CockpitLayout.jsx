@@ -729,6 +729,21 @@ function AmountRows({ rows, currency, total, empty = 'Nothing in this group.' })
   )
 }
 
+function CardLink({ card, onOpen }) {
+  return (
+    <button
+      type="button"
+      disabled={!card.key}
+      onClick={() => onOpen?.(card)}
+      className="w-full text-left py-1.5 px-1 -mx-1 rounded flex gap-2 items-baseline hover:bg-surface disabled:cursor-default"
+    >
+      <span className="font-mono text-xs flex-none">{card.key}</span>
+      <span className="text-sm truncate flex-1">{card.title || 'Untitled'}</span>
+      <span className="text-[11px] text-muted flex-none">{statusLabel(card.status)}</span>
+    </button>
+  )
+}
+
 function ShippedBreakdown({ week, onOpenCard }) {
   const cards = Array.isArray(week?.cards) ? week.cards : null
   if (!cards) return <p className="text-sm text-muted">Still loading the cards.</p>
@@ -759,16 +774,7 @@ function ShippedBreakdown({ week, onOpenCard }) {
           <ul>
             {group.cards.map((card) => (
               <li key={card.key || `${card.title}-${card.updated_at}`}>
-                <button
-                  type="button"
-                  disabled={!card.key}
-                  onClick={() => onOpenCard(card)}
-                  className="w-full text-left py-1.5 px-1 -mx-1 rounded flex gap-2 items-baseline hover:bg-surface disabled:cursor-default"
-                >
-                  <span className="font-mono text-xs flex-none">{card.key}</span>
-                  <span className="text-sm truncate flex-1">{card.title || 'Untitled'}</span>
-                  <span className="text-[11px] text-muted flex-none">{statusLabel(card.status)}</span>
-                </button>
+                <CardLink card={card} onOpen={onOpenCard} />
               </li>
             ))}
           </ul>
@@ -778,7 +784,7 @@ function ShippedBreakdown({ week, onOpenCard }) {
   )
 }
 
-function ReleasesBreakdown({ week }) {
+function ReleasesBreakdown({ week, onOpenRelease }) {
   const items = week?.releases || []
   if (!items.length) return <p className="text-sm text-muted">No releases in the last 7 days.</p>
   return (
@@ -791,15 +797,48 @@ function ReleasesBreakdown({ week }) {
             </li>
           )
         }
+        const count = Array.isArray(item.issues) ? item.issues.length : null
         return (
-          <li key={`${item.project_key}-${item.name}-${item.released_at}`} className="flex items-baseline gap-2 py-1.5">
-            <ProjectTag project={item.project_key} />
-            <span className="text-sm font-medium">{item.name || 'Release'}</span>
-            <span className="text-xs text-muted ml-auto">{shortWhen(item.released_at)}</span>
+          <li key={`${item.project_key}-${item.name}-${item.released_at}`}>
+            <button
+              type="button"
+              onClick={() => onOpenRelease?.(item)}
+              aria-label={`Show cards in ${releaseLabel(item)}`}
+              className="w-full text-left py-1.5 px-1 -mx-1 rounded flex items-baseline gap-2 hover:bg-surface"
+            >
+              <ProjectTag project={item.project_key} />
+              <span className="text-sm font-medium">{item.name || 'Release'}</span>
+              {count != null && (
+                <span className="text-xs text-muted flex-none">
+                  {count} {count === 1 ? 'card' : 'cards'}
+                </span>
+              )}
+              <span className="text-xs text-muted ml-auto flex-none">{shortWhen(item.released_at)}</span>
+            </button>
           </li>
         )
       })}
     </ul>
+  )
+}
+
+function ReleaseIssues({ release, onOpenCard }) {
+  const issues = release?.issues
+  if (!Array.isArray(issues)) return <p className="text-sm text-muted">Still loading the cards.</p>
+  if (!issues.length) return <p className="text-sm text-muted">No cards are tagged with this version.</p>
+  return (
+    <div>
+      <p className="text-sm text-muted mb-3">
+        {`${issues.length} ${issues.length === 1 ? 'card' : 'cards'} tagged ${release.name}.`}
+      </p>
+      <ul>
+        {issues.map((card) => (
+          <li key={card.key || `${card.title}-${card.updated_at}`}>
+            <CardLink card={card} onOpen={onOpenCard} />
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 
@@ -936,9 +975,10 @@ function CompanyBreakdown({ company }) {
   )
 }
 
-function WeekBreakdown({ kind, companyLabel, week, money, onOpenCard }) {
+function WeekBreakdown({ kind, companyLabel, week, money, release, onOpenCard, onOpenRelease }) {
   if (kind === 'shipped') return <ShippedBreakdown week={week} onOpenCard={onOpenCard} />
-  if (kind === 'releases') return <ReleasesBreakdown week={week} />
+  if (kind === 'releases' && release) return <ReleaseIssues release={release} onOpenCard={onOpenCard} />
+  if (kind === 'releases') return <ReleasesBreakdown week={week} onOpenRelease={onOpenRelease} />
   if (kind === 'ai') return <SpendBreakdown money={money} />
   if (kind === 'company') {
     const company = (money?.books?.companies || []).find((row) => row.label === companyLabel)
@@ -1180,7 +1220,7 @@ function GoLivePanel({ row, onChanged, showToast }) {
   )
 }
 
-function Drawer({ open, title, onClose, children, footer }) {
+function Drawer({ open, title, onClose, onBack, children, footer }) {
   useEffect(() => {
     if (!open) return undefined
     const { body } = document
@@ -1194,17 +1234,24 @@ function Drawer({ open, title, onClose, children, footer }) {
   useEffect(() => {
     if (!open) return undefined
     const onKey = (e) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      if (onBack) onBack()
+      else onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, onBack])
   if (!open) return null
   return (
     <div className="fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : 'Details'}>
       <div className="modal-overlay" onClick={onClose} />
       <div className="absolute bottom-0 inset-x-0 h-[92dvh] rounded-t-2xl lg:rounded-none lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[560px] bg-elevated shadow-card flex flex-col">
-        <div className="flex items-center gap-3 px-4 lg:px-5 py-3 border-b border-border">
+        <div className="flex items-center gap-2 px-4 lg:px-5 py-3 border-b border-border">
+          {onBack && (
+            <button type="button" onClick={onBack} className="btn-ghost px-2" aria-label="Back">
+              ←
+            </button>
+          )}
           <h3 className="font-semibold flex-1 min-w-0 truncate">{title}</h3>
           <button type="button" onClick={onClose} className="btn-ghost px-2" aria-label="Close">
             ✕
@@ -1828,6 +1875,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   let drawerTitle = ''
   let drawerBody = null
   let drawerFooter = null
+  let drawerBack = null
   if (drawer?.type === 'ticket') {
     const { item } = drawer
     const busy = busyIds.has(item.id)
@@ -2098,13 +2146,38 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       releases: 'Releases, 7 days',
       ai: 'AI and cloud spend, 7 days',
     }
-    drawerTitle = drawer.kind === 'company' ? `${drawer.company}, this month` : titles[drawer.kind] || 'Details'
+    const release =
+      drawer.kind === 'releases' && drawer.releaseName
+        ? (data?.week?.releases || []).find(
+            (item) =>
+              item &&
+              typeof item === 'object' &&
+              item.name === drawer.releaseName &&
+              (item.project_key || '') === (drawer.releaseProject || ''),
+          ) || drawer.release
+        : null
+    if (release) {
+      drawerTitle = releaseLabel(release) || 'Release'
+      drawerBack = () => setDrawer({ type: 'breakdown', kind: 'releases' })
+    } else {
+      drawerTitle = drawer.kind === 'company' ? `${drawer.company}, this month` : titles[drawer.kind] || 'Details'
+    }
     drawerBody = (
       <WeekBreakdown
         kind={drawer.kind}
         companyLabel={drawer.company}
         week={data?.week}
         money={money}
+        release={release}
+        onOpenRelease={(item) =>
+          setDrawer({
+            type: 'breakdown',
+            kind: 'releases',
+            releaseName: item.name,
+            releaseProject: item.project_key || '',
+            release: item,
+          })
+        }
         onOpenCard={(card) => {
           if (!card?.key) return
           closeDrawer()
@@ -2443,7 +2516,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         </div>
       </main>
 
-      <Drawer open={Boolean(drawer)} title={drawerTitle} onClose={closeDrawer} footer={drawerFooter}>
+      <Drawer open={Boolean(drawer)} title={drawerTitle} onClose={closeDrawer} onBack={drawerBack} footer={drawerFooter}>
         {drawerBody}
       </Drawer>
 
