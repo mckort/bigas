@@ -29,7 +29,7 @@ def main(argv=None) -> int:
     parser.add_argument("--firestore-location", default="eur3", help="Location used when creating Firestore (default eur3)")
     args = parser.parse_args(argv)
     if args.deploy and not args.apply:
-        print("✗ --deploy includes --apply. Pass both, so the plan is not skipped by accident.")
+        print("✗ --deploy requires --apply. Pass both, so the plan is not skipped by accident.")
         return 2
     return setup_cloud(
         project=args.project,

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
@@ -62,7 +63,10 @@ def runner_email(project: str) -> str:
 
 
 def subprocess_runner(args: Sequence[str]) -> CommandResult:
-    proc = subprocess.run(list(args), capture_output=True, text=True, check=False)
+    try:
+        proc = subprocess.run(list(args), capture_output=True, text=True, check=False)
+    except OSError as exc:
+        return CommandResult(127, "", str(exc))
     return CommandResult(proc.returncode, proc.stdout or "", proc.stderr or "")
 
 
@@ -254,14 +258,14 @@ def setup_cloud(
         print("Copy the service URL into BIGAS_PUBLIC_URL, then python scripts/apply_portfolio.py --apply")
         return 0
 
-    env = read_env_file(env_file)
+    env = {**os.environ, **read_env_file(env_file)}
     missing = missing_deploy_requirements(env)
     if missing:
         print("✗ ./deploy.sh needs: " + ", ".join(missing))
         return 2
     root = repo_root or Path(__file__).resolve().parents[1]
     if (env.get("SECRET_MANAGER") or "").strip().lower() == "true":
-        sync = runner(["python", str(root / "scripts" / "sync_env_to_secret_manager.py")])
+        sync = runner([sys.executable, str(root / "scripts" / "sync_env_to_secret_manager.py")])
         if not _ok(sync):
             print(f"✗ Secret Manager sync failed.\n{(sync.stderr or sync.stdout).strip()}")
             return 1
@@ -279,7 +283,7 @@ def setup_cloud(
         print("✗ ./deploy.sh failed.")
         tail = (deployed.stderr or deployed.stdout).strip().splitlines()
         if tail:
-            print(tail[-1])
+            print("\n".join(tail[-10:]))
         return 1
     print("✓ Deployed. Copy the service URL into BIGAS_PUBLIC_URL, then:")
     print("  python scripts/apply_portfolio.py --webhook --apply")
