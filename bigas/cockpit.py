@@ -563,6 +563,7 @@ def _week_stats(
     """
     since = now - WEEK
     shipped: Dict[str, int] = {}
+    cards: List[Dict[str, Any]] = []
     for board in boards:
         key = (board.get("project_key") or "").strip().upper()
         if not key:
@@ -573,16 +574,36 @@ def _week_stats(
             updated = _parse_time(t.get("updated_at"))
             if updated and updated >= since and is_in_release_cut(t.get("status") or "", project_key=key):
                 shipped[key] = shipped.get(key, 0) + 1
+                cards.append(
+                    {
+                        "key": t.get("key") or "",
+                        "title": t.get("title") or t.get("summary") or "",
+                        "project_key": key,
+                        "status": resolve_column_status(t.get("status") or "", project_key=key)
+                        or (t.get("status") or ""),
+                        "updated_at": t.get("updated_at") or "",
+                    }
+                )
     releases = []
     for key, items in (releases_by_project or {}).items():
+        project = str(key or "").strip().upper()
         for r in items or []:
             at = _parse_time(r.get("released_at"))
             if r.get("released") and at and at >= since:
-                releases.append(f"{key} {r.get('name') or ''}".strip())
+                releases.append(
+                    {
+                        "project_key": project,
+                        "name": str(r.get("name") or "").strip(),
+                        "released_at": r.get("released_at") or "",
+                    }
+                )
+    cards.sort(key=lambda card: str(card.get("updated_at") or ""), reverse=True)
+    releases.sort(key=lambda item: str(item.get("released_at") or ""), reverse=True)
     return {
         "shipped": sum(shipped.values()),
         "shipped_by_project": shipped,
-        "releases": sorted(releases),
+        "cards": cards,
+        "releases": releases,
     }
 
 
@@ -637,7 +658,7 @@ def build_cockpit(
     signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
     week = _week_stats(boards, tickets_by_board, releases_by_project or {}, now)
     if not tickets_loaded:
-        week = {**week, "shipped": None, "shipped_by_project": None}
+        week = {**week, "shipped": None, "shipped_by_project": None, "cards": None}
         needs_out = None
         signoff_out = None
         needs_count = None

@@ -471,6 +471,8 @@ def test_cockpit_shell_skips_the_board_scan(client, monkeypatch):
     assert body["signoff"] is None
     assert body["counts"]["needs"] is None
     assert body["week"]["shipped"] is None
+    assert body["week"]["cards"] is None
+    assert isinstance(body["week"]["releases"], list)
     assert isinstance(body["ship"], list)
     assert calls == {"tickets": 0, "freshness": 0}
 
@@ -482,6 +484,7 @@ def test_cockpit_shell_skips_the_board_scan(client, monkeypatch):
     loaded = full.get_json()
     assert loaded["partial"] is False
     assert isinstance(loaded["needs"], list)
+    assert isinstance(loaded["week"]["cards"], list)
 
 
 def test_cockpit_spa_route_is_served(client, monkeypatch):
@@ -601,6 +604,7 @@ def test_week_stats_count_recently_shipped_cards_and_releases():
                 _ticket("2", "Final approval (manual)", updated_at=(now - timedelta(days=3)).isoformat()),
                 _ticket("3", "Done", updated_at=(now - timedelta(days=30)).isoformat()),
                 _ticket("4", "In Progress (AI)", updated_at=(now - timedelta(hours=1)).isoformat()),
+                _ticket("5", "Done", issue_type="Epic", updated_at=(now - timedelta(days=1)).isoformat()),
             ]
         },
         threads=[],
@@ -613,7 +617,16 @@ def test_week_stats_count_recently_shipped_cards_and_releases():
         },
         now=now,
     )
-    assert payload["week"] == {"shipped": 2, "shipped_by_project": {"VFA": 2}, "releases": ["VFA 0.2.3"]}
+    released_at = (now - timedelta(days=2)).isoformat()
+    assert payload["week"]["shipped"] == 2
+    assert payload["week"]["shipped_by_project"] == {"VFA": 2}
+    assert payload["week"]["releases"] == [
+        {"project_key": "VFA", "name": "0.2.3", "released_at": released_at},
+    ]
+    assert [(card["key"], card["status"], card["title"]) for card in payload["week"]["cards"]] == [
+        ("VFA-1", "Done", "Ticket 1"),
+        ("VFA-2", "Final approval (manual)", "Ticket 2"),
+    ]
 
 
 def test_ship_rows_carry_their_step():
@@ -646,9 +659,26 @@ def test_money_summary_reports_each_source_and_caches(monkeypatch):
             raise RuntimeError("401 from Accounted")
         return {
             "month_start": today.replace(day=1),
-            "current": {"nettoomsattning": 50000, "net_result": 18400.4, "total_expenses": 31600},
-            "previous": {"total_expenses": 28000, "net_result": 9000},
+            "current": {
+                "nettoomsattning": 50000,
+                "net_result": 18400.4,
+                "total_expenses": 31600,
+                "expense_sections": [
+                    {
+                        "title": "External costs",
+                        "subtotal": 20000,
+                        "rows": [
+                            {"account_number": "4531", "account_name": "Cloud", "amount": 12000},
+                            {"account_number": "6570", "account_name": "Bank fees", "amount": 8000},
+                        ],
+                    }
+                ],
+            },
+            "previous": {"nettoomsattning": 40000, "total_expenses": 28000, "net_result": 9000},
+            "year": {"nettoomsattning": 90000, "total_expenses": 40000, "net_result": 50000},
             "cash_now": 120000,
+            "receivables": 4000,
+            "payables": 1500,
             "unbooked": 3,
             "inbox": 1,
         }
@@ -665,9 +695,13 @@ def test_money_summary_reports_each_source_and_caches(monkeypatch):
     out = cockpit_money.money_summary()
     gpw, scaleup = out["books"]["companies"]
     assert gpw["label"] == "Green Promo Wear" and gpw["result"] == 18400.4 and gpw["unbooked"] == 3
+    assert gpw["cost_lines"][0] == {"account": "4531", "name": "Cloud", "amount": 12000.0}
+    assert gpw["receivables"] == 4000.0 and gpw["payables"] == 1500.0 and gpw["year_result"] == 50000.0
     assert "401" in scaleup["error"]
     assert out["ai"]["week"] == 138.0 and out["ai"]["change_pct"] == 38
     assert out["ai"]["top"][0] == {"name": "cursor", "amount": 100.0}
+    assert out["ai"]["breakdown"]["providers"][0] == {"name": "cursor", "label": "Cursor", "amount": 100.0}
+    assert out["ai"]["breakdown"]["providers"][1]["name"] == "llm_logs"
 
     cockpit_money.money_summary()
     assert calls["books"] == 2  # cached: no second fetch
@@ -714,7 +748,74 @@ def test_money_summary_bad_shapes_do_not_fail_the_endpoint(monkeypatch):
     assert string_month["month"] == "2026-11" and string_month["result"] == 2.0
     assert out["ai"]["week"] == 5.0
     assert out["ai"]["top"][0] == {"name": "tavily", "amount": 3.0}
+    assert out["ai"]["breakdown"]["providers"] == [{"name": "tavily", "label": "Tavily", "amount": 3.0}]
+    assert out["ai"]["breakdown"]["invoice"] == {"amount": None, "lines": []}
     assert out["ai"]["errors"] == ["cursor blew up", "llm_logs"]
+    cockpit_money.reset_cache_for_tests()
+
+
+def test_money_summary_keeps_cloud_invoice_out_of_the_list_price_breakdown(monkeypatch):
+    from bigas import cockpit_money
+
+    cockpit_money.reset_cache_for_tests()
+    monkeypatch.setenv("BIGAS_USAGE_PROVIDERS", "cursor,gcp_billing")
+    monkeypatch.delenv("ACCOUNTED_CFO_COMPANIES", raising=False)
+    report = {
+        "totals": {
+            "est_cost_usd": 18,
+            "invoice_cost_usd": 40,
+            "by_provider": {"cursor": 18, "gcp_billing": 40},
+            "by_feature": {"cto_pr_review": 18, "gcp.cloud_run": 40},
+            "by_app": {"bigas": 58},
+            "activity_by_feature": {"cto_pr_review": 3},
+        },
+        "top_prs": [{"pr_url": "https://github.com/mckort/bigas/pull/12", "est_cost_usd": 4.5}],
+        "events": [
+            {
+                "provider": "cursor",
+                "feature": "cto_pr_review",
+                "est_cost_usd": 18,
+                "cost_estimate": True,
+                "meta": {
+                    "app": "bigas",
+                    "pr_url": "https://github.com/mckort/bigas/pull/12",
+                    "model_tier": "judgment",
+                },
+            },
+            {
+                "provider": "gcp_billing",
+                "feature": "gcp.cloud_run",
+                "est_cost_usd": 40,
+                "cost_estimate": False,
+                "meta": {
+                    "cost_kind": "invoice",
+                    "gcp_sku": "Cloud Run",
+                    "gcp_project": "bigas",
+                    "gcp_service": "Cloud Run",
+                    "app": "bigas",
+                },
+            },
+        ],
+    }
+    monkeypatch.setattr("bigas.resources.cto.usage.service.fetch_ai_usage", lambda days=7: report)
+    monkeypatch.setattr(
+        "bigas.resources.cto.usage.service.enrich_with_prior_period",
+        lambda item: {**item, "prior_period": {"totals": {"est_cost_usd": 20}}},
+    )
+    out = cockpit_money.money_summary()
+    breakdown = out["ai"]["breakdown"]
+    assert out["ai"]["week"] == 18.0
+    assert breakdown["providers"] == [{"name": "cursor", "label": "Cursor", "amount": 18.0}]
+    assert breakdown["features"] == [{"name": "cto_pr_review", "label": "PR review", "amount": 18.0, "calls": 3}]
+    assert breakdown["apps"] == [{"name": "bigas", "label": "Bigas", "amount": 18.0}]
+    assert breakdown["model_tiers"] == [{"name": "judgment", "label": "Pro", "amount": 18.0}]
+    assert breakdown["invoice"]["amount"] == 40.0
+    assert breakdown["invoice"]["lines"] == [
+        {"name": "Cloud Run", "label": "Cloud Run", "project": "bigas", "amount": 40.0}
+    ]
+    assert breakdown["pull_requests"] == [
+        {"url": "https://github.com/mckort/bigas/pull/12", "amount": 4.5}
+    ]
     cockpit_money.reset_cache_for_tests()
 
 
