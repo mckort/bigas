@@ -61,6 +61,89 @@ test('a yes/no question waits in the drawer once the send has finished', () => {
   assert.equal(run.phase, 'confirm')
 })
 
+test('the command that asked for confirmation is not treated as the reply', () => {
+  const phase = deployRunPhase({
+    pendingSend: false,
+    messages: [
+      message({
+        message_id: 'cmd',
+        role: 'user',
+        content: 'deploy BIG to production',
+        created_at: '2026-11-13T14:00:01.000Z',
+      }),
+      message({
+        message_id: 'ask',
+        content: 'Reply **yes** to deploy.',
+        created_at: '2026-11-13T14:00:05.000Z',
+      }),
+    ],
+  })
+  assert.equal(phase, 'confirm')
+})
+
+test('a user reply after the confirmation stays on working', () => {
+  const asked = applyDeployUpdate(
+    { since, prompt: 'deploy BIG to production', messages: [] },
+    [
+      message({
+        message_id: 'cmd',
+        role: 'user',
+        content: 'deploy BIG to production',
+        created_at: '2026-11-13T14:00:01.000Z',
+      }),
+      message({
+        message_id: 'ask',
+        content: 'Reply **yes** to deploy.',
+        created_at: '2026-11-13T14:00:05.000Z',
+      }),
+    ],
+    { pendingSend: false },
+  )
+  assert.equal(asked.phase, 'confirm')
+  const answered = applyDeployUpdate(
+    asked,
+    [
+      message({
+        message_id: 'yes',
+        role: 'user',
+        content: 'yes',
+        created_at: '2026-11-13T14:00:06.000Z',
+      }),
+    ],
+    { pendingSend: false },
+  )
+  assert.equal(answered.phase, 'working')
+})
+
+test('a user reply timestamp at or after the confirmation stays on working', () => {
+  const phase = deployRunPhase({
+    pendingSend: false,
+    messages: [
+      message({
+        message_id: 'yes',
+        role: 'user',
+        content: 'yes',
+        created_at: '2026-11-13T14:00:06.000Z',
+      }),
+      message({
+        message_id: 'ask',
+        content: 'Reply **yes** to deploy.',
+        created_at: '2026-11-13T14:00:05.000Z',
+      }),
+    ],
+  })
+  assert.equal(phase, 'working')
+})
+
+test('progress line ids stay unique when the fallback key would collide', () => {
+  const lines = deployProgressLines([
+    message({ message_id: '', created_at: '2026-11-13T14:00:05.000Z', content: 'First' }),
+    message({ message_id: '', created_at: '2026-11-13T14:00:05.000Z', content: 'Second' }),
+  ])
+  assert.equal(lines.length, 2)
+  assert.notEqual(lines[0].id, lines[1].id)
+})
+
 test('the drawer stays on working while the send is still in flight', () => {
   const phase = deployRunPhase({
     pendingSend: true,

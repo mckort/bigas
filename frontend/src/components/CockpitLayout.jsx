@@ -1640,7 +1640,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         const res = await fetchMessages(threadId, { since })
         if (cancelled) return
         let incoming = res.messages || []
-        let deployPoll = Boolean(res.deploy_poll_active)
+        let deployPoll = res.deploy_poll_active !== undefined
+          ? Boolean(res.deploy_poll_active)
+          : Boolean(commandRun.current?.deployPoll)
         const nowMs = Date.now()
         if (deployPoll && nowMs - lastPostcheck > 8000) {
           lastPostcheck = nowMs

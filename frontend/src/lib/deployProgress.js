@@ -48,21 +48,37 @@ export function deployProgressLines(messages) {
       if (message.role !== 'assistant' && message.role !== 'system') return false
       return Boolean(String(message.content || '').trim())
     })
-    .map((message) => ({
-      id: message.message_id || `${message.created_at}:${message.role}`,
+    .map((message, index) => ({
+      id: message.message_id || `${message.created_at}:${message.role}:${index}`,
       text: String(message.content).trim(),
       status: message.metadata?.status || '',
     }))
 }
 
+/** A user message after the confirmation question, by order or by timestamp. */
+function userRepliedAfter(messages, last) {
+  const list = messages || []
+  const lastIndex = list.indexOf(last)
+  const lastAt = at(last?.created_at)
+  return list.some((message, index) => {
+    if (!message || message.role !== 'user') return false
+    if (lastIndex >= 0 && index > lastIndex) return true
+    const created = at(message.created_at)
+    return created > 0 && lastAt > 0 && created >= lastAt
+  })
+}
+
 export function deployRunPhase({ pendingSend = false, error = '', messages = [], deployPoll = false } = {}) {
   if (error) return 'error'
-  const last = [...(messages || [])].reverse().find((message) => {
+  const list = messages || []
+  const last = [...list].reverse().find((message) => {
     if (!message || (message.role !== 'assistant' && message.role !== 'system')) return false
     return Boolean(String(message.content || '').trim())
   })
-  if (!pendingSend && last && CONFIRM_RE.test(String(last.content || ''))) return 'confirm'
-  if (pendingSend || deployPoll || !last || last.metadata?.status === 'in_progress') return 'working'
+  const asking = Boolean(last && CONFIRM_RE.test(String(last.content || '')))
+  const replied = Boolean(asking && userRepliedAfter(list, last))
+  if (!pendingSend && asking && !replied) return 'confirm'
+  if (pendingSend || deployPoll || replied || !last || last.metadata?.status === 'in_progress') return 'working'
   return 'done'
 }
 
