@@ -273,9 +273,11 @@ export default function Landing({ onSignIn }) {
                 <img
                   src="/marketing/cockpit.png"
                   alt="Cockpit dashboard: this week’s numbers, a Ship card per project, and AI work in progress"
-                  className="w-full rounded-xl border border-border shadow-soft"
+                  className="w-full h-auto rounded-xl border border-border shadow-soft"
                   width={838}
                   height={1024}
+                  loading="lazy"
+                  decoding="async"
                 />
               </figure>
             </div>
