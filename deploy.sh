@@ -25,8 +25,8 @@ if [ -z "$GA4_PROPERTY_ID" ]; then
     exit 1
 fi
 
-if [ -z "$OPENAI_API_KEY" ]; then
-    echo "❌ Error: OPENAI_API_KEY environment variable is not set"
+if [ -z "$OPENAI_API_KEY" ] && [ -z "$GEMINI_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+    echo "❌ Error: set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY"
     echo "Please set it in your .env file or export it in your shell"
     exit 1
 fi

@@ -184,7 +184,7 @@ def open_setup_pr(spec: RepoSpec, files: dict) -> Optional[str]:
     return pr.get("html_url") or None
 
 
-def main() -> int:
+def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--key", required=True, help="board project key, e.g. ACME (cards become ACME-1, ACME-2)")
     p.add_argument("--repo", required=True, help="GitHub owner/repo")
@@ -206,7 +206,7 @@ def main() -> int:
     p.add_argument("--skip-env", action="store_true", help="do not touch the env file")
     p.add_argument("--skip-github", action="store_true", help="do not touch GitHub")
     p.add_argument("--apply", action="store_true", help="make the changes (default: print the plan)")
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     spec = RepoSpec(
         key=args.key.strip().upper(),
@@ -317,7 +317,9 @@ def main() -> int:
                     print("✓ Added workflow_run webhook")
 
     print("\nNext:")
-    if not args.skip_github and url is None:
+    if args.skip_github:
+        print("  - GitHub was not changed. After BIGAS_PUBLIC_URL is set, rerun without --skip-github.")
+    elif url is None:
         print(f"  - Open a pull request from {SETUP_BRANCH} into {spec.branch} (the branch was pushed).")
     else:
         print("  - Merge the pull request above.")

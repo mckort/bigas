@@ -18,3 +18,5 @@ frontend/dist/
 load_env.sh
 # Archived copy of bigas-core (renamed from bigas-core); keep local only
 bigas-core-archive/
+# Local portfolio drafted by scripts/discover_portfolio.py (repo names, edited keys)
+bigas.portfolio.yaml

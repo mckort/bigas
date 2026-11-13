@@ -10,18 +10,37 @@ The goal: Bigas runs, and each of the human's GitHub repos is wired so that
 - **Ship** on `/cockpit` can deploy the repo,
 - a failed GitHub Actions run reaches Bigas (self-healing CI).
 
-Two scripts do the work, and both are safe to rerun:
+These scripts do the work, and each one is safe to rerun:
 
 | Script | What it does |
 |---|---|
-| `python scripts/connect_repo.py` | Plans (dry run) or applies the env and GitHub changes for one repo |
+| `python scripts/setup.py --noninteractive` | Writes a local `.env` from the environment. No prompts. One LLM key is required |
+| `python scripts/discover_portfolio.py` | Drafts `bigas.portfolio.yaml` from a folder of cloned repos |
+| `python scripts/apply_portfolio.py` | Plans, then with `--apply` connects every row in that file |
+| `python scripts/connect_repo.py` | Same plan or apply for a single repo |
+| `python scripts/setup_cloud.py` | Plans, then with `--apply` creates the Cloud Run plumbing. `--deploy` runs `./deploy.sh` |
 | `python scripts/bigas_doctor.py` | Checks the instance and every connected repo; `--json` for agents; exit 1 on failure |
+
+## Prerequisite: one folder of clones
+
+Ask the human to put every product repo in one parent folder, each clone a subfolder. Folders that are not git repos are ignored, so notes and scratch directories can sit beside the clones. When this Bigas clone is a sibling of the product repos, the parent of this repo is the folder to scan.
+
+```bash
+python scripts/discover_portfolio.py              # parent of this repo
+python scripts/discover_portfolio.py --root ~/Code
+```
+
+The draft lists, for each GitHub repo, a suggested project key, `owner/repo`, the default branch when `origin/HEAD` is set (otherwise the local checkout, marked as a guess), and any `workflow_dispatch` workflow whose file name contains `deploy`. Other `workflow_dispatch` files are named in a comment so the human can add them (for example an iOS preview workflow). An SSH host alias counts as GitHub when `ssh -G that-alias` prints `hostname github.com`. A second checkout of the same repo, including a git worktree, is left out and named in a comment. A repo with no deploy file gets a comment listing sibling clones that do have one, which is how a shared infra repo shows up. The script does not set `deploy_repo` by itself.
+
+Show the file to the human. They delete rows they do not want on the board, shorten keys (`vcfieldassistant` is not a good card prefix), confirm any guessed branch, and fill `deploy_repo` when the workflow lives in another repo. `release: staging` is for a project that already ships versioned releases. A new project leaves `release` empty and uses **Go to production** later.
+
+`bigas.portfolio.yaml` is gitignored. Do not commit it.
 
 ## Rules for the agent
 
 1. **Never print, log or commit secret values.** The human creates and pastes secrets into `.env` themselves. `.env` is gitignored; keep it that way.
 2. **Dry-run first.** Run `connect_repo.py` without `--apply`, show the human the plan, then apply.
-3. **Ask, don't guess** on the decisions in step 0. Repo names, branches and deploy workflows come from the human or from the repos themselves (`gh repo view`, `ls .github/workflows`).
+3. **Ask, don't guess** on the decisions in step 0. A folder of clones may draft the repo list (`discover_portfolio.py`). Show that file to the human before apply. Do not invent a key, branch, or deploy workflow the file and the human did not confirm.
 4. **Prefer the scripts to hand edits.** They keep the env maps in the format the server parses.
 5. **Finish with the doctor.** The work is done when `python scripts/bigas_doctor.py --json` reports `"ok": true` and the warnings left over are ones the human chose to accept.
 
@@ -41,23 +60,35 @@ Two scripts do the work, and both are safe to rerun:
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-python scripts/setup.py               # interactive; writes .env (asks for an LLM key)
+# The human exports one key. The script writes .env and does not print the value.
+GEMINI_API_KEY=... python scripts/setup.py --noninteractive
 cd frontend && npm install && npm run build && cd ..
 python run_core.py                    # http://localhost:8080, dev token: bigas-dev-token
 python scripts/bigas_doctor.py --offline
 ```
 
-`scripts/setup.py` needs a terminal. When the agent cannot answer prompts, copy `env.example` to `.env` and have the human fill in one LLM key (`GEMINI_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`), plus:
+`python scripts/setup.py` without `--noninteractive` is the interactive wizard, for a human at a keyboard. `--noninteractive` reads `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` from the environment (Gemini wins when more than one is set; `--provider` overrides). When `GITHUB_TOKEN`, `CURSOR_API_KEY`, `BIGAS_ACCESS_KEYS`, `GITHUB_WEBHOOK_SECRET`, `BIGAS_PUBLIC_URL`, or `BIGAS_FEATURES` are already exported, they are copied into `.env`. An existing `.env` is left alone unless `--force` is passed. If no LLM key is exported, the script exits and names the variable to set. It does not copy `env.example`.
+
+After the server is up, draft and apply the portfolio. `--skip-github` writes the board maps before a public URL exists:
 
 ```bash
-CHAT_ENABLED=true
-CHAT_STORAGE_MODE=memory
-CHAT_AUTH_MODE=dev
+python scripts/discover_portfolio.py
+python scripts/apply_portfolio.py
+python scripts/apply_portfolio.py --apply --skip-github
 ```
 
 ## 2. Deploy to Cloud Run (needed for the GitHub loop)
 
-Follow the [README deploy tutorial](../README.md#tutorial-deploy-your-first-bigas-server). Then set these in `.env` (the human supplies the values):
+Plan, then create the project plumbing. The long form of the same steps is the [README deploy tutorial](../README.md#tutorial-deploy-your-first-bigas-server).
+
+```bash
+python scripts/setup_cloud.py --project acme-bigas            # plan
+python scripts/setup_cloud.py --project acme-bigas --apply    # APIs, Artifact Registry, runner service account, Firestore
+```
+
+`--apply` needs an active `gcloud` account and billing on the project. It stops when either is missing. It enables the Cloud Run, Artifact Registry, Storage, Secret Manager, Firestore, Identity Toolkit, and GA4 APIs, creates `bigas-repo` in `europe-north1` and the `bigas-runner` service account, grants the runtime roles, and creates a Firestore database in `eur3` when the project has none. Empty Cloud Run settings in `.env` are filled in (`GOOGLE_PROJECT_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `DOCKER_REPO`, `IMAGE_NAME`, `IMAGE_TAG`). Existing values are left as they are.
+
+Set these in `.env` (the human supplies the values). `BIGAS_PUBLIC_URL` is the URL printed by the deploy below:
 
 | Variable | Why |
 |---|---|
@@ -68,11 +99,24 @@ Follow the [README deploy tutorial](../README.md#tutorial-deploy-your-first-biga
 | `CURSOR_API_KEY` | Cards → pull requests, and review autofix. Cursor dashboard → Integrations. |
 | `GITHUB_WEBHOOK_SECRET` | Random string. Signs the `workflow_run` webhook (self-healing CI, deploy post-checks). |
 
-Then `./deploy.sh`, which passes these to Cloud Run. With `SECRET_MANAGER=true`, `GITHUB_TOKEN` and `CURSOR_API_KEY` come from Secret Manager instead: run `python scripts/sync_env_to_secret_manager.py` before deploying. Values in Secret Manager win over Cloud Run env at startup.
+Then deploy. `./deploy.sh` needs `GA4_PROPERTY_ID` and one of `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`. With `SECRET_MANAGER=true`, the script syncs Secret Manager first (those values win over Cloud Run env at startup).
+
+```bash
+python scripts/setup_cloud.py --project acme-bigas --apply --deploy
+```
+
+Three things stay with the human: billing and `gcloud auth login`; the Firebase web app (add this GCP project in the Firebase console, copy the web config into `FIREBASE_*` and `VITE_FIREBASE_*`, set `CHAT_AUTH_MODE=firebase` and `CHAT_STORAGE_MODE=firestore` — [README: Chat setup](../README.md#setup)); and copying the Cloud Run URL into `BIGAS_PUBLIC_URL`.
 
 ## 3. Connect a repo
 
-Ask for the key, repo, branch, release model and deploy workflow, then:
+When the portfolio file from the prerequisite is filled in, one command covers every row. It calls `connect_repo.py` once per project. Dry run first:
+
+```bash
+python scripts/apply_portfolio.py                         # plan
+python scripts/apply_portfolio.py --webhook --apply       # env + GitHub, after BIGAS_PUBLIC_URL is set
+```
+
+One repo, or a row the file does not describe yet: ask for the key, repo, branch, release model and deploy workflow, then:
 
 ```bash
 # 1. plan
