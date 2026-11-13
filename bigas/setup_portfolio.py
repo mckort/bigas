@@ -72,7 +72,9 @@ def _ssh_hostname(host: str) -> str:
         return _HOST_CACHE[key]
     name = ""
     try:
-        proc = subprocess.run(["ssh", "-G", host], capture_output=True, text=True, timeout=5, check=False)
+        proc = subprocess.run(
+            ["ssh", "-G", "--", host], capture_output=True, text=True, timeout=5, check=False
+        )
     except (OSError, subprocess.TimeoutExpired):
         proc = None
     if proc is not None and proc.returncode == 0:
@@ -435,14 +437,22 @@ def apply_projects(
         print("✗ No projects in the portfolio. Delete is fine; an empty file connects nothing.")
         return 2
     planned: List[Tuple[PortfolioProject, List[str]]] = []
+    seen_keys = set()
+    seen_repos = set()
     for project in projects:
         spec = project.to_spec()
         errors = spec.validate()
+        if spec.key in seen_keys:
+            errors.append(f"duplicate key {spec.key}")
+        if spec.repo in seen_repos:
+            errors.append(f"duplicate repo {spec.repo}")
         if errors:
             for error in errors:
                 label = project.path or project.repo or project.key
                 print(f"✗ {label}: {error}")
             return 2
+        seen_keys.add(spec.key)
+        seen_repos.add(spec.repo)
         planned.append(
             (
                 project,

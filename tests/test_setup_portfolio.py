@@ -189,3 +189,56 @@ def test_apply_projects_rejects_a_bad_key_before_connecting():
     )
     assert code == 2
     assert calls == []
+
+
+def test_apply_projects_rejects_duplicate_keys_and_repos(capsys):
+    calls = []
+
+    def connect(argv):
+        calls.append(argv)
+        return 0
+
+    code = apply_projects(
+        [
+            PortfolioProject(key="ACME", repo="acme/shop"),
+            PortfolioProject(key="acme", repo="acme/other"),
+        ],
+        apply=True,
+        webhook=False,
+        skip_github=True,
+        env_file="",
+        connect=connect,
+    )
+    assert code == 2
+    assert calls == []
+    assert "duplicate key ACME" in capsys.readouterr().out
+
+    code = apply_projects(
+        [
+            PortfolioProject(key="ACME", repo="acme/shop"),
+            PortfolioProject(key="BIG", repo="acme/shop"),
+        ],
+        apply=True,
+        webhook=False,
+        skip_github=True,
+        env_file="",
+        connect=connect,
+    )
+    assert code == 2
+    assert calls == []
+    assert "duplicate repo acme/shop" in capsys.readouterr().out
+
+
+def test_ssh_hostname_does_not_treat_a_hyphen_host_as_a_flag(monkeypatch):
+    import bigas.setup_portfolio as portfolio
+
+    monkeypatch.setattr(portfolio, "_HOST_CACHE", {})
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = list(args)
+        return subprocess.CompletedProcess(args, 0, "hostname github.com\n", "")
+
+    monkeypatch.setattr(portfolio.subprocess, "run", fake_run)
+    assert portfolio._ssh_hostname("-weird-alias") == "github.com"
+    assert captured["args"] == ["ssh", "-G", "--", "-weird-alias"]
