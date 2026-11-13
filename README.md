@@ -59,7 +59,9 @@ Four surfaces, one loop ([Getting started](#getting-started-from-first-card-to-p
 | **Objectives** (optional) | `/objectives` | The quarter's scoreboard. You name the aim; Key Results hold the numbers; board cards link to a KR so shipping work and moving a metric are the same story. |
 | **Chat** | `/chat` | Chief of Staff by default, or any specialist directly. Agents reason, use tools, and take action (file a card, review a PR, draft copy) instead of handing you a checklist. |
 
-Objectives is optional: switch it off with [`BIGAS_FEATURES`](#keep-it-focused-optional-areas). See the [Objectives](#walkthrough-from-quarterly-objective-to-shipped-work), [board](#walkthrough-from-jira-card-to-merged-pr), and [chat](#walkthrough-from-chat-to-production-deploy) walkthroughs for screenshots of each surface.
+![Cockpit dashboard: this week’s numbers, a Ship card per project, and AI work in progress](assets/images/cockpit.png)
+
+Objectives is optional: switch it off with [`BIGAS_FEATURES`](#keep-it-focused-optional-areas). Screenshots of [Objectives](#walkthrough-from-quarterly-objective-to-shipped-work), the [board](#walkthrough-from-jira-card-to-merged-pr), and [chat](#walkthrough-from-chat-to-production-deploy) are in those walkthroughs.
 
 It currently ships six specialists:
 
