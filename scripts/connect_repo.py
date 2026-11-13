@@ -188,7 +188,11 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--key", required=True, help="board project key, e.g. ACME (cards become ACME-1, ACME-2)")
     p.add_argument("--repo", required=True, help="GitHub owner/repo")
-    p.add_argument("--branch", default="main", help="branch Cursor starts from and PRs target (default main)")
+    p.add_argument(
+        "--branch",
+        default="main",
+        help="GitHub default branch. Written to PROJECT_BRANCH_MAPPING when it is not main (default main)",
+    )
     p.add_argument("--name", default="", help="display name, e.g. 'Acme Shop'")
     p.add_argument("--deploy", default="", help="deploy workflow file(s) DevOps dispatches, comma-separated")
     p.add_argument("--deploy-repo", default="", help="repo that holds the deploy workflow, when not --repo")

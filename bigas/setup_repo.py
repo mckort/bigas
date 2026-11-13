@@ -88,6 +88,34 @@ def _list_add(raw: str, key: str) -> str:
     return ",".join(keys)
 
 
+def _mapping_default(raw: str) -> str:
+    for key, value in _csv_items(raw):
+        if key.upper() == "DEFAULT" and value:
+            return value
+    return "main"
+
+
+def _branch_mapping_change(get, spec: RepoSpec) -> Tuple[str, str]:
+    """Entry to add to PROJECT_BRANCH_MAPPING, or ("", "") when none is needed.
+
+    A versioned prefix is always recorded. A development branch is recorded
+    when it is not the DEFAULT production branch: DEFAULT:main must not be
+    the only instruction for a repo whose real branch is master.
+    """
+    name = (
+        "PROJECT_BRANCH_MAPPING"
+        if get("PROJECT_BRANCH_MAPPING") or not get("BIGAS_PROJECT_BRANCH_MAPPING")
+        else "BIGAS_PROJECT_BRANCH_MAPPING"
+    )
+    current = get(name) or "DEFAULT:main"
+    if spec.release_prefix:
+        return name, _csv_upsert(current, spec.key, spec.release_prefix)
+    branch = (spec.branch or "main").strip() or "main"
+    if branch == _mapping_default(current):
+        return "", ""
+    return name, _csv_upsert(current, spec.key, branch)
+
+
 def plan_env_changes(env: Dict[str, str], spec: RepoSpec) -> Dict[str, str]:
     """Return ``{NAME: new value}`` for every env var that has to change."""
     get = lambda name: (env.get(name) or "").strip()  # noqa: E731
@@ -113,10 +141,9 @@ def plan_env_changes(env: Dict[str, str], spec: RepoSpec) -> Dict[str, str]:
         )
     if spec.deploy_repo and spec.deploy_repo != spec.repo:
         want["BIGAS_DEPLOY_REPO_MAP"] = _csv_upsert(get("BIGAS_DEPLOY_REPO_MAP"), spec.key, spec.deploy_repo)
-    if spec.release_prefix:
-        name = "PROJECT_BRANCH_MAPPING" if get("PROJECT_BRANCH_MAPPING") or not get("BIGAS_PROJECT_BRANCH_MAPPING") else "BIGAS_PROJECT_BRANCH_MAPPING"
-        current = get(name) or "DEFAULT:main"
-        want[name] = _csv_upsert(current, spec.key, spec.release_prefix)
+    mapping_name, mapping_value = _branch_mapping_change(get, spec)
+    if mapping_value:
+        want[mapping_name] = mapping_value
 
     return {name: value for name, value in want.items() if value != get(name)}
 

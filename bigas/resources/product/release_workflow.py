@@ -158,6 +158,22 @@ def versioned_feature_branch(prefix: str, version: str) -> str:
     return f"{base}-{ver}"
 
 
+def default_hides_repo_production(default_branch: str, repo_production: str) -> bool:
+    """True when DEFAULT:main would send a master-only repo at a missing branch.
+
+    ``main`` and ``master`` are both production branches. A portfolio default of
+    ``main`` must not override a repo whose own base branch is ``master``.
+    """
+    default = (default_branch or "").strip()
+    repo = (repo_production or "").strip()
+    if not default or not repo or default == repo:
+        return False
+    return (
+        default.lower() in _PRODUCTION_BRANCH_NAMES
+        and repo.lower() in _PRODUCTION_BRANCH_NAMES
+    )
+
+
 def uses_versioned_feature_branches(mapped_branch: str, production: str = "main") -> bool:
     """True when the project mapping is a staging-style prefix, not production."""
     mapped = (mapped_branch or "").strip()
@@ -196,7 +212,8 @@ def resolve_automerge_branch(
     Priority:
     1. hotfix label → production branch (repo map or DEFAULT/main)
     2. PROJECT_BRANCH_MAPPING for project key
-    3. PROJECT_BRANCH_MAPPING DEFAULT entry
+    3. PROJECT_BRANCH_MAPPING DEFAULT entry, unless that entry is ``main`` or
+       ``master`` and the repo base branch is the other one
     4. BIGAS_JIRA_REPO_BASE_BRANCH_MAP for repo
     5. BIGAS_JIRA_DEFAULT_BASE_BRANCH / main
 
@@ -215,12 +232,19 @@ def resolve_automerge_branch(
     branch_map = project_branch_map if project_branch_map is not None else project_branch_mapping_from_env()
     proj = (project_key or "").strip().upper()
     mapped = ""
+    repo_production = ""
+    if repo_base_branches and repo_key in repo_base_branches:
+        repo_production = repo_base_branches[repo_key]
     if proj and proj in branch_map:
         mapped = branch_map[proj]
     elif "DEFAULT" in branch_map:
-        mapped = branch_map["DEFAULT"]
-    elif repo_base_branches and repo_key in repo_base_branches:
-        mapped = repo_base_branches[repo_key]
+        default_mapped = branch_map["DEFAULT"]
+        if default_hides_repo_production(default_mapped, repo_production):
+            mapped = repo_production
+        else:
+            mapped = default_mapped
+    elif repo_production:
+        mapped = repo_production
     else:
         mapped = prod_branch
 

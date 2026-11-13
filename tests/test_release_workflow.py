@@ -9,6 +9,7 @@ from bigas.resources.product.release_workflow import (
     labels_include_hotfix,
     normalize_semver_tag,
     parse_project_branch_mapping,
+    default_hides_repo_production,
     resolve_automerge_branch,
     resolve_production_branch,
     version_from_feature_branch,
@@ -89,6 +90,26 @@ def test_normalize_semver_tag_invalid():
         normalize_semver_tag("not-a-version")
 
 
+def test_default_main_does_not_hide_a_master_repo():
+    assert default_hides_repo_production("main", "master")
+    assert not default_hides_repo_production("main", "main")
+    assert not default_hides_repo_production("main", "develop")
+    branch = resolve_automerge_branch(
+        project_key="AURA",
+        repo="mckort/auralearn",
+        project_branch_map={"VFA": "staging", "DEFAULT": "main"},
+        repo_base_branches={"mckort/auralearn": "master"},
+    )
+    assert branch == "master"
+    named = resolve_automerge_branch(
+        project_key="AURA",
+        repo="mckort/auralearn",
+        project_branch_map={"AURA": "master", "DEFAULT": "main"},
+        repo_base_branches={"mckort/auralearn": "master"},
+    )
+    assert named == "master"
+
+
 def test_resolve_production_branch_ignores_staging_map():
     branch = resolve_production_branch(
         project_key="VFA",
@@ -104,6 +125,11 @@ def test_config_automerge_branch_for_project(monkeypatch):
     cfg = JiraAutomationConfig.from_env()
     assert cfg.automerge_branch_for_project("VFA", "mckort/vcfieldassistant") == "staging"
     assert cfg.automerge_branch_for_project("BIG", "mckort/bigas") == "main"
+    assert cfg.automerge_branch_for_project("AURA", "mckort/auralearn") == "master"
+    assert (
+        cfg.automerge_branch_for_project("FYDA", "mckort/fulfillyourdreamadventure")
+        == "master"
+    )
     assert (
         cfg.automerge_branch_for_project("VFA", "mckort/vcfieldassistant", labels=["hotfix"])
         == "main"

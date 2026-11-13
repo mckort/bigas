@@ -23,6 +23,8 @@ python scripts/bigas_doctor.py --json                                  # verify;
 
 To add one more project to a running Bigas, use the **Add a project (checklist)** section of the playbook. It lists what each mode needs (tokens, repo workflows, settings), and when to use the cockpit's **Go to production** button instead of env.
 
+Pass `--branch` as that repo's real default branch (`gh repo view owner/repo --json defaultBranchRef`). `connect_repo.py` writes `PROJECT_BRANCH_MAPPING=KEY:<branch>` whenever that branch is not `main`. `DEFAULT:main` only covers projects you left unnamed. It does not mean "each repo's default branch". A `master` repo left on `DEFAULT` makes **In Progress (AI)** ask Cursor to start from `main`, and no agent starts. AuraLearn and Fulfil Your Dream Adventure are `AURA:master` and `FYDA:master`.
+
 Never print or commit secret values. Ask the human for credentials and for the decisions listed in step 0 of the playbook.
 
 ## Layout

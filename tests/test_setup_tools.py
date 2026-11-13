@@ -42,6 +42,20 @@ def test_plan_env_changes_for_a_new_repo():
     assert changes["PROJECT_BRANCH_MAPPING"] == "DEFAULT:main,ACME:staging"
 
 
+def test_plan_env_changes_records_a_master_branch():
+    env = {"PROJECT_BRANCH_MAPPING": "VFA:staging,DEFAULT:main"}
+    spec = RepoSpec(key="AURA", repo="mckort/auralearn", branch="master")
+    changes = plan_env_changes(env, spec)
+    assert changes["PROJECT_BRANCH_MAPPING"] == "VFA:staging,DEFAULT:main,AURA:master"
+
+
+def test_plan_env_changes_leaves_default_main_unnamed():
+    env = {"PROJECT_BRANCH_MAPPING": "VFA:staging,DEFAULT:main"}
+    spec = RepoSpec(key="BIG", repo="mckort/bigas", branch="main")
+    changes = plan_env_changes(env, spec)
+    assert "PROJECT_BRANCH_MAPPING" not in changes
+
+
 def test_plan_env_changes_is_idempotent():
     spec = RepoSpec(key="ACME", repo="acme/shop", deploy_workflows=["deploy.yml"])
     env = {}
