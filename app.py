@@ -245,6 +245,7 @@ def create_app():
             or path.startswith("/api/feed")
             or path.startswith("/api/auth/")
             or path.startswith("/assets/")
+            or path == "/marketing/cockpit.png"
             or path.startswith("/.well-known/")
             or path.startswith("/oauth")
             or path.lstrip("/") in BRAND_ICON_FILES
