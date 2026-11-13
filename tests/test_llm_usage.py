@@ -81,6 +81,38 @@ class TokenUsageTests(unittest.TestCase):
             self.assertEqual(resolve_model_price_usd_per_mtok("gemini-4-argon"), (4.00, 20.00))
             self.assertEqual(resolve_model_price_usd_per_mtok("gemini-4-carbon"), (4.00, 20.00))
 
+    def test_gemini_38_flash_intro_price_through_2026(self):
+        with patch("bigas.llm.usage.date") as mock_date:
+            mock_date.today.return_value = date(2026, 11, 13)
+            self.assertEqual(
+                resolve_model_price_usd_per_mtok("gemini-3.8-flash"),
+                (0.75, 3.75),
+            )
+            self.assertEqual(
+                resolve_model_price_usd_per_mtok("models/gemini-3.8-flash"),
+                (0.75, 3.75),
+            )
+            usage = TokenUsage(
+                prompt_tokens=1_000_000,
+                candidates_tokens=1_000_000,
+                total_tokens=2_000_000,
+            )
+            self.assertEqual(estimate_cost_usd("gemini-3.8-flash", usage), 0.75 + 3.75)
+
+    def test_gemini_38_flash_list_price_from_2027(self):
+        with patch("bigas.llm.usage.date") as mock_date:
+            mock_date.today.return_value = date(2027, 1, 1)
+            self.assertEqual(
+                resolve_model_price_usd_per_mtok("gemini-3.8-flash"),
+                (1.50, 7.50),
+            )
+
+    def test_gemini_38_flash_lite_is_not_the_flash_intro_price(self):
+        with patch("bigas.llm.usage.date") as mock_date:
+            mock_date.today.return_value = date(2026, 11, 13)
+            price = resolve_model_price_usd_per_mtok("gemini-3.8-flash-lite")
+        self.assertNotEqual(price, (0.75, 3.75))
+
     def test_flash_estimate_does_not_double_count_thoughts(self):
         # Realistic Gemini shape: candidates already includes thoughts.
         usage = TokenUsage(

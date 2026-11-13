@@ -798,6 +798,14 @@ class GcpBillingTests(unittest.TestCase):
             "gcp.app_engine",
         )
 
+    def test_net_cost_sql_converts_account_currency_to_usd(self):
+        from bigas.providers.usage.gcp_billing import _net_cost_usd_sql
+
+        sql = _net_cost_usd_sql()
+        self.assertIn("cost / currency_conversion_rate", sql)
+        self.assertIn("c.amount / currency_conversion_rate", sql)
+        self.assertNotIn("SUM(cost) +", sql)
+
     def test_rows_to_events(self):
         from bigas.providers.usage.gcp_billing import _rows_to_events
 
