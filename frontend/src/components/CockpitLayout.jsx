@@ -33,10 +33,10 @@ const KIND_STYLE = {
 }
 
 const TABS = [
-  { id: 'needs', label: 'Needs you' },
-  { id: 'working', label: 'Working' },
-  { id: 'ship', label: 'Ship' },
   { id: 'week', label: 'Week' },
+  { id: 'ship', label: 'Ship' },
+  { id: 'working', label: 'Working' },
+  { id: 'needs', label: 'Needs you' },
 ]
 
 function greeting() {
@@ -142,7 +142,7 @@ function itemSub(item) {
   return parts.join(' · ')
 }
 
-function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
+function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack, embedded = false }) {
   const rowRef = useRef(null)
   const drag = useRef({ x0: null, dx: 0, moved: false, suppressUntil: 0 })
   const style = KIND_STYLE[item.kind] || KIND_STYLE.design
@@ -216,7 +216,7 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
         onPointerCancel={onPointerEnd}
-        className="relative bg-elevated flex items-center gap-3 py-2.5 cursor-pointer transition-transform duration-200 group"
+        className={`relative ${embedded ? 'bg-bg' : 'bg-elevated'} flex items-center gap-3 py-2.5 cursor-pointer transition-transform duration-200 group`}
         style={{ touchAction: 'pan-y' }}
       >
         <KindIcon kind={item.kind} />
@@ -264,6 +264,81 @@ function NeedRow({ item, now, busy, onOpen, onPrimary, onSendBack }) {
         </div>
       </div>
     </li>
+  )
+}
+
+const NEED_PREVIEW = 4
+
+function boardNameOf(item) {
+  if (item?.type === 'ticket') return item.ticket?.board_name || ''
+  return ''
+}
+
+function groupNeedsByProject(items, shipRows) {
+  const names = {}
+  for (const row of shipRows || []) {
+    const key = String(row.key || '').toUpperCase()
+    if (key) names[key] = row.name || key
+  }
+  const groups = new Map()
+  for (const item of items) {
+    const key = projectOf(item) || 'Other'
+    if (!groups.has(key)) {
+      groups.set(key, { key, name: names[key] || boardNameOf(item) || key, items: [] })
+    }
+    groups.get(key).items.push(item)
+  }
+  return [...groups.values()].sort((a, b) => b.items.length - a.items.length || a.key.localeCompare(b.key))
+}
+
+function NeedProjectCard({ group, now, busyIds, onOpen, onPrimary, onSendBack }) {
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? group.items : group.items.slice(0, NEED_PREVIEW)
+  const hidden = group.items.length - shown.length
+  return (
+    <div className="border border-border rounded-xl p-3.5 bg-bg min-w-0 flex flex-col">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="font-semibold truncate">{group.name}</span>
+        {group.name !== group.key && (
+          <span className="font-mono text-[11px] text-muted truncate">{group.key}</span>
+        )}
+        <span className="ml-auto text-[11px] rounded-md px-2 py-0.5 flex-none bg-amber-500/15 text-amber-700 dark:text-amber-300">
+          {group.items.length} waiting
+        </span>
+      </div>
+      <ul className="mt-1">
+        {shown.map((item) => (
+          <NeedRow
+            key={item.id}
+            item={item}
+            now={now}
+            busy={busyIds.has(item.id)}
+            embedded
+            onOpen={onOpen}
+            onPrimary={onPrimary}
+            onSendBack={onSendBack}
+          />
+        ))}
+      </ul>
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="btn-ghost text-xs px-2.5 py-1 min-h-[32px] mt-2 self-start"
+        >
+          Show {hidden} more
+        </button>
+      )}
+      {expanded && group.items.length > NEED_PREVIEW && (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="btn-ghost text-xs px-2.5 py-1 min-h-[32px] mt-2 self-start"
+        >
+          Show less
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -439,7 +514,9 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onRe
           ? row.release_error
             ? 'Could not load releases. The cockpit retries every 15 seconds.'
             : row.version
-            ? `Version ${row.version} · ${row.cut_count} card${row.cut_count === 1 ? '' : 's'} in the cut`
+            ? row.cut_count == null
+              ? `Version ${row.version}`
+              : `Version ${row.version} · ${row.cut_count} card${row.cut_count === 1 ? '' : 's'} in the cut`
             : row.state === 'idle'
               ? 'No open version. Create one under Releases on the board.'
               : 'Deploy in progress'
@@ -548,7 +625,14 @@ function WeekTiles({ week, money, moneyError }) {
       .slice(0, 3)
       .map(([k, n]) => `${k} ${n}`)
       .join(' · ')
-    tiles.push(<Tile key="shipped" label="Cards shipped, 7 days" value={week.shipped} sub={top || 'None yet'} />)
+    tiles.push(
+      <Tile
+        key="shipped"
+        label="Cards shipped, 7 days"
+        value={week.shipped == null ? '…' : week.shipped}
+        sub={week.shipped == null ? 'Loading…' : top || 'None yet'}
+      />,
+    )
     tiles.push(
       <Tile
         key="releases"
@@ -921,7 +1005,7 @@ function DeployDetail({ item }) {
 export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOpenChat, onDiscussTicket, onLogout }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
-  const [tab, setTab] = useState('needs')
+  const [tab, setTab] = useState('week')
   const [now, setNow] = useState(Date.now())
   const [busyIds, setBusyIds] = useState(() => new Set())
   const [drawer, setDrawer] = useState(null)
@@ -931,13 +1015,25 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const [showStuck, setShowStuck] = useState(false)
   const [money, setMoney] = useState(null)
   const [moneyError, setMoneyError] = useState('')
+  const fullReady = useRef(false)
   const toastTimer = useRef(null)
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
+  const loadShell = useCallback(async () => {
+    try {
+      const res = await fetchCockpit('shell')
+      setData((prev) => (prev && !prev.partial ? prev : res))
+      setError('')
+    } catch (err) {
+      if (!fullReady.current) setError(err.message || 'Could not load the cockpit')
+    }
+  }, [])
+
   const load = useCallback(async () => {
     try {
-      const res = await fetchCockpit()
-      setData(res)
+      const res = await fetchCockpit('needs')
+      fullReady.current = true
+      setData({ ...res, partial: false })
       setError('')
     } catch (err) {
       setError(err.message || 'Could not load the cockpit')
@@ -959,12 +1055,13 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   }, [loadMoney])
 
   useEffect(() => {
+    loadShell()
     load()
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') load()
     }, POLL_MS)
     return () => clearInterval(id)
-  }, [load])
+  }, [load, loadShell])
 
   const showToast = useCallback((message, action) => {
     setToast({ message, action })
@@ -1122,12 +1219,14 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   }
 
   const inProject = (project) => !projectFilter || project === projectFilter
-  const needs = (data?.needs || []).filter((i) => inProject(projectOf(i)))
-  const signoff = (data?.signoff || []).filter((i) => inProject(projectOf(i)))
+  const needsReady = Boolean(data) && !data.partial && Array.isArray(data.needs)
+  const needs = needsReady ? data.needs.filter((i) => inProject(projectOf(i))) : []
+  const signoff = needsReady ? (data.signoff || []).filter((i) => inProject(projectOf(i))) : []
   const working = (data?.working || []).filter((i) => inProject(projectOf(i)))
   const stuck = (data?.stuck || []).filter((i) => inProject(projectOf(i)))
   const ship = (data?.ship || []).filter((row) => inProject((row.key || '').toUpperCase()))
-  const counts = { needs: needs.length, working: working.length }
+  const needGroups = needsReady ? groupNeedsByProject(needs, ship) : []
+  const counts = { needs: needsReady ? needs.length : null, working: data ? working.length : null }
   const projectCounts = (() => {
     const out = {}
     for (const item of [...(data?.needs || []), ...(data?.signoff || []), ...(data?.working || []), ...(data?.stuck || [])]) {
@@ -1403,7 +1502,11 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           <div className="min-w-0 flex-1">
             <h1 className="font-bold leading-tight">Cockpit</h1>
             <p className="text-xs text-muted truncate">
-              {data ? `${counts.needs} waiting on you · ${counts.working} running` : 'Loading…'}
+              {!data
+                ? 'Loading…'
+                : counts.needs == null
+                  ? 'Loading what needs you…'
+                  : `${counts.needs} waiting on you · ${counts.working} running`}
             </p>
           </div>
           <button type="button" onClick={() => onSwitchView('board')} className="text-sm btn-secondary px-3 py-2 hidden lg:inline-flex">
@@ -1453,7 +1556,11 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           </h2>
           {data && (
             <span className="text-sm text-muted">
-              {counts.needs ? `${counts.needs} things need you` : 'Nothing waits on you'}
+              {counts.needs == null
+                ? 'Loading what needs you…'
+                : counts.needs
+                  ? `${counts.needs} things need you`
+                  : 'Nothing waits on you'}
             </span>
           )}
         </div>
@@ -1490,81 +1597,90 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         {error && (
           <div className="card p-3 mb-4 text-sm text-red-600 flex items-center gap-3">
             {error}
-            <button type="button" onClick={load} className="btn-secondary text-xs px-3 py-1 min-h-[32px] ml-auto">
+            <button type="button" onClick={() => { loadShell(); load() }} className="btn-secondary text-xs px-3 py-1 min-h-[32px] ml-auto">
               Retry
             </button>
           </div>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          <Section id="needs" title="Needs you" count={data ? counts.needs : null} accent mobileTab={tab}>
-            <p className="text-xs text-muted mb-1 lg:hidden">Swipe right to approve, left to send back.</p>
-            {!data && !error && <p className="text-sm text-muted py-6 text-center">Loading…</p>}
-            {data && needs.length === 0 && (
-              <div className="py-8 text-center">
-                <p className="font-semibold">You're clear</p>
-                <p className="text-sm text-muted">Nothing waits on you. The AI keeps working in the background.</p>
-              </div>
-            )}
-            <ul>
-              {needs.map((item) => (
-                <NeedRow
-                  key={item.id}
-                  item={item}
-                  now={now}
-                  busy={busyIds.has(item.id)}
-                  onOpen={openNeed}
-                  onPrimary={primaryNeed}
-                  onSendBack={sendBackNeed}
-                />
-              ))}
-            </ul>
-            {signoff.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-border">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span aria-hidden="true" className="text-green-600 dark:text-green-400">✓</span>
-                  <span className="text-sm">
-                    <b>{signoff.length}</b> shipped card{signoff.length === 1 ? '' : 's'} waiting for sign-off
-                  </span>
-                  <div className="ml-auto flex gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setShowSignoff((v) => !v)}
-                      aria-expanded={showSignoff}
-                      className="btn-ghost text-xs px-2.5 py-1 min-h-[32px]"
-                    >
-                      {showSignoff ? 'Hide' : 'Show'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDrawer({ type: 'signoff-all', items: signoff })}
-                      className="btn-secondary text-xs px-2.5 py-1 min-h-[32px]"
-                    >
-                      Mark all done
-                    </button>
+        <div className="grid gap-4">
+          <Section
+            id="week"
+            title="This week"
+            mobileTab={tab}
+            right={
+              <button type="button" onClick={() => loadMoney(true)} className="btn-ghost text-xs px-2.5 py-1 min-h-[32px]">
+                Refresh numbers
+              </button>
+            }
+          >
+            <WeekTiles week={data?.week} money={money} moneyError={moneyError} />
+            <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
+              {WEEKLY_ACTIONS.map((action) => {
+                const busyId = `week:${action.id}`
+                return (
+                  <div key={action.id} className="border border-border rounded-xl p-3.5 bg-bg flex flex-col">
+                    <h3 className="font-semibold">{action.title}</h3>
+                    <p className="text-xs text-muted mt-1 flex-1">{action.body}</p>
+                    <div className="flex gap-1.5 mt-3">
+                      <button
+                        type="button"
+                        disabled={busyIds.has(busyId)}
+                        onClick={() =>
+                          runAgentPrompt(busyId, action.agentId, action.prompt, `${action.title}: asked ${action.agentId === 'cfo' ? 'CFO' : 'Product'}`)
+                        }
+                        className="btn-accent text-xs px-3 py-1 min-h-[34px]"
+                      >
+                        {busyIds.has(busyId) ? 'Sending…' : action.button}
+                      </button>
+                      <button type="button" onClick={() => onOpenChat(action.agentId)} className="btn-ghost text-xs px-2.5 py-1 min-h-[34px]">
+                        Last result
+                      </button>
+                    </div>
                   </div>
-                </div>
-                {showSignoff && (
-                  <ul className="mt-1">
-                    {signoff.map((item) => (
-                      <NeedRow
-                        key={item.id}
-                        item={item}
-                        now={now}
-                        busy={busyIds.has(item.id)}
-                        onOpen={openNeed}
-                        onPrimary={primaryNeed}
-                        onSendBack={sendBackNeed}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
+                )
+              })}
+            </div>
           </Section>
 
-          <Section id="working" title="AI working" count={data ? counts.working : null} mobileTab={tab}>
-            {data && working.length === 0 && (
+          <Section
+            id="ship"
+            title="Ship"
+            mobileTab={tab}
+            right={<span className="text-xs text-muted hidden sm:inline">Versioned releases and staging rehearsals</span>}
+          >
+            {!data && !error && <p className="text-sm text-muted py-4">Loading…</p>}
+            {data && ship.length === 0 && (
+              <p className="text-sm text-muted py-4">No deploy targets configured. See the README section on DevOps.</p>
+            )}
+            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+              {ship.map((row) => (
+                <ShipCard
+                  key={row.key}
+                  row={row}
+                  steps={data?.ship_steps || []}
+                  onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
+                  busy={busyIds.has(`ship:${row.key}`)}
+                  onOpenChat={onOpenChat}
+                  onCommand={(r, cmd) => setDrawer({ type: 'command', row: r, cmd })}
+                  onReview={(r) => {
+                    const pending = needs.find(
+                      (n) => n.type === 'deploy_confirm' && n.project_key?.toUpperCase() === r.key?.toUpperCase(),
+                    )
+                    if (pending) openNeed(pending)
+                    else onOpenChat('devops')
+                  }}
+                />
+              ))}
+            </div>
+          </Section>
+
+          <Section id="working" title="AI working" count={counts.working} mobileTab={tab}>
+            {!data && !error && <p className="text-sm text-muted py-6 text-center">Loading…</p>}
+            {data?.partial && working.length === 0 && (
+              <p className="text-sm text-muted py-6 text-center">Loading…</p>
+            )}
+            {data && !data.partial && working.length === 0 && (
               <p className="text-sm text-muted py-6 text-center">Nothing running now. Approve a card to start some.</p>
             )}
             <ul>
@@ -1615,76 +1731,82 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
             )}
           </Section>
 
-          <Section
-            id="ship"
-            title="Ship"
-            mobileTab={tab}
-            className="lg:col-span-2"
-            right={<span className="text-xs text-muted hidden sm:inline">Versioned releases and staging rehearsals</span>}
-          >
-            {data && ship.length === 0 && (
-              <p className="text-sm text-muted py-4">No deploy targets configured. See the README section on DevOps.</p>
-            )}
-            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-              {ship.map((row) => (
-                <ShipCard
-                  key={row.key}
-                  row={row}
-                  steps={data?.ship_steps || []}
-                  onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
-                  busy={busyIds.has(`ship:${row.key}`)}
-                  onOpenChat={onOpenChat}
-                  onCommand={(r, cmd) => setDrawer({ type: 'command', row: r, cmd })}
-                  onReview={(r) => {
-                    const pending = needs.find(
-                      (n) => n.type === 'deploy_confirm' && n.project_key?.toUpperCase() === r.key?.toUpperCase(),
-                    )
-                    if (pending) openNeed(pending)
-                    else onOpenChat('devops')
-                  }}
-                />
-              ))}
-            </div>
-          </Section>
-
-          <Section
-            id="week"
-            title="This week"
-            mobileTab={tab}
-            className="lg:col-span-2"
-            right={
-              <button type="button" onClick={() => loadMoney(true)} className="btn-ghost text-xs px-2.5 py-1 min-h-[32px]">
-                Refresh numbers
-              </button>
-            }
-          >
-            <WeekTiles week={data?.week} money={money} moneyError={moneyError} />
-            <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
-              {WEEKLY_ACTIONS.map((action) => {
-                const busyId = `week:${action.id}`
-                return (
-                  <div key={action.id} className="border border-border rounded-xl p-3.5 bg-bg flex flex-col">
-                    <h3 className="font-semibold">{action.title}</h3>
-                    <p className="text-xs text-muted mt-1 flex-1">{action.body}</p>
-                    <div className="flex gap-1.5 mt-3">
-                      <button
-                        type="button"
-                        disabled={busyIds.has(busyId)}
-                        onClick={() =>
-                          runAgentPrompt(busyId, action.agentId, action.prompt, `${action.title}: asked ${action.agentId === 'cfo' ? 'CFO' : 'Product'}`)
-                        }
-                        className="btn-accent text-xs px-3 py-1 min-h-[34px]"
-                      >
-                        {busyIds.has(busyId) ? 'Sending…' : action.button}
-                      </button>
-                      <button type="button" onClick={() => onOpenChat(action.agentId)} className="btn-ghost text-xs px-2.5 py-1 min-h-[34px]">
-                        Last result
-                      </button>
-                    </div>
+          <Section id="needs" title="Needs you" count={counts.needs} mobileTab={tab}>
+            <p className="text-xs text-muted mb-2 lg:hidden">Swipe right to approve, left to send back.</p>
+            {!needsReady && !error && (
+              <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3" aria-hidden="true">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="border border-border rounded-xl p-3.5 bg-bg animate-pulse">
+                    <div className="h-4 w-28 rounded bg-surface-muted" />
+                    <div className="h-3 w-full rounded bg-surface-muted mt-3" />
+                    <div className="h-3 w-2/3 rounded bg-surface-muted mt-2" />
                   </div>
-                )
-              })}
-            </div>
+                ))}
+              </div>
+            )}
+            {needsReady && needs.length === 0 && (
+              <div className="py-8 text-center">
+                <p className="font-semibold">You're clear</p>
+                <p className="text-sm text-muted">Nothing waits on you. The AI keeps working in the background.</p>
+              </div>
+            )}
+            {needsReady && needGroups.length > 0 && (
+              <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+                {needGroups.map((group) => (
+                  <NeedProjectCard
+                    key={group.key}
+                    group={group}
+                    now={now}
+                    busyIds={busyIds}
+                    onOpen={openNeed}
+                    onPrimary={primaryNeed}
+                    onSendBack={sendBackNeed}
+                  />
+                ))}
+              </div>
+            )}
+            {signoff.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span aria-hidden="true" className="text-green-600 dark:text-green-400">✓</span>
+                  <span className="text-sm">
+                    <b>{signoff.length}</b> shipped card{signoff.length === 1 ? '' : 's'} waiting for sign-off
+                  </span>
+                  <div className="ml-auto flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowSignoff((v) => !v)}
+                      aria-expanded={showSignoff}
+                      className="btn-ghost text-xs px-2.5 py-1 min-h-[32px]"
+                    >
+                      {showSignoff ? 'Hide' : 'Show'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDrawer({ type: 'signoff-all', items: signoff })}
+                      className="btn-secondary text-xs px-2.5 py-1 min-h-[32px]"
+                    >
+                      Mark all done
+                    </button>
+                  </div>
+                </div>
+                {showSignoff && (
+                  <ul className="mt-1">
+                    {signoff.map((item) => (
+                      <NeedRow
+                        key={item.id}
+                        item={item}
+                        now={now}
+                        busy={busyIds.has(item.id)}
+                        onOpen={openNeed}
+                        onPrimary={primaryNeed}
+                        onSendBack={sendBackNeed}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </Section>
         </div>
       </main>

@@ -445,6 +445,45 @@ def test_cockpit_api_lists_cards_waiting_for_approval(client):
     assert set(body) >= {"needs", "working", "ship", "counts"}
 
 
+def test_cockpit_shell_skips_the_board_scan(client, monkeypatch):
+    calls = {"tickets": 0, "freshness": 0}
+
+    from bigas.tickets.service import TicketService
+
+    original = TicketService.list_tickets
+
+    def counting(self, *args, **kwargs):
+        calls["tickets"] += 1
+        return original(self, *args, **kwargs)
+
+    def counting_fresh(specs):
+        calls["freshness"] += 1
+        return {}
+
+    monkeypatch.setattr(TicketService, "list_tickets", counting)
+    monkeypatch.setattr("bigas.cockpit_freshness.lookup_deploy_freshness", counting_fresh)
+
+    resp = client.get("/api/cockpit?part=shell", headers=_auth())
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["partial"] is True
+    assert body["needs"] is None
+    assert body["signoff"] is None
+    assert body["counts"]["needs"] is None
+    assert body["week"]["shipped"] is None
+    assert isinstance(body["ship"], list)
+    assert calls == {"tickets": 0, "freshness": 0}
+
+    unknown = client.get("/api/cockpit?part=nope", headers=_auth())
+    assert unknown.status_code == 400
+
+    full = client.get("/api/cockpit?part=needs", headers=_auth())
+    assert full.status_code == 200
+    loaded = full.get_json()
+    assert loaded["partial"] is False
+    assert isinstance(loaded["needs"], list)
+
+
 def test_cockpit_spa_route_is_served(client, monkeypatch):
     monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_MODE", "restricted")
     monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_KEYS", {"secret-key"})

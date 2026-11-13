@@ -437,8 +437,10 @@ export async function pollBoardCampaign(
   return latest
 }
 
-export async function fetchCockpit() {
-  return apiFetch('/api/cockpit')
+export async function fetchCockpit(part = '') {
+  const value = String(part || '').trim()
+  const qs = value && value !== 'all' ? `?part=${encodeURIComponent(value)}` : ''
+  return apiFetch(`/api/cockpit${qs}`)
 }
 
 export async function signOffTickets(ticketIds) {

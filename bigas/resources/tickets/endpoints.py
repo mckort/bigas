@@ -611,9 +611,25 @@ def project_release_mark_released(project_key: str, release_id: str):
 @tickets_bp.route("/api/cockpit", methods=["GET"])
 @require_chat_auth
 def cockpit():
-    """Start-page read model: what needs you, what the AI is doing, what can ship."""
+    """Start-page read model: what needs you, what the AI is doing, what can ship.
+
+    ``part=shell`` skips the board scan and the git compare so the page can
+    paint This week, Ship, and AI working. ``part=needs`` (and the default)
+    is the full model, including Needs you.
+    """
     from bigas.cockpit import load_cockpit
 
+    part = (request.args.get("part") or "all").strip().lower()
+    if part not in {"all", "shell", "needs"}:
+        return jsonify({"error": "part must be all, shell, or needs"}), 400
+    if part == "shell":
+        return jsonify(
+            load_cockpit(
+                g.chat_user["uid"],
+                include_tickets=False,
+                include_freshness=False,
+            )
+        )
     return jsonify(load_cockpit(g.chat_user["uid"]))
 
 

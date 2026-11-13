@@ -23,6 +23,7 @@ Ship
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -366,6 +367,7 @@ def _ship_rows(
     deploy_items: Dict[str, List[Dict[str, Any]]],
     release_modes: Optional[Dict[str, str]] = None,
     deploy_freshness: Optional[Dict[str, Dict[str, Any]]] = None,
+    tickets_loaded: bool = True,
 ) -> List[Dict[str, Any]]:
     """One row per deploy target.
 
@@ -480,19 +482,24 @@ def _ship_rows(
         release_error = releases is None
         release = None if release_error else _default_release(releases)
         version = (release or {}).get("name") or ""
-        cut = [
-            t
-            for t in tickets_by_project.get(key, [])
-            if version
-            and str(t.get("fix_version") or "").lstrip("vV") == version.lstrip("vV")
-            and is_in_release_cut(t.get("status") or "", project_key=key)
-        ]
         release_mode = modes.get(key, "production")
         if release_mode == "development":
             commands = [{"label": "Deploy", "prompt": f"deploy {key} to production"}]
         else:
             commands = [{"label": "Prepare deploy", "prompt": f"prepare deploy {key} {version}".strip()}]
-        cut_pending = _pending_from_tickets(cut) if release_mode != "development" and cut else None
+        # A shell response has not read the board yet, so a cut of 0 would be a lie.
+        cut_count: Optional[int] = None
+        cut_pending = None
+        if tickets_loaded:
+            cut = [
+                t
+                for t in tickets_by_project.get(key, [])
+                if version
+                and str(t.get("fix_version") or "").lstrip("vV") == version.lstrip("vV")
+                and is_in_release_cut(t.get("status") or "", project_key=key)
+            ]
+            cut_count = len(cut)
+            cut_pending = _pending_from_tickets(cut) if release_mode != "development" and cut else None
         rows.append(
             _with_deploy_cue(
                 {
@@ -501,12 +508,12 @@ def _ship_rows(
                     "mode": "versioned",
                     "release_mode": release_mode,
                     "version": version,
-                    "cut_count": len(cut),
+                    "cut_count": cut_count,
                     "release_error": release_error,
                     "commands": commands,
                     **_state(key),
                 },
-                cut_count=len(cut),
+                cut_count=cut_count,
                 pending=cut_pending,
             )
         )
@@ -594,12 +601,22 @@ def build_cockpit(
     now: Optional[datetime] = None,
     release_modes: Optional[Dict[str, str]] = None,
     deploy_freshness: Optional[Dict[str, Dict[str, Any]]] = None,
+    tickets_loaded: bool = True,
 ) -> Dict[str, Any]:
-    """Assemble the cockpit payload from already-loaded data (pure function)."""
+    """Assemble the cockpit payload from already-loaded data (pure function).
+
+    ``tickets_loaded`` false is the fast shell: ship, week releases, and running
+    pipelines, with Needs you left unset so the page can paint before the board
+    scan. Counts for that section stay null rather than zero.
+    """
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    ticket_items = _ticket_items(boards, tickets_by_board)
+    ticket_items = _ticket_items(boards, tickets_by_board) if tickets_loaded else {
+        "needs": [],
+        "working": [],
+        "signoff": [],
+    }
     deploy_items = _deploy_items(threads)
     # Deploy confirms first (they hold maintenance windows), then oldest cards.
     needs = deploy_items["needs"] + _sort_by_since(ticket_items["needs"], newest_first=False)
@@ -615,21 +632,35 @@ def build_cockpit(
         deploy_items=deploy_items,
         release_modes=release_modes,
         deploy_freshness=deploy_freshness,
+        tickets_loaded=tickets_loaded,
     )
     signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
+    week = _week_stats(boards, tickets_by_board, releases_by_project or {}, now)
+    if not tickets_loaded:
+        week = {**week, "shipped": None, "shipped_by_project": None}
+        needs_out = None
+        signoff_out = None
+        needs_count = None
+        signoff_count = None
+    else:
+        needs_out = needs
+        signoff_out = signoff
+        needs_count = len(needs)
+        signoff_count = len(signoff)
     return {
-        "needs": needs,
+        "partial": not tickets_loaded,
+        "needs": needs_out,
         "working": working,
         "stuck": stuck,
-        "signoff": signoff,
+        "signoff": signoff_out,
         "ship": ship,
         "ship_steps": list(SHIP_STEPS),
-        "week": _week_stats(boards, tickets_by_board, releases_by_project or {}, now),
+        "week": week,
         "counts": {
-            "needs": len(needs),
+            "needs": needs_count,
             "working": len(working),
             "stuck": len(stuck),
-            "signoff": len(signoff),
+            "signoff": signoff_count,
         },
     }
 
@@ -687,8 +718,46 @@ def close_signoff(user_id: str, ticket_ids: List[str]) -> Dict[str, Any]:
     return {"closed": closed, "skipped": skipped}
 
 
-def load_cockpit(user_id: str) -> Dict[str, Any]:
-    """Load boards, tickets, devops threads and releases for one user."""
+def _load_board_tickets(service, boards: List[Dict[str, Any]], user_id: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Tickets for every project board. Several boards are read at once."""
+    tickets_by_board: Dict[str, List[Dict[str, Any]]] = {}
+    board_ids = [
+        board.get("board_id") or ""
+        for board in boards
+        if (board.get("project_key") or "").strip()
+    ]
+
+    def _one(board_id: str):
+        try:
+            return board_id, service.list_tickets(board_id, user_id=user_id)
+        except Exception:
+            logger.warning("Cockpit could not list tickets for board %s", board_id, exc_info=True)
+            return board_id, []
+
+    if len(board_ids) <= 1:
+        for board_id in board_ids:
+            loaded_id, tickets = _one(board_id)
+            tickets_by_board[loaded_id] = tickets
+        return tickets_by_board
+
+    with ThreadPoolExecutor(max_workers=min(8, len(board_ids))) as pool:
+        for loaded_id, tickets in pool.map(_one, board_ids):
+            tickets_by_board[loaded_id] = tickets
+    return tickets_by_board
+
+
+def load_cockpit(
+    user_id: str,
+    *,
+    include_tickets: bool = True,
+    include_freshness: bool = True,
+) -> Dict[str, Any]:
+    """Load boards, tickets, devops threads and releases for one user.
+
+    The shell (``include_tickets`` and ``include_freshness`` false) skips the
+    board scan and the git compare so This week, Ship, and AI working can
+    render before Needs you.
+    """
     from bigas.chat.db import get_chat_store
     from bigas.tickets.releases import list_releases
     from bigas.tickets.service import TicketService
@@ -700,15 +769,12 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
         logger.warning("Cockpit could not list boards", exc_info=True)
         boards = []
     tickets_by_board: Dict[str, List[Dict[str, Any]]] = {}
-    for board in boards:
-        if not (board.get("project_key") or "").strip():
-            continue
-        board_id = board.get("board_id") or ""
-        try:
-            tickets_by_board[board_id] = service.list_tickets(board_id, user_id=user_id)
-        except Exception:
-            logger.warning("Cockpit could not list tickets for board %s", board_id, exc_info=True)
-            tickets_by_board[board_id] = []
+    ticket_pool = None
+    ticket_future = None
+    if include_tickets:
+        # Overlap the board scan with releases and the git compare below.
+        ticket_pool = ThreadPoolExecutor(max_workers=1)
+        ticket_future = ticket_pool.submit(_load_board_tickets, service, boards, user_id)
 
     try:
         threads = get_chat_store().list_threads(user_id)
@@ -771,20 +837,30 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
             release_prefixes[key] = (state.get("release_prefix") or "").strip()
 
     freshness: Dict[str, Dict[str, Any]] = {}
-    try:
-        from bigas.cockpit_freshness import lookup_deploy_freshness
+    if include_freshness:
+        try:
+            from bigas.cockpit_freshness import lookup_deploy_freshness
 
-        freshness = lookup_deploy_freshness(
-            _freshness_specs(
-                projects,
-                command_groups,
-                release_modes,
-                release_prefixes,
-                releases_by_project,
+            freshness = lookup_deploy_freshness(
+                _freshness_specs(
+                    projects,
+                    command_groups,
+                    release_modes,
+                    release_prefixes,
+                    releases_by_project,
+                )
             )
-        )
-    except Exception:
-        logger.warning("Cockpit could not check for undeployed changes", exc_info=True)
+        except Exception:
+            logger.warning("Cockpit could not check for undeployed changes", exc_info=True)
+
+    if ticket_future is not None:
+        try:
+            tickets_by_board = ticket_future.result()
+        except Exception:
+            logger.warning("Cockpit could not list tickets", exc_info=True)
+            tickets_by_board = {}
+        finally:
+            ticket_pool.shutdown(wait=False)
 
     return build_cockpit(
         boards=boards,
@@ -795,6 +871,7 @@ def load_cockpit(user_id: str) -> Dict[str, Any]:
         releases_by_project=releases_by_project,
         release_modes=release_modes,
         deploy_freshness=freshness,
+        tickets_loaded=include_tickets,
     )
 
 
