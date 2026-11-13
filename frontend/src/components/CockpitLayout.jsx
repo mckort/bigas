@@ -41,7 +41,7 @@ const TABS = [
 
 // Phone: one column. From sm, add columns as the viewport grows so a card stays about 18rem and the row uses the screen.
 const CARD_GRID =
-  'grid gap-3 grid-cols-1 sm:[grid-template-columns:repeat(auto-fill,minmax(min(100%,18rem),1fr))]'
+  'grid gap-3 grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))]'
 
 function greeting() {
   const h = new Date().getHours()
@@ -1003,7 +1003,7 @@ function WeekTiles({ week, money, moneyError, onOpen }) {
   }
   return (
     <div className="mb-4">
-      <div className="grid gap-2 grid-cols-2 md:grid-cols-3 lg:[grid-template-columns:repeat(auto-fill,minmax(min(100%,12.5rem),1fr))]">{tiles}</div>
+      <div className="grid gap-2 grid-cols-2 md:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(min(100%,12.5rem),1fr))]">{tiles}</div>
       {!money && !moneyError && <p className="text-[11px] text-muted mt-2">Loading money from Accounted and usage sources…</p>}
       {moneyError && <p className="text-[11px] text-red-600 mt-2">{moneyError}</p>}
       {money && !money.books?.configured && !money.ai?.configured && (
