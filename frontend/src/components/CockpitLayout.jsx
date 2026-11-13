@@ -33,7 +33,7 @@ function isSystemComment(comment) {
 }
 
 function commentText(comment) {
-  return (comment?.body || '').replace(SYSTEM_COMMENT_MARKER, '').trim()
+  return (comment?.body || '').replaceAll(SYSTEM_COMMENT_MARKER, '').trim()
 }
 
 const KIND_STYLE = {
@@ -1230,7 +1230,10 @@ function TicketDetail({ item, comment, setComment, reloadKey = 0 }) {
     }
     fetchTicket(ticketId)
       .then((res) => {
-        if (!cancelled) setFull(res.ticket)
+        if (!cancelled) {
+          setFull(res.ticket)
+          setError('')
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err.message || 'Could not load the card')
@@ -1284,8 +1287,8 @@ function TicketDetail({ item, comment, setComment, reloadKey = 0 }) {
         <div>
           <h4 className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">Saved for the AI</h4>
           <div className="space-y-2">
-            {human.map((entry) => (
-              <p key={entry.id} className="text-sm bg-surface rounded-lg p-3 whitespace-pre-wrap break-words">
+            {human.map((entry, idx) => (
+              <p key={entry.id || idx} className="text-sm bg-surface rounded-lg p-3 whitespace-pre-wrap break-words">
                 {commentText(entry)}
               </p>
             ))}
@@ -1852,7 +1855,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         {comment.trim() && (
           <button
             type="button"
-            disabled={savingComment}
+            disabled={busy || savingComment}
             onClick={() => saveComment(item)}
             className="btn-secondary text-sm px-3"
           >
@@ -1910,6 +1913,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     )
   } else if (drawer?.type === 'working') {
     const { item } = drawer
+    const busy = busyIds.has(item.id)
     drawerTitle = (
       <span>
         <ProjectTag project={projectOf(item)} label={item.ticket.key} />
@@ -1942,7 +1946,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         {comment.trim() && (
           <button
             type="button"
-            disabled={savingComment}
+            disabled={busy || savingComment}
             onClick={() => saveComment(item)}
             className="btn-secondary text-sm px-3"
           >
