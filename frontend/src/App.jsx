@@ -104,7 +104,7 @@ export default function App() {
   }, [user, locationPath])
 
   useEffect(() => {
-    if (user && isLoginPath(locationPath)) {
+    if (user && (isLoginPath(locationPath) || locationPath === '/')) {
       syncPath('/cockpit', { replace: true })
       setView('cockpit')
     }
