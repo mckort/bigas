@@ -807,7 +807,7 @@ function ReleasesBreakdown({ week, onOpenRelease }) {
               className="w-full text-left py-1.5 px-1 -mx-1 rounded flex items-baseline gap-2 hover:bg-surface"
             >
               <ProjectTag project={item.project_key} />
-              <span className="text-sm font-medium">{item.name || 'Release'}</span>
+              <span className="text-sm font-medium truncate min-w-0 flex-1">{item.name || 'Release'}</span>
               {count != null && (
                 <span className="text-xs text-muted flex-none">
                   {count} {count === 1 ? 'card' : 'cards'}
@@ -829,7 +829,7 @@ function ReleaseIssues({ release, onOpenCard }) {
   return (
     <div>
       <p className="text-sm text-muted mb-3">
-        {`${issues.length} ${issues.length === 1 ? 'card' : 'cards'} tagged ${release.name}.`}
+        {`${issues.length} ${issues.length === 1 ? 'card' : 'cards'} tagged ${release?.name || 'this version'}.`}
       </p>
       <ul>
         {issues.map((card) => (
@@ -2147,7 +2147,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       ai: 'AI and cloud spend, 7 days',
     }
     const release =
-      drawer.kind === 'releases' && drawer.releaseName
+      drawer.kind === 'releases' && (drawer.releaseName || drawer.release)
         ? (data?.week?.releases || []).find(
             (item) =>
               item &&
