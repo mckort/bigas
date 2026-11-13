@@ -654,9 +654,9 @@ function Tile({ label, value, sub, tone = '', onClick }) {
   }`
   const body = (
     <>
-      <p className="text-[11px] text-muted truncate">{label}</p>
-      <p className={`text-lg font-semibold leading-tight truncate ${tone}`}>{value}</p>
-      {sub && <p className="text-[11px] text-muted truncate">{sub}</p>}
+      <span className="block text-[11px] text-muted truncate">{label}</span>
+      <span className={`block text-lg font-semibold leading-tight truncate ${tone}`}>{value}</span>
+      {sub && <span className="block text-[11px] text-muted truncate">{sub}</span>}
     </>
   )
   if (!onClick) {
@@ -823,7 +823,7 @@ function SpendBreakdown({ money }) {
       )}
       <BreakdownSection title="Cloud invoice">
         {invoice.amount == null ? (
-          <p className="text-sm text-muted">Cloud invoice could not be read.</p>
+          <p className="text-sm text-muted">Cloud billing is not set up.</p>
         ) : (
           <>
             <p className="text-sm mb-2">{formatMoney(invoice.amount, 'USD')} this week, not included above.</p>
@@ -1818,6 +1818,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         money={money}
         onOpenCard={(card) => {
           if (!card?.key) return
+          closeDrawer()
           onSwitchView('board', `/board?ticket=${encodeURIComponent(card.key)}`)
         }}
       />
