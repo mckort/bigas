@@ -451,6 +451,78 @@ def test_ship_card_lists_merged_tickets_from_undeployed_commits():
     assert ship["GPW-PROD"]["pending_count"] == 3
 
 
+def test_pending_keeps_unticketed_commits_and_the_upstream_count():
+    from bigas.cockpit import _pending_merged_not_deployed
+
+    items, count = _pending_merged_not_deployed(
+        project_key="VFA",
+        fresh={
+            "pending": [
+                {
+                    "key": "",
+                    "title": "VFA-2: Merged, waiting for deploy",
+                    "url": "https://github.com/commit/vfa-2",
+                },
+                {
+                    "key": "",
+                    "title": "chore: bump the lockfile",
+                    "url": "https://github.com/commit/chore",
+                },
+                {
+                    "key": "",
+                    "title": "VFA-2: same ticket again",
+                    "url": "https://github.com/commit/vfa-2-again",
+                },
+                {
+                    "key": "",
+                    "title": "hotfix without a ticket",
+                    "url": "https://github.com/commit/hotfix",
+                },
+            ],
+            "pending_count": 28,
+        },
+        tickets=[
+            "not-a-ticket",
+            {
+                "key": "VFA-2",
+                "title": "VFA-2: Merged, waiting for deploy",
+                "url": "https://board/VFA-2",
+            },
+        ],
+    )
+    assert items == [
+        {"key": "VFA-2", "title": "Merged, waiting for deploy", "url": "https://board/VFA-2"},
+        {
+            "key": "",
+            "title": "chore: bump the lockfile",
+            "url": "https://github.com/commit/chore",
+        },
+        {
+            "key": "",
+            "title": "hotfix without a ticket",
+            "url": "https://github.com/commit/hotfix",
+        },
+    ]
+    assert count == 28
+
+    expanded, expanded_count = _pending_merged_not_deployed(
+        project_key="VFA",
+        fresh={
+            "pending": [
+                {
+                    "key": "",
+                    "title": "Release 0.2.4 (VFA-2, VFA-9)",
+                    "url": "https://github.com/commit/release",
+                }
+            ],
+            "pending_count": 1,
+        },
+        tickets=[],
+    )
+    assert [item["key"] for item in expanded] == ["VFA-2", "VFA-9"]
+    assert expanded_count == 2
+
+
 def test_pending_from_compare_skips_blank_subjects_and_keeps_the_full_count():
     from bigas.cockpit_freshness import pending_from_compare
 

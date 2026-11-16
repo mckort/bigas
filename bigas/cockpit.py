@@ -512,7 +512,8 @@ def _pending_merged_not_deployed(
     found in those subjects are resolved to board cards so Next deploy lists
     merged work, not every Final approval card on the open version (those may
     already be in production under Sign-off). Commits with no ticket key still
-    appear as commit rows.
+    appear as commit rows. The count stays the git freshness total when that
+    is larger than the rows returned.
     """
     commit_items, commit_count = _pending_from_freshness(fresh)
     if not commit_items and commit_count <= 0:
@@ -520,42 +521,50 @@ def _pending_merged_not_deployed(
 
     by_key: Dict[str, Dict[str, Any]] = {}
     for ticket in tickets:
+        if not isinstance(ticket, dict):
+            continue
         key = str(ticket.get("key") or "").strip().upper()
         if key and key not in by_key:
             by_key[key] = ticket
 
-    ordered_keys: List[str] = []
+    items: List[Dict[str, str]] = []
     seen_keys = set()
     for item in commit_items:
+        if len(items) >= _PENDING_CAP:
+            break
         blob = f"{item.get('key') or ''} {item.get('title') or ''}"
-        for key in _ticket_keys_for_project(project_key, blob):
+        keys = _ticket_keys_for_project(project_key, blob)
+        if not keys:
+            items.append(
+                {
+                    "key": item.get("key") or "",
+                    "title": item.get("title") or "",
+                    "url": item.get("url") or "",
+                }
+            )
+            continue
+        for key in keys:
+            if len(items) >= _PENDING_CAP:
+                break
             if key in seen_keys:
                 continue
             seen_keys.add(key)
-            ordered_keys.append(key)
-
-    if not ordered_keys:
-        return commit_items, commit_count
-
-    items: List[Dict[str, str]] = []
-    for key in ordered_keys:
-        if len(items) >= _PENDING_CAP:
-            break
-        ticket = by_key.get(key)
-        if ticket:
-            title = str(ticket.get("title") or ticket.get("summary") or "").strip()
-            if title.lower().startswith(key.lower()):
-                title = title[len(key) :].lstrip(" :—-").strip()
-            items.append(
-                {
-                    "key": key,
-                    "title": title,
-                    "url": str(ticket.get("url") or "").strip(),
-                }
-            )
-        else:
-            items.append({"key": key, "title": "", "url": ""})
-    return items, max(len(ordered_keys), len(items))
+            card = by_key.get(key)
+            if card:
+                title = str(card.get("title") or card.get("summary") or "").strip()
+                if title.lower().startswith(key.lower()):
+                    title = title[len(key) :].lstrip(" :—-").strip()
+                items.append(
+                    {
+                        "key": key,
+                        "title": title,
+                        "url": str(card.get("url") or "").strip(),
+                    }
+                )
+            else:
+                items.append({"key": key, "title": "", "url": ""})
+    count = commit_count if commit_count > len(items) else len(items)
+    return items, count
 
 
 def _ship_rows(
