@@ -169,7 +169,7 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
     assert ship["VFA"]["commands"][0]["prompt"] == "prepare deploy VFA 0.2.4"
     assert ship["VFA"]["deploy_ready"] is True
     assert ship["VFA"]["latest_deploy"]["version"] == "v0.2.3"
-    # Final approval / Done are already in prod — Next deploy stays empty without git ahead.
+    # No undeployed commits → Final approval/Done stay under Sign-off, not Next deploy.
     assert ship["VFA"]["pending"] == []
     assert ship["VFA"]["pending_count"] == 0
     assert ship["GPW-PROD"]["deploy_ready"] is False
@@ -177,7 +177,7 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
     assert ship["GPW-PROD"]["pending_count"] == 0
 
 
-def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
+def test_ship_card_lists_merged_tickets_from_undeployed_commits():
     payload = build_cockpit(
         boards=[
             BOARD,
@@ -190,15 +190,22 @@ def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
                     "1",
                     "Done",
                     fix_version="0.2.4",
-                    title="In the cut",
+                    title="Already signed off",
                     url="https://board/VFA-1",
                 ),
                 _ticket(
                     "2",
                     "Final approval (manual)",
                     fix_version="0.2.4",
-                    title="Already in prod",
+                    title="Merged, waiting for deploy",
                     url="https://board/VFA-2",
+                ),
+                _ticket(
+                    "325",
+                    "Final approval (manual)",
+                    fix_version="0.2.4",
+                    title="Wrongly still on this version",
+                    url="https://board/VFA-325",
                 ),
                 _ticket("9", "To Do", fix_version="0.2.4", title="Still open"),
             ],
@@ -233,11 +240,16 @@ def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
                 "pending": [
                     {
                         "key": "",
-                        "title": "VFA-9: still waiting on main",
-                        "url": "https://github.com/commit/vfa",
-                    }
+                        "title": "Release 0.2.4: merge staging (VFA-2, VFA-9)",
+                        "url": "https://github.com/commit/vfa-release",
+                    },
+                    {
+                        "key": "",
+                        "title": "VFA-2: Merged, waiting for deploy",
+                        "url": "https://github.com/commit/vfa-2",
+                    },
                 ],
-                "pending_count": 1,
+                "pending_count": 2,
             },
             "BIG": {
                 "ahead": True,
@@ -265,16 +277,16 @@ def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
         },
     )
     ship = {row["key"]: row for row in payload["ship"]}
-    assert ship["VFA"]["cut_count"] == 2
+    assert ship["VFA"]["cut_count"] == 3
+    # Only keys present in undeployed commits — not VFA-1 / VFA-325 left on the version.
     assert ship["VFA"]["pending"] == [
-        {
-            "key": "",
-            "title": "VFA-9: still waiting on main",
-            "url": "https://github.com/commit/vfa",
-        }
+        {"key": "VFA-2", "title": "Merged, waiting for deploy", "url": "https://board/VFA-2"},
+        {"key": "VFA-9", "title": "Still open", "url": ""},
     ]
-    assert ship["VFA"]["pending_count"] == 1
-    assert ship["BIG"]["pending"][0]["title"] == "BIG-171: Do not wait on the review job"
+    assert ship["VFA"]["pending_count"] == 2
+    assert ship["BIG"]["pending"] == [
+        {"key": "BIG-171", "title": "", "url": ""},
+    ]
     assert ship["BIG"]["pending_count"] == 1
     assert ship["AURA"]["cut_count"] == 0
     assert ship["AURA"]["pending"][0]["title"] == "Fix the lesson player"
