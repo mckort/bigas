@@ -508,7 +508,7 @@ function stagingPrimaryCommand(row) {
   if (!commands.length) return null
   const wanted = String(row?.primary_prompt || '').trim()
   if (wanted) {
-    const match = commands.find((c) => c.prompt === wanted)
+    const match = commands.find((c) => String(c?.prompt || '').trim() === wanted)
     if (match) return match
   }
   // Fallback when an older API omits primary_prompt: prefer Update once the
