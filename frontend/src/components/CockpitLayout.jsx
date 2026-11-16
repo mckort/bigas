@@ -503,9 +503,26 @@ function PendingChanges({ items, count }) {
   )
 }
 
+function stagingPrimaryCommand(row) {
+  const commands = Array.isArray(row?.commands) ? row.commands : []
+  if (!commands.length) return null
+  const wanted = String(row?.primary_prompt || '').trim()
+  if (wanted) {
+    const match = commands.find((c) => String(c?.prompt || '').trim() === wanted)
+    if (match) return match
+  }
+  // Fallback when an older API omits primary_prompt: prefer Update once the
+  // stack is live, otherwise Prepare staging.
+  if (row?.staging_live) {
+    const update = commands.find((c) => /update staging/i.test(c.prompt || ''))
+    if (update) return update
+  }
+  return commands.find((c) => /prepare staging/i.test(c.prompt || '')) || commands[0]
+}
+
 function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onReleaseMode }) {
   const isDev = row.release_mode === 'development'
-  const primary = row.mode === 'versioned' ? row.commands[0] : row.commands.find((c) => /prepare staging/i.test(c.prompt))
+  const primary = row.mode === 'versioned' ? row.commands[0] : stagingPrimaryCommand(row)
   const others = row.commands.filter((c) => c !== primary)
   const deployClass = row.deploy_ready ? 'btn-accent' : 'btn-secondary'
   const missingVersion = row.mode === 'versioned' && !isDev && !row.version

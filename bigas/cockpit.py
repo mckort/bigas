@@ -23,9 +23,10 @@ Ship
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from bigas.tickets.constants import (
     AI_TRIGGER_STATUSES,
@@ -283,6 +284,154 @@ def ship_deploy_ready(
     return ahead is True
 
 
+def staging_primary_prompt(
+    commands: Iterable[Dict[str, Any]],
+    *,
+    stack_live: bool,
+) -> str:
+    """Prompt for the blue Ship action on a staging-rehearsal card.
+
+    Prepare staging builds the stack. Once that URL answers (including a
+    maintenance page), Update staging is the next step — same rule the
+    chat uses when it adopts a live stack without copying the database.
+    """
+    prompts = [str(cmd.get("prompt") or "") for cmd in commands if isinstance(cmd, dict)]
+    prepare = next((p for p in prompts if "prepare staging" in p.lower()), "")
+    update = next((p for p in prompts if "update staging" in p.lower()), "")
+    if stack_live and update:
+        return update
+    if prepare:
+        return prepare
+    return update or (prompts[0] if prompts else "")
+
+
+_STAGING_LIVE_TTL_SEC = 60
+# requests' timeout does not cover a hung DNS lookup. Abandon the probe so
+# /api/cockpit can return; a probe that finishes later still fills the cache.
+_STAGING_LIVE_WAIT_SEC = 4
+_staging_live_cache: Dict[str, Tuple[float, bool]] = {}
+_staging_live_lock = threading.Lock()
+
+
+def reset_staging_live_cache_for_tests() -> None:
+    with _staging_live_lock:
+        _staging_live_cache.clear()
+
+
+def _staging_live_cached(key: str, now: float) -> Optional[bool]:
+    with _staging_live_lock:
+        cached = _staging_live_cache.get(key)
+    if not cached or now - cached[0] >= _STAGING_LIVE_TTL_SEC:
+        return None
+    return bool(cached[1])
+
+
+def _remember_staging_live(key: str, checked_at: float, live: bool) -> None:
+    """Record a check unless a newer one is already stored."""
+    with _staging_live_lock:
+        current = _staging_live_cache.get(key)
+        if current is not None and current[0] > checked_at:
+            return
+        _staging_live_cache[key] = (checked_at, live)
+
+
+def staging_stack_is_live(project_key: str) -> bool:
+    """Cached reachability of one project's staging URL.
+
+    This performs the HTTP check on a cache miss. ``/api/cockpit`` uses
+    ``lookup_staging_live``, which gives up if the check is still running.
+    """
+    key = (project_key or "").strip().upper()
+    if not key:
+        return False
+    now = datetime.now(timezone.utc).timestamp()
+    cached = _staging_live_cached(key, now)
+    if cached is not None:
+        return cached
+    live = False
+    try:
+        from bigas.resources.devops.gpw_pipeline import staging_envs, staging_stack_answers
+
+        env = staging_envs().get(key)
+        if env is not None:
+            live = bool(staging_stack_answers(env))
+    except Exception:
+        logger.warning("Staging live check failed for %s", key, exc_info=True)
+        live = False
+    _remember_staging_live(key, now, live)
+    return live
+
+
+def lookup_staging_live(project_keys: Iterable[str]) -> Dict[str, bool]:
+    """``{PROJECT: live}`` for the staging ship cards.
+
+    Fresh cache hits return immediately. Misses are probed together, and a
+    check that is still running after ``_STAGING_LIVE_WAIT_SEC`` is left in
+    the background and reported false for this request. A probe that finishes
+    later updates the cache, so the next cockpit poll can highlight Update
+    staging without blocking this one.
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    keys: List[str] = []
+    seen = set()
+    for raw in project_keys:
+        key = (raw or "").strip().upper()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+    if not keys:
+        return {}
+
+    out: Dict[str, bool] = {}
+    missing: List[str] = []
+    for key in keys:
+        cached = _staging_live_cached(key, now)
+        if cached is None:
+            missing.append(key)
+        else:
+            out[key] = cached
+    if not missing:
+        return out
+
+    def _one(key: str) -> bool:
+        try:
+            return bool(staging_stack_is_live(key))
+        except Exception:
+            logger.warning("Staging live check failed for %s", key, exc_info=True)
+            return False
+
+    pool = ThreadPoolExecutor(max_workers=min(4, len(missing)))
+    try:
+        futures = {pool.submit(_one, key): key for key in missing}
+        try:
+            for future in as_completed(futures, timeout=_STAGING_LIVE_WAIT_SEC):
+                key = futures[future]
+                try:
+                    live = bool(future.result())
+                except Exception:
+                    logger.warning("Staging live check failed for %s", key, exc_info=True)
+                    live = False
+                out[key] = live
+                _remember_staging_live(key, now, live)
+        except FuturesTimeout:
+            logger.warning("Staging live check timed out; ship cards keep Prepare staging")
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    fetched_at = datetime.now(timezone.utc).timestamp()
+    for key in missing:
+        if key in out:
+            continue
+        cached = _staging_live_cached(key, fetched_at)
+        if cached is None:
+            out[key] = False
+            _remember_staging_live(key, now, False)
+        else:
+            out[key] = cached
+    return out
+
+
 def _default_release(releases: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     open_releases = [r for r in releases if not r.get("released")]
     for release in open_releases:
@@ -369,15 +518,20 @@ def _ship_rows(
     release_modes: Optional[Dict[str, str]] = None,
     deploy_freshness: Optional[Dict[str, Dict[str, Any]]] = None,
     tickets_loaded: bool = True,
+    staging_live_by_key: Optional[Dict[str, bool]] = None,
 ) -> List[Dict[str, Any]]:
     """One row per deploy target.
 
     ``release_modes`` maps project key → ``production`` (versioned releases) or
     ``development`` (deploys from the production branch). Unknown keys count
     as production, which is how every versioned row behaved before.
+
+    ``staging_live_by_key`` is the precomputed staging URL check. A missing
+    key stays false (Prepare staging). This function does no network I/O.
     """
     modes = release_modes or {}
     freshness = deploy_freshness or {}
+    staging_live = staging_live_by_key or {}
 
     def _with_deploy_cue(
         row: Dict[str, Any],
@@ -457,6 +611,8 @@ def _ship_rows(
         key = _norm_key(group.get("key"))
         if not key:
             continue
+        commands = list(group.get("commands") or [])
+        stack_live = bool(staging_live.get(key, False))
         rows.append(
             _with_deploy_cue(
                 {
@@ -466,7 +622,9 @@ def _ship_rows(
                     "release_mode": "production",
                     "version": "",
                     "cut_count": None,
-                    "commands": list(group.get("commands") or []),
+                    "commands": commands,
+                    "primary_prompt": staging_primary_prompt(commands, stack_live=stack_live),
+                    "staging_live": stack_live,
                     **_state(key),
                 },
                 cut_count=None,
@@ -673,6 +831,7 @@ def build_cockpit(
     release_modes: Optional[Dict[str, str]] = None,
     deploy_freshness: Optional[Dict[str, Dict[str, Any]]] = None,
     tickets_loaded: bool = True,
+    staging_live_by_key: Optional[Dict[str, bool]] = None,
 ) -> Dict[str, Any]:
     """Assemble the cockpit payload from already-loaded data (pure function).
 
@@ -704,6 +863,7 @@ def build_cockpit(
         release_modes=release_modes,
         deploy_freshness=deploy_freshness,
         tickets_loaded=tickets_loaded,
+        staging_live_by_key=staging_live_by_key,
     )
     signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
     week = _week_stats(boards, tickets_by_board, releases_by_project or {}, now)
@@ -834,8 +994,8 @@ def load_cockpit(
     """Load boards, tickets, devops threads and releases for one user.
 
     The shell (``include_tickets`` and ``include_freshness`` false) skips the
-    board scan and the git compare so This week, Ship, and AI working can
-    render before Needs you.
+    board scan, the git compare, and the staging reachability check so This
+    week, Ship, and AI working can render before Needs you.
     """
     from bigas.chat.db import get_chat_store
     from bigas.tickets.releases import list_releases
@@ -916,6 +1076,18 @@ def load_cockpit(
             release_prefixes[key] = (state.get("release_prefix") or "").strip()
 
     freshness: Dict[str, Dict[str, Any]] = {}
+    staging_live: Dict[str, bool] = {}
+    # Probe alongside the git compare, not inside build_cockpit. A slow staging
+    # URL then cannot hold the pure assembly, or the fast shell, on the request
+    # thread. The join is instant when the cache is warm or the compare is slower.
+    staging_pool: Optional[ThreadPoolExecutor] = None
+    staging_future = None
+    if include_freshness and command_groups:
+        staging_pool = ThreadPoolExecutor(max_workers=1)
+        staging_future = staging_pool.submit(
+            lookup_staging_live,
+            [(group.get("key") or "") for group in command_groups],
+        )
     if include_freshness:
         try:
             from bigas.cockpit_freshness import lookup_deploy_freshness
@@ -931,6 +1103,18 @@ def load_cockpit(
             )
         except Exception:
             logger.warning("Cockpit could not check for undeployed changes", exc_info=True)
+    if staging_future is not None and staging_pool is not None:
+        pool = staging_pool
+        try:
+            loaded = staging_future.result(timeout=_STAGING_LIVE_WAIT_SEC + 1)
+            if isinstance(loaded, dict):
+                staging_live = {str(key): bool(value) for key, value in loaded.items()}
+        except FuturesTimeout:
+            logger.warning("Staging live check timed out; ship cards keep Prepare staging")
+        except Exception:
+            logger.warning("Cockpit could not check staging reachability", exc_info=True)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     if ticket_future is not None:
         try:
@@ -951,6 +1135,7 @@ def load_cockpit(
         release_modes=release_modes,
         deploy_freshness=freshness,
         tickets_loaded=include_tickets,
+        staging_live_by_key=staging_live,
     )
 
 
