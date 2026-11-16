@@ -225,6 +225,114 @@ def test_ship_card_highlights_update_staging_when_stack_is_live():
     assert live_row["staging_live"] is True
 
 
+def test_build_cockpit_does_not_probe_staging_reachability(monkeypatch):
+    def boom(key):
+        raise AssertionError(key)
+
+    monkeypatch.setattr("bigas.cockpit.staging_stack_is_live", boom)
+    payload = build_cockpit(
+        boards=[],
+        tickets_by_board={},
+        threads=[],
+        command_groups=[
+            {
+                "key": "GPW-PROD",
+                "name": "Green Promo Wear",
+                "commands": [
+                    {"label": "Prepare staging", "prompt": "prepare staging GPW-PROD"},
+                    {"label": "Update staging", "prompt": "update staging GPW-PROD"},
+                ],
+            }
+        ],
+    )
+    row = payload["ship"][0]
+    assert row["staging_live"] is False
+    assert row["primary_prompt"] == "prepare staging GPW-PROD"
+
+
+_STAGING_COMMANDS = [
+    {"label": "Prepare staging", "prompt": "prepare staging GPW-PROD"},
+    {"label": "Update staging", "prompt": "update staging GPW-PROD"},
+]
+
+
+def _stub_gpw_cockpit(monkeypatch, *, probe):
+    class _Service:
+        def list_boards(self, user_id):
+            return [{"board_id": "b1", "project_key": "GPW-PROD", "name": "GPW"}]
+
+        def list_tickets(self, *args, **kwargs):
+            return []
+
+    monkeypatch.setattr("bigas.tickets.service.TicketService", lambda: _Service())
+    monkeypatch.setattr(
+        "bigas.chat.db.get_chat_store",
+        lambda: type("Store", (), {"list_threads": lambda self, user_id: []})(),
+    )
+    monkeypatch.setattr("bigas.resources.devops.prepare.list_shortcut_projects", lambda: [])
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.list_gpw_command_shortcuts",
+        lambda: [{"key": "GPW-PROD", "name": "Green Promo Wear", "commands": _STAGING_COMMANDS}],
+    )
+    monkeypatch.setattr("bigas.cockpit_freshness.lookup_deploy_freshness", lambda specs: {})
+    monkeypatch.setattr("bigas.cockpit.staging_stack_is_live", probe)
+
+
+def test_load_cockpit_highlights_update_from_a_prefetched_staging_check(monkeypatch):
+    _stub_gpw_cockpit(monkeypatch, probe=lambda key: True)
+
+    from bigas.cockpit import load_cockpit
+
+    row = load_cockpit("user-1")["ship"][0]
+    assert row["staging_live"] is True
+    assert row["primary_prompt"] == "update staging GPW-PROD"
+
+
+def test_load_cockpit_shell_does_not_probe_staging(monkeypatch):
+    calls = []
+
+    def probe(key):
+        calls.append(key)
+        return True
+
+    _stub_gpw_cockpit(monkeypatch, probe=probe)
+
+    from bigas.cockpit import load_cockpit
+
+    row = load_cockpit("user-1", include_tickets=False, include_freshness=False)["ship"][0]
+    assert calls == []
+    assert row["staging_live"] is False
+    assert row["primary_prompt"] == "prepare staging GPW-PROD"
+
+
+def test_lookup_staging_live_does_not_wait_out_a_hung_probe(monkeypatch):
+    from bigas.cockpit import lookup_staging_live
+
+    reset_staging_live_cache_for_tests()
+    monkeypatch.setattr("bigas.cockpit._STAGING_LIVE_WAIT_SEC", 1.0)
+    started = threading.Event()
+    release = threading.Event()
+
+    def probe(key):
+        started.set()
+        release.wait(20)
+        return True
+
+    monkeypatch.setattr("bigas.cockpit.staging_stack_is_live", probe)
+    try:
+        t0 = time.monotonic()
+        out = lookup_staging_live(["GPW-PROD"])
+        elapsed = time.monotonic() - t0
+    finally:
+        release.set()
+    assert elapsed < 4, elapsed
+    assert started.is_set()
+    assert out == {"GPW-PROD": False}
+    # The abandoned check must not be started again while the negative cache is fresh.
+    assert lookup_staging_live(["gpw-prod"]) == {"GPW-PROD": False}
+    reset_staging_live_cache_for_tests()
+
+
 def test_ship_card_names_the_cut_or_the_undeployed_commits():
     payload = build_cockpit(
         boards=[
