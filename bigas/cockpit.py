@@ -283,6 +283,58 @@ def ship_deploy_ready(
     return ahead is True
 
 
+def staging_primary_prompt(
+    commands: Iterable[Dict[str, Any]],
+    *,
+    stack_live: bool,
+) -> str:
+    """Prompt for the blue Ship action on a staging-rehearsal card.
+
+    Prepare staging builds the stack. Once that URL answers (including a
+    maintenance page), Update staging is the next step — same rule the
+    chat uses when it adopts a live stack without copying the database.
+    """
+    prompts = [str(cmd.get("prompt") or "") for cmd in commands if isinstance(cmd, dict)]
+    prepare = next((p for p in prompts if "prepare staging" in p.lower()), "")
+    update = next((p for p in prompts if "update staging" in p.lower()), "")
+    if stack_live and update:
+        return update
+    if prepare:
+        return prepare
+    return update or (prompts[0] if prompts else "")
+
+
+_STAGING_LIVE_TTL_SEC = 60
+_staging_live_cache: Dict[str, tuple] = {}
+
+
+def reset_staging_live_cache_for_tests() -> None:
+    _staging_live_cache.clear()
+
+
+def staging_stack_is_live(project_key: str) -> bool:
+    """Cached reachability of the project's staging URL."""
+    key = (project_key or "").strip().upper()
+    if not key:
+        return False
+    now = datetime.now(timezone.utc).timestamp()
+    cached = _staging_live_cache.get(key)
+    if cached and now - cached[0] < _STAGING_LIVE_TTL_SEC:
+        return bool(cached[1])
+    live = False
+    try:
+        from bigas.resources.devops.gpw_pipeline import staging_envs, staging_stack_answers
+
+        env = staging_envs().get(key)
+        if env is not None:
+            live = bool(staging_stack_answers(env))
+    except Exception:
+        logger.warning("Staging live check failed for %s", key, exc_info=True)
+        live = False
+    _staging_live_cache[key] = (now, live)
+    return live
+
+
 def _default_release(releases: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     open_releases = [r for r in releases if not r.get("released")]
     for release in open_releases:
@@ -369,15 +421,20 @@ def _ship_rows(
     release_modes: Optional[Dict[str, str]] = None,
     deploy_freshness: Optional[Dict[str, Dict[str, Any]]] = None,
     tickets_loaded: bool = True,
+    staging_live_by_key: Optional[Dict[str, bool]] = None,
 ) -> List[Dict[str, Any]]:
     """One row per deploy target.
 
     ``release_modes`` maps project key → ``production`` (versioned releases) or
     ``development`` (deploys from the production branch). Unknown keys count
     as production, which is how every versioned row behaved before.
+
+    ``staging_live_by_key`` overrides the staging URL check (tests). When
+    omitted, each staging row probes ``staging_stack_is_live``.
     """
     modes = release_modes or {}
     freshness = deploy_freshness or {}
+    staging_live = staging_live_by_key or {}
 
     def _with_deploy_cue(
         row: Dict[str, Any],
@@ -457,6 +514,11 @@ def _ship_rows(
         key = _norm_key(group.get("key"))
         if not key:
             continue
+        commands = list(group.get("commands") or [])
+        if key in staging_live:
+            stack_live = bool(staging_live[key])
+        else:
+            stack_live = staging_stack_is_live(key)
         rows.append(
             _with_deploy_cue(
                 {
@@ -466,7 +528,9 @@ def _ship_rows(
                     "release_mode": "production",
                     "version": "",
                     "cut_count": None,
-                    "commands": list(group.get("commands") or []),
+                    "commands": commands,
+                    "primary_prompt": staging_primary_prompt(commands, stack_live=stack_live),
+                    "staging_live": stack_live,
                     **_state(key),
                 },
                 cut_count=None,
@@ -673,6 +737,7 @@ def build_cockpit(
     release_modes: Optional[Dict[str, str]] = None,
     deploy_freshness: Optional[Dict[str, Dict[str, Any]]] = None,
     tickets_loaded: bool = True,
+    staging_live_by_key: Optional[Dict[str, bool]] = None,
 ) -> Dict[str, Any]:
     """Assemble the cockpit payload from already-loaded data (pure function).
 
@@ -704,6 +769,7 @@ def build_cockpit(
         release_modes=release_modes,
         deploy_freshness=deploy_freshness,
         tickets_loaded=tickets_loaded,
+        staging_live_by_key=staging_live_by_key,
     )
     signoff = _sort_by_since(ticket_items["signoff"], newest_first=True)
     week = _week_stats(boards, tickets_by_board, releases_by_project or {}, now)

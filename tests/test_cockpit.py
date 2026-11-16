@@ -17,9 +17,16 @@ os.environ.setdefault("CHAT_AUTH_MODE", "dev")
 os.environ.setdefault("CHAT_DEV_TOKEN", "test-dev-token")
 
 from app import create_app
-from bigas.cockpit import build_cockpit
+from bigas.cockpit import build_cockpit, reset_staging_live_cache_for_tests, staging_primary_prompt
 from bigas.tickets import store as ticket_store_module
 from bigas.tickets.release_store import reset_release_store_for_tests
+
+
+@pytest.fixture(autouse=True)
+def _stub_staging_live(monkeypatch):
+    """Ship tests do not hit the live staging URL."""
+    reset_staging_live_cache_for_tests()
+    monkeypatch.setattr("bigas.cockpit.staging_stack_is_live", lambda key: False)
 
 _JIRA_ENV_KEYS = (
     "JIRA_BASE_URL",
@@ -174,6 +181,48 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
     assert ship["GPW-PROD"]["deploy_ready"] is False
     assert ship["GPW-PROD"]["pending"] == []
     assert ship["GPW-PROD"]["pending_count"] == 0
+    assert ship["GPW-PROD"]["primary_prompt"] == "prepare staging GPW-PROD"
+    assert ship["GPW-PROD"]["staging_live"] is False
+
+
+def test_staging_primary_prompt_switches_to_update_when_stack_is_live():
+    commands = [
+        {"label": "Prepare staging", "prompt": "prepare staging GPW-PROD"},
+        {"label": "Update staging", "prompt": "update staging GPW-PROD"},
+        {"label": "Teardown staging", "prompt": "teardown staging GPW-PROD"},
+        {"label": "Prepare deploy", "prompt": "prepare deploy GPW-PROD"},
+    ]
+    assert staging_primary_prompt(commands, stack_live=False) == "prepare staging GPW-PROD"
+    assert staging_primary_prompt(commands, stack_live=True) == "update staging GPW-PROD"
+
+
+def test_ship_card_highlights_update_staging_when_stack_is_live():
+    commands = [
+        {"label": "Prepare staging", "prompt": "prepare staging GPW-PROD"},
+        {"label": "Update staging", "prompt": "update staging GPW-PROD"},
+        {"label": "Teardown staging", "prompt": "teardown staging GPW-PROD"},
+        {"label": "Prepare deploy", "prompt": "prepare deploy GPW-PROD"},
+    ]
+    cold = build_cockpit(
+        boards=[],
+        tickets_by_board={},
+        threads=[],
+        command_groups=[{"key": "GPW-PROD", "name": "Green Promo Wear", "commands": commands}],
+        staging_live_by_key={"GPW-PROD": False},
+    )
+    live = build_cockpit(
+        boards=[],
+        tickets_by_board={},
+        threads=[],
+        command_groups=[{"key": "GPW-PROD", "name": "Green Promo Wear", "commands": commands}],
+        staging_live_by_key={"GPW-PROD": True},
+    )
+    cold_row = cold["ship"][0]
+    live_row = live["ship"][0]
+    assert cold_row["primary_prompt"] == "prepare staging GPW-PROD"
+    assert cold_row["staging_live"] is False
+    assert live_row["primary_prompt"] == "update staging GPW-PROD"
+    assert live_row["staging_live"] is True
 
 
 def test_ship_card_names_the_cut_or_the_undeployed_commits():
