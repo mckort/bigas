@@ -176,7 +176,7 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
     assert ship["VFA"]["commands"][0]["prompt"] == "prepare deploy VFA 0.2.4"
     assert ship["VFA"]["deploy_ready"] is True
     assert ship["VFA"]["latest_deploy"]["version"] == "v0.2.3"
-    # Final approval / Done are already in prod — Next deploy stays empty without git ahead.
+    # No undeployed commits → Final approval/Done stay under Sign-off, not Next deploy.
     assert ship["VFA"]["pending"] == []
     assert ship["VFA"]["pending_count"] == 0
     assert ship["GPW-PROD"]["deploy_ready"] is False
@@ -334,7 +334,7 @@ def test_lookup_staging_live_does_not_wait_out_a_hung_probe(monkeypatch):
     reset_staging_live_cache_for_tests()
 
 
-def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
+def test_ship_card_lists_merged_tickets_from_undeployed_commits():
     payload = build_cockpit(
         boards=[
             BOARD,
@@ -347,15 +347,22 @@ def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
                     "1",
                     "Done",
                     fix_version="0.2.4",
-                    title="In the cut",
+                    title="Already signed off",
                     url="https://board/VFA-1",
                 ),
                 _ticket(
                     "2",
                     "Final approval (manual)",
                     fix_version="0.2.4",
-                    title="Already in prod",
+                    title="Merged, waiting for deploy",
                     url="https://board/VFA-2",
+                ),
+                _ticket(
+                    "325",
+                    "Final approval (manual)",
+                    fix_version="0.2.4",
+                    title="Wrongly still on this version",
+                    url="https://board/VFA-325",
                 ),
                 _ticket("9", "To Do", fix_version="0.2.4", title="Still open"),
             ],
@@ -390,11 +397,16 @@ def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
                 "pending": [
                     {
                         "key": "",
-                        "title": "VFA-9: still waiting on main",
-                        "url": "https://github.com/commit/vfa",
-                    }
+                        "title": "Release 0.2.4: merge staging (VFA-2, VFA-9)",
+                        "url": "https://github.com/commit/vfa-release",
+                    },
+                    {
+                        "key": "",
+                        "title": "VFA-2: Merged, waiting for deploy",
+                        "url": "https://github.com/commit/vfa-2",
+                    },
                 ],
-                "pending_count": 1,
+                "pending_count": 2,
             },
             "BIG": {
                 "ahead": True,
@@ -422,21 +434,93 @@ def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
         },
     )
     ship = {row["key"]: row for row in payload["ship"]}
-    assert ship["VFA"]["cut_count"] == 2
+    assert ship["VFA"]["cut_count"] == 3
+    # Only keys present in undeployed commits — not VFA-1 / VFA-325 left on the version.
     assert ship["VFA"]["pending"] == [
-        {
-            "key": "",
-            "title": "VFA-9: still waiting on main",
-            "url": "https://github.com/commit/vfa",
-        }
+        {"key": "VFA-2", "title": "Merged, waiting for deploy", "url": "https://board/VFA-2"},
+        {"key": "VFA-9", "title": "Still open", "url": ""},
     ]
-    assert ship["VFA"]["pending_count"] == 1
-    assert ship["BIG"]["pending"][0]["title"] == "BIG-171: Do not wait on the review job"
+    assert ship["VFA"]["pending_count"] == 2
+    assert ship["BIG"]["pending"] == [
+        {"key": "BIG-171", "title": "", "url": ""},
+    ]
     assert ship["BIG"]["pending_count"] == 1
     assert ship["AURA"]["cut_count"] == 0
     assert ship["AURA"]["pending"][0]["title"] == "Fix the lesson player"
     assert ship["GPW-PROD"]["pending"][0]["title"] == "Update the storefront"
     assert ship["GPW-PROD"]["pending_count"] == 3
+
+
+def test_pending_keeps_unticketed_commits_and_the_upstream_count():
+    from bigas.cockpit import _pending_merged_not_deployed
+
+    items, count = _pending_merged_not_deployed(
+        project_key="VFA",
+        fresh={
+            "pending": [
+                {
+                    "key": "",
+                    "title": "VFA-2: Merged, waiting for deploy",
+                    "url": "https://github.com/commit/vfa-2",
+                },
+                {
+                    "key": "",
+                    "title": "chore: bump the lockfile",
+                    "url": "https://github.com/commit/chore",
+                },
+                {
+                    "key": "",
+                    "title": "VFA-2: same ticket again",
+                    "url": "https://github.com/commit/vfa-2-again",
+                },
+                {
+                    "key": "",
+                    "title": "hotfix without a ticket",
+                    "url": "https://github.com/commit/hotfix",
+                },
+            ],
+            "pending_count": 28,
+        },
+        tickets=[
+            "not-a-ticket",
+            {
+                "key": "VFA-2",
+                "title": "VFA-2: Merged, waiting for deploy",
+                "url": "https://board/VFA-2",
+            },
+        ],
+    )
+    assert items == [
+        {"key": "VFA-2", "title": "Merged, waiting for deploy", "url": "https://board/VFA-2"},
+        {
+            "key": "",
+            "title": "chore: bump the lockfile",
+            "url": "https://github.com/commit/chore",
+        },
+        {
+            "key": "",
+            "title": "hotfix without a ticket",
+            "url": "https://github.com/commit/hotfix",
+        },
+    ]
+    assert count == 28
+
+    expanded, expanded_count = _pending_merged_not_deployed(
+        project_key="VFA",
+        fresh={
+            "pending": [
+                {
+                    "key": "",
+                    "title": "Release 0.2.4 (VFA-2, VFA-9)",
+                    "url": "https://github.com/commit/release",
+                }
+            ],
+            "pending_count": 1,
+        },
+        tickets=[],
+    )
+    assert [item["key"] for item in expanded] == ["VFA-2", "VFA-9"]
+    assert expanded_count == 2
 
 
 def test_pending_from_compare_skips_blank_subjects_and_keeps_the_full_count():

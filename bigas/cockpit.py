@@ -16,10 +16,10 @@ AI working
     Tickets in an AI column and devops threads with a running pipeline poll.
 Ship
     One row per deploy target with its default unreleased version, how
-    many tickets are in that cut, the undeployed commits the next prepare
-    deploy or deploy will ship (Next deploy — never Final approval/Done
-    cards; those are already in prod under Sign-off), whether those
-    changes are ready, and the latest shipped version.
+    many tickets are in that cut, and Next deploy: tickets whose keys
+    appear in commits that are merged but not yet in production (git
+    freshness). Final approval cards that are already deployed stay under
+    Sign-off only.
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from bigas.portfolio import ISSUE_KEY_SEARCH_RE, normalize_project_key
 from bigas.tickets.constants import (
     AI_TRIGGER_STATUSES,
     is_in_release_cut,
@@ -485,6 +486,87 @@ def _pending_from_freshness(fresh: Dict[str, Any]) -> tuple:
     return items, count
 
 
+def _ticket_keys_for_project(project_key: str, text: str) -> List[str]:
+    """Issue keys for this project mentioned in commit/PR text, first seen order."""
+    prefix = f"{normalize_project_key(project_key)}-"
+    found: List[str] = []
+    seen = set()
+    for match in ISSUE_KEY_SEARCH_RE.finditer(text or ""):
+        key = match.group(1).upper()
+        if not key.startswith(prefix) or key in seen:
+            continue
+        seen.add(key)
+        found.append(key)
+    return found
+
+
+def _pending_merged_not_deployed(
+    *,
+    project_key: str,
+    fresh: Dict[str, Any],
+    tickets: Iterable[Dict[str, Any]],
+) -> tuple:
+    """Tickets (or commits) waiting on the next deploy.
+
+    Undeployed commits from git freshness are the source of truth. Ticket keys
+    found in those subjects are resolved to board cards so Next deploy lists
+    merged work, not every Final approval card on the open version (those may
+    already be in production under Sign-off). Commits with no ticket key still
+    appear as commit rows. The count stays the git freshness total when that
+    is larger than the rows returned.
+    """
+    commit_items, commit_count = _pending_from_freshness(fresh)
+    if not commit_items and commit_count <= 0:
+        return [], 0
+
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for ticket in tickets:
+        if not isinstance(ticket, dict):
+            continue
+        key = str(ticket.get("key") or "").strip().upper()
+        if key and key not in by_key:
+            by_key[key] = ticket
+
+    items: List[Dict[str, str]] = []
+    seen_keys = set()
+    for item in commit_items:
+        if len(items) >= _PENDING_CAP:
+            break
+        blob = f"{item.get('key') or ''} {item.get('title') or ''}"
+        keys = _ticket_keys_for_project(project_key, blob)
+        if not keys:
+            items.append(
+                {
+                    "key": item.get("key") or "",
+                    "title": item.get("title") or "",
+                    "url": item.get("url") or "",
+                }
+            )
+            continue
+        for key in keys:
+            if len(items) >= _PENDING_CAP:
+                break
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            card = by_key.get(key)
+            if card:
+                title = str(card.get("title") or card.get("summary") or "").strip()
+                if title.lower().startswith(key.lower()):
+                    title = title[len(key) :].lstrip(" :—-").strip()
+                items.append(
+                    {
+                        "key": key,
+                        "title": title,
+                        "url": str(card.get("url") or "").strip(),
+                    }
+                )
+            else:
+                items.append({"key": key, "title": "", "url": ""})
+    count = commit_count if commit_count > len(items) else len(items)
+    return items, count
+
+
 def _ship_rows(
     *,
     boards: Iterable[Dict[str, Any]],
@@ -511,6 +593,14 @@ def _ship_rows(
     freshness = deploy_freshness or {}
     staging_live = staging_live_by_key or {}
 
+    tickets_by_project: Dict[str, List[Dict[str, Any]]] = {}
+    for board in boards:
+        key = (board.get("project_key") or "").strip().upper()
+        if key:
+            tickets_by_project.setdefault(key, []).extend(
+                tickets_by_board.get(board.get("board_id") or "", [])
+            )
+
     def _with_deploy_cue(
         row: Dict[str, Any],
         *,
@@ -532,21 +622,14 @@ def _ship_rows(
             ahead=ahead if isinstance(ahead, bool) else None,
             version=str(row.get("version") or ""),
         )
-        # Next deploy names what is not in production yet (git freshness).
-        # Done / Final approval cut cards are already shipped — Sign-off owns
-        # them — so they must not appear here even when prepare-deploy still
-        # counts them in cut_count for the open version.
-        items, count = _pending_from_freshness(fresh if isinstance(fresh, dict) else {})
+        items, count = _pending_merged_not_deployed(
+            project_key=key,
+            fresh=fresh if isinstance(fresh, dict) else {},
+            tickets=tickets_by_project.get(key, []),
+        )
         row["pending"] = items
         row["pending_count"] = count
         return row
-    tickets_by_project: Dict[str, List[Dict[str, Any]]] = {}
-    for board in boards:
-        key = (board.get("project_key") or "").strip().upper()
-        if key:
-            tickets_by_project.setdefault(key, []).extend(
-                tickets_by_board.get(board.get("board_id") or "", [])
-            )
 
     def _norm_key(value: Any) -> str:
         return (value or "").upper()
