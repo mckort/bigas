@@ -169,14 +169,15 @@ def test_devops_thread_state_feeds_needs_working_and_ship():
     assert ship["VFA"]["commands"][0]["prompt"] == "prepare deploy VFA 0.2.4"
     assert ship["VFA"]["deploy_ready"] is True
     assert ship["VFA"]["latest_deploy"]["version"] == "v0.2.3"
-    assert [item["key"] for item in ship["VFA"]["pending"]] == ["VFA-2", "VFA-1"]
-    assert ship["VFA"]["pending_count"] == 2
+    # Final approval / Done are already in prod — Next deploy stays empty without git ahead.
+    assert ship["VFA"]["pending"] == []
+    assert ship["VFA"]["pending_count"] == 0
     assert ship["GPW-PROD"]["deploy_ready"] is False
     assert ship["GPW-PROD"]["pending"] == []
     assert ship["GPW-PROD"]["pending_count"] == 0
 
 
-def test_ship_card_names_the_cut_or_the_undeployed_commits():
+def test_ship_card_names_undeployed_commits_not_final_approval_cut_cards():
     payload = build_cockpit(
         boards=[
             BOARD,
@@ -191,6 +192,13 @@ def test_ship_card_names_the_cut_or_the_undeployed_commits():
                     fix_version="0.2.4",
                     title="In the cut",
                     url="https://board/VFA-1",
+                ),
+                _ticket(
+                    "2",
+                    "Final approval (manual)",
+                    fix_version="0.2.4",
+                    title="Already in prod",
+                    url="https://board/VFA-2",
                 ),
                 _ticket("9", "To Do", fix_version="0.2.4", title="Still open"),
             ],
@@ -222,7 +230,13 @@ def test_ship_card_names_the_cut_or_the_undeployed_commits():
         deploy_freshness={
             "VFA": {
                 "ahead": True,
-                "pending": [{"key": "", "title": "commit the cut already names", "url": ""}],
+                "pending": [
+                    {
+                        "key": "",
+                        "title": "VFA-9: still waiting on main",
+                        "url": "https://github.com/commit/vfa",
+                    }
+                ],
                 "pending_count": 1,
             },
             "BIG": {
@@ -251,8 +265,13 @@ def test_ship_card_names_the_cut_or_the_undeployed_commits():
         },
     )
     ship = {row["key"]: row for row in payload["ship"]}
+    assert ship["VFA"]["cut_count"] == 2
     assert ship["VFA"]["pending"] == [
-        {"key": "VFA-1", "title": "In the cut", "url": "https://board/VFA-1"}
+        {
+            "key": "",
+            "title": "VFA-9: still waiting on main",
+            "url": "https://github.com/commit/vfa",
+        }
     ]
     assert ship["VFA"]["pending_count"] == 1
     assert ship["BIG"]["pending"][0]["title"] == "BIG-171: Do not wait on the review job"
