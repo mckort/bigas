@@ -6,9 +6,13 @@ const GITHUB_FORK_URL = 'https://github.com/mckort/bigas/fork'
 const TUTORIAL_URL =
   'https://github.com/mckort/bigas/blob/main/docs/tutorial-set-up-a-virtual-ai-team.md'
 const X_URL = 'https://x.com/bigasmyaiteam'
+const DEMO_VIDEO_ID = 'vlT4wrpa11M'
+const DEMO_VIDEO_EMBED_URL = `https://www.youtube.com/embed/${DEMO_VIDEO_ID}`
+const DEMO_VIDEO_WATCH_URL = `https://youtu.be/${DEMO_VIDEO_ID}`
 
 const NAV_LINKS = [
   { href: '#how-it-works', label: 'How it works' },
+  { href: '#demo', label: 'Demo' },
   { href: '#modes', label: 'Dev → prod' },
   { href: '#surfaces', label: 'Surfaces' },
   { href: '#team', label: 'Team' },
@@ -329,6 +333,44 @@ export default function Landing({ onSignIn }) {
                 </li>
               ))}
             </ol>
+          </div>
+        </section>
+
+        {/* Product walkthrough */}
+        <section className="py-12 sm:py-16 border-b border-border" aria-labelledby="demo-heading">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6">
+            <SectionHeading
+              id="demo"
+              headingId="demo-heading"
+              eyebrow="Watch it"
+              title="From a board card to a live deploy"
+              lead="A short walkthrough of researching, planning, implementing, reviewing, and shipping — with you approving each step."
+            />
+            <div className="mt-8 max-w-4xl">
+              <div className="relative w-full overflow-hidden rounded-xl border border-border shadow-soft bg-elevated aspect-video">
+                <iframe
+                  src={DEMO_VIDEO_EMBED_URL}
+                  title="Bigas product walkthrough: from a board card to a live deploy"
+                  className="absolute inset-0 h-full w-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
+                  loading="lazy"
+                />
+              </div>
+              <p className="mt-3 text-sm text-muted">
+                Prefer YouTube?{' '}
+                <a
+                  href={DEMO_VIDEO_WATCH_URL}
+                  className="underline hover:text-text"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open the walkthrough
+                </a>
+                .
+              </p>
+            </div>
           </div>
         </section>
 
