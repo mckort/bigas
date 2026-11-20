@@ -15,7 +15,13 @@ import {
   signOffTickets,
   updateTicket,
 } from '../lib/api'
-import { applyDeployUpdate, deployProgressLines } from '../lib/deployProgress'
+import {
+  applyDeployUpdate,
+  commandForShipRow,
+  deployProgressLines,
+  emptyDeployRun,
+  pipelineForProject,
+} from '../lib/deployProgress'
 import { WEEKLY_ACTIONS, cursorPrompt, openAgentThread, sendToAgent, timeAgo } from '../lib/cockpit'
 import { featureEnabled } from '../lib/features'
 import { linkify } from '../lib/linkify'
@@ -23,6 +29,9 @@ import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
 
 const POLL_MS = 15000
+// One blip while a deploy is running should not abandon tracking. After this
+// many polls in a row fail, tell the user DevOps cannot be reached.
+const COMMAND_POLL_ERROR_LIMIT = 3
 const SWIPE_PX = 90
 // The click that follows a touch swipe must not open the row. It arrives after pointerup.
 const SWIPE_CLICK_MS = 400
@@ -366,10 +375,14 @@ function NeedProjectCard({ group, now, busyIds, onOpen, onPrimary, onSendBack })
   )
 }
 
-function WorkingRow({ item, now, onOpenChat, onOpenTicket, onRetry, busy }) {
+function WorkingRow({ item, now, onOpenChat, onOpenTicket, onOpenPipeline, onRetry, busy }) {
   const isTicket = item.type === 'ticket'
   const link = isTicket ? item.ticket.pr_url || item.ticket.agent_url : item.run_url
-  const open = () => (isTicket ? onOpenTicket(item) : onOpenChat('devops'))
+  const open = () => {
+    if (isTicket) return onOpenTicket(item)
+    if (item.type === 'pipeline' && onOpenPipeline) return onOpenPipeline(item)
+    return onOpenChat('devops')
+  }
   return (
     <li className="flex items-center gap-3 py-2.5 border-t border-border first:border-t-0">
       {item.stuck ? (
@@ -384,7 +397,7 @@ function WorkingRow({ item, now, onOpenChat, onOpenTicket, onRetry, busy }) {
         type="button"
         onClick={open}
         className="min-w-0 flex-1 text-left group rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        title={isTicket ? 'Open the card' : 'Open the DevOps chat'}
+        title={isTicket ? 'Open the card' : 'Show deploy progress'}
       >
         <span className="block truncate font-medium group-hover:text-accent transition-colors">
           <ProjectTag project={projectOf(item)} label={isTicket ? item.ticket.key : item.project_key} />
@@ -544,7 +557,7 @@ function stagingPrimaryCommand(row) {
   return commands.find((c) => /prepare staging/i.test(c.prompt || '')) || commands[0]
 }
 
-function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onReleaseMode }) {
+function ShipCard({ row, steps = [], busy, onCommand, onOpenProgress, onReview, onReleaseMode }) {
   const isDev = row.release_mode === 'development'
   const primary = row.mode === 'versioned' ? row.commands[0] : stagingPrimaryCommand(row)
   const others = row.commands.filter((c) => c !== primary)
@@ -621,8 +634,8 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenChat, onReview, onRe
             Review deploy
           </button>
         ) : row.state === 'running' ? (
-          <button type="button" onClick={() => onOpenChat('devops')} className="btn-secondary text-xs px-3 py-1 min-h-[34px]">
-            Open DevOps chat
+          <button type="button" onClick={() => onOpenProgress(row)} className="btn-secondary text-xs px-3 py-1 min-h-[34px]">
+            Show progress
           </button>
         ) : (
           primary && (
@@ -1512,6 +1525,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const toastTimer = useRef(null)
   const commandRunToken = useRef(0)
   const commandRun = useRef(null)
+  const commandPollErrors = useRef(0)
+  const didRehydrate = useRef(false)
+  const [pollTrack, setPollTrack] = useState({ threadId: '', phase: '', since: '', token: 0 })
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
   const loadShell = useCallback(async () => {
@@ -1607,8 +1623,15 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
 
 
   const closeDrawer = useCallback(() => {
+    // Closing the panel leaves DevOps running — keep tracking a working run.
+    if (commandRun.current?.phase === 'working') {
+      setDrawer(null)
+      setComment('')
+      return
+    }
     commandRunToken.current += 1
     commandRun.current = null
+    setPollTrack({ threadId: '', phase: '', since: '', token: 0 })
     setDrawer(null)
     setComment('')
   }, [])
@@ -1709,8 +1732,128 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
 
   const publishCommandRun = useCallback((next) => {
     commandRun.current = next
+    setPollTrack({
+      threadId: next?.threadId || '',
+      phase: next?.phase || '',
+      since: next?.since || '',
+      token: next?.token || 0,
+    })
     setDrawer((current) => (current?.type === 'command' ? { ...current, run: next } : current))
   }, [])
+
+  const reportCommandPollError = useCallback(
+    (err) => {
+      if (commandRunToken.current !== commandRun.current?.token) return
+      commandPollErrors.current += 1
+      if (commandPollErrors.current < COMMAND_POLL_ERROR_LIMIT) return
+      publishCommandRun(
+        applyDeployUpdate(commandRun.current, [], {
+          pendingSend: Boolean(commandRun.current?.pendingSend),
+          error: err?.message || 'Could not reach DevOps',
+        }),
+      )
+    },
+    [publishCommandRun],
+  )
+
+  const openCommandProgress = useCallback(
+    async (row, { open = true } = {}) => {
+      if (!row) return
+      const pipeline = pipelineForProject(data?.working, row.key)
+      const threadId = String(row.thread_id || pipeline?.thread_id || '').trim()
+      if (!threadId) {
+        onOpenChat?.('devops')
+        return
+      }
+      const current = commandRun.current
+      const sameThread = current?.threadId === threadId
+      const cmd =
+        commandForShipRow(row) ||
+        ({
+          label: row.detail || 'Deploy',
+          prompt: (sameThread ? current?.prompt : '') || '',
+        })
+      if (
+        sameThread &&
+        (current.phase === 'working' || current.phase === 'confirm')
+      ) {
+        if (open) setDrawer({ type: 'command', row, cmd, run: current })
+        return
+      }
+      // Pipeline or row start time, and only this thread's cursor. With no
+      // start time, omit since so the fetch includes the whole deploy.
+      const since = pipeline?.since || row?.since || (sameThread ? current?.since : '') || ''
+      const token = commandRunToken.current + 1
+      commandRunToken.current = token
+      commandPollErrors.current = 0
+      const base = emptyDeployRun({
+        threadId,
+        since,
+        prompt: cmd.prompt || '',
+        token,
+        deployPoll: true,
+      })
+      publishCommandRun(base)
+      if (open) setDrawer({ type: 'command', row, cmd, run: base })
+      try {
+        const res = await fetchMessages(threadId, { since })
+        if (commandRunToken.current !== token) return
+        const incoming = res.messages || []
+        const deployPoll =
+          res.deploy_poll_active !== undefined ? Boolean(res.deploy_poll_active) : true
+        const next = applyDeployUpdate(
+          { ...commandRun.current, threadId },
+          incoming,
+          { pendingSend: false, deployPoll },
+        )
+        commandPollErrors.current = 0
+        publishCommandRun(next)
+        if (next.phase === 'done' || next.phase === 'confirm') setTimeout(load, 500)
+      } catch (err) {
+        if (commandRunToken.current !== token) return
+        // Drawer is open and still empty: say DevOps could not be reached.
+        // Once lines are on screen, or the drawer is closed, keep polling and
+        // surface the error only after repeated failures.
+        const hasLines = (commandRun.current?.messages || []).length > 0
+        if (open && !hasLines) {
+          publishCommandRun(
+            applyDeployUpdate(commandRun.current, [], {
+              pendingSend: false,
+              error: err?.message || 'Could not reach DevOps',
+            }),
+          )
+          return
+        }
+        reportCommandPollError(err)
+      }
+    },
+    [data?.working, load, onOpenChat, publishCommandRun, reportCommandPollError],
+  )
+
+  const openPipelineProgress = useCallback(
+    (item) => {
+      if (!item || item.type !== 'pipeline') {
+        onOpenChat?.('devops')
+        return
+      }
+      const row =
+        (data?.ship || []).find(
+          (shipRow) =>
+            String(shipRow.key || '').toUpperCase() === String(item.project_key || '').toUpperCase(),
+        ) || {
+          key: item.project_key,
+          name: item.project_key,
+          thread_id: item.thread_id,
+          detail: item.stage,
+          commands: [{ label: 'Deploy', prompt: '' }],
+        }
+      return openCommandProgress(
+        { ...row, thread_id: item.thread_id || row.thread_id },
+        { open: true },
+      )
+    },
+    [data?.ship, onOpenChat, openCommandProgress],
+  )
 
   const beginCommand = useCallback(
     async (row, cmd, text) => {
@@ -1718,6 +1861,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       if (!prompt) return
       const token = commandRunToken.current + 1
       commandRunToken.current = token
+      commandPollErrors.current = 0
       const previous = commandRun.current
       const since = previous?.since || new Date(Date.now() - 5000).toISOString()
       const base = {
@@ -1767,16 +1911,28 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     [load, publishCommandRun],
   )
 
-  const commandThreadId = drawer?.type === 'command' ? drawer.run?.threadId || '' : ''
-  const commandPhase = drawer?.type === 'command' ? drawer.run?.phase || '' : ''
-  const commandSince = drawer?.type === 'command' ? drawer.run?.since || '' : ''
+  useEffect(() => {
+    if (!data || data.partial || didRehydrate.current) return
+    const running = (data.ship || []).filter((row) => row.state === 'running' && row.thread_id)
+    if (!running.length) return
+    const current = commandRun.current
+    if (
+      current?.phase === 'working' &&
+      running.some((row) => row.thread_id === current.threadId)
+    ) {
+      didRehydrate.current = true
+      return
+    }
+    didRehydrate.current = true
+    openCommandProgress(running[0], { open: false })
+  }, [data, openCommandProgress])
 
   useEffect(() => {
-    if (!commandThreadId || commandPhase !== 'working') return undefined
+    if (!pollTrack.threadId || pollTrack.phase !== 'working') return undefined
     let cancelled = false
     let lastPostcheck = 0
-    const threadId = commandThreadId
-    const since = commandSince
+    const threadId = pollTrack.threadId
+    const since = pollTrack.since
 
     async function tick() {
       try {
@@ -1795,6 +1951,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           if (polled.status === 'complete' || polled.active === false) deployPoll = false
         }
         if (commandRunToken.current !== commandRun.current?.token) return
+        commandPollErrors.current = 0
         const wasWorking = commandRun.current?.phase === 'working'
         const next = applyDeployUpdate(commandRun.current, incoming, {
           pendingSend: Boolean(commandRun.current?.pendingSend),
@@ -1816,8 +1973,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         if (unchanged) return
         publishCommandRun(next)
         if (wasWorking && (next.phase === 'done' || next.phase === 'confirm')) setTimeout(load, 500)
-      } catch {
-        /* keep the last lines on screen */
+      } catch (err) {
+        if (cancelled) return
+        reportCommandPollError(err)
       }
     }
 
@@ -1828,7 +1986,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       clearTimeout(first)
       clearInterval(id)
     }
-  }, [commandThreadId, commandPhase, commandSince, load, publishCommandRun])
+  }, [pollTrack.threadId, pollTrack.phase, pollTrack.since, pollTrack.token, load, publishCommandRun, reportCommandPollError])
 
   const openNeed = (item) => {
     setComment('')
@@ -2374,6 +2532,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                   now={now}
                   onOpenChat={onOpenChat}
                   onOpenTicket={openTicket}
+                  onOpenPipeline={openPipelineProgress}
                   onRetry={retryStuck}
                   busy={busyIds.has(item.id)}
                 />
@@ -2404,6 +2563,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                         now={now}
                         onOpenChat={onOpenChat}
                         onOpenTicket={openTicket}
+                        onOpenPipeline={openPipelineProgress}
                         onRetry={retryStuck}
                         busy={busyIds.has(item.id)}
                       />
@@ -2432,10 +2592,11 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                   steps={data?.ship_steps || []}
                   onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
                   busy={busyIds.has(`ship:${row.key}`)}
-                  onOpenChat={onOpenChat}
+                  onOpenProgress={(r) => openCommandProgress(r, { open: true })}
                   onCommand={(r, cmd) => {
                     commandRunToken.current += 1
                     commandRun.current = null
+                    setPollTrack({ threadId: '', phase: '', since: '', token: 0 })
                     setDrawer({ type: 'command', row: r, cmd })
                   }}
                   onReview={(r) => {
