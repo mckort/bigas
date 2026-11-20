@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from bigas.resources.product.create_release_notes.jira_client import (
     JiraClient,
     JiraConfig,
     JiraError,
+    adf_to_plain_text,
     normalize_issue_key,
 )
 from bigas.tickets.constants import resolve_column_status
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateTicketError(RuntimeError):
@@ -40,8 +44,69 @@ def _result_from_ticket(updated: Dict[str, Any], *, key: str) -> Dict[str, Any]:
     }
 
 
+def _jira_snapshot(
+    client: JiraClient,
+    *,
+    key: str,
+    base_url: str,
+    resolved_status: Optional[str],
+    written_description: Optional[str],
+) -> Dict[str, Any]:
+    """Same keys as the internal-board payload, including unchanged fields.
+
+    ``written_description`` is None when this call did not replace the body.
+    A failed re-read keeps the values this call wrote and still returns
+    ``status`` and ``description``.
+    """
+    summary: Optional[str] = None
+    status = resolved_status
+    description = "" if written_description is None else written_description
+    try:
+        issue = client.get_issue(
+            key,
+            fields=["summary", "status", "description"],
+        )
+    except JiraError as exc:
+        logger.warning(
+            "Updated Jira issue %s but could not re-read it: %s",
+            key,
+            exc,
+        )
+    else:
+        fields: Dict[str, Any] = {}
+        if isinstance(issue, dict):
+            raw_fields = issue.get("fields")
+            if isinstance(raw_fields, dict):
+                fields = raw_fields
+        fetched_summary = str(fields.get("summary") or "").strip()
+        if fetched_summary:
+            summary = fetched_summary
+        status_field = fields.get("status")
+        status_name = ""
+        if isinstance(status_field, dict):
+            status_name = str(status_field.get("name") or "").strip()
+        if status_name:
+            status = status_name
+        if written_description is None:
+            description = adf_to_plain_text(fields.get("description"))
+    root = (base_url or "").rstrip("/")
+    return {
+        "ok": True,
+        "key": key,
+        "url": f"{root}/browse/{key}" if root else None,
+        "summary": summary or key,
+        "status": status,
+        "description": description or "",
+        "source": "jira",
+    }
+
+
 class UpdateTicketService:
-    """Update board column and/or description on an existing ticket."""
+    """Update board column and/or description on an existing ticket.
+
+    The internal board and Jira both return ``status`` and ``description``
+    (current values, including fields this call did not change).
+    """
 
     def update(
         self,
@@ -88,7 +153,8 @@ class UpdateTicketService:
         proj = project_key_from_issue_key(key)
         resolved_status: Optional[str] = None
         try:
-            client = JiraClient(JiraConfig.from_env())
+            config = JiraConfig.from_env()
+            client = JiraClient(config)
             if raw_status:
                 resolved_status = resolve_column_status(raw_status, project_key=proj) or raw_status
                 client.transition_issue(key, to_status_name=resolved_status)
@@ -96,13 +162,11 @@ class UpdateTicketService:
                 client.update_description(key, str(description or ""))
         except JiraError as exc:
             raise UpdateTicketError(_format_jira_error(exc, issue_key=key)) from exc
-        payload: Dict[str, Any] = {
-            "ok": True,
-            "key": key,
-            "source": "jira",
-        }
-        if resolved_status is not None:
-            payload["status"] = resolved_status
-        if has_description:
-            payload["description"] = str(description or "")
-        return payload
+        else:
+            return _jira_snapshot(
+                client,
+                key=key,
+                base_url=config.base_url,
+                resolved_status=resolved_status,
+                written_description=str(description or "") if has_description else None,
+            )
