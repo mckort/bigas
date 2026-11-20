@@ -823,8 +823,10 @@ def format_main_ship_report(
     commits: List[Dict[str, Any]],
     compared: Optional[List[str]] = None,
     files_changed: Optional[int] = None,
+    branch: str = "main",
 ) -> str:
-    lines = ["**On `main` now — yes deploys this**"]
+    ship = (branch or "main").strip() or "main"
+    lines = [f"**On `{ship}` now — yes deploys this**"]
     if compared:
         lines.append("Compared `" + "`, `".join(compared) + "`.")
     if commits:
@@ -842,7 +844,7 @@ def format_main_ship_report(
             lines.append(f"- …and {len(commits) - 20} more")
     else:
         lines.append("")
-        lines.append("No commits on `main` that are not already in production.")
+        lines.append(f"No commits on `{ship}` that are not already in production.")
     if files_changed is not None:
         lines.append("")
         lines.append(f"{files_changed} file(s) changed vs production.")
@@ -1773,8 +1775,19 @@ def continue_after_main_ready(
 
     report, in_cut, open_tickets = format_version_ticket_report(key, ver)
     _post(thread_id, report)
+    try:
+        repo = _project_repo(key)
+        _feature, production = _branch_pair(key, repo, ver)
+        ship_ref = (production or "").strip() or "main"
+    except Exception:
+        logger.warning(
+            "Could not resolve production branch for %s; falling back to main",
+            key,
+            exc_info=True,
+        )
+        ship_ref = "main"
     git = reconcile_release_with_git(
-        project_key=key, version=ver, in_cut=in_cut, head_ref="main"
+        project_key=key, version=ver, in_cut=in_cut, head_ref=ship_ref
     )
     if git.get("text"):
         _post(thread_id, git["text"])
@@ -1786,7 +1799,7 @@ def continue_after_main_ready(
         status="in_progress",
     )
     try:
-        risk = check_deployment_risk(project_key=key, head_ref="main")
+        risk = check_deployment_risk(project_key=key, head_ref=ship_ref)
     except DevOpsError as exc:
         _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Pre-check failed: {exc}")
@@ -1808,6 +1821,7 @@ def continue_after_main_ready(
             commits=list(git.get("commits") or []),
             compared=list(git.get("compared") or []),
             files_changed=files_changed,
+            branch=ship_ref,
         ),
     )
     _post(thread_id, _format_risk_for_chat(risk))

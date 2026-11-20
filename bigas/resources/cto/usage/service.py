@@ -21,6 +21,7 @@ from bigas.resources.cto.usage.pricing import (
     default_autofix_model,
     default_implement_model,
     estimate_cursor_cost_usd,
+    resolve_cursor_price_usd_per_mtok,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,10 @@ def format_cursor_usage_discord_lines(
     model: str,
     est_cost_usd: Optional[float],
 ) -> List[str]:
+    # Empty metering is common right after an agent finishes — omit rather than
+    # post "0 tokens" / "unknown model" which looks like the run did no work.
+    if usage.total_tokens <= 0:
+        return []
     token_line = format_token_counts(
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
@@ -85,7 +90,10 @@ def format_cursor_usage_discord_lines(
     if est_cost_usd is not None:
         lines.append(f"Estimated list-price: {_approx_money(est_cost_usd, digits=4)} ({model})")
     elif token_line:
-        lines.append(f"Estimated list-price: n/a (unknown model {model})")
+        if resolve_cursor_price_usd_per_mtok(model) is None:
+            lines.append(f"Estimated list-price: n/a (unknown model {model})")
+        else:
+            lines.append(f"Estimated list-price: n/a ({model})")
     return lines
 
 
@@ -95,11 +103,11 @@ def fetch_cursor_run_usage(
     run_id: Optional[str] = None,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
-    retries: int = 3,
-    retry_delay_seconds: float = 1.5,
+    retries: int = 8,
+    retry_delay_seconds: float = 2.5,
 ) -> Dict[str, Any]:
     """
-    Fetch Cursor token usage for one agent/run with short retries for settling.
+    Fetch Cursor token usage for one agent/run with retries for metering lag.
 
     Never raises — returns ``{"ok": False, ...}`` on failure.
     """

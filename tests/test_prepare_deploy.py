@@ -1426,6 +1426,18 @@ def test_format_main_ship_report_lists_commits():
     assert "4 file(s) changed" in text
 
 
+def test_format_main_ship_report_uses_production_branch_name():
+    text = format_main_ship_report(
+        commits=[],
+        compared=[],
+        files_changed=0,
+        branch="master",
+    )
+    assert "On `master` now" in text
+    assert "No commits on `master`" in text
+    assert "On `main` now" not in text
+
+
 class _FakeGitHub:
     def __init__(self, *, ahead_by=7, staging_ahead=7, created=None):
         self.ahead_by = ahead_by

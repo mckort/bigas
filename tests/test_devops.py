@@ -572,6 +572,20 @@ def test_filter_unchanged_workflows_keeps_first_deploy():
     assert skipped == []
 
 
+def test_filter_unchanged_workflows_keeps_all_when_compare_failed():
+    to_run, skipped = filter_unchanged_workflows(
+        ["deploy.yml", "eas-preview-ios.yml"],
+        {
+            "no_prod_version": False,
+            "compare_failed": True,
+            "component_changes": {"backend": [], "web": [], "app": []},
+            "total_files_changed": 0,
+        },
+    )
+    assert to_run == ["deploy.yml", "eas-preview-ios.yml"]
+    assert skipped == []
+
+
 def test_filter_unchanged_workflows_legacy_risk_without_component_changes():
     workflows = ["deploy-backend.yml", "deploy-web.yml"]
     to_run, skipped = filter_unchanged_workflows(
@@ -592,6 +606,43 @@ class _NoChangeGitHubClient(_FakeGitHubClient):
     def compare_refs(self, owner, repo, base, head):
         self.compared.append((base, head))
         return {"files": []}
+
+
+class _CompareFailGitHubClient(_FakeGitHubClient):
+    def list_releases(self, owner, repo, *, limit=50):
+        return []
+
+    def latest_release_with_prefix(self, owner, repo, prefix):
+        return None
+
+    def get_latest_release_tag(self, owner, repo):
+        return "v0.2.0"
+
+    def get_default_branch(self, owner, repo):
+        return "master"
+
+    def compare_refs(self, owner, repo, base, head):
+        from bigas.resources.devops.github_actions import GitHubActionsError
+
+        self.compared.append((base, head))
+        raise GitHubActionsError(f"Compare failed: {owner}/{repo} {base}...{head}")
+
+
+def test_check_deployment_risk_compare_failed_does_not_skip_workflows(monkeypatch):
+    monkeypatch.delenv("BIGAS_DEPLOY_WORKFLOW_MAP", raising=False)
+    monkeypatch.delenv("BIGAS_JIRA_PROJECT_REPO_MAP", raising=False)
+    monkeypatch.delenv("BIGAS_DEPLOY_REPO_MAP", raising=False)
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: _CompareFailGitHubClient(),
+    )
+    result = check_deployment_risk(project_key="AURA", head_ref="master")
+    assert result["compare_failed"] is True
+    assert result["total_files_changed"] == 0
+    assert result["workflows_to_run"] == ["deploy.yml", "eas-preview-ios.yml"]
+    assert result["skipped_workflows"] == []
+    assert "compare failed" in result["summary"].lower()
+    assert "could not diff against production" in result["summary"].lower()
 
 
 def test_check_deployment_risk_web_only_skips_backend(monkeypatch):
