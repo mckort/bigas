@@ -230,7 +230,7 @@ def test_pipeline_requires_project_key(monkeypatch):
     assert "VFA" in contents or "project key" in contents.lower()
 
 
-def test_clear_stale_pending_on_unrelated_message(monkeypatch):
+def test_clear_stale_keeps_pending_on_unrelated_message():
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
     store.patch_thread(
@@ -240,10 +240,14 @@ def test_clear_stale_pending_on_unrelated_message(monkeypatch):
 
     assert should_run_deploy_pipeline("what is the status?", thread["thread_id"]) is False
     clear_stale_pending_deploy("what is the status?", thread["thread_id"])
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    pending = store.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert isinstance(pending, dict)
+    assert pending.get("project_key") == "VFA"
 
 
-def test_deploy_start_clears_pending_other_project():
+def test_deploy_start_keeps_pending_other_project():
+    from bigas.resources.devops.pipeline import _all_pendings
+
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
     store.patch_thread(
@@ -258,10 +262,14 @@ def test_deploy_start_clears_pending_other_project():
 
     assert should_run_deploy_pipeline("deploy bigas", thread["thread_id"]) is True
     clear_stale_pending_deploy("deploy bigas", thread["thread_id"])
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    pendings = _all_pendings(thread["thread_id"])
+    assert "VFA" in pendings
+    assert "BIG" not in pendings
 
 
 def test_named_project_wins_over_pending_vfa(monkeypatch):
+    from bigas.resources.devops.pipeline import _all_pendings
+
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
     store.patch_thread(
@@ -314,7 +322,30 @@ def test_named_project_wins_over_pending_vfa(monkeypatch):
     assert seen.get("project_key") == "BIG"
     assert seen.get("trigger_project_key") == "BIG"
     assert result["status"] == "in_progress"
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    # VFA confirm must survive a deploy start for another project.
+    assert "VFA" in _all_pendings(thread["thread_id"])
+
+
+def test_ambiguous_yes_asks_for_project_key():
+    from bigas.resources.devops.pipeline import _set_pending
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    tid = thread["thread_id"]
+    _set_pending(
+        tid,
+        {"project_key": "VFA", "kind": "prepare", "version": "0.2.0", "repo": "mckort/vcfieldassistant"},
+    )
+    _set_pending(
+        tid,
+        {"project_key": "BIG", "kind": "prepare", "version": "1.0.0", "repo": "mckort/bigas"},
+    )
+
+    result = run_chat_deploy_pipeline(thread_id=tid, user_message="yes")
+    assert result["status"] == "complete"
+    blob = "\n".join(m["content"] for m in store.list_messages(tid))
+    assert "yes VFA" in blob or "Several deploys" in blob
+    assert "VFA" in blob and "BIG" in blob
 
 
 def test_pipeline_skips_when_nothing_changed(monkeypatch):

@@ -459,14 +459,16 @@ function pendingHref(url) {
 }
 
 function PendingChanges({ items, count }) {
+  const [expanded, setExpanded] = useState(false)
   const list = (Array.isArray(items) ? items : []).filter((item) => {
     const parts = pendingParts(item)
     return parts.key || parts.title
   })
   if (!list.length) return null
-  const shown = list.slice(0, PENDING_SHOWN)
-  const total = Math.max(Number(count) || 0, list.length)
-  const more = total - shown.length
+  const shown = expanded ? list : list.slice(0, PENDING_SHOWN)
+  const hidden = list.length - shown.length
+  const commitTotal = Math.max(Number(count) || 0, list.length)
+  const extraCommits = commitTotal > list.length ? commitTotal - list.length : 0
   return (
     <div className="mt-2.5 min-w-0">
       <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">Next deploy</p>
@@ -497,8 +499,30 @@ function PendingChanges({ items, count }) {
             </li>
           )
         })}
-        {more > 0 && <li className="text-[11px] text-muted">+{more} more</li>}
+        {extraCommits > 0 && (expanded || hidden === 0) && (
+          <li className="text-[11px] text-muted">
+            {extraCommits} more commit{extraCommits === 1 ? '' : 's'} ahead
+          </li>
+        )}
       </ul>
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="btn-ghost text-xs px-2.5 py-1 min-h-[32px] mt-1.5 self-start"
+        >
+          Show {hidden} more
+        </button>
+      )}
+      {expanded && list.length > PENDING_SHOWN && (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="btn-ghost text-xs px-2.5 py-1 min-h-[32px] mt-1.5 self-start"
+        >
+          Show less
+        </button>
+      )}
     </div>
   )
 }
@@ -1647,7 +1671,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     async (item, answer) => {
       setBusy(item.id, true)
       try {
-        await sendMessage(item.thread_id, answer, `cockpit-${Date.now()}`)
+        const project = String(item.project_key || '').trim()
+        const message = project ? `${answer} ${project}` : answer
+        await sendMessage(item.thread_id, message, `cockpit-${Date.now()}`)
         dropNeed(item.id)
         closeDrawer()
         showToast(answer === 'yes' ? `Deploying ${item.title}` : `Stopped ${item.title}`, {

@@ -292,9 +292,11 @@ def _patch(thread_id: Optional[str], **fields: Any) -> None:
 
 
 def pending_gpw_action(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    pending = _thread(thread_id).get("pending_deploy")
-    if isinstance(pending, dict) and pending.get("kind") == "gpw":
-        return pending
+    from bigas.resources.devops.pipeline import _all_pendings
+
+    for pending in _all_pendings(thread_id).values():
+        if isinstance(pending, dict) and pending.get("kind") == "gpw":
+            return pending
     return None
 
 
@@ -1106,9 +1108,11 @@ def _ask(
     env: StagingEnv,
     candidate_sha: str = "",
 ) -> Dict[str, Any]:
-    _patch(
+    from bigas.resources.devops.pipeline import _set_pending
+
+    _set_pending(
         thread_id,
-        pending_deploy={
+        {
             "kind": "gpw",
             "action": action,
             "project_key": env.project_key,
@@ -1191,11 +1195,13 @@ def _confirm(thread_id: Optional[str], pending: Dict[str, Any]) -> Dict[str, Any
     if env is None:
         only = list(staging_envs().values())
         env = only[0] if len(only) == 1 else None
+    from bigas.resources.devops.pipeline import _set_pending
+
     if env is None:
-        _patch(thread_id, pending_deploy=None)
+        _set_pending(thread_id, None, project_key=pending.get("project_key"))
         _post(thread_id, "That confirmation is not tied to a staging environment anymore.")
         return {"status": "complete", "summary": "Missing staging environment."}
-    _patch(thread_id, pending_deploy=None)
+    _set_pending(thread_id, None, project_key=env.project_key)
     if action == "teardown":
         try:
             run = dispatch_gpw_workflow("teardown", {"confirm": "yes"}, env=env)
@@ -1236,14 +1242,32 @@ def _confirm(thread_id: Optional[str], pending: Dict[str, Any]) -> Dict[str, Any
 def run_gpw_pipeline(*, thread_id: Optional[str], user_message: str) -> Dict[str, Any]:
     from bigas.resources.devops.pipeline import is_cancel, is_confirm
 
-    pending = pending_gpw_action(thread_id)
-    if pending and is_cancel(user_message):
-        _patch(thread_id, pending_deploy=None)
-        _complete_progress(thread_id)
-        _post(thread_id, "Cancelled. Nothing was changed.")
-        return {"status": "complete", "summary": "Cancelled."}
-    if pending and is_confirm(user_message):
-        return _confirm(thread_id, pending)
+    from bigas.resources.devops.pipeline import (
+        _resolve_pending_for_reply,
+        _set_pending,
+        run_chat_deploy_pipeline,
+    )
+
+    if is_cancel(user_message) or is_confirm(user_message):
+        resolved, err = _resolve_pending_for_reply(
+            thread_id, user_message, confirm=is_confirm(user_message)
+        )
+        if err:
+            _post(thread_id, err)
+            return {"status": "complete", "summary": err}
+        if resolved and resolved.get("kind") == "gpw":
+            if is_cancel(user_message):
+                _set_pending(thread_id, None, project_key=resolved.get("project_key"))
+                _complete_progress(thread_id)
+                _post(thread_id, "Cancelled. Nothing was changed.")
+                return {"status": "complete", "summary": "Cancelled."}
+            return _confirm(thread_id, resolved)
+        if resolved:
+            return run_chat_deploy_pipeline(
+                thread_id=thread_id,
+                user_message=user_message,
+                _from_gpw=True,
+            )
 
     command, project_key = parse_staging_command(user_message)
     if not command:
@@ -1391,9 +1415,11 @@ def _finish_success(thread_id: str, poll: Dict[str, Any]) -> None:
             "Maintenance goes on at the start and comes off only after a green post-deploy check.\n\n"
             "Reply **yes** to deploy, or **no** to stop.",
         )
-        _patch(
+        from bigas.resources.devops.pipeline import _set_pending
+
+        _set_pending(
             thread_id,
-            pending_deploy={
+            {
                 "kind": "gpw",
                 "action": "deploy",
                 "project_key": project_key,
