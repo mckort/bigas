@@ -134,7 +134,9 @@ export function emptyDeployRun({
     phase: 'working',
     pendingSend: false,
     threadId: threadId || '',
-    since: since || new Date(Date.now() - 5000).toISOString(),
+    // Blank since means the caller has no start time. A synthetic window would
+    // hide earlier steps of a deploy that is already running.
+    since: since || '',
     prompt: prompt || '',
     messages: [],
     error: '',

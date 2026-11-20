@@ -29,6 +29,9 @@ import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
 
 const POLL_MS = 15000
+// One blip while a deploy is running should not abandon tracking. After this
+// many polls in a row fail, tell the user DevOps cannot be reached.
+const COMMAND_POLL_ERROR_LIMIT = 3
 const SWIPE_PX = 90
 // The click that follows a touch swipe must not open the row. It arrives after pointerup.
 const SWIPE_CLICK_MS = 400
@@ -1522,6 +1525,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const toastTimer = useRef(null)
   const commandRunToken = useRef(0)
   const commandRun = useRef(null)
+  const commandPollErrors = useRef(0)
   const didRehydrate = useRef(false)
   const [pollTrack, setPollTrack] = useState({ threadId: '', phase: '', since: '', token: 0 })
   useEffect(() => () => clearTimeout(toastTimer.current), [])
@@ -1737,6 +1741,21 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     setDrawer((current) => (current?.type === 'command' ? { ...current, run: next } : current))
   }, [])
 
+  const reportCommandPollError = useCallback(
+    (err) => {
+      if (commandRunToken.current !== commandRun.current?.token) return
+      commandPollErrors.current += 1
+      if (commandPollErrors.current < COMMAND_POLL_ERROR_LIMIT) return
+      publishCommandRun(
+        applyDeployUpdate(commandRun.current, [], {
+          pendingSend: Boolean(commandRun.current?.pendingSend),
+          error: err?.message || 'Could not reach DevOps',
+        }),
+      )
+    },
+    [publishCommandRun],
+  )
+
   const openCommandProgress = useCallback(
     async (row, { open = true } = {}) => {
       if (!row) return
@@ -1746,23 +1765,27 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         onOpenChat?.('devops')
         return
       }
+      const current = commandRun.current
+      const sameThread = current?.threadId === threadId
       const cmd =
         commandForShipRow(row) ||
         ({
           label: row.detail || 'Deploy',
-          prompt: commandRun.current?.prompt || '',
+          prompt: (sameThread ? current?.prompt : '') || '',
         })
-      const current = commandRun.current
       if (
-        current?.threadId === threadId &&
+        sameThread &&
         (current.phase === 'working' || current.phase === 'confirm')
       ) {
         if (open) setDrawer({ type: 'command', row, cmd, run: current })
         return
       }
-      const since = pipeline?.since || current?.since || new Date(Date.now() - 60000).toISOString()
+      // Pipeline or row start time, and only this thread's cursor. With no
+      // start time, omit since so the fetch includes the whole deploy.
+      const since = pipeline?.since || row?.since || (sameThread ? current?.since : '') || ''
       const token = commandRunToken.current + 1
       commandRunToken.current = token
+      commandPollErrors.current = 0
       const base = emptyDeployRun({
         threadId,
         since,
@@ -1783,12 +1806,28 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           incoming,
           { pendingSend: false, deployPoll },
         )
+        commandPollErrors.current = 0
         publishCommandRun(next)
-      } catch {
-        /* keep the base run on screen */
+        if (next.phase === 'done' || next.phase === 'confirm') setTimeout(load, 500)
+      } catch (err) {
+        if (commandRunToken.current !== token) return
+        // Drawer is open and still empty: say DevOps could not be reached.
+        // Once lines are on screen, or the drawer is closed, keep polling and
+        // surface the error only after repeated failures.
+        const hasLines = (commandRun.current?.messages || []).length > 0
+        if (open && !hasLines) {
+          publishCommandRun(
+            applyDeployUpdate(commandRun.current, [], {
+              pendingSend: false,
+              error: err?.message || 'Could not reach DevOps',
+            }),
+          )
+          return
+        }
+        reportCommandPollError(err)
       }
     },
-    [data?.working, onOpenChat, publishCommandRun],
+    [data?.working, load, onOpenChat, publishCommandRun, reportCommandPollError],
   )
 
   const openPipelineProgress = useCallback(
@@ -1822,6 +1861,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       if (!prompt) return
       const token = commandRunToken.current + 1
       commandRunToken.current = token
+      commandPollErrors.current = 0
       const previous = commandRun.current
       const since = previous?.since || new Date(Date.now() - 5000).toISOString()
       const base = {
@@ -1884,7 +1924,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       return
     }
     didRehydrate.current = true
-    openCommandProgress(running[0], { open: true })
+    openCommandProgress(running[0], { open: false })
   }, [data, openCommandProgress])
 
   useEffect(() => {
@@ -1911,6 +1951,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           if (polled.status === 'complete' || polled.active === false) deployPoll = false
         }
         if (commandRunToken.current !== commandRun.current?.token) return
+        commandPollErrors.current = 0
         const wasWorking = commandRun.current?.phase === 'working'
         const next = applyDeployUpdate(commandRun.current, incoming, {
           pendingSend: Boolean(commandRun.current?.pendingSend),
@@ -1932,8 +1973,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         if (unchanged) return
         publishCommandRun(next)
         if (wasWorking && (next.phase === 'done' || next.phase === 'confirm')) setTimeout(load, 500)
-      } catch {
-        /* keep the last lines on screen */
+      } catch (err) {
+        if (cancelled) return
+        reportCommandPollError(err)
       }
     }
 
@@ -1944,7 +1986,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       clearTimeout(first)
       clearInterval(id)
     }
-  }, [pollTrack.threadId, pollTrack.phase, pollTrack.since, pollTrack.token, load, publishCommandRun])
+  }, [pollTrack.threadId, pollTrack.phase, pollTrack.since, pollTrack.token, load, publishCommandRun, reportCommandPollError])
 
   const openNeed = (item) => {
     setComment('')

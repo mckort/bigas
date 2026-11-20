@@ -213,5 +213,13 @@ test('emptyDeployRun starts in working with deployPoll', () => {
   assert.equal(run.phase, 'working')
   assert.equal(run.deployPoll, true)
   assert.equal(run.threadId, 't1')
+  assert.equal(run.since, since)
   assert.equal(run.token, 3)
+})
+
+test('emptyDeployRun keeps a blank since so a resume can load the whole thread', () => {
+  const run = emptyDeployRun({ threadId: 't1', since: '', token: 4 })
+  assert.equal(run.since, '')
+  assert.equal(run.phase, 'working')
+  assert.equal(run.error, '')
 })
