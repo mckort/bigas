@@ -109,6 +109,10 @@ def fetch_cursor_run_usage(
     """
     Fetch Cursor token usage for one agent/run with retries for metering lag.
 
+    Blocks the caller: a miss sleeps ``retry_delay_seconds`` between attempts
+    (about 20s with the defaults). HTTP and chat handlers must not run the
+    full retry budget on the request thread.
+
     Never raises — returns ``{"ok": False, ...}`` on failure.
     """
     aid = (agent_id or "").strip()

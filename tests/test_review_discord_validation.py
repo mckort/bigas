@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 from flask import Flask
 
-from bigas.resources.cto.endpoints import _discord_review_posted_message, cto_bp
+from bigas.resources.cto.endpoints import (
+    _discord_cursor_usage_suffix,
+    _discord_review_posted_message,
+    cto_bp,
+)
 
 
 def _app():
@@ -264,6 +268,97 @@ def test_discord_review_posted_message_includes_pr_title_as_link():
     ) in header
     assert "PR: https://github.com/mckort/bigas/pull/11" not in header
     assert body == "Looks good."
+
+
+def test_cursor_usage_suffix_returns_ready_metering_without_a_thread(monkeypatch):
+    def fake_fetch(**kwargs):
+        assert kwargs["retries"] == 1
+        assert kwargs["retry_delay_seconds"] == 0
+        return {"ok": True, "discord_lines": ["Cursor usage: 10 tokens"]}
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.endpoints.fetch_cursor_run_usage",
+        fake_fetch,
+    )
+
+    def _unexpected_thread(*_args, **_kwargs):
+        raise AssertionError("ready metering must not start a background retry")
+
+    monkeypatch.setattr("bigas.resources.cto.endpoints.threading.Thread", _unexpected_thread)
+    suffix = _discord_cursor_usage_suffix(agent_id="bc-1")
+    assert suffix == "\nCursor usage: 10 tokens"
+
+
+def test_cursor_usage_suffix_retries_lag_off_the_request_thread(monkeypatch):
+    calls = []
+
+    def fake_fetch(**kwargs):
+        calls.append(kwargs)
+        if kwargs.get("retries") == 1:
+            return {"ok": True, "discord_lines": []}
+        return {"ok": True, "discord_lines": ["Cursor usage: 12 tokens"]}
+
+    posted = []
+    started = {}
+
+    class _ImmediateThread:
+        def __init__(self, target, name=None, daemon=None):
+            started["target"] = target
+            started["name"] = name
+            started["daemon"] = daemon
+
+        def start(self):
+            started["started"] = True
+
+    monkeypatch.setattr(
+        "bigas.resources.cto.endpoints.fetch_cursor_run_usage",
+        fake_fetch,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.endpoints.threading.Thread",
+        _ImmediateThread,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.cto.endpoints._post_cto_status",
+        lambda message: posted.append(message),
+    )
+    suffix = _discord_cursor_usage_suffix(
+        agent_id="bc-1",
+        run_id="run-9",
+        context="PR: example",
+    )
+    assert suffix == ""
+    assert calls == [
+        {
+            "agent_id": "bc-1",
+            "run_id": "run-9",
+            "api_key": None,
+            "retries": 1,
+            "retry_delay_seconds": 0,
+        }
+    ]
+    assert started["started"] is True
+    assert started["daemon"] is True
+    assert started["name"] == "cursor-run-usage"
+    assert posted == []
+    started["target"]()
+    assert calls[1]["agent_id"] == "bc-1"
+    assert calls[1]["run_id"] == "run-9"
+    assert "retries" not in calls[1]
+    assert posted == ["PR: example\nCursor usage: 12 tokens"]
+
+
+def test_cursor_usage_suffix_skips_retry_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(
+        "bigas.resources.cto.endpoints.fetch_cursor_run_usage",
+        lambda **kwargs: {"ok": False, "reason": "CURSOR_API_KEY not set"},
+    )
+
+    def _unexpected_thread(*_args, **_kwargs):
+        raise AssertionError("missing API key must not retry")
+
+    monkeypatch.setattr("bigas.resources.cto.endpoints.threading.Thread", _unexpected_thread)
+    assert _discord_cursor_usage_suffix(agent_id="bc-1") == ""
 
 
 @patch("bigas.resources.cto.endpoints._discord_cursor_usage_suffix", return_value="")
