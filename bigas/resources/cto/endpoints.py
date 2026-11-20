@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 
 from flask import Blueprint, jsonify, request
 
@@ -149,26 +150,95 @@ def _discord_review_posted_message(
     )
 
 
+_USAGE_RETRY_SKIP_REASONS = frozenset(
+    {"agent_id missing", "CURSOR_API_KEY not set"}
+)
+
+
+def _schedule_cursor_usage_followup(
+    *,
+    agent_id: str,
+    run_id: str | None,
+    cursor_api_key: str | None,
+    context: str,
+) -> None:
+    """Retry Cursor metering off the request thread and post lines if they arrive."""
+
+    def _run() -> None:
+        try:
+            result = fetch_cursor_run_usage(
+                agent_id=agent_id,
+                run_id=run_id,
+                api_key=cursor_api_key,
+            )
+        except Exception:
+            logger.warning("Cursor usage fetch failed for Discord", exc_info=True)
+            return
+        if not result.get("ok"):
+            return
+        lines = [
+            str(line)
+            for line in (result.get("discord_lines") or [])
+            if str(line).strip()
+        ]
+        if not lines:
+            return
+        body = "\n".join(lines)
+        prefix = (context or "").strip()
+        if prefix:
+            body = f"{prefix}\n{body}"
+        _post_cto_status(body)
+
+    threading.Thread(
+        target=_run,
+        name="cursor-run-usage",
+        daemon=True,
+    ).start()
+
+
 def _discord_cursor_usage_suffix(
     *,
     agent_id: str,
     run_id: str | None = None,
     cursor_api_key: str | None = None,
+    context: str = "",
 ) -> str:
-    """Best-effort Cursor usage lines for autofix Discord notifications."""
+    """Best-effort Cursor usage lines for autofix Discord notifications.
+
+    A ready metering response is returned for the status message. When usage
+    is still empty or the API errors, the remaining retries run on a
+    background thread so this handler does not sleep through metering lag.
+    """
     try:
         result = fetch_cursor_run_usage(
             agent_id=agent_id,
             run_id=run_id,
             api_key=cursor_api_key,
+            retries=1,
+            retry_delay_seconds=0,
         )
     except Exception:
         logger.warning("Cursor usage fetch failed for Discord", exc_info=True)
         return ""
     if not result.get("ok"):
+        reason = str(result.get("reason") or "")
+        if reason in _USAGE_RETRY_SKIP_REASONS:
+            return ""
+        _schedule_cursor_usage_followup(
+            agent_id=agent_id,
+            run_id=run_id,
+            cursor_api_key=cursor_api_key,
+            context=context,
+        )
         return ""
     lines = result.get("discord_lines") or []
     if not lines:
+        _schedule_cursor_usage_followup(
+            agent_id=agent_id,
+            run_id=run_id,
+            cursor_api_key=cursor_api_key,
+            context=context,
+        )
         return ""
     return "\n" + "\n".join(str(line) for line in lines)
 
@@ -1657,6 +1727,7 @@ def autofix_followup():
         agent_id=agent_id,
         run_id=status.get("run_id") or run_id,
         cursor_api_key=cursor_api_key,
+        context=pr_ref,
     )
     if not status.get("ok"):
         _post_cto_status(

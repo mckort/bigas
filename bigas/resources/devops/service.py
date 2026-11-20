@@ -200,6 +200,9 @@ def filter_unchanged_workflows(
     names = [w.strip() for w in (workflows or []) if w and w.strip()]
     if not risk or risk.get("no_prod_version"):
         return names, []
+    # Failed compares leave total_files_changed=0 — do not treat that as "unchanged".
+    if risk.get("compare_failed"):
+        return names, []
     has_components = "component_changes" in risk
     has_total = "total_files_changed" in risk
     if not has_components and not has_total:
@@ -542,10 +545,15 @@ def check_deployment_risk(
                 _record_component_file(component_changes, label, filename, item)
 
     files = list(files_by_name.values())
+    # One successful component compare must not hide a sibling that failed
+    # (missing tag, rate limit, network). An unknown diff is not "no changes".
+    compare_failed = bool(compare_errors)
     if compared:
         base_display = " + ".join(compared)
     elif bases and all(tag == head for _label, tag in bases):
         base_display = f"{head} → {head}"
+    elif compare_failed:
+        base_display = f"(compare failed) → {head}"
     else:
         base_display = f"(no production version) → {head}"
 
@@ -584,11 +592,17 @@ def check_deployment_risk(
 
     if compare_errors:
         warnings.extend(compare_errors)
+    if compare_failed:
+        warnings.append(
+            "Git compare failed; change set vs prod is unknown — not skipping deploy workflows."
+        )
 
     risk_level = "low"
     if migration_count or findings["infrastructure_config"]:
         risk_level = "high"
     elif findings["dependency_change"] or findings["other_risky"]:
+        risk_level = "medium"
+    elif compare_failed:
         risk_level = "medium"
 
     no_prod_version = not bases
@@ -609,6 +623,11 @@ def check_deployment_risk(
             f"Cannot compare live prod against {head}."
         )
         summary_parts.append("This would be the first versioned deploy.")
+    elif compare_failed:
+        summary_parts.append(f"Compared {base_display} on {target.repo}.")
+        summary_parts.append(
+            "Could not diff against production; deploy workflows will still run."
+        )
     else:
         summary_parts.append(f"Compared {base_display} on {target.repo}.")
         summary_parts.append(f"{len(files)} file(s) changed.")
@@ -619,6 +638,7 @@ def check_deployment_risk(
         target.workflows,
         {
             "no_prod_version": no_prod_version,
+            "compare_failed": compare_failed,
             "component_changes": component_file_lists,
             "total_files_changed": len(files),
         },
@@ -664,6 +684,7 @@ def check_deployment_risk(
         "warnings": warnings,
         "findings": findings,
         "no_prod_version": no_prod_version,
+        "compare_failed": compare_failed,
         "workflows_configured": target.workflows,
         "site_urls": target.site_urls,
         "deploy_repo": target.dispatch_repo,

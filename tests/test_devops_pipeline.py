@@ -230,7 +230,7 @@ def test_pipeline_requires_project_key(monkeypatch):
     assert "VFA" in contents or "project key" in contents.lower()
 
 
-def test_clear_stale_pending_on_unrelated_message(monkeypatch):
+def test_clear_stale_keeps_pending_on_unrelated_message():
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
     store.patch_thread(
@@ -240,10 +240,14 @@ def test_clear_stale_pending_on_unrelated_message(monkeypatch):
 
     assert should_run_deploy_pipeline("what is the status?", thread["thread_id"]) is False
     clear_stale_pending_deploy("what is the status?", thread["thread_id"])
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    pending = store.get_thread(thread["thread_id"]).get("pending_deploy")
+    assert isinstance(pending, dict)
+    assert pending.get("project_key") == "VFA"
 
 
-def test_deploy_start_clears_pending_other_project():
+def test_deploy_start_keeps_pending_other_project():
+    from bigas.resources.devops.pipeline import _all_pendings
+
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
     store.patch_thread(
@@ -258,10 +262,14 @@ def test_deploy_start_clears_pending_other_project():
 
     assert should_run_deploy_pipeline("deploy bigas", thread["thread_id"]) is True
     clear_stale_pending_deploy("deploy bigas", thread["thread_id"])
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    pendings = _all_pendings(thread["thread_id"])
+    assert "VFA" in pendings
+    assert "BIG" not in pendings
 
 
 def test_named_project_wins_over_pending_vfa(monkeypatch):
+    from bigas.resources.devops.pipeline import _all_pendings
+
     store = get_chat_store()
     thread = store.create_thread("user-1", "devops")
     store.patch_thread(
@@ -314,7 +322,30 @@ def test_named_project_wins_over_pending_vfa(monkeypatch):
     assert seen.get("project_key") == "BIG"
     assert seen.get("trigger_project_key") == "BIG"
     assert result["status"] == "in_progress"
-    assert store.get_thread(thread["thread_id"]).get("pending_deploy") is None
+    # VFA confirm must survive a deploy start for another project.
+    assert "VFA" in _all_pendings(thread["thread_id"])
+
+
+def test_ambiguous_yes_asks_for_project_key():
+    from bigas.resources.devops.pipeline import _set_pending
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    tid = thread["thread_id"]
+    _set_pending(
+        tid,
+        {"project_key": "VFA", "kind": "prepare", "version": "0.2.0", "repo": "mckort/vcfieldassistant"},
+    )
+    _set_pending(
+        tid,
+        {"project_key": "BIG", "kind": "prepare", "version": "1.0.0", "repo": "mckort/bigas"},
+    )
+
+    result = run_chat_deploy_pipeline(thread_id=tid, user_message="yes")
+    assert result["status"] == "complete"
+    blob = "\n".join(m["content"] for m in store.list_messages(tid))
+    assert "yes VFA" in blob or "Several deploys" in blob
+    assert "VFA" in blob and "BIG" in blob
 
 
 def test_pipeline_skips_when_nothing_changed(monkeypatch):
@@ -852,3 +883,196 @@ def test_expire_stale_deploy_poll_leaves_gpw_review_wait():
     assert poll["phase"] == "review_autofix"
     blob = "\n".join(m["content"] for m in store.list_messages(thread["thread_id"]))
     assert "Post-check" not in blob
+
+
+def _running_poll(project_key, run_id, repo):
+    return {
+        "repo": repo,
+        "project_key": project_key,
+        "triggered": [
+            {
+                "workflow": "deploy.yml",
+                "run_id": run_id,
+                "html_url": f"https://x/{run_id}",
+            }
+        ],
+        "site_urls": [],
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "finished_lines": [],
+        "failed_runs": [],
+        "done_run_ids": [],
+        "ref": "main",
+    }
+
+
+def test_parallel_deploy_polls_advance_together(monkeypatch):
+    from bigas.resources.devops.pipeline import _set_deploy_poll
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    _set_deploy_poll(thread_id, _running_poll("VFA", 11, "mckort/vcfieldassistant"))
+    _set_deploy_poll(thread_id, _running_poll("BIG", 22, "mckort/bigas"))
+    statuses = {
+        11: {"workflow_status": "in_progress", "conclusion": None, "html_url": "https://x/11"},
+        22: {"workflow_status": "completed", "conclusion": "success", "html_url": "https://x/22"},
+    }
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: statuses[kwargs["run_id"]],
+    )
+
+    first = poll_deploy_postcheck(thread_id)
+    assert first["status"] == "in_progress"
+    assert first["active"] is True
+    polls = store.get_thread(thread_id).get("pending_deploy_polls") or {}
+    assert "VFA" in polls
+    assert "BIG" not in polls
+
+    statuses[11] = {
+        "workflow_status": "completed",
+        "conclusion": "success",
+        "html_url": "https://x/11",
+    }
+    second = poll_deploy_postcheck(thread_id)
+    assert second["status"] == "complete"
+    assert second["active"] is False
+    assert not (store.get_thread(thread_id).get("pending_deploy_polls") or {})
+    assert store.get_thread(thread_id).get("pending_deploy_poll") is None
+
+
+def test_resume_workflow_polls_the_matching_project(monkeypatch):
+    from bigas.resources.devops.pipeline import _set_deploy_poll
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    _set_deploy_poll(thread_id, _running_poll("VFA", 11, "mckort/vcfieldassistant"))
+    _set_deploy_poll(thread_id, _running_poll("BIG", 22, "mckort/bigas"))
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "success",
+            "html_url": "https://x/22",
+        },
+    )
+
+    result = resume_deploy_postcheck_from_workflow(
+        {
+            "action": "completed",
+            "workflow_run": {"id": 22, "conclusion": "success"},
+            "repository": {"name": "bigas", "owner": {"login": "mckort"}},
+        }
+    )
+    assert result["resumed"] == 1
+    polls = store.get_thread(thread_id).get("pending_deploy_polls") or {}
+    assert "BIG" not in polls
+    assert polls["VFA"]["triggered"][0]["run_id"] == 11
+    assert store.get_thread(thread_id).get("has_pending_deploy_poll") is True
+
+
+def test_prepare_poll_does_not_block_other_project_deploy(monkeypatch):
+    from bigas.resources.devops.pipeline import _set_deploy_poll
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    now = datetime.now(timezone.utc).isoformat()
+    store.patch_thread(
+        thread_id,
+        pending_prepare_poll={
+            "project_key": "BIG",
+            "phase": "autofix",
+            "repo": "mckort/bigas",
+            "pr_number": 4,
+            "started_at": now,
+        },
+    )
+    _set_deploy_poll(thread_id, _running_poll("VFA", 11, "mckort/vcfieldassistant"))
+    seen = {"runs": [], "prepare": []}
+
+    def _status(**kwargs):
+        seen["runs"].append(kwargs["run_id"])
+        return {"workflow_status": "in_progress", "conclusion": None, "html_url": "https://x/11"}
+
+    def _prepare(thread_id, project_key=None):
+        seen["prepare"].append(project_key)
+        return {"status": "in_progress", "active": True}
+
+    monkeypatch.setattr("bigas.resources.devops.pipeline.get_deployment_status", _status)
+    monkeypatch.setattr("bigas.resources.devops.prepare.poll_prepare_followup", _prepare)
+
+    result = poll_deploy_postcheck(thread_id)
+    assert seen["prepare"] == ["BIG"]
+    assert seen["runs"] == [11]
+    assert result["status"] == "in_progress"
+    assert result["active"] is True
+
+
+def test_clearing_keyed_deploy_keeps_unkeyed_poll():
+    from bigas.resources.devops.pipeline import _set_deploy_poll
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    now = datetime.now(timezone.utc).isoformat()
+    _set_deploy_poll(
+        thread_id,
+        {
+            "kind": "gpw",
+            "phase": "prepare_staging",
+            "repo": "Green-Promo-Wear-Global/GPW",
+            "triggered": [{"workflow": "prepare-staging.yml", "run_id": 7}],
+            "started_at": now,
+        },
+    )
+    _set_deploy_poll(thread_id, _running_poll("VFA", 11, "mckort/vcfieldassistant"))
+    _set_deploy_poll(thread_id, None, project_key="VFA")
+    data = store.get_thread(thread_id)
+    polls = data.get("pending_deploy_polls") or {}
+    assert "VFA" not in polls
+    assert polls["_"]["kind"] == "gpw"
+    assert data.get("has_pending_deploy_poll") is True
+    assert data.get("pending_deploy_poll")["kind"] == "gpw"
+
+
+def test_gpw_finish_clears_its_map_entry_only(monkeypatch):
+    from bigas.resources.devops.gpw_pipeline import poll_gpw
+    from bigas.resources.devops.pipeline import _set_deploy_poll
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    now = datetime.now(timezone.utc).isoformat()
+    _set_deploy_poll(
+        thread_id,
+        {
+            "kind": "gpw",
+            "phase": "prepare_staging",
+            "project_key": "GPW-PROD",
+            "repo": "Green-Promo-Wear-Global/GPW",
+            "triggered": [{"workflow": "prepare-staging.yml", "run_id": 7}],
+            "production_sha": "abc123456789",
+            "candidate_sha": "def123456789",
+            "started_at": now,
+        },
+    )
+    _set_deploy_poll(thread_id, _running_poll("VFA", 11, "mckort/vcfieldassistant"))
+    monkeypatch.setattr(
+        "bigas.resources.devops.service.get_deployment_status",
+        lambda **kwargs: {
+            "workflow_status": "completed",
+            "conclusion": "success",
+            "html_url": "https://example.test/7",
+        },
+    )
+
+    result = poll_gpw(thread_id)
+    assert result["active"] is False
+    data = store.get_thread(thread_id)
+    polls = data.get("pending_deploy_polls") or {}
+    assert "GPW-PROD" not in polls
+    assert polls["VFA"]["triggered"][0]["run_id"] == 11
+    assert data.get("has_pending_deploy_poll") is True
+    assert data.get("pending_deploy_poll")["project_key"] == "VFA"

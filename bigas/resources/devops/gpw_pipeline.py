@@ -292,9 +292,11 @@ def _patch(thread_id: Optional[str], **fields: Any) -> None:
 
 
 def pending_gpw_action(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    pending = _thread(thread_id).get("pending_deploy")
-    if isinstance(pending, dict) and pending.get("kind") == "gpw":
-        return pending
+    from bigas.resources.devops.pipeline import _all_pendings
+
+    for pending in _all_pendings(thread_id).values():
+        if isinstance(pending, dict) and pending.get("kind") == "gpw":
+            return pending
     return None
 
 
@@ -523,6 +525,45 @@ def dispatch_gpw_workflow(
     return dispatch_workflow(repo=env.repo, workflow=workflow, ref=ref, inputs=inputs or None)
 
 
+def _set_gpw_deploy_poll(
+    thread_id: Optional[str],
+    payload: Optional[Dict[str, Any]],
+    *,
+    project_key: Optional[str] = None,
+) -> None:
+    """Write one GPW poll into the shared deploy-poll map."""
+    from bigas.resources.devops.pipeline import _set_deploy_poll
+
+    if payload is None:
+        slot = (project_key or "").strip() or "_"
+        _set_deploy_poll(thread_id, None, project_key=slot)
+        return
+    _set_deploy_poll(
+        thread_id,
+        payload,
+        project_key=project_key or payload.get("project_key"),
+    )
+
+
+def _load_thread_deploy_poll(
+    thread_id: Optional[str], project_key: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    from bigas.resources.devops.pipeline import _all_deploy_polls, _deploy_poll
+
+    if project_key:
+        found = _deploy_poll(thread_id, project_key)
+        return found if isinstance(found, dict) else None
+    polls = _all_deploy_polls(thread_id)
+    for value in polls.values():
+        if isinstance(value, dict) and value.get("kind") == "gpw":
+            return value
+    if len(polls) == 1:
+        only = next(iter(polls.values()))
+        return only if isinstance(only, dict) else None
+    legacy = _thread(thread_id).get("pending_deploy_poll")
+    return legacy if isinstance(legacy, dict) else None
+
+
 def _begin_poll(
     thread_id: Optional[str],
     *,
@@ -532,9 +573,9 @@ def _begin_poll(
     production_sha: str = "",
     candidate_sha: str = "",
 ) -> Dict[str, Any]:
-    _patch(
+    _set_gpw_deploy_poll(
         thread_id,
-        pending_deploy_poll={
+        {
             "kind": "gpw",
             "phase": phase,
             "project_key": env.project_key,
@@ -553,7 +594,6 @@ def _begin_poll(
             "failed_runs": [],
             "done_run_ids": [],
         },
-        has_pending_deploy_poll=True,
     )
     url = run.get("html_url") or ""
     run_id = run.get("run_id") or "?"
@@ -603,8 +643,32 @@ def _gpw_in_progress_poll(**extra: Any) -> Dict[str, Any]:
     }
 
 
-def _clear_gpw_poll(thread_id: Optional[str]) -> None:
-    _patch(thread_id, pending_deploy_poll=None, has_pending_deploy_poll=False)
+def _clear_gpw_poll(
+    thread_id: Optional[str], project_key: Optional[str] = None
+) -> None:
+    """Drop GPW poll slots. Product deploy polls on the same thread stay."""
+    from bigas.resources.devops.pipeline import _all_deploy_polls
+
+    from bigas.portfolio import normalize_project_key
+
+    wanted = normalize_project_key(project_key) if (project_key or "").strip() else ""
+    polls = _all_deploy_polls(thread_id) if thread_id else {}
+    slots = []
+    for map_key, value in polls.items():
+        if not isinstance(value, dict) or value.get("kind") != "gpw":
+            continue
+        slot = normalize_project_key(value.get("project_key") or map_key) or str(map_key or "_")
+        map_slot = normalize_project_key(map_key) or str(map_key or "_")
+        if wanted and slot != wanted and map_slot != wanted:
+            continue
+        if slot not in slots:
+            slots.append(slot)
+    if not slots:
+        if not wanted or wanted == "_":
+            _set_gpw_deploy_poll(thread_id, None, project_key="_")
+        return
+    for slot in slots:
+        _set_gpw_deploy_poll(thread_id, None, project_key=slot)
 
 
 _GPW_FOLLOWUP_PHASES = ("review_autofix_followup", "review_after_fix_merge")
@@ -616,7 +680,11 @@ def _claim_gpw_followup(thread_id: str, poll: Dict[str, Any], phase: str) -> boo
     Later polls, including after the chat is reopened, wait on this claim
     instead of repeating the same message.
     """
-    current = _thread(thread_id).get("pending_deploy_poll")
+    slot = (poll.get("project_key") or "").strip() or "_"
+    current = _load_thread_deploy_poll(thread_id, slot)
+    if not isinstance(current, dict):
+        legacy = _thread(thread_id).get("pending_deploy_poll")
+        current = legacy if isinstance(legacy, dict) else None
     if not isinstance(current, dict):
         return False
     if (current.get("phase") or "") != (poll.get("phase") or ""):
@@ -627,13 +695,18 @@ def _claim_gpw_followup(thread_id: str, poll: Dict[str, Any], phase: str) -> boo
         return False
     claimed = dict(current)
     claimed["phase"] = phase
-    _patch(thread_id, pending_deploy_poll=claimed, has_pending_deploy_poll=True)
+    _set_gpw_deploy_poll(thread_id, claimed, project_key=slot)
     return True
 
 
-def _stop_staging_review(thread_id: Optional[str], message: str) -> Dict[str, Any]:
+def _stop_staging_review(
+    thread_id: Optional[str],
+    message: str,
+    *,
+    project_key: Optional[str] = None,
+) -> Dict[str, Any]:
     _complete_progress(thread_id)
-    _clear_gpw_poll(thread_id)
+    _clear_gpw_poll(thread_id, project_key=project_key)
     _post(thread_id, message)
     return {"status": "complete", "active": False, "summary": message}
 
@@ -764,7 +837,11 @@ def _dispatch_after_clean_review(
         )
     except Exception as exc:
         logger.exception("Prepare-staging dispatch failed for %s", env.project_key)
-        return _stop_staging_review(thread_id, f"Could not start prepare-staging: {exc}")
+        return _stop_staging_review(
+            thread_id,
+            f"Could not start prepare-staging: {exc}",
+            project_key=env.project_key,
+        )
     _post(
         thread_id,
         "Review is clean. Building a full staging environment from production "
@@ -793,12 +870,16 @@ def _begin_review_autofix_poll(
     pr_number = _safe_pr_number(launched.get("pr_number"))
     started_at = datetime.now(timezone.utc).isoformat()
     if cooldown_until and thread_id:
-        current = _thread(thread_id).get("pending_deploy_poll") or {}
+        current = _load_thread_deploy_poll(thread_id, env.project_key) or {}
+        if not (isinstance(current, dict) and current.get("kind") == "gpw"):
+            legacy = _thread(thread_id).get("pending_deploy_poll") or {}
+            if isinstance(legacy, dict) and legacy.get("kind") == "gpw":
+                current = legacy
         if isinstance(current, dict) and current.get("started_at"):
             started_at = current["started_at"]
-    _patch(
+    _set_gpw_deploy_poll(
         thread_id,
-        pending_deploy_poll={
+        {
             "kind": "gpw",
             "phase": "review_autofix",
             "project_key": env.project_key,
@@ -814,7 +895,6 @@ def _begin_review_autofix_poll(
             "started_at": started_at,
             "triggered": [],
         },
-        has_pending_deploy_poll=True,
     )
     return {
         "status": "in_progress",
@@ -837,7 +917,7 @@ def _handle_dirty_staging_review(
 
     reason = (reviewed.get("reason") or "").strip()
     if reason and not (reviewed.get("review") or "").strip():
-        return _stop_staging_review(thread_id, reason)
+        return _stop_staging_review(thread_id, reason, project_key=env.project_key)
     if _review_allows_staging(env, reviewed, rounds_started=rounds_started):
         return _dispatch_after_clean_review(thread_id, env, reviewed)
 
@@ -851,6 +931,7 @@ def _handle_dirty_staging_review(
                 f"Autofix stopped after {max_iters} rounds. "
                 "Remaining findings need manual handling. Staging was not built."
             ),
+            project_key=env.project_key,
         )
     preview = _review_preview(env, reviewed)
 
@@ -865,6 +946,7 @@ def _handle_dirty_staging_review(
             thread_id,
             _review_preview(env, reviewed, final=True)
             + f"\n\nCould not start autofix ({exc}).",
+            project_key=env.project_key,
         )
 
     if launched.get("cooldown"):
@@ -898,6 +980,7 @@ def _handle_dirty_staging_review(
                 thread_id,
                 _review_preview(env, reviewed, final=True)
                 + f"\n\nAutofix did not start ({loop_reason}).",
+                project_key=env.project_key,
             )
         if launched.get("review_clean"):
             fix_pr_number = _safe_pr_number(reviewed.get("pr_number"))
@@ -922,13 +1005,16 @@ def _handle_dirty_staging_review(
                     reviewed = review_candidate(env)
                 except Exception as exc:
                     logger.exception("Prepare-staging re-review failed for %s", env.project_key)
-                    return _stop_staging_review(thread_id, f"Review failed: {exc}")
+                    return _stop_staging_review(
+                        thread_id, f"Review failed: {exc}", project_key=env.project_key
+                    )
             return _dispatch_after_clean_review(thread_id, env, reviewed)
         skip_reason = (launched.get("reason") or "skipped").strip()
         return _stop_staging_review(
             thread_id,
             _review_preview(env, reviewed, final=True)
             + f"\n\nAutofix did not start ({skip_reason}).",
+            project_key=env.project_key,
         )
 
     next_round = rounds_started + 1
@@ -966,7 +1052,9 @@ def _start_prepare_staging(thread_id: Optional[str], env: StagingEnv) -> Dict[st
         reviewed = review_candidate(env)
     except Exception as exc:
         logger.exception("Prepare-staging review failed for %s", env.project_key)
-        return _stop_staging_review(thread_id, f"Review failed: {exc}")
+        return _stop_staging_review(
+            thread_id, f"Review failed: {exc}", project_key=env.project_key
+        )
     if not reviewed.get("ok"):
         return _handle_dirty_staging_review(thread_id, env, reviewed)
     return _dispatch_after_clean_review(thread_id, env, reviewed)
@@ -1106,9 +1194,11 @@ def _ask(
     env: StagingEnv,
     candidate_sha: str = "",
 ) -> Dict[str, Any]:
-    _patch(
+    from bigas.resources.devops.pipeline import _set_pending
+
+    _set_pending(
         thread_id,
-        pending_deploy={
+        {
             "kind": "gpw",
             "action": action,
             "project_key": env.project_key,
@@ -1191,11 +1281,13 @@ def _confirm(thread_id: Optional[str], pending: Dict[str, Any]) -> Dict[str, Any
     if env is None:
         only = list(staging_envs().values())
         env = only[0] if len(only) == 1 else None
+    from bigas.resources.devops.pipeline import _set_pending
+
     if env is None:
-        _patch(thread_id, pending_deploy=None)
+        _set_pending(thread_id, None, project_key=pending.get("project_key"))
         _post(thread_id, "That confirmation is not tied to a staging environment anymore.")
         return {"status": "complete", "summary": "Missing staging environment."}
-    _patch(thread_id, pending_deploy=None)
+    _set_pending(thread_id, None, project_key=env.project_key)
     if action == "teardown":
         try:
             run = dispatch_gpw_workflow("teardown", {"confirm": "yes"}, env=env)
@@ -1236,14 +1328,32 @@ def _confirm(thread_id: Optional[str], pending: Dict[str, Any]) -> Dict[str, Any
 def run_gpw_pipeline(*, thread_id: Optional[str], user_message: str) -> Dict[str, Any]:
     from bigas.resources.devops.pipeline import is_cancel, is_confirm
 
-    pending = pending_gpw_action(thread_id)
-    if pending and is_cancel(user_message):
-        _patch(thread_id, pending_deploy=None)
-        _complete_progress(thread_id)
-        _post(thread_id, "Cancelled. Nothing was changed.")
-        return {"status": "complete", "summary": "Cancelled."}
-    if pending and is_confirm(user_message):
-        return _confirm(thread_id, pending)
+    from bigas.resources.devops.pipeline import (
+        _resolve_pending_for_reply,
+        _set_pending,
+        run_chat_deploy_pipeline,
+    )
+
+    if is_cancel(user_message) or is_confirm(user_message):
+        resolved, err = _resolve_pending_for_reply(
+            thread_id, user_message, confirm=is_confirm(user_message)
+        )
+        if err:
+            _post(thread_id, err)
+            return {"status": "complete", "summary": err}
+        if resolved and resolved.get("kind") == "gpw":
+            if is_cancel(user_message):
+                _set_pending(thread_id, None, project_key=resolved.get("project_key"))
+                _complete_progress(thread_id)
+                _post(thread_id, "Cancelled. Nothing was changed.")
+                return {"status": "complete", "summary": "Cancelled."}
+            return _confirm(thread_id, resolved)
+        if resolved:
+            return run_chat_deploy_pipeline(
+                thread_id=thread_id,
+                user_message=user_message,
+                _from_gpw=True,
+            )
 
     command, project_key = parse_staging_command(user_message)
     if not command:
@@ -1391,9 +1501,11 @@ def _finish_success(thread_id: str, poll: Dict[str, Any]) -> None:
             "Maintenance goes on at the start and comes off only after a green post-deploy check.\n\n"
             "Reply **yes** to deploy, or **no** to stop.",
         )
-        _patch(
+        from bigas.resources.devops.pipeline import _set_pending
+
+        _set_pending(
             thread_id,
-            pending_deploy={
+            {
                 "kind": "gpw",
                 "action": "deploy",
                 "project_key": project_key,
@@ -1587,10 +1699,12 @@ def _after_candidate_rereview(
     reviewed: Dict[str, Any],
 ) -> Dict[str, Any]:
     if (reviewed.get("reason") or "").strip() and not (reviewed.get("review") or "").strip():
-        return _stop_staging_review(thread_id, reviewed["reason"])
+        return _stop_staging_review(
+            thread_id, reviewed["reason"], project_key=env.project_key
+        )
     rounds_started = int(poll.get("rounds_started") or 0)
     if _review_allows_staging(env, reviewed, rounds_started=rounds_started):
-        _clear_gpw_poll(thread_id)
+        _clear_gpw_poll(thread_id, project_key=env.project_key)
         return _dispatch_after_clean_review(thread_id, env, reviewed)
     return _handle_dirty_staging_review(
         thread_id,
@@ -1634,9 +1748,9 @@ def _merge_fix_pr_then_stage(
             f"Fix PR is clean. Waiting for required checks, then GitHub will merge {pr_url}",
             status="in_progress",
         )
-        _patch(
+        _set_gpw_deploy_poll(
             thread_id,
-            pending_deploy_poll={
+            {
                 **poll,
                 "phase": "wait_fix_merge",
                 "pr_number": pr_number,
@@ -1644,11 +1758,12 @@ def _merge_fix_pr_then_stage(
                 "agent_id": "",
                 "started_at": datetime.now(timezone.utc).isoformat(),
             },
-            has_pending_deploy_poll=True,
         )
         return _gpw_in_progress_poll()
     except GitHubPRCommentError as exc:
-        return _stop_staging_review(thread_id, f"Could not merge the fix PR: {exc}")
+        return _stop_staging_review(
+            thread_id, f"Could not merge the fix PR: {exc}", project_key=env.project_key
+        )
     _post(thread_id, f"Merged the fix PR into `{env.candidate_branch}`: {pr_url}")
     return _review_candidate_after_fix_merge(thread_id, env, poll)
 
@@ -1665,7 +1780,9 @@ def _review_candidate_after_fix_merge(
         )
     except Exception as exc:
         logger.exception("Prepare-staging re-review failed for %s", env.project_key)
-        return _stop_staging_review(thread_id, f"Review failed: {exc}")
+        return _stop_staging_review(
+            thread_id, f"Review failed: {exc}", project_key=env.project_key
+        )
     return _after_candidate_rereview(thread_id, env, poll, reviewed)
 
 
@@ -1675,7 +1792,9 @@ def _continue_after_review_autofix(
     env = _env_for_poll(poll)
     if env is None:
         return _stop_staging_review(
-            thread_id, "Autofix finished, but the staging environment is unknown."
+            thread_id,
+            "Autofix finished, but the staging environment is unknown.",
+            project_key=poll.get("project_key"),
         )
     follows_new_pr = bool(poll.get("follows_new_pr"))
     if follows_new_pr:
@@ -1684,12 +1803,15 @@ def _continue_after_review_autofix(
             return _stop_staging_review(
                 thread_id,
                 "Autofix finished but did not open a pull request, so staging was not built.",
+                project_key=poll.get("project_key"),
             )
         try:
             reviewed = _review_fix_pull_request(env, pr_number)
         except Exception as exc:
             logger.exception("Prepare-staging fix PR review failed for %s", env.project_key)
-            return _stop_staging_review(thread_id, f"Review failed: {exc}")
+            return _stop_staging_review(
+                thread_id, f"Review failed: {exc}", project_key=poll.get("project_key")
+            )
         if reviewed.get("merged"):
             _post(thread_id, f"Fix PR already merged: {reviewed.get('pr_url') or pr_url}")
             return _review_candidate_after_fix_merge(thread_id, env, poll)
@@ -1723,6 +1845,7 @@ def _poll_review_autofix(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
             thread_id,
             "Prepare staging timed out waiting for autofix. "
             "Ask me to prepare staging again.",
+            project_key=poll.get("project_key"),
         )
     agent_id = (poll.get("agent_id") or "").strip()
     if not agent_id:
@@ -1732,7 +1855,9 @@ def _poll_review_autofix(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
         env = _env_for_poll(poll)
         if env is None:
             return _stop_staging_review(
-                thread_id, "Could not retry autofix because the staging environment is unknown."
+                thread_id,
+                "Could not retry autofix because the staging environment is unknown.",
+                project_key=poll.get("project_key"),
             )
         reviewed = {
             "review": poll.get("pending_review_body") or "",
@@ -1765,6 +1890,7 @@ def _poll_review_autofix(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
             thread_id,
             f"Autofix failed ({status.get('status') or 'UNKNOWN'}). Staging was not built."
             + (f" {pr_url}" if pr_url else ""),
+            project_key=poll.get("project_key"),
         )
     if not _claim_gpw_followup(thread_id, poll, "review_autofix_followup"):
         return {"status": "in_progress", "active": True}
@@ -1777,11 +1903,16 @@ def _poll_wait_fix_merge(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
             thread_id,
             "Prepare staging timed out waiting for the fix PR to merge. "
             f"{poll.get('pr_url') or ''}".strip(),
+            project_key=poll.get("project_key"),
         )
     env = _env_for_poll(poll)
     pr_number = _safe_pr_number(poll.get("pr_number"))
     if env is None or not pr_number:
-        return _stop_staging_review(thread_id, "Could not keep waiting on the fix pull request.")
+        return _stop_staging_review(
+            thread_id,
+            "Could not keep waiting on the fix pull request.",
+            project_key=poll.get("project_key"),
+        )
     try:
         owner, name = _owner_name(env)
         pr = _github_pr_client().get_pull_request(owner, name, pr_number)
@@ -1797,16 +1928,16 @@ def _poll_wait_fix_merge(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]
         return _stop_staging_review(
             thread_id,
             f"The fix PR was closed without merging. Staging was not built. {poll.get('pr_url') or ''}".strip(),
+            project_key=poll.get("project_key"),
         )
     return _gpw_in_progress_poll()
 
 
-def poll_gpw(thread_id: str) -> Dict[str, Any]:
+def poll_gpw(thread_id: str, project_key: Optional[str] = None) -> Dict[str, Any]:
     """One client-driven poll step for a GPW workflow run."""
     from bigas.resources.devops.service import get_deployment_status
 
-    thread = _thread(thread_id)
-    poll = thread.get("pending_deploy_poll")
+    poll = _load_thread_deploy_poll(thread_id, project_key)
     if not isinstance(poll, dict) or poll.get("kind") != "gpw":
         return {"status": "complete", "active": False}
     phase = (poll.get("phase") or "").strip()
@@ -1816,6 +1947,7 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
                 thread_id,
                 "Prepare staging timed out during review follow-up. "
                 "Ask me to prepare staging again.",
+                project_key=poll.get("project_key"),
             )
         return {"status": "in_progress", "active": True}
     if phase == "review_autofix":
@@ -1834,13 +1966,13 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
                 item["workflow"] = (env.workflows.get(phase) if env else "") or phase
             triggered = [item]
             poll = {**poll, "triggered": triggered}
-            _patch(thread_id, pending_deploy_poll=poll)
+            _set_gpw_deploy_poll(thread_id, poll, project_key=poll.get("project_key") or "_")
         else:
             started = _parse_started(poll.get("started_at") or "")
             if datetime.now(timezone.utc) < started + timedelta(seconds=_POLL_TIMEOUT_SEC):
                 return {"status": "in_progress", "active": True}
             _complete_progress(thread_id)
-            _patch(thread_id, pending_deploy_poll=None, has_pending_deploy_poll=False)
+            _clear_gpw_poll(thread_id, project_key=poll.get("project_key"))
             _post(thread_id, "No GitHub Actions run id came back. Check the Actions tab.")
             return {"status": "complete", "active": False}
 
@@ -1849,7 +1981,7 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
     started = _parse_started(poll.get("started_at") or "")
     if datetime.now(timezone.utc) >= started + timedelta(seconds=_POLL_TIMEOUT_SEC):
         _complete_progress(thread_id)
-        _patch(thread_id, pending_deploy_poll=None, has_pending_deploy_poll=False)
+        _clear_gpw_poll(thread_id, project_key=poll.get("project_key"))
         _post(thread_id, f"Timed out waiting for run #{run_id}. Check the Actions tab.")
         return {"status": "complete", "active": False}
     try:
@@ -1862,7 +1994,7 @@ def poll_gpw(thread_id: str) -> Dict[str, Any]:
 
     conclusion = (status.get("conclusion") or "unknown").lower()
     _complete_progress(thread_id)
-    _patch(thread_id, pending_deploy_poll=None, has_pending_deploy_poll=False)
+    _clear_gpw_poll(thread_id, project_key=poll.get("project_key"))
     if conclusion == "success":
         _finish_success(thread_id, poll)
     else:

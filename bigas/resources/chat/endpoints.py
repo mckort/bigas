@@ -143,10 +143,9 @@ def thread_messages(thread_id: str):
             store, thread_id, since=since, latest=latest
         )
         thread_data = store.get_thread(thread_id) or {}
-        deploy_poll_active = bool(
-            thread_data.get("pending_deploy_poll")
-            or thread_data.get("pending_prepare_poll")
-        )
+        from bigas.resources.devops.pipeline import thread_has_active_deploy_poll
+
+        deploy_poll_active = thread_has_active_deploy_poll(thread_data)
         return jsonify({
             "messages": messages,
             "deploy_poll_active": deploy_poll_active,

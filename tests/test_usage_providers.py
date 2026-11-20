@@ -75,6 +75,23 @@ class DiscordFormatTests(unittest.TestCase):
         self.assertTrue(any("≈$" in line for line in lines))
         self.assertFalse(any("~$" in line for line in lines))
 
+    def test_discord_lines_omit_zero_usage(self):
+        lines = format_cursor_usage_discord_lines(
+            usage=CursorTokenUsage(),
+            model="grok-4.7",
+            est_cost_usd=None,
+        )
+        self.assertEqual(lines, [])
+
+    def test_discord_lines_known_model_without_cost(self):
+        usage = CursorTokenUsage(input_tokens=100, output_tokens=20)
+        lines = format_cursor_usage_discord_lines(
+            usage=usage, model="grok-4.7", est_cost_usd=None
+        )
+        self.assertTrue(any("Cursor usage:" in line for line in lines))
+        self.assertTrue(any("n/a (grok-4.7)" in line for line in lines))
+        self.assertFalse(any("unknown model" in line for line in lines))
+
 
 class WeeklyReportTests(unittest.TestCase):
     def test_format_weekly_report(self):

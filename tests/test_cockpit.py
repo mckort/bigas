@@ -523,6 +523,29 @@ def test_pending_keeps_unticketed_commits_and_the_upstream_count():
     assert expanded_count == 2
 
 
+def test_pending_lists_each_distinct_ticket_once_and_keeps_commit_count():
+    """Same-key commits collapse to one row; count still reports commits ahead."""
+    from bigas.cockpit import _pending_merged_not_deployed
+
+    items, count = _pending_merged_not_deployed(
+        project_key="VFA",
+        fresh={
+            "pending": [
+                {"key": "", "title": "VFA-337: Deal memo thought", "url": "https://c/1"},
+                {"key": "", "title": "VFA-337: follow-up", "url": "https://c/2"},
+                {"key": "", "title": "VFA-340: Cap table fix", "url": "https://c/3"},
+            ],
+            "pending_count": 3,
+        },
+        tickets=[
+            {"key": "VFA-337", "title": "Deal memo thought", "url": "/board?ticket=VFA-337"},
+            {"key": "VFA-340", "title": "Cap table fix", "url": "/board?ticket=VFA-340"},
+        ],
+    )
+    assert [item["key"] for item in items] == ["VFA-337", "VFA-340"]
+    assert count == 3
+
+
 def test_pending_from_compare_skips_blank_subjects_and_keeps_the_full_count():
     from bigas.cockpit_freshness import pending_from_compare
 

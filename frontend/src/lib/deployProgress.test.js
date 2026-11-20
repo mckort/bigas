@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyDeployUpdate, deployProgressLines, deployRunPhase } from './deployProgress.js'
+import {
+  applyDeployUpdate,
+  commandForShipRow,
+  deployProgressLines,
+  deployRunPhase,
+  emptyDeployRun,
+  pipelineForProject,
+} from './deployProgress.js'
 
 const since = '2026-11-13T14:00:00.000Z'
 
@@ -177,4 +184,42 @@ test('a later update replaces the same progress message', () => {
   ])
   assert.deepEqual(deployProgressLines(second.messages).map((line) => line.status), ['complete', ''])
   assert.equal(second.phase, 'done')
+})
+
+test('commandForShipRow prefers primary_prompt', () => {
+  const cmd = commandForShipRow({
+    primary_prompt: 'update staging GPW-PROD',
+    commands: [
+      { label: 'Prepare staging', prompt: 'prepare staging GPW-PROD' },
+      { label: 'Update staging', prompt: 'update staging GPW-PROD' },
+    ],
+  })
+  assert.equal(cmd.label, 'Update staging')
+})
+
+test('pipelineForProject matches the ship key', () => {
+  const item = pipelineForProject(
+    [
+      { type: 'ticket', project_key: 'VFA' },
+      { type: 'pipeline', project_key: 'vfa', thread_id: 't1', since: since },
+    ],
+    'VFA',
+  )
+  assert.equal(item.thread_id, 't1')
+})
+
+test('emptyDeployRun starts in working with deployPoll', () => {
+  const run = emptyDeployRun({ threadId: 't1', since, prompt: 'prepare deploy VFA 0.1.0', token: 3 })
+  assert.equal(run.phase, 'working')
+  assert.equal(run.deployPoll, true)
+  assert.equal(run.threadId, 't1')
+  assert.equal(run.since, since)
+  assert.equal(run.token, 3)
+})
+
+test('emptyDeployRun keeps a blank since so a resume can load the whole thread', () => {
+  const run = emptyDeployRun({ threadId: 't1', since: '', token: 4 })
+  assert.equal(run.since, '')
+  assert.equal(run.phase, 'working')
+  assert.equal(run.error, '')
 })
