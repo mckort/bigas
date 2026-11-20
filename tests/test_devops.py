@@ -628,6 +628,35 @@ class _CompareFailGitHubClient(_FakeGitHubClient):
         raise GitHubActionsError(f"Compare failed: {owner}/{repo} {base}...{head}")
 
 
+class _PartialCompareFailGitHubClient(_FakeGitHubClient):
+    def compare_refs(self, owner, repo, base, head):
+        self.compared.append((base, head))
+        if str(base).startswith("deploy-web-"):
+            from bigas.resources.devops.github_actions import GitHubActionsError
+
+            raise GitHubActionsError(f"Compare failed: {base}")
+        return {"files": [{"filename": "backend/src/index.ts"}]}
+
+
+def test_check_deployment_risk_partial_compare_does_not_skip_failed_component(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "bigas.resources.devops.service._github_client",
+        lambda token=None: _PartialCompareFailGitHubClient(),
+    )
+    result = check_deployment_risk(project_key="VFA", head_ref="main")
+    assert result["compare_failed"] is True
+    assert result["risk_level"] == "medium"
+    assert result["workflows_to_run"] == ["deploy-backend.yml", "deploy-web.yml"]
+    assert result["skipped_workflows"] == []
+    summary = result["summary"].lower()
+    assert "could not diff against production" in summary
+    assert "file(s) changed" not in summary
+    assert "no web changes" not in summary
+    assert any("deploy-web-" in warning for warning in result["warnings"])
+
+
 def test_check_deployment_risk_compare_failed_does_not_skip_workflows(monkeypatch):
     monkeypatch.delenv("BIGAS_DEPLOY_WORKFLOW_MAP", raising=False)
     monkeypatch.delenv("BIGAS_JIRA_PROJECT_REPO_MAP", raising=False)

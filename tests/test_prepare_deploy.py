@@ -1731,6 +1731,43 @@ def test_prepare_already_on_main_locks_cut_for_new_prs(monkeypatch):
     assert nxt and nxt["is_default"] is True
 
 
+def test_prepare_compare_failed_omits_zero_file_count(monkeypatch):
+    create_release("VFA", name="0.2.3")
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {"status": "already_on_main", "repo": "mckort/vcfieldassistant"},
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.check_deployment_risk",
+        lambda **kwargs: {
+            **_low_risk(),
+            "compare_failed": True,
+            "total_files_changed": 0,
+            "summary": "Could not diff against production; deploy workflows will still run.",
+        },
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.list_shipping_commits",
+        lambda **kwargs: {
+            "commits": [],
+            "compared": ["deploy-web-old → main"],
+            "truncated": False,
+            "errors": [],
+        },
+    )
+
+    run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.2.3",
+    )
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "Could not diff against production" in blob
+    assert "0 file(s) changed" not in blob
+    assert "file(s) changed vs production" not in blob
+
+
 def test_prepare_after_merge_shows_main_commits(monkeypatch):
     store = get_ticket_store()
     board = store.create_board("dev-user", name="VFA Board", project_key="VFA")

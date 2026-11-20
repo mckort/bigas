@@ -1813,7 +1813,10 @@ def continue_after_main_ready(
     from bigas.resources.devops.pipeline import _format_risk_for_chat
 
     files_changed = risk.get("total_files_changed")
-    if not isinstance(files_changed, int):
+    # A failed compare stores 0 because the diff was never computed. Passing
+    # that int makes the ship report say "0 file(s) changed" next to the
+    # "could not diff" warning.
+    if risk.get("compare_failed") or not isinstance(files_changed, int):
         files_changed = None
     _post(
         thread_id,

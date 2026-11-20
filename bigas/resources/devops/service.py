@@ -545,7 +545,9 @@ def check_deployment_risk(
                 _record_component_file(component_changes, label, filename, item)
 
     files = list(files_by_name.values())
-    compare_failed = bool(bases) and not compared and bool(compare_errors)
+    # One successful component compare must not hide a sibling that failed
+    # (missing tag, rate limit, network). An unknown diff is not "no changes".
+    compare_failed = bool(compare_errors)
     if compared:
         base_display = " + ".join(compared)
     elif bases and all(tag == head for _label, tag in bases):
