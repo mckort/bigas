@@ -1603,8 +1603,10 @@ def _launch_autofix_and_poll(
     return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
 
 
-def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
-    poll = pending_prepare_poll(thread_id)
+def poll_prepare_followup(
+    thread_id: str, project_key: Optional[str] = None
+) -> Dict[str, Any]:
+    poll = pending_prepare_poll(thread_id, project_key)
     if not poll:
         return {"status": "complete", "active": False}
 

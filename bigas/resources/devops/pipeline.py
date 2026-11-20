@@ -508,7 +508,10 @@ def _set_deploy_poll(
         key = _project_key_of({"project_key": project_key}) if project_key else ""
         if key:
             polls.pop(key, None)
-            polls.pop("_", None)
+            # "_" is the unkeyed/GPW slot. Remove it only when this clear
+            # targets that slot. A named project must leave it alone.
+            if key == "_":
+                polls.pop("_", None)
         else:
             polls = {}
         _write_deploy_poll_map(thread_id, polls)
@@ -516,6 +519,12 @@ def _set_deploy_poll(
     key = _project_key_of(payload, project_key or "") or "_"
     polls[key] = {**payload, **({"project_key": key} if key != "_" else {})}
     _write_deploy_poll_map(thread_id, polls)
+
+
+def _deploy_poll_slot(poll: Optional[Dict[str, Any]]) -> str:
+    """Map key for one poll. Unkeyed and legacy GPW polls use ``_``."""
+    key = _project_key_of(poll) if isinstance(poll, dict) else ""
+    return key or "_"
 
 
 def thread_has_active_deploy_poll(thread: Optional[Dict[str, Any]]) -> bool:
@@ -679,7 +688,7 @@ def _finalize_deploy_postcheck(
     elif not health_ok:
         parts.append("Site health check failed — skipping release notes and social drafts.")
     _post(thread_id, "\n".join(parts))
-    _set_deploy_poll(thread_id, None, project_key=poll.get("project_key"))
+    _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
     if not failed_runs and not remaining and health_ok and poll.get("release_version"):
         try:
             from bigas.resources.devops.prepare import finalize_versioned_deploy
@@ -747,39 +756,26 @@ def _finalize_deploy_postcheck(
         _complete_pipeline_progress(thread_id)
 
 
-def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
-    """Single client-driven poll step for post-deploy workflow status and health."""
-    from bigas.resources.devops.gpw_pipeline import poll_gpw
-    from bigas.resources.devops.prepare import pending_prepare_poll, poll_prepare_followup
+def _poll_activity(thread_id: str) -> Dict[str, Any]:
+    """``active`` stays true while any prepare or deploy poll remains on the thread."""
+    thread = _store().get_thread(thread_id) or {}
+    active = thread_has_active_deploy_poll(thread)
+    return {"status": "in_progress" if active else "complete", "active": active}
 
-    gpw_poll = _deploy_poll(thread_id)
-    if isinstance(gpw_poll, dict) and gpw_poll.get("kind") == "gpw":
-        return poll_gpw(thread_id)
 
-    if pending_prepare_poll(thread_id):
-        result = poll_prepare_followup(thread_id)
-        if result.get("status") == "in_progress" or result.get("active"):
-            return {"status": "in_progress", "active": True}
-        if result.get("deploy_poll_active"):
-            return {"status": "in_progress", "active": True}
-        if _deploy_poll(thread_id):
-            return {"status": "in_progress", "active": True}
-        return {"status": result.get("status") or "complete", "active": False}
-
-    poll = _deploy_poll(thread_id)
-    if not poll:
-        return {"status": "complete", "active": False}
-
+def _advance_deploy_poll(thread_id: str, poll: Dict[str, Any]) -> None:
+    """Advance one product deploy poll. Other polls on the thread stay put."""
     repo = poll.get("repo") or ""
     triggered = poll.get("triggered") or []
+    poll_project = poll.get("project_key")
     if not triggered:
         _post(
             thread_id,
             "I didn't get a GitHub Actions run ID back. Check the Actions tab manually.",
         )
         _complete_pipeline_progress(thread_id)
-        _set_deploy_poll(thread_id, None, project_key=poll.get("project_key"))
-        return {"status": "complete", "active": False}
+        _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
+        return
 
     started_at = poll.get("started_at") or datetime.now(timezone.utc).isoformat()
     deadline = _parse_started_at(started_at) + timedelta(seconds=_POLL_TIMEOUT_SEC)
@@ -787,7 +783,6 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
     failed_runs = list(poll.get("failed_runs") or [])
     done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
     newly_finished: List[str] = []
-    poll_project = poll.get("project_key")
 
     for item in triggered:
         run_id = item.get("run_id")
@@ -840,7 +835,7 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
             },
             project_key=poll_project,
         )
-        return {"status": "in_progress", "active": True}
+        return
 
     _finalize_deploy_postcheck(
         thread_id,
@@ -852,7 +847,49 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
         },
         remaining=remaining,
     )
-    return {"status": "complete", "active": False}
+
+
+def poll_deploy_postcheck(
+    thread_id: str, project_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """Single client-driven poll step for post-deploy workflow status and health.
+
+    ``project_key`` advances that project only (webhook resume). The client
+    omits it and every prepare and deploy poll on the thread advances.
+    A prepare poll for one project does not skip another project's deploy.
+    """
+    from bigas.resources.devops.gpw_pipeline import poll_gpw
+    from bigas.resources.devops.prepare import (
+        pending_prepare_poll,
+        poll_prepare_followup,
+        prepare_poll_map_from_thread,
+    )
+
+    if project_key:
+        prepare_keys = (
+            [project_key] if pending_prepare_poll(thread_id, project_key) else []
+        )
+        slot = _project_key_of({"project_key": project_key}) or project_key
+        targeted = _deploy_poll(thread_id, project_key)
+        deploy_items = [(slot, targeted)] if isinstance(targeted, dict) else []
+    else:
+        thread = _store().get_thread(thread_id) or {}
+        prepare_keys = list(prepare_poll_map_from_thread(thread).keys())
+        deploy_items = list(_all_deploy_polls(thread_id).items())
+
+    for key in prepare_keys:
+        poll_prepare_followup(thread_id, project_key=key)
+
+    for key, _poll in deploy_items:
+        current = _deploy_poll(thread_id, key)
+        if not isinstance(current, dict):
+            continue
+        if current.get("kind") == "gpw":
+            poll_gpw(thread_id, project_key=current.get("project_key") or key or "_")
+        else:
+            _advance_deploy_poll(thread_id, current)
+
+    return _poll_activity(thread_id)
 
 
 def _poll_includes_run(
@@ -902,7 +939,7 @@ def expire_stale_deploy_poll(thread_id: Optional[str]) -> bool:
         done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
         remaining = _unfinished_runs(triggered, done_ids)
         # Clear before network I/O so concurrent polls cannot re-enter or brick the thread.
-        _set_deploy_poll(thread_id, None, project_key=poll.get("project_key"))
+        _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
         try:
             _finalize_deploy_postcheck(thread_id, poll, remaining=remaining)
         except Exception:
@@ -965,7 +1002,13 @@ def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, 
         if not matched:
             continue
         try:
-            poll_deploy_postcheck(thread_id)
+            seen = set()
+            for poll in matched:
+                slot = _deploy_poll_slot(poll)
+                if slot in seen:
+                    continue
+                seen.add(slot)
+                poll_deploy_postcheck(thread_id, project_key=slot)
             resumed.append(thread_id)
         except Exception:
             logger.exception(
@@ -974,7 +1017,7 @@ def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, 
                 run_id,
             )
             for poll in matched:
-                _set_deploy_poll(thread_id, None, project_key=poll.get("project_key"))
+                _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
             _complete_pipeline_progress(thread_id)
     return {"resumed": len(resumed), "thread_ids": resumed}
 

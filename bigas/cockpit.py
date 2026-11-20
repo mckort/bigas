@@ -153,6 +153,12 @@ def _ticket_items(
 
 
 def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    from bigas.resources.devops.pipeline import (
+        _deploy_poll_map_from_thread,
+        _pending_map_from_thread,
+    )
+    from bigas.resources.devops.prepare import prepare_poll_map_from_thread
+
     needs: List[Dict[str, Any]] = []
     working: List[Dict[str, Any]] = []
     for thread in threads:
@@ -160,12 +166,6 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
             continue
         thread_id = thread.get("thread_id") or ""
         updated = thread.get("updated_at") or ""
-
-        from bigas.resources.devops.pipeline import (
-            _deploy_poll_map_from_thread,
-            _pending_map_from_thread,
-        )
-        from bigas.resources.devops.prepare import prepare_poll_map_from_thread
 
         for pending in _pending_map_from_thread(thread).values():
             if not pending.get("project_key"):
