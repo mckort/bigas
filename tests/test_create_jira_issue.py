@@ -272,7 +272,10 @@ def test_manifest_includes_create_ticket():
     assert "status" in params["properties"]
     update = tools["update_ticket"]
     assert update["path"] == "/mcp/tools/update_ticket"
-    assert set(update["parameters"]["required"]) == {"issue_key", "status"}
+    assert set(update["parameters"]["required"]) == {"issue_key"}
+    assert "description" in update["parameters"]["properties"]
+    assert "status" in update["parameters"]["properties"]
+    assert "description" in update["description"].lower()
     lookup = tools["lookup_ticket"]
     assert lookup["path"] == "/mcp/tools/lookup_ticket"
     assert "parent" in lookup["description"].lower()

@@ -659,6 +659,31 @@ class TicketService:
             raise ValueError(f"Ticket {key} not found")
         return updated
 
+    def set_description(
+        self,
+        issue_key: str,
+        description: str,
+        *,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Replace the ticket description (markdown)."""
+        key = (issue_key or "").strip().upper()
+        if not key:
+            raise ValueError("issue_key is required")
+        ticket = self._store.get_ticket_by_key(key)
+        if not ticket:
+            raise ValueError(f"Ticket {key} not found")
+        board = self._store.get_board(ticket.get("board_id") or "")
+        actor = user_id or (board or {}).get("user_id") or _sync_user_id()
+        updated = self.update_ticket(
+            ticket["ticket_id"],
+            user_id=actor,
+            description=description if description is not None else "",
+        )
+        if not updated:
+            raise ValueError(f"Ticket {key} not found")
+        return updated
+
     def transition_to_next(self, issue_key: str) -> Dict[str, Any]:
         from bigas.tickets.jira_adapter import TicketJiraAdapter
 
