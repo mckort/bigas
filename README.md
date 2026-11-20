@@ -949,7 +949,7 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `POST create_ticket` | Create a Task, Feature, Bug, or Improvement on the internal board (or Jira); returns issue key + URL. Shared by every chat agent and MCP client. Use Feature for new user-facing product work; Improvement for polish, UX, copy, and upgrades to existing behavior. Set `marketing=true` for marketing-related tickets (adds label `marketing`). Optional `parent_epic_key` links to a known Epic; omit it for a standalone ticket. Optional `status` sets the column. Alias: `create_jira_issue` |
 | `POST lookup_ticket` | Look up one or more tickets (including parent Epic) and/or list open Epics. Accepts a range such as `BIG-15 to BIG-18`. Shared by every chat agent. Does not decide whether a new ticket should use that parent. Alias: `lookup_jira` |
 | `POST search_tickets` | Search the board (or Jira) with JQL. Alias: `search_jira` |
-| `POST update_ticket` | Move an existing ticket to a board column (`issue_key` + `status`) |
+| `POST update_ticket` | Update an existing ticket: board column (`status`) and/or description text (`description`). At least one of `status` or `description` with `issue_key`. |
 | `POST jira_status_automation` | Jira Automation webhook: AI handlers when issues move into AI columns — see [walkthrough](#walkthrough-from-jira-card-to-merged-pr) |
 | `POST jira_status_automation_job` | Poll a background `jira_status_automation` job by `job_id` |
 | `POST create_release_notes` | Board/Jira Fix Version → release notes + blog draft + social copy; optional semver GitHub Release and mark released (board carry-forward) |

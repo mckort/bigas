@@ -137,6 +137,32 @@ def test_update_passes_user_id_to_set_status(monkeypatch):
     }
 
 
+def test_update_description_via_service():
+    created = CreateJiraIssueService().create(
+        project_key="VFA",
+        summary="Rewrite brief",
+        description="Old text",
+    )
+    assert created["ok"] is True
+    updated = UpdateTicketService().update(
+        issue_key=created["key"],
+        description="## New brief\n\nDo the thing.",
+    )
+    assert updated["ok"] is True
+    assert updated["description"] == "## New brief\n\nDo the thing."
+    assert updated["status"] == "To Do"
+    assert updated["key"] == created["key"]
+
+
+def test_update_rejects_missing_status_and_description():
+    try:
+        UpdateTicketService().update(issue_key="VFA-1")
+    except UpdateTicketError as exc:
+        assert "status or description" in str(exc).lower()
+    else:
+        raise AssertionError("expected UpdateTicketError")
+
+
 def test_normalize_issue_type_accepts_improvement():
     assert "Improvement" in ISSUE_TYPES
     assert "Improvement" in CREATABLE_ISSUE_TYPES

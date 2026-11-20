@@ -342,6 +342,63 @@ def test_update_ticket_rejects_unknown_column(client):
     assert "unknown column" in moved.get_json()["error"].lower()
 
 
+def test_update_ticket_updates_description(client, monkeypatch):
+    monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_MODE", "open")
+    created = client.post(
+        "/mcp/tools/create_ticket",
+        data=json.dumps(
+            {
+                "project_key": "VFA",
+                "summary": "Needs better brief",
+                "description": "Original brief",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert created.status_code == 200
+    key = created.get_json()["key"]
+    updated = client.post(
+        "/mcp/tools/update_ticket",
+        data=json.dumps(
+            {
+                "issue_key": key,
+                "description": "## Updated\n\nNew acceptance criteria.",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert updated.status_code == 200
+    body = updated.get_json()
+    assert body["ok"] is True
+    assert body["key"] == key
+    assert body["description"] == "## Updated\n\nNew acceptance criteria."
+    assert body["status"] == "To Do"
+
+
+def test_update_ticket_requires_status_or_description(client, monkeypatch):
+    monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_MODE", "open")
+    created = client.post(
+        "/mcp/tools/create_ticket",
+        data=json.dumps(
+            {
+                "project_key": "VFA",
+                "summary": "No fields",
+                "description": "Stay put",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert created.status_code == 200
+    key = created.get_json()["key"]
+    resp = client.post(
+        "/mcp/tools/update_ticket",
+        data=json.dumps({"issue_key": key}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    assert "status or description" in resp.get_json()["error"].lower()
+
+
 def test_lookup_internal_ticket(client):
     create = client.post(
         "/mcp/tools/create_ticket",

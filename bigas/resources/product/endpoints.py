@@ -523,26 +523,32 @@ def create_ticket():
 @require_bigas_access_key
 def update_ticket():
     """
-    Move an existing ticket to a board column (or Jira status).
+    Update an existing ticket's board column and/or description.
 
     Request JSON:
       {
         "issue_key": "VFA-48",
-        "status": "Final Review"
+        "status": "Final Review",
+        "description": "Updated markdown body"
       }
+
+    At least one of status or description is required.
     """
     data = request.json or {}
     is_valid, error_msg = validate_request_data(
         data,
-        required_fields=["issue_key", "status"],
+        required_fields=["issue_key"],
     )
     if not is_valid:
         return jsonify({"error": error_msg}), 400
 
+    status_raw = data.get("status")
+    description = data.get("description") if "description" in data else None
     try:
         result = UpdateTicketService().update(
             issue_key=str(data.get("issue_key") or ""),
-            status=str(data.get("status") or ""),
+            status=None if status_raw is None else str(status_raw),
+            description=None if description is None else str(description),
             user_id=str(data.get("user_id") or "").strip() or None,
         )
         return jsonify(result)
@@ -1113,9 +1119,10 @@ def get_manifest():
             {
                 "name": "update_ticket",
                 "description": (
-                    "Move an existing internal-board (or Jira) ticket to a column. "
-                    "Use for Final Review / Final approval (manual) and other columns. "
-                    "Accepts aliases like Final Review."
+                    "Update an existing internal-board (or Jira) ticket. "
+                    "Move it to a column (Final Review / Final approval (manual) and aliases) "
+                    "and/or replace the description text (markdown). "
+                    "Pass at least one of status or description."
                 ),
                 "path": "/mcp/tools/update_ticket",
                 "method": "POST",
@@ -1129,12 +1136,19 @@ def get_manifest():
                         "status": {
                             "type": "string",
                             "description": (
-                                "Board column. Accepts exact names or aliases "
+                                "Optional board column. Accepts exact names or aliases "
                                 "such as Final Review → Final approval (manual)."
                             ),
                         },
+                        "description": {
+                            "type": "string",
+                            "description": (
+                                "Optional replacement description (markdown). "
+                                "Replaces the full body; omit to leave description unchanged."
+                            ),
+                        },
                     },
-                    "required": ["issue_key", "status"],
+                    "required": ["issue_key"],
                 },
             },
             {
