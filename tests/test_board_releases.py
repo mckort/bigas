@@ -115,11 +115,32 @@ def test_lock_for_new_prs_creates_next_default(monkeypatch):
     created = create_release("VFA", name="0.7.0", is_default=True)
     result = lock_release_for_new_prs("VFA", "0.7.0")
     assert result["next_version"] == "0.8.0"
+    assert result["github_locked"] is True
     nxt = get_release_store().get_release_by_name("VFA", "0.8.0")
     assert nxt and nxt["is_default"] is True
     assert get_release_store().get_release(created["release_id"])["pr_locked"] is True
     with pytest.raises(ReleaseError, match="PR-locked"):
         set_default_release("VFA", created["release_id"], True)
+
+
+def test_lock_for_new_prs_can_skip_github_ruleset(monkeypatch):
+    locked = []
+    monkeypatch.setattr(
+        "bigas.resources.product.release_branches.lock_released_feature_branch",
+        lambda **kwargs: locked.append(kwargs) or {"locked": True},
+    )
+    create_release("VFA", name="0.7.0", is_default=True)
+    create_release("VFA", name="0.8.0")
+    result = lock_release_for_new_prs("VFA", "0.7.0", lock_github=False)
+    assert result["release"]["pr_locked"] is True
+    assert result["github_locked"] is False
+    assert result["next_version"] == "0.8.0"
+    assert locked == []
+
+    again = lock_release_for_new_prs("VFA", "0.7.0", lock_github=True)
+    assert again["already_locked"] is True
+    assert again["github_locked"] is True
+    assert locked and locked[0]["version"] == "0.7.0"
 
 
 def test_create_list_delete_release():
