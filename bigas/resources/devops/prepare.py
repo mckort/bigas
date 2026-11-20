@@ -77,9 +77,7 @@ def _defer_until_review_workflow_finishes(
         role="system",
         status="in_progress",
     )
-    _thread_set(
-        thread_id,
-        pending_prepare_poll={
+    set_prepare_poll(thread_id, {
             "phase": "wait_review_workflow",
             "repo": repo,
             "pr_number": pr_number,
@@ -89,8 +87,7 @@ def _defer_until_review_workflow_finishes(
             "cut_keys": list(cut_keys or []),
             "review_phase": review_phase,
             "started_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+        })
     return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
 
 
@@ -183,14 +180,102 @@ def pending_release_notes(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
     return _thread_get(thread_id, "pending_release_notes")
 
 
-def pending_prepare_poll(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    return _thread_get(thread_id, "pending_prepare_poll")
+def prepare_poll_map_from_thread(
+    thread: Optional[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Normalize legacy ``pending_prepare_poll`` plus ``pending_prepare_polls``."""
+    out: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(thread, dict):
+        return out
+    raw_map = thread.get("pending_prepare_polls")
+    if isinstance(raw_map, dict):
+        for key, value in raw_map.items():
+            if not isinstance(value, dict):
+                continue
+            project = normalize_project_key(value.get("project_key") or key)
+            if project:
+                out[project] = {**value, "project_key": project}
+    legacy = thread.get("pending_prepare_poll")
+    if isinstance(legacy, dict):
+        project = normalize_project_key(legacy.get("project_key"))
+        if project and project not in out:
+            out[project] = {**legacy, "project_key": project}
+    return out
 
 
-def clear_prepare_state(thread_id: Optional[str]) -> None:
+def _all_prepare_polls(thread_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
+    if not thread_id:
+        return {}
+    return prepare_poll_map_from_thread(_store().get_thread(thread_id) or {})
+
+
+def pending_prepare_poll(
+    thread_id: Optional[str], project_key: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    polls = _all_prepare_polls(thread_id)
+    if not polls:
+        return None
+    if project_key:
+        return polls.get(normalize_project_key(project_key))
+    if len(polls) == 1:
+        return next(iter(polls.values()))
+    return next(iter(polls.values()))
+
+
+def _write_prepare_poll_map(
+    thread_id: Optional[str], polls: Dict[str, Dict[str, Any]]
+) -> None:
+    cleaned = {
+        key: {**value, "project_key": key}
+        for key, value in polls.items()
+        if isinstance(value, dict) and key
+    }
+    legacy = next(iter(cleaned.values())) if cleaned else None
+    _thread_set(
+        thread_id,
+        pending_prepare_polls=cleaned or None,
+        pending_prepare_poll=legacy,
+    )
+
+
+def set_prepare_poll(
+    thread_id: Optional[str], payload: Optional[Dict[str, Any]]
+) -> None:
     if not thread_id:
         return
-    _thread_set(thread_id, pending_prepare_poll=None, pending_release_notes=None)
+    polls = _all_prepare_polls(thread_id)
+    if payload is None:
+        polls = {}
+        _write_prepare_poll_map(thread_id, polls)
+        return
+    key = normalize_project_key(payload.get("project_key"))
+    if not key:
+        return
+    polls[key] = {**payload, "project_key": key}
+    _write_prepare_poll_map(thread_id, polls)
+
+
+def clear_prepare_poll(
+    thread_id: Optional[str], *, project_key: Optional[str] = None
+) -> None:
+    if not thread_id:
+        return
+    if not project_key:
+        _write_prepare_poll_map(thread_id, {})
+        return
+    polls = _all_prepare_polls(thread_id)
+    polls.pop(normalize_project_key(project_key), None)
+    _write_prepare_poll_map(thread_id, polls)
+
+
+def clear_prepare_state(
+    thread_id: Optional[str], *, project_key: Optional[str] = None
+) -> None:
+    if not thread_id:
+        return
+    clear_prepare_poll(thread_id, project_key=project_key)
+    # Release notes stay a single thread slot; a new prepare supersedes them.
+    _thread_set(thread_id, pending_release_notes=None)
 
 
 def clear_pending_release_notes(thread_id: Optional[str]) -> None:
@@ -1274,9 +1359,7 @@ def review_and_merge_release_pr(
                 role="system",
                 status="in_progress",
             )
-            _thread_set(
-                thread_id,
-                pending_prepare_poll={
+            set_prepare_poll(thread_id, {
                     "phase": "wait_actions_review",
                     "repo": repo,
                     "pr_number": pr_number,
@@ -1287,8 +1370,7 @@ def review_and_merge_release_pr(
                     "initial_review_body": review_body,
                     "nit_only_reason": reason,
                     "started_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
+                })
             return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
         _complete_pipeline_progress(thread_id)
         _post(
@@ -1409,9 +1491,7 @@ def _merge_or_wait(
             role="system",
             status="in_progress",
         )
-        _thread_set(
-            thread_id,
-            pending_prepare_poll={
+        set_prepare_poll(thread_id, {
                 "phase": "wait_merge",
                 "repo": repo,
                 "pr_number": pr_number,
@@ -1420,8 +1500,7 @@ def _merge_or_wait(
                 "version": version,
                 "cut_keys": list(cut_keys or []),
                 "started_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+            })
         return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
     except GitHubPRCommentError as exc:
         _complete_pipeline_progress(thread_id)
@@ -1509,9 +1588,7 @@ def _launch_autofix_and_poll(
         role="system",
         status="in_progress",
     )
-    _thread_set(
-        thread_id,
-        pending_prepare_poll={
+    set_prepare_poll(thread_id, {
             "phase": "autofix",
             "repo": repo,
             "pr_number": pr_number,
@@ -1522,13 +1599,14 @@ def _launch_autofix_and_poll(
             "agent_id": launched.get("agent_id") or "",
             "run_id": launched.get("run_id") or "",
             "started_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+        })
     return {"status": "polling", "deploy_poll_active": True, "pr_url": pr_url}
 
 
-def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
-    poll = pending_prepare_poll(thread_id)
+def poll_prepare_followup(
+    thread_id: str, project_key: Optional[str] = None
+) -> Dict[str, Any]:
+    poll = pending_prepare_poll(thread_id, project_key)
     if not poll:
         return {"status": "complete", "active": False}
 
@@ -1538,7 +1616,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
     except ValueError:
         started_dt = datetime.now(timezone.utc)
     if datetime.now(timezone.utc) >= started_dt + timedelta(seconds=_POLL_TIMEOUT_SEC):
-        _thread_set(thread_id, pending_prepare_poll=None)
+        clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
         _complete_pipeline_progress(thread_id)
         _post(
             thread_id,
@@ -1551,7 +1629,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
     pr_number = int(poll.get("pr_number") or 0)
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
     if not repo or not pr_number or "/" not in repo:
-        _thread_set(thread_id, pending_prepare_poll=None)
+        clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
         return {"status": "complete", "active": False}
 
     from bigas.resources.cto.pr_review.github_client import GitHubPRCommentClient
@@ -1560,7 +1638,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
     gh = GitHubPRCommentClient(token=token)
     pr = gh.get_pull_request(owner, repo_name, pr_number)
     if pr.get("merged"):
-        _thread_set(thread_id, pending_prepare_poll=None)
+        clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
         _post(thread_id, f"✅ Release PR merged: {poll.get('pr_url') or pr.get('html_url')}")
         return continue_after_main_ready(
             thread_id=thread_id,
@@ -1575,7 +1653,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
             if datetime.now(timezone.utc) >= started_dt + timedelta(
                 seconds=_POLL_TIMEOUT_SEC
             ):
-                _thread_set(thread_id, pending_prepare_poll=None)
+                clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
                 _complete_pipeline_progress(thread_id)
                 _post(
                     thread_id,
@@ -1584,7 +1662,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
                 )
                 return {"status": "complete", "active": False}
             return {"status": "in_progress", "active": True}
-        _thread_set(thread_id, pending_prepare_poll=None)
+        clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
         resume_phase = (poll.get("review_phase") or "initial").strip() or "initial"
         result = review_and_merge_release_pr(
             repo=repo,
@@ -1615,7 +1693,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
             nit_reason = (poll.get("nit_only_reason") or "").strip()
             if not nit_reason:
                 nit_reason = "only non-blocking / nit suggestions"
-            _thread_set(thread_id, pending_prepare_poll=None)
+            clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
             _complete_pipeline_progress(thread_id)
             _post(
                 thread_id,
@@ -1634,7 +1712,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
             initial_body=(poll.get("initial_review_body") or ""),
         )
         if state.ready and state.body:
-            _thread_set(thread_id, pending_prepare_poll=None)
+            clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
             result = _merge_or_wait(
                 gh,
                 owner=owner,
@@ -1649,7 +1727,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
             )
             return _prepare_result_to_poll(thread_id, result)
         if state.actions_refreshed and state.body:
-            _thread_set(thread_id, pending_prepare_poll=None)
+            clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
             result = _continue_release_review_from_body(
                 gh,
                 review_body=state.body,
@@ -1681,7 +1759,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
             if not status.get("done"):
                 return {"status": "in_progress", "active": True}
             if not status.get("ok"):
-                _thread_set(thread_id, pending_prepare_poll=None)
+                clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
                 _complete_pipeline_progress(thread_id)
                 _post(
                     thread_id,
@@ -1689,7 +1767,7 @@ def poll_prepare_followup(thread_id: str) -> Dict[str, Any]:
                     f"Release PR: {poll.get('pr_url')}",
                 )
                 return {"status": "complete", "active": False}
-        _thread_set(thread_id, pending_prepare_poll=None)
+        clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
         result = review_and_merge_release_pr(
             repo=repo,
             pr_number=pr_number,
@@ -1859,9 +1937,12 @@ def continue_after_main_ready(
         "extra_commit_count": len(extra),
         "site_urls": risk.get("site_urls") or [],
     }
-    from bigas.resources.devops.pipeline import _set_pending, plain_risk_clause
+    from bigas.resources.devops.pipeline import _all_pendings, _set_pending, plain_risk_clause
 
     _set_pending(thread_id, pending)
+    other = [k for k in _all_pendings(thread_id) if k != key]
+    yes_hint = f"**yes {key}**" if other else "**yes**"
+    no_hint = f"**no {key}**" if other else "**no**"
     reasons = []
     if risk_level in ("high", "medium"):
         reasons.append(f"risk level is **{risk_level}**{plain_risk_clause(risk)}")
@@ -1877,12 +1958,12 @@ def continue_after_main_ready(
         prompt = (
             "Prepare is ready, but "
             + " and ".join(reasons)
-            + ". Reply **yes** to deploy `main`, or **no** to cancel."
+            + f". Reply {yes_hint} to deploy `main`, or {no_hint} to cancel."
         )
     else:
         prompt = (
             "Risk is **low**, the cut matches git, and there are no leftover open tickets. "
-            "Reply **yes** to deploy `main`, or **no** to cancel."
+            f"Reply {yes_hint} to deploy `main`, or {no_hint} to cancel."
         )
     _post(thread_id, prompt)
     return {"status": "complete", "summary": risk.get("summary") or ""}
@@ -1936,8 +2017,8 @@ def run_prepare_deploy(
 
     from bigas.resources.devops.pipeline import _set_pending
 
-    _set_pending(thread_id, None)
-    clear_prepare_state(thread_id)
+    _set_pending(thread_id, None, project_key=key)
+    clear_prepare_state(thread_id, project_key=key)
 
     _post(
         thread_id,

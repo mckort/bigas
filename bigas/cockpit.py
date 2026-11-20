@@ -153,6 +153,12 @@ def _ticket_items(
 
 
 def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    from bigas.resources.devops.pipeline import (
+        _deploy_poll_map_from_thread,
+        _pending_map_from_thread,
+    )
+    from bigas.resources.devops.prepare import prepare_poll_map_from_thread
+
     needs: List[Dict[str, Any]] = []
     working: List[Dict[str, Any]] = []
     for thread in threads:
@@ -161,8 +167,9 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
         thread_id = thread.get("thread_id") or ""
         updated = thread.get("updated_at") or ""
 
-        pending = thread.get("pending_deploy")
-        if isinstance(pending, dict) and pending.get("project_key"):
+        for pending in _pending_map_from_thread(thread).values():
+            if not pending.get("project_key"):
+                continue
             kind = pending.get("kind") or "deploy"
             action = pending.get("action") or "deploy"
             version = pending.get("version") or ""
@@ -174,7 +181,7 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
                 label = "Ready to deploy to production"
             needs.append(
                 {
-                    "id": f"deploy:{thread_id}",
+                    "id": f"deploy:{thread_id}:{target}",
                     "type": "deploy_confirm",
                     "kind": "ship",
                     "label": label,
@@ -190,15 +197,17 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
                 }
             )
 
-        poll = thread.get("pending_deploy_poll")
-        if isinstance(poll, dict) and poll.get("project_key"):
+        for poll in _deploy_poll_map_from_thread(thread).values():
+            if not poll.get("project_key"):
+                continue
             phase = poll.get("phase") or ""
             runs = [r for r in (poll.get("triggered") or []) if isinstance(r, dict)]
+            target = (poll.get("project_key") or "").upper()
             working.append(
                 {
-                    "id": f"pipeline:{thread_id}:deploy",
+                    "id": f"pipeline:{thread_id}:deploy:{target}",
                     "type": "pipeline",
-                    "project_key": (poll.get("project_key") or "").upper(),
+                    "project_key": target,
                     "stage": _GPW_PHASE_LABELS.get(phase, phase.replace("_", " ") or "Running"),
                     "phase": phase,
                     "thread_id": thread_id,
@@ -207,14 +216,16 @@ def _deploy_items(threads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str,
                 }
             )
 
-        prep = thread.get("pending_prepare_poll")
-        if isinstance(prep, dict) and prep.get("project_key"):
+        for prep in prepare_poll_map_from_thread(thread).values():
+            if not prep.get("project_key"):
+                continue
             phase = prep.get("phase") or ""
+            target = (prep.get("project_key") or "").upper()
             working.append(
                 {
-                    "id": f"pipeline:{thread_id}:prepare",
+                    "id": f"pipeline:{thread_id}:prepare:{target}",
                     "type": "pipeline",
-                    "project_key": (prep.get("project_key") or "").upper(),
+                    "project_key": target,
                     "version": prep.get("version") or "",
                     "stage": _PREPARE_PHASE_LABELS.get(phase, phase.replace("_", " ") or "Preparing"),
                     "phase": phase,
@@ -512,8 +523,10 @@ def _pending_merged_not_deployed(
     found in those subjects are resolved to board cards so Next deploy lists
     merged work, not every Final approval card on the open version (those may
     already be in production under Sign-off). Commits with no ticket key still
-    appear as commit rows. The count stays the git freshness total when that
-    is larger than the rows returned.
+    appear as commit rows. ``pending_count`` stays the git freshness total
+    (commits ahead) when that is larger than the rows returned — the ship
+    card expands from ``pending`` itself and only mentions extra commits,
+    never more tickets than rows.
     """
     commit_items, commit_count = _pending_from_freshness(fresh)
     if not commit_items and commit_count <= 0:

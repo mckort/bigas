@@ -32,11 +32,13 @@ _STATUS_RE = re.compile(
     re.I,
 )
 _CONFIRM_RE = re.compile(
-    r"^\s*(ja|yes|ok|okej|kör|go|gör det|deploy anyway|bekräfta)\b",
+    r"^\s*(ja|yes|ok|okej|kör|go|gör det|deploy anyway|bekräfta)\b"
+    r"(?:\s+(?P<project>[A-Za-z][A-Za-z0-9_-]{1,15}))?",
     re.I,
 )
 _CANCEL_RE = re.compile(
-    r"^\s*(nej|no|avbryt|cancel|stoppa)\b",
+    r"^\s*(nej|no|avbryt|cancel|stoppa)\b"
+    r"(?:\s+(?P<project>[A-Za-z][A-Za-z0-9_-]{1,15}))?",
     re.I,
 )
 
@@ -60,6 +62,46 @@ def is_confirm(text: str) -> bool:
 
 def is_cancel(text: str) -> bool:
     return bool(_CANCEL_RE.search(text or ""))
+
+
+_REPLY_PROJECT_FILLER = frozenset(
+    {
+        "to",
+        "please",
+        "anyway",
+        "for",
+        "the",
+        "it",
+        "now",
+        "do",
+        "deploy",
+        "that",
+        "this",
+    }
+)
+
+
+def _reply_project_token(raw: Optional[str]) -> Optional[str]:
+    from bigas.portfolio import normalize_project_key
+
+    token = (raw or "").strip()
+    if not token or token.lower() in _REPLY_PROJECT_FILLER:
+        return None
+    return normalize_project_key(token) or None
+
+
+def confirm_project_key(text: str) -> Optional[str]:
+    match = _CONFIRM_RE.search(text or "")
+    if not match:
+        return None
+    return _reply_project_token(match.group("project"))
+
+
+def cancel_project_key(text: str) -> Optional[str]:
+    match = _CANCEL_RE.search(text or "")
+    if not match:
+        return None
+    return _reply_project_token(match.group("project"))
 
 
 def _store():
@@ -96,42 +138,145 @@ def _complete_pipeline_progress(thread_id: Optional[str]) -> None:
             store.patch_message(message["message_id"], metadata={"status": "complete"})
 
 
-def _pending(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def _project_key_of(payload: Optional[Dict[str, Any]], fallback: str = "") -> str:
+    from bigas.portfolio import normalize_project_key
+
+    if isinstance(payload, dict):
+        key = normalize_project_key(payload.get("project_key") or fallback)
+        if key:
+            return key
+    return normalize_project_key(fallback)
+
+
+def _pending_map_from_thread(thread: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Normalize legacy ``pending_deploy`` plus ``pending_deploys`` into one map."""
+    out: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(thread, dict):
+        return out
+    raw_map = thread.get("pending_deploys")
+    if isinstance(raw_map, dict):
+        for key, value in raw_map.items():
+            if not isinstance(value, dict):
+                continue
+            project = _project_key_of(value, str(key))
+            if project:
+                out[project] = {**value, "project_key": project}
+    legacy = thread.get("pending_deploy")
+    if isinstance(legacy, dict):
+        project = _project_key_of(legacy)
+        if project and project not in out:
+            out[project] = {**legacy, "project_key": project}
+    return out
+
+
+def _all_pendings(thread_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
     if not thread_id:
+        return {}
+    return _pending_map_from_thread(_store().get_thread(thread_id) or {})
+
+
+def _pending(
+    thread_id: Optional[str], project_key: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    pendings = _all_pendings(thread_id)
+    if not pendings:
         return None
-    thread = _store().get_thread(thread_id) or {}
-    pending = thread.get("pending_deploy")
-    return pending if isinstance(pending, dict) else None
+    if project_key:
+        return pendings.get(_project_key_of({"project_key": project_key}))
+    if len(pendings) == 1:
+        return next(iter(pendings.values()))
+    return None
 
 
-def _set_pending(thread_id: Optional[str], payload: Optional[Dict[str, Any]]) -> None:
+def _write_pending_map(
+    thread_id: Optional[str], pendings: Dict[str, Dict[str, Any]]
+) -> None:
     if not thread_id or not hasattr(_store(), "patch_thread"):
         return
-    _store().patch_thread(thread_id, pending_deploy=payload)
+    cleaned = {
+        key: {**value, "project_key": key}
+        for key, value in pendings.items()
+        if isinstance(value, dict) and key
+    }
+    legacy = next(iter(cleaned.values())) if len(cleaned) == 1 else None
+    _store().patch_thread(
+        thread_id,
+        pending_deploys=cleaned or None,
+        pending_deploy=legacy,
+    )
 
 
-def _clear_pending_deploy_state(thread_id: Optional[str]) -> None:
-    if _pending(thread_id):
-        _set_pending(thread_id, None)
+def _set_pending(
+    thread_id: Optional[str],
+    payload: Optional[Dict[str, Any]],
+    *,
+    project_key: Optional[str] = None,
+) -> None:
+    """Set or clear a yes/no confirm. Scoped to one project when known."""
+    if not thread_id:
+        return
+    pendings = _all_pendings(thread_id)
+    if payload is None:
+        key = _project_key_of({"project_key": project_key}) if project_key else ""
+        if key:
+            pendings.pop(key, None)
+        else:
+            pendings = {}
+        _write_pending_map(thread_id, pendings)
+        return
+    key = _project_key_of(payload, project_key or "")
+    if not key:
+        return
+    pendings[key] = {**payload, "project_key": key}
+    _write_pending_map(thread_id, pendings)
+
+
+def _clear_pending_deploy_state(
+    thread_id: Optional[str], *, project_key: Optional[str] = None
+) -> None:
     from bigas.resources.devops.prepare import clear_prepare_state
 
+    if project_key:
+        _set_pending(thread_id, None, project_key=project_key)
+        clear_prepare_state(thread_id, project_key=project_key)
+        return
+    _set_pending(thread_id, None)
     clear_prepare_state(thread_id)
 
 
+def _command_project_key(user_message: str) -> Optional[str]:
+    from bigas.portfolio import resolve_project
+    from bigas.resources.devops.prepare import is_prepare_start, parse_prepare_command
+
+    if is_prepare_start(user_message):
+        key = (parse_prepare_command(user_message).get("project_key") or "").strip()
+        if key:
+            return key
+    return resolve_project(user_message)
+
+
 def clear_stale_pending_deploy(user_message: str, thread_id: Optional[str] = None) -> None:
-    """Drop leftover deploy state on unrelated messages or a new deploy command."""
-    from bigas.resources.devops.gpw_pipeline import is_gpw_command
+    """Drop confirm/prepare state only for the project named in a new command.
+
+    Unrelated chat leaves outstanding confirms alone so a parallel prepare for
+    another project can still answer yes/no.
+    """
+    from bigas.resources.devops.gpw_pipeline import is_gpw_command, staging_envs
     from bigas.resources.devops.prepare import is_prepare_start
 
     if is_gpw_command(user_message):
-        _set_pending(thread_id, None)
+        keys = sorted(staging_envs().keys())
+        target = _command_project_key(user_message) or (keys[0] if len(keys) == 1 else None)
+        if target:
+            _set_pending(thread_id, None, project_key=target)
         return
     if is_prepare_start(user_message) or is_deploy_start(user_message):
-        _clear_pending_deploy_state(thread_id)
+        target = _command_project_key(user_message)
+        if target:
+            _clear_pending_deploy_state(thread_id, project_key=target)
         return
-    if should_run_deploy_pipeline(user_message, thread_id):
-        return
-    _clear_pending_deploy_state(thread_id)
+    # Confirms, cancels, and release-notes replies keep their pending state.
+    # Do not wipe other projects' yes/no prompts on ordinary chat.
 
 
 def should_run_deploy_pipeline(user_message: str, thread_id: Optional[str] = None) -> bool:
@@ -140,14 +285,48 @@ def should_run_deploy_pipeline(user_message: str, thread_id: Optional[str] = Non
 
     if is_gpw_command(user_message) or is_prepare_start(user_message) or is_deploy_start(user_message):
         return True
-    pending = _pending(thread_id)
-    if pending and (is_confirm(user_message) or is_cancel(user_message)):
+    if _all_pendings(thread_id) and (is_confirm(user_message) or is_cancel(user_message)):
         return True
     if pending_release_notes(thread_id) and (
         is_confirm(user_message) or is_cancel(user_message)
     ):
         return True
     return False
+
+
+def _resolve_pending_for_reply(
+    thread_id: Optional[str], user_message: str, *, confirm: bool
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Pick which project confirm a yes/no applies to.
+
+    Returns ``(pending, error)``. When several confirms wait and the reply has
+    no project key, ``error`` asks the user to name one.
+    """
+    pendings = _all_pendings(thread_id)
+    if not pendings:
+        return None, None
+    named = confirm_project_key(user_message) if confirm else cancel_project_key(user_message)
+    if named:
+        pending = pendings.get(named)
+        if not pending:
+            ordered = sorted(pendings)
+            keys = ", ".join(ordered)
+            sample = ordered[0]
+            return None, (
+                f"No deploy waiting for **{named}**. "
+                f"Waiting on: {keys}. Reply **yes {sample}** "
+                "(or **no …**) for that project."
+            )
+        return pending, None
+    if len(pendings) == 1:
+        return next(iter(pendings.values())), None
+    keys = ", ".join(sorted(pendings))
+    verb = "yes" if confirm else "no"
+    sample = sorted(pendings)[0]
+    return None, (
+        f"Several deploys are waiting ({keys}). "
+        f"Reply **{verb} {sample}** (or another project key) so I know which one."
+    )
 
 
 def _format_triggered_runs(triggered: List[Dict[str, Any]]) -> str:
@@ -244,22 +423,119 @@ def _format_risk_for_chat(risk: Dict[str, Any]) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
-def _deploy_poll(thread_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def _deploy_poll_map_from_thread(
+    thread: Optional[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(thread, dict):
+        return out
+    raw_map = thread.get("pending_deploy_polls")
+    if isinstance(raw_map, dict):
+        for key, value in raw_map.items():
+            if not isinstance(value, dict):
+                continue
+            project = _project_key_of(value, str(key))
+            if project:
+                out[project] = {**value, "project_key": project}
+    legacy = thread.get("pending_deploy_poll")
+    if isinstance(legacy, dict):
+        project = _project_key_of(legacy)
+        if project and project not in out:
+            out[project] = {**legacy, "project_key": project}
+        elif not project and not out:
+            # GPW/legacy polls without a key still need a slot.
+            out["_"] = dict(legacy)
+    return out
+
+
+def _all_deploy_polls(thread_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
     if not thread_id:
+        return {}
+    return _deploy_poll_map_from_thread(_store().get_thread(thread_id) or {})
+
+
+def _deploy_poll(
+    thread_id: Optional[str], project_key: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    polls = _all_deploy_polls(thread_id)
+    if not polls:
         return None
-    thread = _store().get_thread(thread_id) or {}
-    poll = thread.get("pending_deploy_poll")
-    return poll if isinstance(poll, dict) else None
+    if project_key:
+        return polls.get(_project_key_of({"project_key": project_key}))
+    if len(polls) == 1:
+        return next(iter(polls.values()))
+    # Prefer a GPW poll when the client polls without a project.
+    for value in polls.values():
+        if value.get("kind") == "gpw":
+            return value
+    return next(iter(polls.values()))
 
 
-def _set_deploy_poll(thread_id: Optional[str], payload: Optional[Dict[str, Any]]) -> None:
+def _write_deploy_poll_map(
+    thread_id: Optional[str], polls: Dict[str, Dict[str, Any]]
+) -> None:
     if not thread_id or not hasattr(_store(), "patch_thread"):
         return
+    cleaned = {
+        key: ({**value, "project_key": key} if key != "_" else dict(value))
+        for key, value in polls.items()
+        if isinstance(value, dict)
+    }
+    legacy = next(iter(cleaned.values())) if len(cleaned) == 1 else (
+        next(iter(cleaned.values()), None) if cleaned else None
+    )
+    # Keep a representative legacy field so older UI still sees an active poll.
+    if len(cleaned) > 1:
+        legacy = next(iter(cleaned.values()))
     _store().patch_thread(
         thread_id,
-        pending_deploy_poll=payload,
-        has_pending_deploy_poll=bool(payload),
+        pending_deploy_polls=cleaned or None,
+        pending_deploy_poll=legacy,
+        has_pending_deploy_poll=bool(cleaned),
     )
+
+
+def _set_deploy_poll(
+    thread_id: Optional[str],
+    payload: Optional[Dict[str, Any]],
+    *,
+    project_key: Optional[str] = None,
+) -> None:
+    if not thread_id:
+        return
+    polls = _all_deploy_polls(thread_id)
+    if payload is None:
+        key = _project_key_of({"project_key": project_key}) if project_key else ""
+        if key:
+            polls.pop(key, None)
+            # "_" is the unkeyed/GPW slot. Remove it only when this clear
+            # targets that slot. A named project must leave it alone.
+            if key == "_":
+                polls.pop("_", None)
+        else:
+            polls = {}
+        _write_deploy_poll_map(thread_id, polls)
+        return
+    key = _project_key_of(payload, project_key or "") or "_"
+    polls[key] = {**payload, **({"project_key": key} if key != "_" else {})}
+    _write_deploy_poll_map(thread_id, polls)
+
+
+def _deploy_poll_slot(poll: Optional[Dict[str, Any]]) -> str:
+    """Map key for one poll. Unkeyed and legacy GPW polls use ``_``."""
+    key = _project_key_of(poll) if isinstance(poll, dict) else ""
+    return key or "_"
+
+
+def thread_has_active_deploy_poll(thread: Optional[Dict[str, Any]]) -> bool:
+    """True when any prepare or deploy poll is waiting (map or legacy)."""
+    if not isinstance(thread, dict):
+        return False
+    if _deploy_poll_map_from_thread(thread):
+        return True
+    from bigas.resources.devops.prepare import prepare_poll_map_from_thread
+
+    return bool(prepare_poll_map_from_thread(thread))
 
 
 def _parse_started_at(value: str) -> datetime:
@@ -412,7 +688,7 @@ def _finalize_deploy_postcheck(
     elif not health_ok:
         parts.append("Site health check failed — skipping release notes and social drafts.")
     _post(thread_id, "\n".join(parts))
-    _set_deploy_poll(thread_id, None)
+    _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
     if not failed_runs and not remaining and health_ok and poll.get("release_version"):
         try:
             from bigas.resources.devops.prepare import finalize_versioned_deploy
@@ -480,39 +756,26 @@ def _finalize_deploy_postcheck(
         _complete_pipeline_progress(thread_id)
 
 
-def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
-    """Single client-driven poll step for post-deploy workflow status and health."""
-    from bigas.resources.devops.gpw_pipeline import poll_gpw
-    from bigas.resources.devops.prepare import pending_prepare_poll, poll_prepare_followup
+def _poll_activity(thread_id: str) -> Dict[str, Any]:
+    """``active`` stays true while any prepare or deploy poll remains on the thread."""
+    thread = _store().get_thread(thread_id) or {}
+    active = thread_has_active_deploy_poll(thread)
+    return {"status": "in_progress" if active else "complete", "active": active}
 
-    gpw_poll = _deploy_poll(thread_id)
-    if isinstance(gpw_poll, dict) and gpw_poll.get("kind") == "gpw":
-        return poll_gpw(thread_id)
 
-    if pending_prepare_poll(thread_id):
-        result = poll_prepare_followup(thread_id)
-        if result.get("status") == "in_progress" or result.get("active"):
-            return {"status": "in_progress", "active": True}
-        if result.get("deploy_poll_active"):
-            return {"status": "in_progress", "active": True}
-        if _deploy_poll(thread_id):
-            return {"status": "in_progress", "active": True}
-        return {"status": result.get("status") or "complete", "active": False}
-
-    poll = _deploy_poll(thread_id)
-    if not poll:
-        return {"status": "complete", "active": False}
-
+def _advance_deploy_poll(thread_id: str, poll: Dict[str, Any]) -> None:
+    """Advance one product deploy poll. Other polls on the thread stay put."""
     repo = poll.get("repo") or ""
     triggered = poll.get("triggered") or []
+    poll_project = poll.get("project_key")
     if not triggered:
         _post(
             thread_id,
             "I didn't get a GitHub Actions run ID back. Check the Actions tab manually.",
         )
         _complete_pipeline_progress(thread_id)
-        _set_deploy_poll(thread_id, None)
-        return {"status": "complete", "active": False}
+        _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
+        return
 
     started_at = poll.get("started_at") or datetime.now(timezone.utc).isoformat()
     deadline = _parse_started_at(started_at) + timedelta(seconds=_POLL_TIMEOUT_SEC)
@@ -570,8 +833,9 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
                 "failed_runs": failed_runs,
                 "done_run_ids": sorted(done_ids),
             },
+            project_key=poll_project,
         )
-        return {"status": "in_progress", "active": True}
+        return
 
     _finalize_deploy_postcheck(
         thread_id,
@@ -583,7 +847,49 @@ def poll_deploy_postcheck(thread_id: str) -> Dict[str, Any]:
         },
         remaining=remaining,
     )
-    return {"status": "complete", "active": False}
+
+
+def poll_deploy_postcheck(
+    thread_id: str, project_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """Single client-driven poll step for post-deploy workflow status and health.
+
+    ``project_key`` advances that project only (webhook resume). The client
+    omits it and every prepare and deploy poll on the thread advances.
+    A prepare poll for one project does not skip another project's deploy.
+    """
+    from bigas.resources.devops.gpw_pipeline import poll_gpw
+    from bigas.resources.devops.prepare import (
+        pending_prepare_poll,
+        poll_prepare_followup,
+        prepare_poll_map_from_thread,
+    )
+
+    if project_key:
+        prepare_keys = (
+            [project_key] if pending_prepare_poll(thread_id, project_key) else []
+        )
+        slot = _project_key_of({"project_key": project_key}) or project_key
+        targeted = _deploy_poll(thread_id, project_key)
+        deploy_items = [(slot, targeted)] if isinstance(targeted, dict) else []
+    else:
+        thread = _store().get_thread(thread_id) or {}
+        prepare_keys = list(prepare_poll_map_from_thread(thread).keys())
+        deploy_items = list(_all_deploy_polls(thread_id).items())
+
+    for key in prepare_keys:
+        poll_prepare_followup(thread_id, project_key=key)
+
+    for key, _poll in deploy_items:
+        current = _deploy_poll(thread_id, key)
+        if not isinstance(current, dict):
+            continue
+        if current.get("kind") == "gpw":
+            poll_gpw(thread_id, project_key=current.get("project_key") or key or "_")
+        else:
+            _advance_deploy_poll(thread_id, current)
+
+    return _poll_activity(thread_id)
 
 
 def _poll_includes_run(
@@ -610,41 +916,41 @@ def _poll_includes_run(
 
 
 def expire_stale_deploy_poll(thread_id: Optional[str]) -> bool:
-    """Finalize a pending deploy poll that has passed the client timeout."""
+    """Finalize pending deploy polls that have passed the client timeout."""
     if not thread_id:
         return False
-    poll = _deploy_poll(thread_id)
-    if not poll:
-        return False
-    # Prepare-staging waits on this same field while a review agent runs.
-    # That wait has its own timeout. Expiring it here posts a deploy Post-check
-    # and drops the follow-up review.
-    if (poll.get("kind") or "") == "gpw":
-        return False
-    started = poll.get("started_at")
-    if not started:
-        return False
-    try:
-        deadline = _parse_started_at(str(started)) + timedelta(seconds=_POLL_TIMEOUT_SEC)
-    except ValueError:
-        return False
-    if datetime.now(timezone.utc) < deadline:
-        return False
-    triggered = poll.get("triggered") or []
-    done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
-    remaining = _unfinished_runs(triggered, done_ids)
-    # Clear before network I/O so concurrent polls cannot re-enter or brick the thread.
-    _set_deploy_poll(thread_id, None)
-    try:
-        _finalize_deploy_postcheck(thread_id, poll, remaining=remaining)
-    except Exception:
-        logger.exception("Stale deploy poll finalization failed for thread %s", thread_id)
-        _post(
-            thread_id,
-            "Post-check timed out but finalization failed — check deploy status manually.",
-        )
-        _complete_pipeline_progress(thread_id)
-    return True
+    expired_any = False
+    for poll in list(_all_deploy_polls(thread_id).values()):
+        # Prepare-staging waits on this same field while a review agent runs.
+        # That wait has its own timeout. Expiring it here posts a deploy Post-check
+        # and drops the follow-up review.
+        if (poll.get("kind") or "") == "gpw":
+            continue
+        started = poll.get("started_at")
+        if not started:
+            continue
+        try:
+            deadline = _parse_started_at(str(started)) + timedelta(seconds=_POLL_TIMEOUT_SEC)
+        except ValueError:
+            continue
+        if datetime.now(timezone.utc) < deadline:
+            continue
+        triggered = poll.get("triggered") or []
+        done_ids = {int(rid) for rid in (poll.get("done_run_ids") or [])}
+        remaining = _unfinished_runs(triggered, done_ids)
+        # Clear before network I/O so concurrent polls cannot re-enter or brick the thread.
+        _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
+        try:
+            _finalize_deploy_postcheck(thread_id, poll, remaining=remaining)
+        except Exception:
+            logger.exception("Stale deploy poll finalization failed for thread %s", thread_id)
+            _post(
+                thread_id,
+                "Post-check timed out but finalization failed — check deploy status manually.",
+            )
+            _complete_pipeline_progress(thread_id)
+        expired_any = True
+    return expired_any
 
 
 def schedule_expire_stale_deploy_poll(thread_id: Optional[str]) -> None:
@@ -685,13 +991,24 @@ def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, 
     resumed: List[str] = []
     for thread in threads:
         thread_id = (thread or {}).get("thread_id")
-        poll = (thread or {}).get("pending_deploy_poll")
-        if not thread_id or not _poll_includes_run(
-            poll if isinstance(poll, dict) else None, run_id, repo
-        ):
+        if not thread_id:
+            continue
+        polls = _deploy_poll_map_from_thread(thread if isinstance(thread, dict) else None)
+        matched = [
+            poll
+            for poll in polls.values()
+            if _poll_includes_run(poll, run_id, repo)
+        ]
+        if not matched:
             continue
         try:
-            poll_deploy_postcheck(thread_id)
+            seen = set()
+            for poll in matched:
+                slot = _deploy_poll_slot(poll)
+                if slot in seen:
+                    continue
+                seen.add(slot)
+                poll_deploy_postcheck(thread_id, project_key=slot)
             resumed.append(thread_id)
         except Exception:
             logger.exception(
@@ -699,7 +1016,8 @@ def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, 
                 thread_id,
                 run_id,
             )
-            _set_deploy_poll(thread_id, None)
+            for poll in matched:
+                _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
             _complete_pipeline_progress(thread_id)
     return {"resumed": len(resumed), "thread_ids": resumed}
 
@@ -715,7 +1033,7 @@ def start_confirmed_deploy(
     """Trigger GitHub Actions and start client-driven post-check polling."""
     from bigas.resources.devops.prepare import clear_pending_release_notes
 
-    _set_pending(thread_id, None)
+    _set_pending(thread_id, None, project_key=project_key)
     clear_pending_release_notes(thread_id)
     planned = (risk or {}).get("workflows_to_run")
     planned_skips = (risk or {}).get("skipped_workflows") or []
@@ -813,6 +1131,7 @@ def run_chat_deploy_pipeline(
     thread_id: Optional[str],
     user_message: str,
     project_key: Optional[str] = None,
+    _from_gpw: bool = False,
 ) -> Dict[str, Any]:
     """Run pre-check → (optional confirm) → trigger → client-polled post-check."""
     from bigas.resources.devops.prepare import (
@@ -829,20 +1148,35 @@ def run_chat_deploy_pipeline(
         run_gpw_pipeline,
     )
 
-    if is_gpw_command(user_message) or pending_gpw_action(thread_id):
+    if not _from_gpw and (is_gpw_command(user_message) or pending_gpw_action(thread_id)):
         return run_gpw_pipeline(thread_id=thread_id, user_message=user_message)
 
     if is_prepare_start(user_message):
         return run_prepare_deploy(thread_id=thread_id, user_message=user_message)
 
-    pending = _pending(thread_id)
-    if pending and is_cancel(user_message):
-        _set_pending(thread_id, None)
-        _complete_pipeline_progress(thread_id)
-        _post(thread_id, "Cancelled the deploy. No workflow was started.")
-        return {"status": "complete", "summary": "Deploy cancelled."}
+    if is_cancel(user_message) and _all_pendings(thread_id):
+        pending, err = _resolve_pending_for_reply(thread_id, user_message, confirm=False)
+        if err:
+            _complete_pipeline_progress(thread_id)
+            _post(thread_id, err)
+            return {"status": "complete", "summary": err}
+        if pending:
+            _set_pending(thread_id, None, project_key=pending.get("project_key"))
+            _complete_pipeline_progress(thread_id)
+            label = pending.get("project_key") or "the deploy"
+            _post(thread_id, f"Cancelled **{label}**. No workflow was started.")
+            return {"status": "complete", "summary": "Deploy cancelled."}
 
-    confirmed = bool(pending and is_confirm(user_message))
+    pending = None
+    confirmed = False
+    if is_confirm(user_message) and _all_pendings(thread_id):
+        pending, err = _resolve_pending_for_reply(thread_id, user_message, confirm=True)
+        if err:
+            _complete_pipeline_progress(thread_id)
+            _post(thread_id, err)
+            return {"status": "complete", "summary": err}
+        confirmed = bool(pending)
+
     if confirmed and (pending or {}).get("kind") == "prepare":
         clear_pending_release_notes(thread_id)
         try:
@@ -860,13 +1194,20 @@ def run_chat_deploy_pipeline(
         )
 
     notes_pending = pending_release_notes(thread_id)
-    if not pending and notes_pending and (is_confirm(user_message) or is_cancel(user_message)):
+    if (
+        not _all_pendings(thread_id)
+        and notes_pending
+        and (is_confirm(user_message) or is_cancel(user_message))
+    ):
         return handle_release_notes_reply(thread_id=thread_id, user_message=user_message)
 
     named = resolve_project(user_message)
-    if is_deploy_start(user_message) and pending:
-        _clear_pending_deploy_state(thread_id)
+    if is_deploy_start(user_message):
+        target = (project_key or "").strip().upper() or named
+        if target:
+            _clear_pending_deploy_state(thread_id, project_key=target)
         pending = None
+        confirmed = False
     key = (project_key or "").strip().upper() or None
     if is_deploy_start(user_message):
         key = key or named
@@ -908,10 +1249,13 @@ def run_chat_deploy_pipeline(
             thread_id,
             {"project_key": key, "risk_level": risk_level, "repo": risk.get("repo")},
         )
+        other = [k for k in _all_pendings(thread_id) if k != key]
+        yes_hint = f"**yes {key}**" if other else "**yes**"
+        no_hint = f"**no {key}**" if other else "**no**"
         _post(
             thread_id,
             f"Risk level is **{risk_level}**{plain_risk_clause(risk)}. "
-            "Reply **yes** to deploy anyway, or **no** to cancel.",
+            f"Reply {yes_hint} to deploy anyway, or {no_hint} to cancel.",
         )
         return {"status": "complete", "summary": risk.get("summary") or ""}
 
