@@ -533,6 +533,8 @@ def update_ticket():
       }
 
     At least one of status or description is required.
+    The response includes the current status and description for both
+    the internal board and Jira, including fields this call left unchanged.
     """
     data = request.json or {}
     is_valid, error_msg = validate_request_data(
@@ -1122,7 +1124,9 @@ def get_manifest():
                     "Update an existing internal-board (or Jira) ticket. "
                     "Move it to a column (Final Review / Final approval (manual) and aliases) "
                     "and/or replace the description text (markdown). "
-                    "Pass at least one of status or description."
+                    "Pass at least one of status or description. "
+                    "Returns the ticket's current status and description, "
+                    "including fields this call left unchanged."
                 ),
                 "path": "/mcp/tools/update_ticket",
                 "method": "POST",

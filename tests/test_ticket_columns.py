@@ -3,6 +3,7 @@ import os
 os.environ.setdefault("CHAT_STORAGE_MODE", "memory")
 
 from bigas.resources.product.create_jira_issue.service import CreateJiraIssueService
+from bigas.resources.product.create_release_notes.jira_client import JiraError
 from bigas.resources.product.update_ticket import (
     UpdateTicketError,
     UpdateTicketService,
@@ -152,6 +153,121 @@ def test_update_description_via_service():
     assert updated["description"] == "## New brief\n\nDo the thing."
     assert updated["status"] == "To Do"
     assert updated["key"] == created["key"]
+
+
+_JIRA_RESULT_KEYS = {
+    "ok",
+    "key",
+    "url",
+    "summary",
+    "status",
+    "description",
+    "source",
+}
+
+
+class _FakeJiraConfig:
+    base_url = "https://example.atlassian.net"
+
+    @staticmethod
+    def from_env():
+        return _FakeJiraConfig()
+
+
+class _FakeJiraClient:
+    def __init__(self, config):
+        self.config = config
+        self.transitions = []
+        self.descriptions = []
+        self.fail_read = False
+
+    def transition_issue(self, issue_key, *, to_status_name, comment=None):
+        self.transitions.append((issue_key, to_status_name))
+
+    def update_description(self, issue_key, description_markdown):
+        self.descriptions.append((issue_key, description_markdown))
+
+    def get_issue(self, issue_key, *, fields=None, expand=None):
+        if self.fail_read:
+            raise JiraError("read failed")
+        status_name = self.transitions[-1][1] if self.transitions else "To Do"
+        return {
+            "key": issue_key,
+            "fields": {
+                "summary": "Existing title",
+                "status": {"name": status_name},
+                "description": "Stored body",
+            },
+        }
+
+
+def _use_fake_jira(monkeypatch, *, fail_read=False):
+    created = {}
+
+    class Client(_FakeJiraClient):
+        def __init__(self, config):
+            super().__init__(config)
+            self.fail_read = fail_read
+            created["client"] = self
+
+    monkeypatch.setattr("bigas.tickets.config.use_internal_board", lambda: False)
+    monkeypatch.setattr(
+        "bigas.resources.product.update_ticket.JiraClient",
+        Client,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.product.update_ticket.JiraConfig",
+        _FakeJiraConfig,
+    )
+    return created
+
+
+def test_jira_update_description_returns_current_status(monkeypatch):
+    created = _use_fake_jira(monkeypatch)
+    result = UpdateTicketService().update(
+        issue_key="VFA-48",
+        description="## New brief\n\nDo the thing.",
+    )
+    assert set(result) == _JIRA_RESULT_KEYS
+    assert result["ok"] is True
+    assert result["source"] == "jira"
+    assert result["key"] == "VFA-48"
+    assert result["status"] == "To Do"
+    assert result["description"] == "## New brief\n\nDo the thing."
+    assert result["summary"] == "Existing title"
+    assert result["url"] == "https://example.atlassian.net/browse/VFA-48"
+    client = created["client"]
+    assert client.transitions == []
+    assert client.descriptions == [("VFA-48", "## New brief\n\nDo the thing.")]
+
+
+def test_jira_update_status_returns_current_description(monkeypatch):
+    created = _use_fake_jira(monkeypatch)
+    result = UpdateTicketService().update(
+        issue_key="VFA-48",
+        status="Final Review",
+    )
+    assert set(result) == _JIRA_RESULT_KEYS
+    assert result["status"] == "Final approval (manual)"
+    assert result["description"] == "Stored body"
+    assert result["summary"] == "Existing title"
+    assert created["client"].transitions == [("VFA-48", "Final approval (manual)")]
+    assert created["client"].descriptions == []
+
+
+def test_jira_update_keeps_written_fields_when_reread_fails(monkeypatch):
+    _use_fake_jira(monkeypatch, fail_read=True)
+    result = UpdateTicketService().update(
+        issue_key="VFA-48",
+        description="Replacement body",
+    )
+    assert set(result) == _JIRA_RESULT_KEYS
+    assert result["ok"] is True
+    assert result["source"] == "jira"
+    assert result["description"] == "Replacement body"
+    assert result["status"] is None
+    assert result["summary"] == "VFA-48"
+    assert result["url"] == "https://example.atlassian.net/browse/VFA-48"
 
 
 def test_update_rejects_missing_status_and_description():
