@@ -99,3 +99,46 @@ export function applyDeployUpdate(run, incoming, { pendingSend = false, error = 
     token: run?.token,
   }
 }
+
+/** Prefer primary_prompt when the ship card sets one (staging Update vs Prepare). */
+export function commandForShipRow(row) {
+  const commands = Array.isArray(row?.commands) ? row.commands : []
+  if (!commands.length) return null
+  const wanted = String(row?.primary_prompt || '').trim()
+  if (wanted) {
+    const match = commands.find((c) => String(c?.prompt || '').trim() === wanted)
+    if (match) return match
+  }
+  return commands[0]
+}
+
+export function pipelineForProject(working, projectKey) {
+  const key = String(projectKey || '').trim().toUpperCase()
+  if (!key) return null
+  return (
+    (Array.isArray(working) ? working : []).find(
+      (item) =>
+        item?.type === 'pipeline' && String(item.project_key || '').trim().toUpperCase() === key,
+    ) || null
+  )
+}
+
+export function emptyDeployRun({
+  threadId = '',
+  since = '',
+  prompt = '',
+  token,
+  deployPoll = true,
+} = {}) {
+  return {
+    phase: 'working',
+    pendingSend: false,
+    threadId: threadId || '',
+    since: since || new Date(Date.now() - 5000).toISOString(),
+    prompt: prompt || '',
+    messages: [],
+    error: '',
+    deployPoll: Boolean(deployPoll),
+    token,
+  }
+}
