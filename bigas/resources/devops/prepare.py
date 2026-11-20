@@ -1816,6 +1816,8 @@ def continue_after_main_ready(
     try:
         from bigas.tickets.releases import ReleaseError, lock_release_for_new_prs
 
+        # Soft lock usually happened at prepare start; this pass adds the GitHub
+        # ruleset once the cut is on main (idempotent for pr_locked).
         locked = lock_release_for_new_prs(key, ver)
         if not locked.get("already_locked") and not locked.get("already_released"):
             nxt = locked.get("next_version")
@@ -2019,6 +2021,33 @@ def run_prepare_deploy(
 
     _set_pending(thread_id, None, project_key=key)
     clear_prepare_state(thread_id, project_key=key)
+
+    # Soft-lock as soon as prepare starts so new tickets cannot join this cut
+    # while the release PR is under review. GitHub ruleset waits until main.
+    try:
+        from bigas.tickets.releases import ReleaseError, lock_release_for_new_prs
+
+        locked = lock_release_for_new_prs(key, ver, lock_github=False)
+        if not locked.get("already_locked") and not locked.get("already_released"):
+            nxt = locked.get("next_version")
+            extra = f" New PRs should target **{nxt}**." if nxt else ""
+            _post(
+                thread_id,
+                f"🔒 **{key} {ver}** locked for new PRs (prepare started). "
+                f"Only review fixes for tickets already in this cut."
+                f"{extra}",
+            )
+    except ReleaseError as exc:
+        _post(
+            thread_id,
+            f"Could not lock {key} {ver} for new PRs before prepare: {exc}",
+        )
+    except Exception:
+        logger.exception("Could not soft-lock %s %s at prepare start", key, ver)
+        _post(
+            thread_id,
+            f"Could not lock {key} {ver} for new PRs before prepare.",
+        )
 
     _post(
         thread_id,

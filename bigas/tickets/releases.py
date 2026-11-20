@@ -209,8 +209,19 @@ def _ensure_next_assignable_version(project_key: str, locked_name: str) -> Optio
     return None
 
 
-def lock_release_for_new_prs(project_key: str, version: str) -> Dict[str, Any]:
-    """Lock a cut for new PRs after it is on main. Does not close the board release."""
+def lock_release_for_new_prs(
+    project_key: str,
+    version: str,
+    *,
+    lock_github: bool = True,
+) -> Dict[str, Any]:
+    """Lock a cut for new PRs. Does not close the board release.
+
+    Soft board lock (``pr_locked``) redirects new tickets / ``pr_base`` to the
+    next version. Call with ``lock_github=False`` when prepare deploy starts so
+    release-PR autofix can still push review fixes; call again with the default
+    after the cut is on main to add the GitHub ruleset when the plan allows one.
+    """
     proj = (project_key or "").strip().upper()
     try:
         name = normalize_version_name(version)
@@ -233,13 +244,15 @@ def lock_release_for_new_prs(project_key: str, version: str) -> Dict[str, Any]:
             if nxt and not nxt.get("released") and not nxt.get("pr_locked"):
                 store.update_release(nxt["release_id"], is_default=True)
 
-    _lock_released_cut(proj, name)
+    if lock_github:
+        _lock_released_cut(proj, name)
     updated = store.get_release(item["release_id"]) or item
     return {
         "release": updated,
         "already_released": already_released,
         "already_locked": already_locked,
         "next_version": next_version,
+        "github_locked": bool(lock_github),
     }
 
 

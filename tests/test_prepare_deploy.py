@@ -1698,7 +1698,42 @@ def test_prepare_after_merge_locks_cut_for_new_prs(monkeypatch):
     assert eight["is_default"] is True
     assert _github_locks and _github_locks[0]["version"] == "0.7.0"
     blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
-    assert "Locked this cut for new PRs" in blob
+    assert "locked for new PRs (prepare started)" in blob
+    assert "Only review fixes" in blob
+    assert "0.8.0" in blob
+    # Soft-lock already posted at start; post-merge message is skipped when already locked.
+    assert "is on `main`. Locked this cut for new PRs" not in blob
+
+
+def test_prepare_start_soft_locks_before_review_poll(monkeypatch):
+    """New tickets must leave the cut as soon as prepare starts, before merge."""
+    create_release("VFA", name="0.7.0", is_default=True)
+    create_release("VFA", name="0.8.0")
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    monkeypatch.setattr(
+        "bigas.resources.devops.prepare.ensure_release_on_main",
+        lambda **kwargs: {
+            "status": "polling",
+            "repo": "mckort/vcfieldassistant",
+            "pr_number": 42,
+        },
+    )
+
+    result = run_prepare_deploy(
+        thread_id=thread["thread_id"],
+        user_message="prepare deploy VFA 0.7.0",
+    )
+    assert result["status"] == "in_progress"
+    item = get_release_store().get_release_by_name("VFA", "0.7.0")
+    assert item["pr_locked"] is True
+    assert item["released"] is False
+    eight = get_release_store().get_release_by_name("VFA", "0.8.0")
+    assert eight["is_default"] is True
+    # GitHub ruleset waits until the cut is on main so release-PR autofix can push.
+    assert _github_locks == []
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "locked for new PRs (prepare started)" in blob
     assert "0.8.0" in blob
 
 
@@ -1729,6 +1764,8 @@ def test_prepare_already_on_main_locks_cut_for_new_prs(monkeypatch):
     assert _github_locks and _github_locks[0]["version"] == "0.7.0"
     nxt = get_release_store().get_release_by_name("VFA", "0.8.0")
     assert nxt and nxt["is_default"] is True
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "locked for new PRs (prepare started)" in blob
 
 
 def test_prepare_compare_failed_omits_zero_file_count(monkeypatch):
