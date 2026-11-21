@@ -8,8 +8,9 @@ Today: the release mode set by the cockpit's "Go to production" button.
     Versioned releases: work for version x.y.z lands on ``<prefix>-x.y.z``,
     "Prepare deploy" reviews the cut and merges it to the production branch.
 
-Env ``PROJECT_BRANCH_MAPPING`` still works and wins for keys it lists, so
-existing setups (VFA) behave as before. Stored in Firestore collection
+Env ``PROJECT_BRANCH_MAPPING`` still wins for non-production values
+(``VFA:staging``, ``GPW-PROD:develop``). Cockpit production overrides env when
+the env value is still ``main``/``master``. Stored in Firestore collection
 ``bigas_project_settings`` (memory store in local mode). Reads are cached for
 ``CACHE_SECONDS`` because branch resolution runs on every automation step.
 """

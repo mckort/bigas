@@ -5,9 +5,10 @@ Bigas treats **AuraLearn** as portfolio project **`AURA`**, with the internal bo
 ## What you get
 
 - **Board:** AI workflow columns (Research and describe → Design and plan → In Progress (AI) → Final approval) on the AURA board.
-- **Repo:** `mckort/auralearn`. Default branch is **`master`** (not `main`).
+- **Repo:** `mckort/auralearn`. Production branch is **`master`** (not `main`).
+- **Versioned releases (like VFA):** Feature PRs target **`staging-x.y.z`**. Prepare deploy merges that cut into `master`, then deploys.
 - **Auto-review / auto-fix:** `.github/workflows/pr-review.yml` in the product repo calls [`docs/pr-review.caller.yml`](pr-review.caller.yml). Repository variable `BIGAS_URL`, optional `BIGAS_AUTO_FIX=true`, plus secrets `BIGAS_API_KEY` and `GH_PAT_FOR_BIGAS` (see [cto-pr-review.md](cto-pr-review.md)).
-- **Implement:** Drag a card to **In Progress (AI)** with `CURSOR_API_KEY` + `GITHUB_TOKEN` on the Bigas instance. `PROJECT_BRANCH_MAPPING` must include `AURA:master`. `DEFAULT:main` does not do that, and AuraLearn has no `main` branch, so the agent never starts.
+- **Implement:** Drag a card to **In Progress (AI)** with `CURSOR_API_KEY` + `GITHUB_TOKEN` on the Bigas instance. `PROJECT_BRANCH_MAPPING` must include `AURA:staging`. Agents open PRs against `lookup_board_releases` → `pr_base` (e.g. `staging-0.6.0`), never directly onto `master` except labeled hotfixes.
 - **Deploy:** DevOps dispatches `deploy.yml` on `mckort/auralearn` (Cloud Run, same pattern as BIG). It runs `deploy-auralearn.sh`. When `mobile/` changed since the last preview build, it also dispatches `eas-preview-ios.yml`, which queues `eas build --profile preview --platform ios` and returns without waiting. The result is posted to the CTO Discord chat. It does not use `mckort/gcp-single-vm-webstack`.
 
 There is no public marketing domain yet, so chat does not map a site hostname to `AURA`.
@@ -22,8 +23,8 @@ BIGAS_JIRA_AUTOMATION_ALLOWED_PROJECTS=VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,F
 # Optional explicit override (defaults are baked into Bigas for AURA):
 # BIGAS_JIRA_PROJECT_REPO_MAP=...,AURA:mckort/auralearn
 # BIGAS_JIRA_REPO_BASE_BRANCH_MAP=...,mckort/auralearn:master
-# Required — DEFAULT:main does not cover this repo:
-# PROJECT_BRANCH_MAPPING=...,AURA:master
+# Required — versioned cuts like VFA (not AURA:master):
+# PROJECT_BRANCH_MAPPING=...,AURA:staging
 # BIGAS_DEPLOY_WORKFLOW_MAP=...|AURA:deploy.yml,eas-preview-ios.yml
 # Do not add AURA to BIGAS_DEPLOY_REPO_MAP. Dispatch stays on mckort/auralearn.
 # BIGAS_PROJECT_LOCAL_PATH_MAP=AURA:/path/to/auralearn
@@ -34,8 +35,9 @@ With `SECRET_MANAGER=true`, sync `BIGAS_DEPLOY_WORKFLOW_MAP` and restart. Code d
 ## GitHub (`mckort/auralearn`)
 
 1. `pr-review.yml` and `deploy.yml` must be on **`master`**.
-2. PR review: variable `BIGAS_URL`, secret `BIGAS_API_KEY`.
-3. Deploy, once, from a machine with `gcloud` and `gh`, using the repo `.env`:
+2. Feature work lands on **`staging-x.y.z`**; prepare deploy merges into `master`.
+3. PR review: variable `BIGAS_URL`, secret `BIGAS_API_KEY`.
+4. Deploy, once, from a machine with `gcloud` and `gh`, using the repo `.env`:
 
 ```bash
 ./scripts/setup-github-actions-deploy.sh

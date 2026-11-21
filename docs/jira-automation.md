@@ -40,7 +40,7 @@ Weekly Cloud Scheduler (`/api/agents/evaluate-goals`) repeats the same evaluatio
 | `BIGAS_JIRA_PROJECT_REPO_MAP` | `VFA:mckort/vcfieldassistant,WAYW:mckort/roadpal,BIG:mckort/bigas,REM:mckort/remotebrief,GPWW:Green-Promo-Wear-Global/greenpromowear-website,GPW-PROD:Green-Promo-Wear-Global/GPW,FYDA:mckort/fulfillyourdreamadventure,MYL:mckort/mylifesdeed,FRI:mckort/frimaninvestments,AURA:mckort/auralearn,POF:mckort/pass-or-fund` |
 | `BIGAS_PROJECT_LOCAL_PATH_MAP` | Optional `FRI:/path/to/frimaninvestments,POF:/path/to/pass-or-fund` for your laptop checkout (GitHub remains the source of truth for cloud agents) |
 | `BIGAS_JIRA_REPO_BASE_BRANCH_MAP` | Per-repo production branch, e.g. `mckort/fulfillyourdreamadventure:master,mckort/auralearn:master,mckort/vcfieldassistant:main`. Defaults include FYDA and AURA→`master`; others→`main`. |
-| `PROJECT_BRANCH_MAPPING` | Branch Cursor actually starts from. One entry per project: `FYDA:master,AURA:master,VFA:staging,DEFAULT:main`. `DEFAULT:main` does not mean the repo default. A `master` repo with no entry used to be sent at `main`, so no agent started. `connect_repo.py --branch` writes the entry when the branch is not `main`. |
+| `PROJECT_BRANCH_MAPPING` | Branch Cursor actually starts from. Versioned production: `VFA:staging,AURA:staging,FYDA:staging`. Staging rehearsal: `GPW-PROD:develop`. Development on a `master` repo still needs an explicit entry (or *Go to production*). `DEFAULT:main` does not mean the repo default. |
 | `BIGAS_JIRA_DEFAULT_BASE_BRANCH` | Fallback when repo is not in the map (default `main`) |
 | `BIGAS_JIRA_STATUS_*_APPROVAL` | Manual gate status names |
 | `BIGAS_JIRA_AI_DAILY_QUOTA` | Default `20` |
