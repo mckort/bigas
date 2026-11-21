@@ -71,12 +71,19 @@ def normalize_semver_tag(version: str) -> str:
     raise ValueError(f"Invalid semver fix version: {version!r}")
 
 
+def _env_maps_to_production_branch(mapped: str) -> bool:
+    """True when env still points at main/master instead of a release prefix."""
+    return (mapped or "").strip().lower() in _PRODUCTION_BRANCH_NAMES
+
+
 def project_branch_mapping_from_env() -> Dict[str, str]:
     """PROJECT_BRANCH_MAPPING plus projects switched to production in the app.
 
-    Env entries win, so a key listed in env behaves exactly as before. A
-    project switched with the cockpit's "Go to production" button gets its
-    release prefix (``staging``) here without a redeploy.
+    Explicit non-production env values win (``VFA:staging``, ``GPW-PROD:develop``).
+    Cockpit *Go to production* overrides env when the env value is still a
+    production branch (``main`` / ``master``), so ``AURA:master`` cannot block
+    versioned ``staging-x.y.z`` after the app flip. A project with no env key
+    still gets the override via setdefault.
     """
     raw = os.environ.get("PROJECT_BRANCH_MAPPING")
     if raw is None or not str(raw).strip():
@@ -87,7 +94,14 @@ def project_branch_mapping_from_env() -> Dict[str, str]:
         from bigas.project_settings import release_branch_overrides
 
         for key, prefix in release_branch_overrides().items():
-            mapping.setdefault(key, prefix)
+            prefix = (prefix or "").strip()
+            if not prefix:
+                continue
+            existing = (mapping.get(key) or "").strip()
+            if not existing:
+                mapping[key] = prefix
+            elif _env_maps_to_production_branch(existing):
+                mapping[key] = prefix
     except Exception:  # settings are best effort; env alone still works
         pass
     return mapping

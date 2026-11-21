@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from bigas.project_settings import reset_for_tests, set_release_mode
 from bigas.resources.product.jira_automation.config import JiraAutomationConfig
 from bigas.resources.product.release_workflow import (
     is_versioned_feature_head,
@@ -10,6 +11,7 @@ from bigas.resources.product.release_workflow import (
     normalize_semver_tag,
     parse_project_branch_mapping,
     default_hides_repo_production,
+    project_branch_mapping_from_env,
     resolve_automerge_branch,
     resolve_production_branch,
     version_from_feature_branch,
@@ -117,6 +119,35 @@ def test_resolve_production_branch_ignores_staging_map():
         repo_base_branches={"mckort/vcfieldassistant": "main"},
     )
     assert branch == "main"
+
+
+def test_cockpit_production_override_beats_env_master(monkeypatch):
+    reset_for_tests()
+    monkeypatch.setenv(
+        "PROJECT_BRANCH_MAPPING",
+        "VFA:staging,AURA:master,GPW-PROD:develop,DEFAULT:main",
+    )
+    set_release_mode("AURA", "production", prefix="staging", by="test")
+    mapping = project_branch_mapping_from_env()
+    assert mapping["AURA"] == "staging"
+    assert mapping["VFA"] == "staging"
+    assert mapping["GPW-PROD"] == "develop"
+    branch = resolve_automerge_branch(
+        project_key="AURA",
+        repo="mckort/auralearn",
+        project_branch_map=mapping,
+        repo_base_branches={"mckort/auralearn": "master"},
+        fix_version="0.6.0",
+    )
+    assert branch == "staging-0.6.0"
+
+
+def test_env_staging_prefix_not_overwritten_by_cockpit(monkeypatch):
+    reset_for_tests()
+    monkeypatch.setenv("PROJECT_BRANCH_MAPPING", "VFA:staging,DEFAULT:main")
+    set_release_mode("VFA", "production", prefix="release", by="test")
+    mapping = project_branch_mapping_from_env()
+    assert mapping["VFA"] == "staging"
 
 
 def test_config_automerge_branch_for_project(monkeypatch):
