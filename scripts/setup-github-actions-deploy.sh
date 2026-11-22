@@ -48,6 +48,21 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+# Fail closed: a deploy env without this key used to wipe Outside agents on Cloud Run.
+gateway_flag="$(grep -E '^[[:space:]]*BIGAS_AGENT_GATEWAY=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+case "$gateway_flag" in
+  on|off|1|0|true|false|yes|no) ;;
+  "")
+    echo "❌ $ENV_FILE must set BIGAS_AGENT_GATEWAY=on or off before updating BIGAS_DEPLOY_ENV." >&2
+    echo "   See docs/agent-gateway.md" >&2
+    exit 1
+    ;;
+  *)
+    echo "❌ BIGAS_AGENT_GATEWAY must be on or off (got: $gateway_flag)" >&2
+    exit 1
+    ;;
+esac
+
 echo "🔧 Project: $PROJECT_ID"
 echo "🔧 GitHub repo: $GITHUB_REPO"
 echo "🔧 Deploy SA: $SA_EMAIL"

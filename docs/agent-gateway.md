@@ -12,6 +12,12 @@ Let Grok, a script, or any other MCP client use Bigas with limits you choose. Yo
    BIGAS_ACCESS_KEYS=...            # your own key, unchanged
    ```
 
+   GitHub Actions deploy reads secret `BIGAS_DEPLOY_ENV`. After changing the local
+   env profile, re-sync that secret (`./scripts/setup-github-actions-deploy.sh` or
+   `gh secret set BIGAS_DEPLOY_ENV < .env`) before the next deploy. Deploy refuses
+   to run if `BIGAS_AGENT_GATEWAY` is missing, so a stale secret cannot silently
+   turn Outside agents off.
+
 2. In the cockpit, find **Outside agents** and press **Connect**. Name the agent (`grok-growth`), pick a level, press **Connect**.
 3. Copy the token and the setup for your client (Grok API, Grok Build, Claude Code, Cursor or curl). Then ask the agent to call `gateway_whoami`. It answers with what it may do.
 

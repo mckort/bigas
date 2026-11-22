@@ -81,6 +81,15 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' "$DEPLOY_ENV" > .env
+          # Catch a stale BIGAS_DEPLOY_ENV before Cloud Run loses Outside agents.
+          gateway_flag="$(grep -E '^[[:space:]]*BIGAS_AGENT_GATEWAY=' .env | tail -n1 | cut -d= -f2- | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+          case "$gateway_flag" in
+            on|off|1|0|true|false|yes|no) ;;
+            *)
+              echo "::error::BIGAS_DEPLOY_ENV must set BIGAS_AGENT_GATEWAY=on or off. Re-sync with ./scripts/setup-github-actions-deploy.sh (or gh secret set BIGAS_DEPLOY_ENV < .env)."
+              exit 1
+              ;;
+          esac
           if [ -n "${IMAGE_TAG_INPUT:-}" ]; then
             printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG_INPUT" >> .env
           else
