@@ -310,6 +310,51 @@ _IMPLEMENT_DONE_CHECKS = """
 """.strip()
 
 
+def _is_versioned_release_base(base_branch: str) -> bool:
+    return (base_branch or "").strip().startswith("staging-")
+
+
+def _versioned_production_model_section(base_branch: str) -> str:
+    """Explain release-branch flow when Bigas resolved a staging-* implement base."""
+    if not _is_versioned_release_base(base_branch):
+        return ""
+    return f"""
+## Versioned production (required)
+
+This product ships through **versioned release branches**. Production (`main` / `master`) stays deployable; feature work accumulates on `{base_branch}`.
+
+How it works:
+1. Your feature PR merges into `{base_branch}` (never into production).
+2. Humans run **Prepare deploy** to review and merge `{base_branch}` → production.
+3. Deploy tags the version; newer `staging-*` branches rebase onto production afterward.
+4. Parallel PRs onto the same cut are normal. Conflicts are fixed later (autofix rebase) — do not retarget to production to avoid them.
+5. When a cut is soft-locked for prepare, new tickets move to the next `staging-*`. Do not open new feature work onto a locked cut.
+
+Required PR base is always `{base_branch}` for this ticket. Cursor `autoCreatePR` often targets production anyway — that is a bug in the opened PR, not the desired base. Immediately `gh pr edit --base {base_branch}` (create `{base_branch}` from production first if missing). Leave the PR on production only for a labeled hotfix.
+"""
+
+
+def _implement_pr_base_instructions(*, issue_key: str, base_branch: str) -> str:
+    base_branch = base_branch or "main"
+    versioned = _is_versioned_release_base(base_branch)
+    never_main = (
+        f"11. Never leave a feature PR targeting production (`main` / `master`) when "
+        f"the required base is `{base_branch}`. Production is allowed only for a "
+        f"labeled hotfix. Do not squash-merge this feature PR onto production yourself."
+        if versioned
+        else (
+            f"11. Required PR base is `{base_branch}`. Leave it on that base unless the "
+            f"ticket is a labeled hotfix that must target production."
+        )
+    )
+    return f"""10. Open a pull request when done (autoCreatePR is enabled). Cursor often opens that PR against the repo default branch (production). Required PR base is `{base_branch}`. After the PR exists, verify the base with `gh pr view --json baseRefName -q .baseRefName`. If it is not `{base_branch}`, immediately run `gh pr edit --base {base_branch}` and verify again. Do not finish while the base is wrong.
+{never_main}
+12. PR title MUST start with `{issue_key}:` followed by a short summary.
+13. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
+14. Do not merge the PR.
+15. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal."""
+
+
 def build_implement_prompt_product(
     *,
     issue_key: str,
@@ -342,7 +387,7 @@ Summary: {summary}
 
 ## Ticket attachments (screenshots are already interpreted)
 {attachments_text or "(none)"}
-
+{_versioned_production_model_section(base_branch)}
 ## Instructions
 1. Implement the issue according to the Brief, Research, Plan, human comments, and ticket attachments.
 2. If AI Research and AI Plan are empty, this is a simple ticket that skipped those steps. Implement the smallest change that matches the title, brief, and screenshots. Do not invent extra scope or wait for a plan.
@@ -353,12 +398,7 @@ Summary: {summary}
 7. Update in-app support/help content (end-user help articles / support pages) when the change affects what users see or how they use the product. Skip when there is no user-facing behavior change, or when the repo has no in-app help.
 8. All UI changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
 9. Before you open the PR or say you are done: remove dead/unused code created by THIS implementation (unused imports, functions, helpers, files, and call sites you replaced). Run typecheck or the linter on the files you edited and delete every unused name it reports there. Do not leave that dead code in the PR. Do not do a repo-wide unused-code cleanup.
-10. Open a pull request when done (autoCreatePR is enabled). Cursor often opens that PR against the repo default branch (`main`). Required PR base is `{base_branch}`. If the opened PR base is not `{base_branch}`, immediately run `gh pr edit --base {base_branch}`.
-11. Never leave a feature PR targeting `main` when `{base_branch}` is a `staging-*` (or other non-main) branch. `main` is allowed only when `{base_branch}` is `main`, or the ticket is a labeled hotfix, or the user explicitly asked for a release merge onto `main`.
-12. PR title MUST start with `{issue_key}:` followed by a short summary.
-13. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-14. Do not merge the PR.
-15. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+{_implement_pr_base_instructions(issue_key=issue_key, base_branch=base_branch)}
 {_IMPLEMENT_DONE_CHECKS}
 """
 
@@ -395,7 +435,7 @@ Summary: {summary}
 
 ## Ticket attachments (screenshots are already interpreted)
 {attachments_text or "(none)"}
-
+{_versioned_production_model_section(base_branch)}
 ## Instructions
 1. Implement content/SEO/page changes according to the Brief, Research, Plan, human comments, and ticket attachments.
 2. If AI Research and AI Plan are empty, this is a simple ticket that skipped those steps. Implement the smallest change that matches the title, brief, and screenshots. Do not invent extra scope or wait for a plan.
@@ -406,12 +446,7 @@ Summary: {summary}
 7. Update the repository README (or equivalent site docs) when the change affects how content, routes, SEO setup, or contributor workflows are documented. Skip when nothing user- or ops-facing changed.
 8. All UI/page changes must also work on a small mobile screen (responsive design). Verify layout, spacing, and interaction at ~320–390px width; avoid fixed widths that break on mobile unless the Brief says otherwise. Skip when there is no UI.
 9. Before you open the PR or say you are done: remove dead/unused code created by THIS implementation (unused imports, functions, helpers, files, and call sites you replaced). Run typecheck or the linter on the files you edited and delete every unused name it reports there. Do not leave that dead code in the PR. Do not do a repo-wide unused-code cleanup.
-10. Open a pull request when done (autoCreatePR is enabled). Cursor often opens that PR against the repo default branch (`main`). Required PR base is `{base_branch}`. If the opened PR base is not `{base_branch}`, immediately run `gh pr edit --base {base_branch}`.
-11. Never leave a feature PR targeting `main` when `{base_branch}` is a `staging-*` (or other non-main) branch. `main` is allowed only when `{base_branch}` is `main`, or the ticket is a labeled hotfix, or the user explicitly asked for a release merge onto `main`.
-12. PR title MUST start with `{issue_key}:` followed by a short summary.
-13. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
-14. Do not merge the PR.
-15. Do NOT ask for confirmation, approval, or whether to proceed. This is an unattended cloud agent — implement immediately and open the PR. Do not stop after a proposal.
+{_implement_pr_base_instructions(issue_key=issue_key, base_branch=base_branch)}
 {_IMPLEMENT_DONE_CHECKS}
 """
 
