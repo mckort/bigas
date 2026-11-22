@@ -1917,6 +1917,60 @@ def test_poll_prepare_keeps_preparing_phase_active():
     assert poll and poll.get("phase") == "preparing"
 
 
+def test_poll_prepare_preparing_timeout_does_not_suggest_merge():
+    from datetime import datetime, timedelta, timezone
+
+    from bigas.resources.devops.prepare import set_prepare_poll
+
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    started = datetime.now(timezone.utc) - timedelta(minutes=46)
+    set_prepare_poll(
+        thread["thread_id"],
+        {
+            "phase": "preparing",
+            "project_key": "AURA",
+            "version": "0.7.0",
+            "started_at": started.isoformat(),
+        },
+    )
+    result = poll_prepare_followup(thread["thread_id"], project_key="AURA")
+    assert result["active"] is False
+    assert result["status"] == "complete"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "before the release PR was opened" in blob
+    assert "merge the PR by hand" not in blob
+    assert not chat.get_thread(thread["thread_id"]).get("pending_prepare_poll")
+
+
+def test_poll_prepare_pr_wait_timeout_still_mentions_manual_merge():
+    from datetime import datetime, timedelta, timezone
+
+    from bigas.resources.devops.prepare import set_prepare_poll
+
+    chat = get_chat_store()
+    thread = chat.create_thread("user-1", "devops")
+    started = datetime.now(timezone.utc) - timedelta(minutes=46)
+    set_prepare_poll(
+        thread["thread_id"],
+        {
+            "phase": "autofix",
+            "repo": "mckort/vcfieldassistant",
+            "pr_number": 12,
+            "pr_url": "https://github.com/mckort/vcfieldassistant/pull/12",
+            "project_key": "VFA",
+            "version": "0.1.0",
+            "started_at": started.isoformat(),
+        },
+    )
+    result = poll_prepare_followup(thread["thread_id"], project_key="VFA")
+    assert result["active"] is False
+    assert result["status"] == "complete"
+    blob = "\n".join(m["content"] for m in chat.list_messages(thread["thread_id"]))
+    assert "waiting for the release PR" in blob
+    assert "merge the PR by hand" in blob
+
+
 def test_finalize_asks_for_social_then_stores_x_draft(monkeypatch):
     monkeypatch.setattr(
         "bigas.tickets.releases.close_release",

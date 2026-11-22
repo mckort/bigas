@@ -1615,17 +1615,24 @@ def poll_prepare_followup(
         started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
     except ValueError:
         started_dt = datetime.now(timezone.utc)
+    phase = poll.get("phase") or "autofix"
     if datetime.now(timezone.utc) >= started_dt + timedelta(seconds=_POLL_TIMEOUT_SEC):
         clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
         _complete_pipeline_progress(thread_id)
-        _post(
-            thread_id,
-            "⏳ Prepare timed out waiting for the release PR. "
-            "Ask me to prepare deploy again, or merge the PR by hand.",
-        )
+        if phase == "preparing":
+            # The release PR does not exist yet, so don't suggest merging it.
+            _post(
+                thread_id,
+                "⏳ Prepare timed out before the release PR was opened. "
+                "Ask me to prepare deploy again.",
+            )
+        else:
+            _post(
+                thread_id,
+                "⏳ Prepare timed out waiting for the release PR. "
+                "Ask me to prepare deploy again, or merge the PR by hand.",
+            )
         return {"status": "complete", "active": False}
-
-    phase = poll.get("phase") or "autofix"
     # Early cockpit marker while the sync prepare request opens/reviews the PR.
     # No repo/PR yet — keep AI working + Ship "running" until a later phase.
     if phase == "preparing":
@@ -1814,7 +1821,9 @@ def continue_after_main_ready(
     # Release PR wait is done (or skipped). Drop the prepare poll so Ship can
     # move to Waiting once pending_deploy is set — including the early
     # ``preparing`` marker from run_prepare_deploy.
-    clear_prepare_poll(thread_id, project_key=key)
+    # Detached callers pass thread_id=None; the chat store is keyed by thread.
+    if thread_id:
+        clear_prepare_poll(thread_id, project_key=key)
     try:
         ver = normalize_version_name(version)
     except SemverError as exc:
