@@ -523,10 +523,11 @@ def _pending_merged_not_deployed(
     found in those subjects are resolved to board cards so Next deploy lists
     merged work, not every Final approval card on the open version (those may
     already be in production under Sign-off). Commits with no ticket key still
-    appear as commit rows. ``pending_count`` stays the git freshness total
-    (commits ahead) when that is larger than the rows returned — the ship
-    card expands from ``pending`` itself and only mentions extra commits,
-    never more tickets than rows.
+    appear as commit rows. A key with no board card (mistype, deleted) keeps
+    the commit subject and GitHub URL so the row stays clickable. ``pending_count``
+    stays the git freshness total (commits ahead) when that is larger than the
+    rows returned — the ship card expands from ``pending`` itself and only
+    mentions extra commits, never more tickets than rows.
     """
     commit_items, commit_count = _pending_from_freshness(fresh)
     if not commit_items and commit_count <= 0:
@@ -545,14 +546,16 @@ def _pending_merged_not_deployed(
     for item in commit_items:
         if len(items) >= _PENDING_CAP:
             break
-        blob = f"{item.get('key') or ''} {item.get('title') or ''}"
+        commit_url = str(item.get("url") or "").strip()
+        commit_title = str(item.get("title") or "").strip()
+        blob = f"{item.get('key') or ''} {commit_title}"
         keys = _ticket_keys_for_project(project_key, blob)
         if not keys:
             items.append(
                 {
                     "key": item.get("key") or "",
-                    "title": item.get("title") or "",
-                    "url": item.get("url") or "",
+                    "title": commit_title,
+                    "url": commit_url,
                 }
             )
             continue
@@ -567,15 +570,15 @@ def _pending_merged_not_deployed(
                 title = str(card.get("title") or card.get("summary") or "").strip()
                 if title.lower().startswith(key.lower()):
                     title = title[len(key) :].lstrip(" :—-").strip()
-                items.append(
-                    {
-                        "key": key,
-                        "title": title,
-                        "url": str(card.get("url") or "").strip(),
-                    }
-                )
+                # Prefer the board link; fall back to the commit when the card
+                # has no URL (or the key was never a board card).
+                url = str(card.get("url") or "").strip() or commit_url
+                items.append({"key": key, "title": title, "url": url})
             else:
-                items.append({"key": key, "title": "", "url": ""})
+                title = commit_title
+                if title.lower().startswith(key.lower()):
+                    title = title[len(key) :].lstrip(" :—-").strip()
+                items.append({"key": key, "title": title, "url": commit_url})
     count = commit_count if commit_count > len(items) else len(items)
     return items, count
 
