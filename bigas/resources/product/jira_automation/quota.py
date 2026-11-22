@@ -13,7 +13,7 @@ class DailyQuota:
     Resets on UTC day change. Not shared across multiple instances.
     """
 
-    def __init__(self, limit: int = 20):
+    def __init__(self, limit: int = 50):
         self._limit = max(1, int(limit))
         self._lock = threading.Lock()
         self._day: Optional[str] = None

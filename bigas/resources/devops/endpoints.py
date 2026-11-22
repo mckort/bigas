@@ -37,6 +37,10 @@ from bigas.resources.product.jira_automation.service import (
 devops_bp = Blueprint("devops_bp", __name__, url_prefix="/mcp/tools")
 logger = logging.getLogger(__name__)
 
+# Hotfix PRs ship full file contents (e.g. README ~100KB+). Keep marketing's
+# 10KB default elsewhere; only this endpoint needs the larger ceiling.
+CREATE_GITHUB_PR_MAX_CHARS = 1_000_000
+
 
 @devops_bp.route("/check_deployment_risk", methods=["POST"])
 def check_deployment_risk_endpoint():
@@ -184,6 +188,7 @@ def create_github_pr_endpoint():
     is_valid, error_msg = validate_request_data(
         data,
         required_fields=["repo", "new_branch_name", "title", "files_to_change"],
+        max_chars=CREATE_GITHUB_PR_MAX_CHARS,
     )
     if not is_valid:
         return jsonify({"error": error_msg}), 400

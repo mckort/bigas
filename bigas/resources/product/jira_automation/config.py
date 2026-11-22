@@ -122,11 +122,11 @@ class JiraAutomationConfig:
             or ",".join(jira_project_keys())
             or "VFA,WAYW,BIG,REM,GPWW,GPW-PROD,FYDA,MYL,FRI,AURA,POF"
         )
-        daily_raw = (os.environ.get("BIGAS_JIRA_AI_DAILY_QUOTA") or "20").strip()
+        daily_raw = (os.environ.get("BIGAS_JIRA_AI_DAILY_QUOTA") or "50").strip()
         try:
             daily_quota = max(1, int(daily_raw))
         except ValueError:
-            daily_quota = 20
+            daily_quota = 50
 
         return JiraAutomationConfig(
             webhook_secret=secret,
