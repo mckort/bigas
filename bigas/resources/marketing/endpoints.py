@@ -1946,15 +1946,27 @@ def google_ads_health_check():
                 continue
             # resourceNames look like "customers/1234567890"
             cid = name.split("/")[-1].replace("-", "").strip()
-            if cid:
+            if cid and cid not in customer_ids:
                 customer_ids.append(cid)
 
-        configured_ok = bool(configured_customer_id and configured_customer_id in customer_ids)
+        # ListAccessibleCustomers returns accounts the identity can open directly
+        # (often only the MCC). A client id reached via login-customer-id is absent.
+        direct_ok = bool(configured_customer_id and configured_customer_id in customer_ids)
+        login_ok = bool(
+            configured_login_customer_id and configured_login_customer_id in customer_ids
+        )
+        configured_ok = direct_ok or bool(configured_customer_id and login_ok)
         hint = None
         if not customer_ids:
             hint = (
                 "No accessible customers. In Google Ads, grant the Cloud Run service account "
                 "(or your local ADC user) access to the Ads account or MCC, then retry."
+            )
+        elif configured_customer_id and login_ok and not direct_ok:
+            hint = (
+                f"GOOGLE_ADS_LOGIN_CUSTOMER_ID={configured_login_customer_id} is accessible. "
+                f"GOOGLE_ADS_CUSTOMER_ID={configured_customer_id} is a client account under that "
+                "manager (MCC), so ListAccessibleCustomers does not list it."
             )
         elif configured_customer_id and not configured_ok:
             hint = (
@@ -1968,12 +1980,15 @@ def google_ads_health_check():
                 "If you use an MCC, also set GOOGLE_ADS_LOGIN_CUSTOMER_ID to the manager id."
             )
 
+        # Non-strings (for example protobuf values) are not JSON serializable.
+        safe_resource_names = [str(name) for name in resource_names if name][:50]
+
         return jsonify(
             {
                 "status": "success",
                 "accessible_customers_count": len(customer_ids),
                 "customer_ids": customer_ids[:50],
-                "resource_names": resource_names[:50],
+                "resource_names": safe_resource_names,
                 "configured_customer_id": configured_customer_id,
                 "configured_login_customer_id": configured_login_customer_id,
                 "configured_customer_accessible": configured_ok if configured_customer_id else None,
