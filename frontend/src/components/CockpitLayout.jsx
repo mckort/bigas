@@ -20,6 +20,7 @@ import {
   commandForShipRow,
   deployProgressLines,
   emptyDeployRun,
+  isTrackedShipRun,
   pipelineForProject,
 } from '../lib/deployProgress'
 import { WEEKLY_ACTIONS, cursorPrompt, openAgentThread, sendToAgent, timeAgo } from '../lib/cockpit'
@@ -558,7 +559,7 @@ function stagingPrimaryCommand(row) {
   return commands.find((c) => /prepare staging/i.test(c.prompt || '')) || commands[0]
 }
 
-function ShipCard({ row, steps = [], busy, onCommand, onOpenProgress, onReview, onReleaseMode }) {
+function ShipCard({ row, steps = [], busy, localTracking, onCommand, onOpenProgress, onReview, onReleaseMode }) {
   const isDev = row.release_mode === 'development'
   const primary = row.mode === 'versioned' ? row.commands[0] : stagingPrimaryCommand(row)
   const others = row.commands.filter((c) => c !== primary)
@@ -569,6 +570,11 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenProgress, onReview, 
     : row.deploy_ready
       ? undefined
       : 'No new changes since the latest deploy'
+  // Client may still track a prepare/deploy after the drawer closes, before the
+  // server poll shows up — treat that like Running so Show progress stays available.
+  const state = row.state === 'idle' && localTracking ? 'running' : row.state
+  const detail = state === 'running' && !row.detail && localTracking ? 'Preparing the release' : row.detail
+  const step = state === 'running' && row.step == null && localTracking ? 0 : row.step
   return (
     <div className="border border-border rounded-xl p-3.5 bg-bg min-w-0 flex flex-col">
       <div className="flex items-center gap-2 min-w-0">
@@ -582,8 +588,8 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenProgress, onReview, 
         >
           {isDev ? 'Development' : 'Production'}
         </span>
-        <span className={`text-[11px] rounded-md px-2 py-0.5 flex-none ${STATE_BADGE[row.state] || STATE_BADGE.idle}`}>
-          {row.state === 'idle' ? 'Idle' : row.state === 'running' ? 'Running' : 'Waiting for you'}
+        <span className={`text-[11px] rounded-md px-2 py-0.5 flex-none ${STATE_BADGE[state] || STATE_BADGE.idle}`}>
+          {state === 'idle' ? 'Idle' : state === 'running' ? 'Running' : 'Waiting for you'}
         </span>
       </div>
       <p className="text-xs text-muted mt-1">
@@ -596,23 +602,23 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenProgress, onReview, 
             ? row.cut_count == null
               ? `Version ${row.version}`
               : `Version ${row.version} · ${row.cut_count} card${row.cut_count === 1 ? '' : 's'} in the cut`
-            : row.state === 'idle'
+            : state === 'idle'
               ? 'No open version. Create one under Releases on the board.'
               : 'Deploy in progress'
           : 'Staging rehearsal, then production'}
       </p>
       {steps.length > 0 && !isDev && (
-        <div className="mt-3" aria-label={row.step == null ? 'Not started' : `Step ${row.step + 1} of ${steps.length}: ${steps[row.step]}`}>
+        <div className="mt-3" aria-label={step == null ? 'Not started' : `Step ${step + 1} of ${steps.length}: ${steps[step]}`}>
           <div className="flex gap-1">
             {steps.map((label, i) => (
               <span
                 key={label}
                 className={`h-1.5 flex-1 rounded-full ${
-                  row.step == null || i > row.step
+                  step == null || i > step
                     ? 'bg-surface-muted'
-                    : i < row.step
+                    : i < step
                       ? 'bg-green-500'
-                      : row.state === 'waiting'
+                      : state === 'waiting'
                         ? 'bg-amber-500'
                         : 'bg-accent animate-pulse'
                 }`}
@@ -621,20 +627,20 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenProgress, onReview, 
           </div>
           <div className="flex text-[10px] text-muted mt-1">
             {steps.map((label, i) => (
-              <span key={label} className={`flex-1 ${row.step === i ? 'text-text font-semibold' : ''}`}>
+              <span key={label} className={`flex-1 ${step === i ? 'text-text font-semibold' : ''}`}>
                 {label}
               </span>
             ))}
           </div>
         </div>
       )}
-      <p className="text-sm mt-2 min-h-[20px]">{row.detail || ''}</p>
+      <p className="text-sm mt-2 min-h-[20px]">{detail || ''}</p>
       <div className="flex flex-wrap gap-1.5 mt-3">
-        {row.state === 'waiting' ? (
+        {state === 'waiting' ? (
           <button type="button" onClick={() => onReview(row)} className={`${deployClass} text-xs px-3 py-1 min-h-[34px]`}>
             Review deploy
           </button>
-        ) : row.state === 'running' ? (
+        ) : state === 'running' ? (
           <button type="button" onClick={() => onOpenProgress(row)} className="btn-secondary text-xs px-3 py-1 min-h-[34px]">
             Show progress
           </button>
@@ -655,7 +661,7 @@ function ShipCard({ row, steps = [], busy, onCommand, onOpenProgress, onReview, 
           <button
             key={cmd.prompt}
             type="button"
-            disabled={busy}
+            disabled={busy || state === 'running'}
             onClick={() => onCommand(row, cmd)}
             className="btn-ghost text-xs px-2.5 py-1 min-h-[34px]"
           >
@@ -1529,6 +1535,8 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const commandPollErrors = useRef(0)
   const didRehydrate = useRef(false)
   const [pollTrack, setPollTrack] = useState({ threadId: '', phase: '', since: '', token: 0 })
+  // Ship key with an in-memory progress tracker (survives closing the drawer).
+  const [trackedShipKey, setTrackedShipKey] = useState('')
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
   const loadShell = useCallback(async () => {
@@ -1626,13 +1634,14 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
 
   const closeDrawer = useCallback(() => {
     // Closing the panel leaves DevOps running — keep tracking a working run.
-    if (commandRun.current?.phase === 'working') {
+    if (commandRun.current?.phase === 'working' || commandRun.current?.phase === 'confirm') {
       setDrawer(null)
       setComment('')
       return
     }
     commandRunToken.current += 1
     commandRun.current = null
+    setTrackedShipKey('')
     setPollTrack({ threadId: '', phase: '', since: '', token: 0 })
     setDrawer(null)
     setComment('')
@@ -1740,6 +1749,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       since: next?.since || '',
       token: next?.token || 0,
     })
+    const key = String(next?.projectKey || '').trim().toUpperCase()
+    const active = next && (next.phase === 'working' || next.phase === 'confirm')
+    setTrackedShipKey(active && key ? key : '')
     setDrawer((current) => (current?.type === 'command' ? { ...current, run: next } : current))
   }, [])
 
@@ -1788,10 +1800,12 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       const token = commandRunToken.current + 1
       commandRunToken.current = token
       commandPollErrors.current = 0
+      const projectKey = String(row.key || '').trim().toUpperCase()
       const base = emptyDeployRun({
         threadId,
         since,
         prompt: cmd.prompt || '',
+        projectKey,
         token,
         deployPoll: true,
       })
@@ -1804,7 +1818,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         const deployPoll =
           res.deploy_poll_active !== undefined ? Boolean(res.deploy_poll_active) : true
         const next = applyDeployUpdate(
-          { ...commandRun.current, threadId },
+          { ...commandRun.current, threadId, projectKey },
           incoming,
           { pendingSend: false, deployPoll },
         )
@@ -1861,6 +1875,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     async (row, cmd, text) => {
       const prompt = (text || cmd?.prompt || '').trim()
       if (!prompt) return
+      const projectKey = String(row?.key || '').trim().toUpperCase()
       const token = commandRunToken.current + 1
       commandRunToken.current = token
       commandPollErrors.current = 0
@@ -1872,6 +1887,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         threadId: previous?.threadId || '',
         since,
         prompt: previous?.prompt || prompt,
+        projectKey,
         messages: previous?.messages || [],
         error: '',
         deployPoll: false,
@@ -1884,7 +1900,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         if (!threadId) {
           threadId = await openAgentThread('devops')
           if (commandRunToken.current !== token) return
-          publishCommandRun({ ...commandRun.current, threadId })
+          publishCommandRun({ ...commandRun.current, threadId, projectKey })
         }
         const res = await sendMessage(threadId, prompt, `cockpit-${Date.now()}`)
         if (commandRunToken.current !== token) return
@@ -1892,7 +1908,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         const deployPoll = Boolean(res.deploy_poll_active) || res.status === 'in_progress'
         publishCommandRun(
           applyDeployUpdate(
-            { ...commandRun.current, threadId },
+            { ...commandRun.current, threadId, projectKey },
             incoming,
             { pendingSend: false, deployPoll },
           ),
@@ -2597,10 +2613,16 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                   steps={data?.ship_steps || []}
                   onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
                   busy={busyIds.has(`ship:${row.key}`)}
+                  localTracking={isTrackedShipRun(commandRun.current, row.key) || trackedShipKey === String(row.key || '').toUpperCase()}
                   onOpenProgress={(r) => openCommandProgress(r, { open: true })}
                   onCommand={(r, cmd) => {
+                    if (isTrackedShipRun(commandRun.current, r.key)) {
+                      openCommandProgress(r, { open: true })
+                      return
+                    }
                     commandRunToken.current += 1
                     commandRun.current = null
+                    setTrackedShipKey('')
                     setPollTrack({ threadId: '', phase: '', since: '', token: 0 })
                     setDrawer({ type: 'command', row: r, cmd })
                   }}

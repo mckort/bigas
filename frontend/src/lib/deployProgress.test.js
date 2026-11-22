@@ -6,6 +6,7 @@ import {
   deployProgressLines,
   deployRunPhase,
   emptyDeployRun,
+  isTrackedShipRun,
   pipelineForProject,
 } from './deployProgress.js'
 
@@ -209,12 +210,27 @@ test('pipelineForProject matches the ship key', () => {
 })
 
 test('emptyDeployRun starts in working with deployPoll', () => {
-  const run = emptyDeployRun({ threadId: 't1', since, prompt: 'prepare deploy VFA 0.1.0', token: 3 })
+  const run = emptyDeployRun({
+    threadId: 't1',
+    since,
+    prompt: 'prepare deploy VFA 0.1.0',
+    projectKey: 'vfa',
+    token: 3,
+  })
   assert.equal(run.phase, 'working')
   assert.equal(run.deployPoll, true)
   assert.equal(run.threadId, 't1')
   assert.equal(run.since, since)
+  assert.equal(run.projectKey, 'VFA')
   assert.equal(run.token, 3)
+})
+
+test('isTrackedShipRun stays true while working or confirming for that ship', () => {
+  const run = emptyDeployRun({ threadId: 't1', projectKey: 'AURA', token: 1 })
+  assert.equal(isTrackedShipRun(run, 'aura'), true)
+  assert.equal(isTrackedShipRun({ ...run, phase: 'confirm' }, 'AURA'), true)
+  assert.equal(isTrackedShipRun({ ...run, phase: 'done' }, 'AURA'), false)
+  assert.equal(isTrackedShipRun(run, 'VFA'), false)
 })
 
 test('emptyDeployRun keeps a blank since so a resume can load the whole thread', () => {

@@ -1625,6 +1625,12 @@ def poll_prepare_followup(
         )
         return {"status": "complete", "active": False}
 
+    phase = poll.get("phase") or "autofix"
+    # Early cockpit marker while the sync prepare request opens/reviews the PR.
+    # No repo/PR yet — keep AI working + Ship "running" until a later phase.
+    if phase == "preparing":
+        return {"status": "in_progress", "active": True}
+
     repo = poll.get("repo") or ""
     pr_number = int(poll.get("pr_number") or 0)
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
@@ -1647,7 +1653,6 @@ def poll_prepare_followup(
             merge_status="merged",
         )
 
-    phase = poll.get("phase") or "autofix"
     if phase == "wait_review_workflow":
         if _review_workflow_running(gh, owner, repo_name, pr_number):
             if datetime.now(timezone.utc) >= started_dt + timedelta(
@@ -1806,6 +1811,10 @@ def continue_after_main_ready(
 ) -> Dict[str, Any]:
     """Risk check + feature report, then confirm or stop if main is empty."""
     key = normalize_project_key(project_key)
+    # Release PR wait is done (or skipped). Drop the prepare poll so Ship can
+    # move to Waiting once pending_deploy is set — including the early
+    # ``preparing`` marker from run_prepare_deploy.
+    clear_prepare_poll(thread_id, project_key=key)
     try:
         ver = normalize_version_name(version)
     except SemverError as exc:
@@ -2021,33 +2030,17 @@ def run_prepare_deploy(
 
     _set_pending(thread_id, None, project_key=key)
     clear_prepare_state(thread_id, project_key=key)
-
-    # Soft-lock as soon as prepare starts so new tickets cannot join this cut
-    # while the release PR is under review. GitHub ruleset waits until main.
-    try:
-        from bigas.tickets.releases import ReleaseError, lock_release_for_new_prs
-
-        locked = lock_release_for_new_prs(key, ver, lock_github=False)
-        if not locked.get("already_locked") and not locked.get("already_released"):
-            nxt = locked.get("next_version")
-            extra = f" New PRs should target **{nxt}**." if nxt else ""
-            _post(
-                thread_id,
-                f"🔒 **{key} {ver}** locked for new PRs (prepare started). "
-                f"Only review fixes for tickets already in this cut."
-                f"{extra}",
-            )
-    except ReleaseError as exc:
-        _post(
-            thread_id,
-            f"Could not lock {key} {ver} for new PRs before prepare: {exc}",
-        )
-    except Exception:
-        logger.exception("Could not soft-lock %s %s at prepare start", key, ver)
-        _post(
-            thread_id,
-            f"Could not lock {key} {ver} for new PRs before prepare.",
-        )
+    # Visible in AI working / Ship as soon as prepare starts — before the
+    # release PR reaches an async wait phase (review workflow, autofix, merge).
+    set_prepare_poll(
+        thread_id,
+        {
+            "phase": "preparing",
+            "project_key": key,
+            "version": ver,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
     # Soft-lock as soon as prepare starts so new tickets cannot join this cut
     # while the release PR is under review. GitHub ruleset waits until main.
@@ -2088,11 +2081,13 @@ def run_prepare_deploy(
             project_key=key, version=ver, thread_id=thread_id
         )
     except DevOpsError as exc:
+        clear_prepare_poll(thread_id, project_key=key)
         _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Could not get {ver} onto main: {exc}")
         return {"status": "complete", "summary": str(exc)}
     except Exception as exc:
         logger.exception("ensure_release_on_main failed")
+        clear_prepare_poll(thread_id, project_key=key)
         _complete_pipeline_progress(thread_id)
         _post(thread_id, f"Could not get {ver} onto main: {exc}")
         return {"status": "complete", "summary": str(exc)}
@@ -2104,6 +2099,7 @@ def run_prepare_deploy(
             "deploy_poll_active": True,
         }
     if merge.get("status") == "failed":
+        clear_prepare_poll(thread_id, project_key=key)
         return {"status": "complete", "summary": merge.get("summary") or "Prepare failed."}
 
     return continue_after_main_ready(

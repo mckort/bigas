@@ -70,6 +70,7 @@ AI_STAGE_LABELS = {
 }
 
 _PREPARE_PHASE_LABELS = {
+    "preparing": "Preparing the release",
     "wait_review_workflow": "Waiting for the PR review workflow",
     "wait_actions_review": "Waiting for the PR review",
     "autofix": "Autofix running",
@@ -460,6 +461,7 @@ _PENDING_CAP = 20
 STEP_REVIEW, STEP_BUILD, STEP_CONFIRM, STEP_DEPLOY = 0, 1, 2, 3
 PHASE_STEPS = {
     # versioned prepare deploy (pending_prepare_poll)
+    "preparing": STEP_REVIEW,
     "wait_review_workflow": STEP_REVIEW,
     "wait_actions_review": STEP_REVIEW,
     "autofix": STEP_REVIEW,

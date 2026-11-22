@@ -93,6 +93,7 @@ export function applyDeployUpdate(run, incoming, { pendingSend = false, error = 
     threadId: run?.threadId || '',
     since: run?.since || '',
     prompt: run?.prompt || '',
+    projectKey: String(run?.projectKey || '').trim().toUpperCase(),
     messages,
     error: error || '',
     deployPoll: Boolean(deployPoll) && !error,
@@ -127,6 +128,7 @@ export function emptyDeployRun({
   threadId = '',
   since = '',
   prompt = '',
+  projectKey = '',
   token,
   deployPoll = true,
 } = {}) {
@@ -138,9 +140,18 @@ export function emptyDeployRun({
     // hide earlier steps of a deploy that is already running.
     since: since || '',
     prompt: prompt || '',
+    projectKey: String(projectKey || '').trim().toUpperCase(),
     messages: [],
     error: '',
     deployPoll: Boolean(deployPoll),
     token,
   }
+}
+
+/** True while the cockpit still tracks an in-flight ship command for this project. */
+export function isTrackedShipRun(run, projectKey) {
+  const key = String(projectKey || '').trim().toUpperCase()
+  if (!run || !key) return false
+  if (String(run.projectKey || '').trim().toUpperCase() !== key) return false
+  return run.phase === 'working' || run.phase === 'confirm'
 }
