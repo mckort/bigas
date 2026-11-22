@@ -17,20 +17,11 @@ PROPOSE = "propose"
 ACT = "act"
 NEVER = "never"
 
-TIERS = (LOOK, PROPOSE, ACT, NEVER)
-
 TIER_LABELS = {
     LOOK: "Look",
     PROPOSE: "Propose",
     ACT: "Act",
     NEVER: "Never",
-}
-
-TIER_HELP = {
-    LOOK: "reads data",
-    PROPOSE: "creates something you can review or undo",
-    ACT: "changes something for real, needs your approval",
-    NEVER: "not available to outside agents",
 }
 
 TOOL_TIERS: Dict[str, str] = {

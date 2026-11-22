@@ -18,9 +18,9 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from bigas.gateway import policy
-from bigas.gateway.policy import ALLOW, DENY, HOLD, LEVELS, OWNER, Decision
+from bigas.gateway.policy import ALLOW, DENY, LEVELS, OWNER, Decision
 from bigas.gateway.store import get_gateway_store, window_key
-from bigas.gateway.tiers import ACT, TIER_LABELS, tool_tier
+from bigas.gateway.tiers import TIER_LABELS, tool_tier
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,6 @@ SHORT_APPROVAL_TTL_SECONDS = 2 * 3600
 SHORT_TTL_TOOLS = {"trigger_deployment", "cherry_pick_hotfix"}
 MAX_RESULT_CHARS = 20000
 INTENT_ARG = "_intent"
-
-APPROVAL_FINAL = {"succeeded", "failed", "denied", "expired", "cancelled"}
 
 GATEWAY_TOOLS = [
     {
@@ -99,6 +97,8 @@ def _owner_keys() -> set:
 
         if has_app_context():
             keys = current_app.config.get("BIGAS_ACCESS_KEYS")
+            if isinstance(keys, str):
+                return {k.strip() for k in keys.split(",") if k.strip()}
             if keys:
                 return set(keys)
     except RuntimeError:
