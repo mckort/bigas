@@ -49,16 +49,28 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # Fail closed: a deploy env without this key used to wipe Outside agents on Cloud Run.
-gateway_flag="$(grep -E '^[[:space:]]*BIGAS_AGENT_GATEWAY=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+# Prefer the sourced shell value (quotes already stripped); fall back to a tolerant line parse.
+gateway_flag="$(echo "${BIGAS_AGENT_GATEWAY:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+if [ -z "$gateway_flag" ]; then
+  gateway_flag="$(
+    grep -E '^[[:space:]]*(export[[:space:]]+)?BIGAS_AGENT_GATEWAY=' "$ENV_FILE" \
+      | tail -n1 \
+      | cut -d= -f2- \
+      | cut -d# -f1 \
+      | tr -d '[:space:]"'\''' \
+      | tr '[:upper:]' '[:lower:]' \
+      || true
+  )"
+fi
 case "$gateway_flag" in
   on|off|1|0|true|false|yes|no) ;;
   "")
-    echo "❌ $ENV_FILE must set BIGAS_AGENT_GATEWAY=on or off before updating BIGAS_DEPLOY_ENV." >&2
+    echo "❌ $ENV_FILE must set BIGAS_AGENT_GATEWAY explicitly (on/off or true/false) before updating BIGAS_DEPLOY_ENV." >&2
     echo "   See docs/agent-gateway.md" >&2
     exit 1
     ;;
   *)
-    echo "❌ BIGAS_AGENT_GATEWAY must be on or off (got: $gateway_flag)" >&2
+    echo "❌ BIGAS_AGENT_GATEWAY must be on/off (or true/false); got: $gateway_flag" >&2
     exit 1
     ;;
 esac

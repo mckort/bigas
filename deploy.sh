@@ -61,14 +61,14 @@ fi
 case "$(echo "${BIGAS_AGENT_GATEWAY:-}" | tr '[:upper:]' '[:lower:]')" in
     on|off|1|0|true|false|yes|no) ;;
     "")
-        echo "❌ Error: BIGAS_AGENT_GATEWAY must be set explicitly to on or off"
+        echo "❌ Error: BIGAS_AGENT_GATEWAY must be set explicitly (on/off or true/false)"
         echo "Add it to the deploy env profile and re-sync GitHub secret BIGAS_DEPLOY_ENV"
         echo "(./scripts/setup-github-actions-deploy.sh or: gh secret set BIGAS_DEPLOY_ENV < .env)"
         echo "See docs/agent-gateway.md"
         exit 1
         ;;
     *)
-        echo "❌ Error: BIGAS_AGENT_GATEWAY must be on or off (got: $BIGAS_AGENT_GATEWAY)"
+        echo "❌ Error: BIGAS_AGENT_GATEWAY must be on/off (or true/false); got: $BIGAS_AGENT_GATEWAY"
         exit 1
         ;;
 esac
