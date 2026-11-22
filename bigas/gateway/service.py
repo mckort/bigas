@@ -292,6 +292,9 @@ def _normalize_limit_overrides(raw: Any) -> Dict[str, int]:
             )
         if value is None or value == "":
             continue
+        # bool subclasses int, so int(True) is 1. Reject before coercing.
+        if isinstance(value, bool):
+            raise GatewayError(f"{key} must be a whole number.")
         try:
             number = int(value)
         except (TypeError, ValueError) as exc:
@@ -312,8 +315,9 @@ def update_agent(agent_id: str, **changes: Any) -> Dict[str, Any]:
         agent["allow_tools"] = _tool_list(changes["allow_tools"])
     if changes.get("deny_tools") is not None:
         agent["deny_tools"] = _tool_list(changes["deny_tools"])
-    if "limits" in changes and changes.get("limits") is not None:
-        # Replace the whole override map. Omit a key (or pass null) to use the level default.
+    if "limits" in changes:
+        # Replace the whole override map. null clears every override.
+        # Omit a key (or pass null for that key) to use the level default.
         agent["limits"] = _normalize_limit_overrides(changes["limits"])
     if changes.get("suspended") is not None:
         agent["suspended"] = bool(changes["suspended"])

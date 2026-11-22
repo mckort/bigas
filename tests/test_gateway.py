@@ -140,6 +140,42 @@ def test_update_agent_limits_and_agent_view():
     assert proposals["max"] == 20 and proposals["overridden"] is False
 
 
+def test_update_agent_limits_null_clears_overrides():
+    gw.connect_agent("grok", "propose")
+    gw.update_agent("grok", limits={"proposals_per_day": 40, "calls_per_hour": 10})
+    cleared = gw.update_agent("grok", limits=None)
+    assert cleared["limits"] == {}
+    view = gw.agent_view(cleared)
+    proposals = next(l for l in view["limits"] if l["key"] == "proposals_per_day")
+    calls = next(l for l in view["limits"] if l["key"] == "calls_per_hour")
+    assert proposals["max"] == 20 and proposals["overridden"] is False
+    assert calls["max"] == 300 and calls["overridden"] is False
+
+
+def test_update_agent_limits_reject_booleans_and_non_integers():
+    gw.connect_agent("grok", "propose")
+    gw.update_agent("grok", limits={"proposals_per_day": 40})
+    for bad in (True, False, "abc", -1):
+        with pytest.raises(gw.GatewayError, match="proposals_per_day"):
+            gw.update_agent("grok", limits={"proposals_per_day": bad})
+    assert gw.get_agent("grok")["limits"] == {"proposals_per_day": 40}
+
+
+def test_cli_limit_sets_number_and_rejects_text(capsys):
+    gw.connect_agent("grok", "propose")
+    from bigas.gateway.__main__ import main
+
+    assert main(["limit", "grok", "proposals_per_day", "40"]) == 0
+    assert "40" in capsys.readouterr().out
+    assert gw.get_agent("grok")["limits"]["proposals_per_day"] == 40
+
+    assert main(["limit", "grok", "proposals_per_day", "abc"]) == 1
+    err = capsys.readouterr().err
+    assert "whole number" in err
+    assert "Traceback" not in err
+    assert gw.get_agent("grok")["limits"]["proposals_per_day"] == 40
+
+
 def test_deny_list_and_allow_list_only_narrow():
     agent = {"id": "g", "name": "grok", "kind": "agent", "level": "operate", "deny_tools": ["create_*"]}
     assert policy.decide(agent, "create_ticket").code == "denied_tool"
@@ -377,6 +413,25 @@ def test_cockpit_api_connect_approve_flow(full_app):
     resp = client.patch("/api/gateway/agents/grok-growth", json={"limits": {}}, headers=auth)
     proposals = next(l for l in resp.get_json()["agent"]["limits"] if l["key"] == "proposals_per_day")
     assert proposals["max"] == 20 and proposals["overridden"] is False
+
+    resp = client.patch(
+        "/api/gateway/agents/grok-growth",
+        json={"limits": {"proposals_per_day": 40}},
+        headers=auth,
+    )
+    assert resp.status_code == 200
+    resp = client.patch("/api/gateway/agents/grok-growth", json={"limits": None}, headers=auth)
+    assert resp.status_code == 200
+    proposals = next(l for l in resp.get_json()["agent"]["limits"] if l["key"] == "proposals_per_day")
+    assert proposals["max"] == 20 and proposals["overridden"] is False
+
+    resp = client.patch(
+        "/api/gateway/agents/grok-growth",
+        json={"limits": {"proposals_per_day": True}},
+        headers=auth,
+    )
+    assert resp.status_code == 400
+    assert "whole number" in resp.get_json()["error"]
 
     resp = client.post("/api/gateway/pause", json={"paused": True}, headers=auth)
     assert resp.get_json() == {"paused": True}

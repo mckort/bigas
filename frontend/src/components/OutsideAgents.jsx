@@ -315,10 +315,12 @@ function AgentLimits({ limits, busy, onSave }) {
     Object.fromEntries((limits || []).map((l) => [l.key, String(l.max)]))
   )
   const [dirty, setDirty] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     setDraft(Object.fromEntries((limits || []).map((l) => [l.key, String(l.max)])))
     setDirty(false)
+    setError('')
   }, [limits])
 
   if (!limits?.length) return null
@@ -326,6 +328,7 @@ function AgentLimits({ limits, busy, onSave }) {
   const setValue = (key, value) => {
     setDraft((prev) => ({ ...prev, [key]: value }))
     setDirty(true)
+    setError('')
   }
 
   const save = () => {
@@ -334,10 +337,14 @@ function AgentLimits({ limits, busy, onSave }) {
       const raw = (draft[row.key] ?? '').trim()
       if (raw === '') continue
       const n = Number(raw)
-      if (!Number.isInteger(n) || n < 0) return
+      if (!Number.isInteger(n) || n < 0) {
+        setError(`${row.label} must be a whole number, 0 or more.`)
+        return
+      }
       // Only send overrides that differ from the level default; omit = use default.
       if (n !== row.default) payload[row.key] = n
     }
+    setError('')
     onSave(payload)
   }
 
@@ -382,6 +389,7 @@ function AgentLimits({ limits, busy, onSave }) {
           </li>
         ))}
       </ul>
+      {error ? <p className="text-sm text-red-600 dark:text-red-400 mt-2">{error}</p> : null}
       {dirty ? (
         <button type="button" className="btn-secondary text-sm mt-2" disabled={busy} onClick={save}>
           Save limits

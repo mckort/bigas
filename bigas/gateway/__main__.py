@@ -117,7 +117,8 @@ def main(argv=None) -> int:
             if args.value is None:
                 limits.pop(args.key, None)
             else:
-                limits[args.key] = int(args.value)
+                # Pass the text through so a bad value raises GatewayError.
+                limits[args.key] = args.value
             agent = gw.update_agent(args.name, limits=limits)
             effective = policy.level_limits(agent)
             label = policy.LIMIT_LABELS[args.key]
