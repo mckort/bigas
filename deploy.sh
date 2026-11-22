@@ -56,6 +56,23 @@ if [ -z "$IMAGE_NAME" ]; then
     exit 1
 fi
 
+# Outside agents: require an explicit on/off. A missing value used to omit the
+# Cloud Run env var, so a stale BIGAS_DEPLOY_ENV secretly turned the gateway off.
+case "$(echo "${BIGAS_AGENT_GATEWAY:-}" | tr -d '[:space:]"'\''' | tr '[:upper:]' '[:lower:]')" in
+    on|off|1|0|true|false|yes|no) ;;
+    "")
+        echo "❌ Error: BIGAS_AGENT_GATEWAY must be set explicitly (on/off or true/false)"
+        echo "Add it to the deploy env profile and re-sync GitHub secret BIGAS_DEPLOY_ENV"
+        echo "(./scripts/setup-github-actions-deploy.sh or: gh secret set BIGAS_DEPLOY_ENV < .env)"
+        echo "See docs/agent-gateway.md"
+        exit 1
+        ;;
+    *)
+        echo "❌ Error: BIGAS_AGENT_GATEWAY must be on/off (or true/false); got: $BIGAS_AGENT_GATEWAY"
+        exit 1
+        ;;
+esac
+
 DEPLOY_GIT_SHA="${DEPLOY_GIT_SHA:-${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}}"
 export DEPLOY_GIT_SHA
 if [ -z "${IMAGE_TAG:-}" ] || [ "$IMAGE_TAG" = "latest" ]; then
@@ -261,7 +278,7 @@ trap "rm -f $ENV_VARS_FILE" EXIT
   echo "BIGAS_ACCESS_MODE: \"$BIGAS_ACCESS_MODE\""
   echo "BIGAS_ACCESS_KEYS: \"$BIGAS_ACCESS_KEYS\""
   echo "BIGAS_ACCESS_HEADER: \"$BIGAS_ACCESS_HEADER\""
-  [ -n "$BIGAS_AGENT_GATEWAY" ] && echo "BIGAS_AGENT_GATEWAY: \"$BIGAS_AGENT_GATEWAY\""
+  echo "BIGAS_AGENT_GATEWAY: \"$BIGAS_AGENT_GATEWAY\""
   [ -n "$DISCORD_WEBHOOK_URL_GATEWAY" ] && echo "DISCORD_WEBHOOK_URL_GATEWAY: \"$DISCORD_WEBHOOK_URL_GATEWAY\""
   [ -n "$DISCORD_WEBHOOK_URL_MARKETING" ] && echo "DISCORD_WEBHOOK_URL_MARKETING: \"$DISCORD_WEBHOOK_URL_MARKETING\""
   [ -n "$DISCORD_WEBHOOK_URL_PRODUCT" ] && echo "DISCORD_WEBHOOK_URL_PRODUCT: \"$DISCORD_WEBHOOK_URL_PRODUCT\""
