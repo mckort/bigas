@@ -115,14 +115,16 @@ def change_agent(agent_id: str):
         return err
     body = request.get_json(silent=True) or {}
     try:
-        agent = gw.update_agent(
-            agent_id,
-            level=body.get("level"),
-            name=body.get("name"),
-            suspended=body.get("paused"),
-            allow_tools=body.get("allow_tools"),
-            deny_tools=body.get("deny_tools"),
-        )
+        kwargs = {
+            "level": body.get("level"),
+            "name": body.get("name"),
+            "suspended": body.get("paused"),
+            "allow_tools": body.get("allow_tools"),
+            "deny_tools": body.get("deny_tools"),
+        }
+        if "limits" in body:
+            kwargs["limits"] = body.get("limits")
+        agent = gw.update_agent(agent_id, **kwargs)
     except gw.GatewayError as exc:
         return _err(exc, 404 if "No agent" in str(exc) else 400)
     return jsonify({"agent": gw.agent_view(agent)})

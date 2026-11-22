@@ -278,6 +278,33 @@ def _tool_list(value: Any) -> List[str]:
     return [str(v).strip() for v in value if str(v).strip()]
 
 
+def _normalize_limit_overrides(raw: Any) -> Dict[str, int]:
+    """Keep only known limit keys with non-negative ints. Empty/null clears a key."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise GatewayError("limits must be an object, for example {\"proposals_per_day\": 40}.")
+    out: Dict[str, int] = {}
+    for key, value in raw.items():
+        if key not in policy.LIMIT_WINDOWS:
+            raise GatewayError(
+                f"Unknown limit {key}. Use: {', '.join(sorted(policy.LIMIT_WINDOWS))}."
+            )
+        if value is None or value == "":
+            continue
+        # bool subclasses int, so int(True) is 1. Reject before coercing.
+        if isinstance(value, bool):
+            raise GatewayError(f"{key} must be a whole number.")
+        try:
+            number = int(value)
+        except (TypeError, ValueError) as exc:
+            raise GatewayError(f"{key} must be a whole number.") from exc
+        if number < 0:
+            raise GatewayError(f"{key} must be 0 or more.")
+        out[key] = number
+    return out
+
+
 def update_agent(agent_id: str, **changes: Any) -> Dict[str, Any]:
     agent = _require_agent(agent_id)
     if changes.get("level") is not None:
@@ -288,6 +315,10 @@ def update_agent(agent_id: str, **changes: Any) -> Dict[str, Any]:
         agent["allow_tools"] = _tool_list(changes["allow_tools"])
     if changes.get("deny_tools") is not None:
         agent["deny_tools"] = _tool_list(changes["deny_tools"])
+    if "limits" in changes:
+        # Replace the whole override map. null clears every override.
+        # Omit a key (or pass null for that key) to use the level default.
+        agent["limits"] = _normalize_limit_overrides(changes["limits"])
     if changes.get("suspended") is not None:
         agent["suspended"] = bool(changes["suspended"])
         if agent["suspended"]:
@@ -680,8 +711,17 @@ def agent_view(agent: Dict[str, Any], tool_names: Optional[List[str]] = None) ->
         "limits": [],
     }
     used = _used(agent)
+    level_defaults = dict(level.get("limits") or {})
+    overrides = agent.get("limits") or {}
     out["limits"] = [
-        {"label": policy.LIMIT_LABELS[k], "used": used.get(k, 0), "max": v}
+        {
+            "key": k,
+            "label": policy.LIMIT_LABELS[k],
+            "used": used.get(k, 0),
+            "max": v,
+            "default": level_defaults.get(k, v),
+            "overridden": k in overrides,
+        }
         for k, v in policy.level_limits(agent).items()
     ]
     if tool_names is not None:

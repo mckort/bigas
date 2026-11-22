@@ -4,6 +4,7 @@
     python -m bigas.gateway list
     python -m bigas.gateway explain grok-growth
     python -m bigas.gateway level grok-growth operate
+    python -m bigas.gateway limit grok-growth proposals_per_day 40
     python -m bigas.gateway pause grok-growth        # or: resume
     python -m bigas.gateway new-token grok-growth
     python -m bigas.gateway remove grok-growth
@@ -60,6 +61,10 @@ def main(argv=None) -> int:
     p = sub.add_parser("level", help="Change an agent's level")
     p.add_argument("name")
     p.add_argument("level", choices=policy.LEVEL_ORDER)
+    p = sub.add_parser("limit", help="Override one limit for an agent (omit value to clear)")
+    p.add_argument("name")
+    p.add_argument("key", choices=sorted(policy.LIMIT_WINDOWS))
+    p.add_argument("value", nargs="?", default=None, help="Whole number, or omit to use the level default")
     for cmd in ("pause", "resume", "remove", "new-token"):
         p = sub.add_parser(cmd)
         p.add_argument("name")
@@ -104,6 +109,23 @@ def main(argv=None) -> int:
         elif args.cmd == "level":
             agent = gw.update_agent(args.name, level=args.level)
             print(f"{agent['id']} now has {policy.LEVELS[agent['level']]['label']} access.")
+        elif args.cmd == "limit":
+            agent = gw.get_agent(args.name)
+            if not agent:
+                raise gw.GatewayError(f"No agent called {args.name}.")
+            limits = dict(agent.get("limits") or {})
+            if args.value is None:
+                limits.pop(args.key, None)
+            else:
+                # Pass the text through so a bad value raises GatewayError.
+                limits[args.key] = args.value
+            agent = gw.update_agent(args.name, limits=limits)
+            effective = policy.level_limits(agent)
+            label = policy.LIMIT_LABELS[args.key]
+            if args.value is None:
+                print(f"{agent['id']}: {label} back to level default ({effective.get(args.key)}).")
+            else:
+                print(f"{agent['id']}: {label} set to {effective.get(args.key)}.")
         elif args.cmd in ("pause", "resume"):
             gw.update_agent(args.name, suspended=args.cmd == "pause")
             print(f"{args.name} {'paused' if args.cmd == 'pause' else 'resumed'}.")
