@@ -1774,12 +1774,15 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     async (row, { open = true } = {}) => {
       if (!row) return
       const pipeline = pipelineForProject(data?.working, row.key)
-      const threadId = String(row.thread_id || pipeline?.thread_id || '').trim()
+      const current = commandRun.current
+      // Server rows stay idle until the poll lands. The in-flight run still
+      // has the thread, so Show progress can reopen the drawer.
+      const trackedThreadId = isTrackedShipRun(current, row.key) ? current?.threadId : ''
+      const threadId = String(row.thread_id || pipeline?.thread_id || trackedThreadId || '').trim()
       if (!threadId) {
         onOpenChat?.('devops')
         return
       }
-      const current = commandRun.current
       const sameThread = current?.threadId === threadId
       const cmd =
         commandForShipRow(row) ||
@@ -2613,7 +2616,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                   steps={data?.ship_steps || []}
                   onReleaseMode={(r) => setDrawer({ type: 'go-live', row: r })}
                   busy={busyIds.has(`ship:${row.key}`)}
-                  localTracking={isTrackedShipRun(commandRun.current, row.key) || trackedShipKey === String(row.key || '').toUpperCase()}
+                  localTracking={isTrackedShipRun(commandRun.current, row.key) || Boolean(trackedShipKey && trackedShipKey === String(row.key || '').toUpperCase())}
                   onOpenProgress={(r) => openCommandProgress(r, { open: true })}
                   onCommand={(r, cmd) => {
                     if (isTrackedShipRun(commandRun.current, r.key)) {
