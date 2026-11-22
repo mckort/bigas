@@ -13,8 +13,6 @@
   <a href="https://github.com/mckort/bigas/fork"><img src="https://img.shields.io/badge/Fork%20%26%20Run%20Locally-Start%20building-73cdfb?style=for-the-badge&logo=github&logoColor=black" alt="Fork & Run Locally"/></a>
 </div>
 
-<!-- TODO: add a 15–20 s GIF of the loop (card → plan → PR → Needs you → deploy) here, e.g. assets/images/bigas-loop.gif, once it is recorded. -->
-
 **Bigas** (Latin for *team*) gives a solo founder one place to run several products: drop a card on the built-in board, the AI researches, plans and opens a reviewed pull request, and you approve each step and ship — straight from `main` while you build, as versioned releases once you have users. Live instance: **[bigas.me](https://bigas.me)** · [Product walkthrough video](https://youtu.be/vlT4wrpa11M)
 
 ## Try it in 5 minutes (only an LLM key)
