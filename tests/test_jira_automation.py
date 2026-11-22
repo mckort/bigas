@@ -2164,7 +2164,7 @@ def test_config_defaults(monkeypatch):
     assert cfg.repo_for_project("GPWW") == "Green-Promo-Wear-Global/greenpromowear-website"
     assert cfg.repo_for_project("GPW-PROD") == "Green-Promo-Wear-Global/GPW"
     assert cfg.handler_for_status("Research and describe (AI)") == HANDLER_RESEARCH
-    assert cfg.daily_quota == 20
+    assert cfg.daily_quota == 50
 
 
 def test_quota_blocks_after_limit():

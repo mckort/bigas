@@ -43,7 +43,7 @@ Weekly Cloud Scheduler (`/api/agents/evaluate-goals`) repeats the same evaluatio
 | `PROJECT_BRANCH_MAPPING` | Branch Cursor actually starts from. Versioned production: `VFA:staging,AURA:staging,FYDA:staging`. Staging rehearsal: `GPW-PROD:develop`. Development on a `master` repo still needs an explicit entry (or *Go to production*). `DEFAULT:main` does not mean the repo default. |
 | `BIGAS_JIRA_DEFAULT_BASE_BRANCH` | Fallback when repo is not in the map (default `main`) |
 | `BIGAS_JIRA_STATUS_*_APPROVAL` | Manual gate status names |
-| `BIGAS_JIRA_AI_DAILY_QUOTA` | Default `20` |
+| `BIGAS_JIRA_AI_DAILY_QUOTA` | Default `50` |
 | `CURSOR_API_KEY` | Required for Implement |
 | `GITHUB_TOKEN` | Repo context, Phase 4 PR lookup, and Implement fallback PR create when Cursor `autoCreatePR` fails |
 | `DISCORD_WEBHOOK_URL_PRODUCT` / `_CTO` | Notifications |

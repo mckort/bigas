@@ -260,6 +260,43 @@ def test_create_github_pr_happy_path(monkeypatch):
     assert fake.created["commit"]["parent"] == "parent-sha"
 
 
+def test_create_github_pr_payload_limit_allows_large_readme():
+    """Marketing's 10KB default must not apply to create_github_pr payloads."""
+    from bigas.resources.devops.endpoints import CREATE_GITHUB_PR_MAX_CHARS
+    from bigas.resources.marketing.utils import validate_request_data
+
+    assert CREATE_GITHUB_PR_MAX_CHARS >= 120_000
+    large_readme = "x" * 120_000
+    payload = {
+        "repo": "acme/demo",
+        "new_branch_name": f"{HOTFIX_BRANCH_PREFIX}readme",
+        "title": "docs: refresh README",
+        "files_to_change": {"README.md": large_readme},
+    }
+    ok, err = validate_request_data(
+        payload,
+        required_fields=["repo", "new_branch_name", "title", "files_to_change"],
+        max_chars=CREATE_GITHUB_PR_MAX_CHARS,
+    )
+    assert ok is True, err
+    ok, err = validate_request_data(payload)
+    assert ok is False
+    assert "too large" in err.lower()
+
+
+def test_validate_request_data_default_still_10kb():
+    from bigas.resources.marketing.utils import validate_request_data
+
+    ok, _ = validate_request_data({"q": "hi"})
+    assert ok is True
+    too_big = {"blob": "y" * 12_000}
+    ok, err = validate_request_data(too_big)
+    assert ok is False
+    assert "too large" in err.lower()
+    ok, _ = validate_request_data(too_big, max_chars=20_000)
+    assert ok is True
+
+
 def _signed_headers(payload: dict) -> dict:
     body = json.dumps(payload).encode()
     import hashlib

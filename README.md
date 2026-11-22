@@ -987,7 +987,7 @@ Requires `GOOGLE_ADS_DEVELOPER_TOKEN` plus ADC (Cloud Run SA or local ADC). Gran
 | `POST get_deployment_status` | Poll a GitHub Actions workflow run by ID |
 | `POST check_website_health` | HTTP GET health check on a live site URL |
 | `POST fetch_github_action_logs` | Download and parse failed job logs from a workflow run (zip with size threshold, or per-job fallback) |
-| `POST create_github_pr` | Create a `bigas-hotfix/*` branch with file changes and open a pull request |
+| `POST create_github_pr` | Create a `bigas-hotfix/*` branch with file changes and open a pull request (payload up to ~1 MB so large files like README fit) |
 | `POST github_workflow_run` | GitHub webhook: failed `workflow_run` → hotfix PR; successful deploy on a semver tag also closes that board Release. See [self-healing walkthrough](#walkthrough-self-healing-cicd-failed-github-actions--hotfix-pr) |
 | `POST self_healing_ci_job` | Poll an async self-healing job by `job_id` |
 

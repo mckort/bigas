@@ -820,14 +820,20 @@ def sanitize_error_message(error: str) -> str:
     
     return error
 
-def validate_request_data(data: Dict[str, Any], required_fields: List[str] = None) -> tuple[bool, str]:
+def validate_request_data(
+    data: Dict[str, Any],
+    required_fields: List[str] = None,
+    *,
+    max_chars: int = 10_000,
+) -> tuple[bool, str]:
     """
     Validate and sanitize request data.
-    
+
     Args:
         data: Request data dictionary
         required_fields: List of required field names
-        
+        max_chars: Max length of ``str(data)`` (default 10KB for marketing tools)
+
     Returns:
         Tuple of (is_valid, error_message)
     """
@@ -840,8 +846,9 @@ def validate_request_data(data: Dict[str, Any], required_fields: List[str] = Non
             if field not in data:
                 return False, f"Missing required field: {field}"
     
-    # Basic size limits
-    if len(str(data)) > 10000:  # 10KB limit
-        return False, "Request data too large (max 10KB)"
-    
+    # Basic size limits (override for file-heavy tools like create_github_pr)
+    limit = max(1, int(max_chars))
+    if len(str(data)) > limit:
+        return False, f"Request data too large (max {limit} characters)"
+
     return True, "" 
