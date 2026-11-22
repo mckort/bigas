@@ -154,7 +154,7 @@ A multi-platform **Paid Ads Analytics Orchestrator** standardizes how ads data i
 
 At a high level:
 
-- **Platform services** (`GoogleAdsService`, `MetaAdsService`, `LinkedInAdsService`, `RedditAdsService`) hide API specifics, authentication, and rate limits.
+- **Platform services** (`GoogleAdsService`, `MetaAdsService`, `LinkedInAdsService`, `RedditAdsService`) hide API specifics, authentication, and rate limits. Google Ads uses ADC + `GOOGLE_ADS_DEVELOPER_TOKEN`; smoke-test with `GET /mcp/tools/google_ads_health_check` to list accessible customer IDs before setting `GOOGLE_ADS_CUSTOMER_ID`.
 - **Standardized storage** uses `raw_ads/{platform}/{date}/...` for raw reports and matching `.enriched.json` files for normalized, LLM-ready payloads.
 - The **Paid Ads Analytics Orchestrator** endpoints handle date ranges, **caching**, and coordinating multi-step jobs (discovery → fetch → enrich → summarize).
 - **Summaries** are generated via a shared `AD_SUMMARY_PROMPTS` registry, so each platform + report type gets a consistent, opinionated analysis, including a dedicated prompt for cross-platform budget recommendations (portfolio overview, key segments, underperformers, concrete next steps).

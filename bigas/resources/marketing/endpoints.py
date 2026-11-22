@@ -1506,6 +1506,7 @@ def get_manifest():
             {"name": "analyze_underperforming_pages", "description": "Analyzes underperforming pages from stored reports and generates AI-powered improvement suggestions.", "path": "/mcp/tools/analyze_underperforming_pages", "method": "POST"},
             {"name": "cleanup_old_reports", "description": "Cleans up old weekly reports to manage storage costs.", "path": "/mcp/tools/cleanup_old_reports", "method": "POST"},
             {"name": "linkedin_ads_health_check", "description": "Smoke test LinkedIn Ads API access by listing ad accounts.", "path": "/mcp/tools/linkedin_ads_health_check", "method": "GET"},
+            {"name": "google_ads_health_check", "description": "Smoke test Google Ads API access via ADC + developer token; lists accessible customer IDs.", "path": "/mcp/tools/google_ads_health_check", "method": "GET"},
             {"name": "fetch_linkedin_ad_analytics_report", "description": "Fetch LinkedIn adAnalytics and store raw data in GCS. Supports explicit date range via start_date/end_date or relative_range.", "path": "/mcp/tools/fetch_linkedin_ad_analytics_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_urn": {"type": "string"}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "relative_range": {"type": "string", "enum": ["LAST_DAY", "LAST_7_DAYS", "LAST_30_DAYS"]}, "time_granularity": {"type": "string", "enum": ["DAILY", "MONTHLY", "ALL"], "default": "DAILY"}, "pivot": {"type": "string", "default": "ACCOUNT"}, "pivots": {"type": "array", "items": {"type": "string"}}, "store_raw": {"type": "boolean", "default": True}, "force_refresh": {"type": "boolean", "default": False}, "include_entity_names": {"type": "boolean", "default": False}}}},
             {"name": "linkedin_exchange_code", "description": "Exchange a LinkedIn OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/linkedin_exchange_code", "method": "POST"},
             {"name": "reddit_exchange_code", "description": "Exchange a Reddit OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/reddit_exchange_code", "method": "POST"},
@@ -1913,6 +1914,91 @@ def reddit_ads_health_check():
         logger.error(f"Error in reddit_ads_health_check: {traceback.format_exc()}")
         sanitized_error = sanitize_error_message(str(e))
         return jsonify({"error": sanitized_error}), 500
+
+
+@marketing_bp.route('/mcp/tools/google_ads_health_check', methods=['GET'])
+def google_ads_health_check():
+    """
+    Smoke test Google Ads API access:
+    - ADC credentials with the adwords scope
+    - GOOGLE_ADS_DEVELOPER_TOKEN
+    - ListAccessibleCustomers (no customer_id required)
+
+    Use this to verify setup and discover customer IDs for GOOGLE_ADS_CUSTOMER_ID.
+    """
+    try:
+        from bigas.resources.marketing.google_ads_service import (
+            GoogleAdsApiError,
+            GoogleAdsAuthError,
+            GoogleAdsService,
+        )
+
+        configured_customer_id = (os.environ.get("GOOGLE_ADS_CUSTOMER_ID") or "").replace("-", "").strip() or None
+        configured_login_customer_id = (
+            (os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "").replace("-", "").strip() or None
+        )
+
+        svc = GoogleAdsService()
+        resource_names = svc.list_accessible_customers()
+        customer_ids: List[str] = []
+        for name in resource_names:
+            if not isinstance(name, str):
+                continue
+            # resourceNames look like "customers/1234567890"
+            cid = name.split("/")[-1].replace("-", "").strip()
+            if cid:
+                customer_ids.append(cid)
+
+        configured_ok = bool(configured_customer_id and configured_customer_id in customer_ids)
+        hint = None
+        if not customer_ids:
+            hint = (
+                "No accessible customers. In Google Ads, grant the Cloud Run service account "
+                "(or your local ADC user) access to the Ads account or MCC, then retry."
+            )
+        elif configured_customer_id and not configured_ok:
+            hint = (
+                f"GOOGLE_ADS_CUSTOMER_ID={configured_customer_id} is set but not in the "
+                "accessible list. Pick an id from customer_ids, or set GOOGLE_ADS_LOGIN_CUSTOMER_ID "
+                "to your manager (MCC) account when querying a client account."
+            )
+        elif not configured_customer_id and customer_ids:
+            hint = (
+                "Set GOOGLE_ADS_CUSTOMER_ID to one of customer_ids (hyphens optional). "
+                "If you use an MCC, also set GOOGLE_ADS_LOGIN_CUSTOMER_ID to the manager id."
+            )
+
+        return jsonify(
+            {
+                "status": "success",
+                "accessible_customers_count": len(customer_ids),
+                "customer_ids": customer_ids[:50],
+                "resource_names": resource_names[:50],
+                "configured_customer_id": configured_customer_id,
+                "configured_login_customer_id": configured_login_customer_id,
+                "configured_customer_accessible": configured_ok if configured_customer_id else None,
+                "hint": hint,
+            }
+        )
+    except ValueError as e:
+        # Missing developer token / bad config
+        return jsonify({"error": sanitize_error_message(str(e))}), 400
+    except GoogleAdsAuthError as e:
+        logger.error("Google Ads auth error in google_ads_health_check: %s", e)
+        return jsonify({"error": sanitize_error_message(str(e))}), 401
+    except GoogleAdsApiError as e:
+        logger.error(
+            "Google Ads API error in google_ads_health_check: status=%s body=%s",
+            e.status_code,
+            (e.response_text or "")[:500],
+        )
+        body: Dict[str, Any] = {"error": sanitize_error_message(str(e))}
+        if e.status_code is not None:
+            body["google_ads_status"] = e.status_code
+        return jsonify(body), 502 if (e.status_code or 500) >= 500 else 400
+    except Exception as e:
+        logger.error("Error in google_ads_health_check: %s", traceback.format_exc())
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 
 @marketing_bp.route('/mcp/tools/fetch_linkedin_ad_analytics_report', methods=['POST'])
