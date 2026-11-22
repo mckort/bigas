@@ -438,11 +438,19 @@ def test_ship_card_lists_merged_tickets_from_undeployed_commits():
     # Only keys present in undeployed commits — not VFA-1 / VFA-325 left on the version.
     assert ship["VFA"]["pending"] == [
         {"key": "VFA-2", "title": "Merged, waiting for deploy", "url": "https://board/VFA-2"},
-        {"key": "VFA-9", "title": "Still open", "url": ""},
+        {
+            "key": "VFA-9",
+            "title": "Still open",
+            "url": "https://github.com/commit/vfa-release",
+        },
     ]
     assert ship["VFA"]["pending_count"] == 2
     assert ship["BIG"]["pending"] == [
-        {"key": "BIG-171", "title": "", "url": ""},
+        {
+            "key": "BIG-171",
+            "title": "Do not wait on the review job",
+            "url": "https://github.com/commit/1",
+        },
     ]
     assert ship["BIG"]["pending_count"] == 1
     assert ship["AURA"]["cut_count"] == 0
@@ -519,8 +527,47 @@ def test_pending_keeps_unticketed_commits_and_the_upstream_count():
         },
         tickets=[],
     )
-    assert [item["key"] for item in expanded] == ["VFA-2", "VFA-9"]
+    assert expanded == [
+        {
+            "key": "VFA-2",
+            "title": "Release 0.2.4 (VFA-2, VFA-9)",
+            "url": "https://github.com/commit/release",
+        },
+        {
+            "key": "VFA-9",
+            "title": "Release 0.2.4 (VFA-2, VFA-9)",
+            "url": "https://github.com/commit/release",
+        },
+    ]
     assert expanded_count == 2
+
+
+def test_pending_orphan_ticket_key_keeps_commit_link_and_subject():
+    """Mistyped / missing board keys must still link to the GitHub commit."""
+    from bigas.cockpit import _pending_merged_not_deployed
+
+    items, count = _pending_merged_not_deployed(
+        project_key="VFA",
+        fresh={
+            "pending": [
+                {
+                    "key": "",
+                    "title": "VFA-424: Strengthen versioned production guidance",
+                    "url": "https://github.com/mckort/vcfieldassistant/commit/abc",
+                }
+            ],
+            "pending_count": 1,
+        },
+        tickets=[],
+    )
+    assert items == [
+        {
+            "key": "VFA-424",
+            "title": "Strengthen versioned production guidance",
+            "url": "https://github.com/mckort/vcfieldassistant/commit/abc",
+        }
+    ]
+    assert count == 1
 
 
 def test_pending_lists_each_distinct_ticket_once_and_keeps_commit_count():
