@@ -24,6 +24,9 @@ PROVIDER_ID="github-oidc"
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
 
 if [ -f "$ENV_FILE" ]; then
+  # Sourcing does not clear variables the file omits. Drop an inherited
+  # BIGAS_AGENT_GATEWAY so validation matches the file this script uploads.
+  unset BIGAS_AGENT_GATEWAY
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"

@@ -58,7 +58,7 @@ fi
 
 # Outside agents: require an explicit on/off. A missing value used to omit the
 # Cloud Run env var, so a stale BIGAS_DEPLOY_ENV secretly turned the gateway off.
-case "$(echo "${BIGAS_AGENT_GATEWAY:-}" | tr '[:upper:]' '[:lower:]')" in
+case "$(echo "${BIGAS_AGENT_GATEWAY:-}" | tr -d '[:space:]"'\''' | tr '[:upper:]' '[:lower:]')" in
     on|off|1|0|true|false|yes|no) ;;
     "")
         echo "❌ Error: BIGAS_AGENT_GATEWAY must be set explicitly (on/off or true/false)"
