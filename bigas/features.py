@@ -43,6 +43,7 @@ FEATURE_TOOLS: Dict[str, FrozenSet[str]] = {
             "fetch_reddit_audience_report",
             "get_latest_report",
             "get_stored_reports",
+            "google_ads_health_check",
             "linkedin_ads_health_check",
             "linkedin_exchange_code",
             "reddit_ads_health_check",

@@ -294,7 +294,9 @@ Details: [from quarterly Objective to shipped work](#walkthrough-from-quarterly-
 - `GOOGLE_PROJECT_ID`
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL` with **Marketer** on that GA4 property
 
-**Optional:** `DISCORD_WEBHOOK_URL_MARKETING`. Ad tokens (LinkedIn / Reddit / Meta / Google Ads) for cross-platform spend. `TARGET_KEYWORDS` for SEO. `X_ACCOUNTS` + credentials for approve/decline drafts.
+**Optional:** `DISCORD_WEBHOOK_URL_MARKETING`. Ad platforms for cross-platform spend (see below). `TARGET_KEYWORDS` for SEO. `X_ACCOUNTS` + credentials for approve/decline drafts.
+
+**Google Ads (optional):** set `GOOGLE_ADS_DEVELOPER_TOKEN` and `GOOGLE_ADS_CUSTOMER_ID`. Auth is ADC — the Cloud Run service account (or your local `gcloud` user) must be invited into the Ads account or MCC. If you query a client account under a manager, also set `GOOGLE_ADS_LOGIN_CUSTOMER_ID`. Smoke-test with `GET /mcp/tools/google_ads_health_check` (lists accessible customer IDs). Then ask Marketing: *"Run a Google Ads portfolio report"*.
 
 **Try:** in the Marketing thread: *"How did the site do last week?"* Then: *"Run a cross-platform marketing analysis"* once ads are connected.
 
@@ -933,12 +935,20 @@ curl -X POST https://your-service-url.a.run.app/mcp/tools/run_linkedin_portfolio
 | `GET reddit_ads_health_check` | Verify API access and list ad accounts |
 | `POST reddit_exchange_code` | Exchange OAuth authorization code for refresh token |
 
+### Google Ads
+
+Requires `GOOGLE_ADS_DEVELOPER_TOKEN` plus ADC (Cloud Run SA or local ADC). Grant that identity access in Google Ads UI. Set `GOOGLE_ADS_CUSTOMER_ID` (and `GOOGLE_ADS_LOGIN_CUSTOMER_ID` when using an MCC).
+
+| Endpoint | Description |
+|---|---|
+| `GET google_ads_health_check` | Verify ADC + developer token; list accessible customer IDs |
+| `POST run_google_ads_portfolio_report` | Campaign/ad/audience performance report → Discord and Marketing Analyst chat |
+| `POST run_google_ads_portfolio_report_async` | Async variant — returns a `job_id` immediately |
+
 ### Paid ads & cross-platform
 
 | Endpoint | Description |
 |---|---|
-| `POST run_google_ads_portfolio_report` | Campaign/ad/audience performance report → Discord and Marketing Analyst chat |
-| `POST run_google_ads_portfolio_report_async` | Async variant — returns a `job_id` immediately |
 | `POST run_meta_portfolio_report` | Meta (Facebook/Instagram) campaign performance → Discord and Marketing Analyst chat |
 | `POST run_meta_portfolio_report_async` | Async variant — returns a `job_id` immediately |
 | `POST run_cross_platform_marketing_analysis` | LinkedIn + Reddit + Google Ads + Meta in one report → Discord and Marketing Analyst chat |
