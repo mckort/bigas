@@ -469,3 +469,46 @@ export async function goToProduction(projectKey, version) {
 export async function backToDevelopment(projectKey) {
   return apiFetch(`/api/projects/${encodeURIComponent(projectKey)}/production`, { method: 'DELETE' })
 }
+
+// Agent gateway (outside agents such as Grok)
+export async function fetchGateway() {
+  return apiFetch('/api/gateway')
+}
+
+export async function connectGatewayAgent(name, level) {
+  return apiFetch('/api/gateway/agents', { method: 'POST', body: JSON.stringify({ name, level }) })
+}
+
+export async function fetchGatewayAgent(agentId) {
+  return apiFetch(`/api/gateway/agents/${encodeURIComponent(agentId)}`)
+}
+
+export async function updateGatewayAgent(agentId, payload) {
+  return apiFetch(`/api/gateway/agents/${encodeURIComponent(agentId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function removeGatewayAgent(agentId) {
+  return apiFetch(`/api/gateway/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' })
+}
+
+export async function newGatewayToken(agentId) {
+  return apiFetch(`/api/gateway/agents/${encodeURIComponent(agentId)}/token`, { method: 'POST' })
+}
+
+export async function pauseGateway(paused) {
+  return apiFetch('/api/gateway/pause', { method: 'POST', body: JSON.stringify({ paused }) })
+}
+
+export async function approveGatewayRequest(approvalId) {
+  return apiFetch(`/api/gateway/approvals/${encodeURIComponent(approvalId)}/approve`, { method: 'POST' })
+}
+
+export async function denyGatewayRequest(approvalId, note = '') {
+  return apiFetch(`/api/gateway/approvals/${encodeURIComponent(approvalId)}/deny`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}

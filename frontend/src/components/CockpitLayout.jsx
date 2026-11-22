@@ -27,6 +27,7 @@ import { featureEnabled } from '../lib/features'
 import { linkify } from '../lib/linkify'
 import { SettingsButton } from './AgentSettings'
 import ThemeToggle from './ThemeToggle'
+import OutsideAgents, { GatewayApprovals, useGateway } from './OutsideAgents'
 
 const POLL_MS = 15000
 // One blip while a deploy is running should not abandon tracking. After this
@@ -1579,6 +1580,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
     clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToast(null), 4000)
   }, [])
+  const gateway = useGateway(showToast)
 
   const saveComment = useCallback(
     async (item) => {
@@ -2025,7 +2027,10 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
   const stuck = (data?.stuck || []).filter((i) => inProject(projectOf(i)))
   const ship = (data?.ship || []).filter((row) => inProject((row.key || '').toUpperCase()))
   const needGroups = needsReady ? groupNeedsByProject(needs, ship) : []
-  const counts = { needs: needsReady ? needs.length : null, working: data ? working.length : null }
+  const counts = {
+    needs: needsReady ? needs.length + gateway.approvals.length : null,
+    working: data ? working.length : null,
+  }
   const projectCounts = (() => {
     const out = {}
     for (const item of [...(data?.needs || []), ...(data?.signoff || []), ...(data?.working || []), ...(data?.stuck || [])]) {
@@ -2612,7 +2617,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           </Section>
 
           <Section id="needs" title="Needs you" count={counts.needs} mobileTab={tab}>
-            <p className="text-xs text-muted mb-2 lg:hidden">Swipe right to approve, left to send back.</p>
+            {needs.length > 0 && <p className="text-xs text-muted mb-2 lg:hidden">Swipe right to approve, left to send back.</p>}
             {!needsReady && !error && (
               <div className={CARD_GRID} aria-hidden="true">
                 {[0, 1, 2].map((i) => (
@@ -2624,7 +2629,8 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
                 ))}
               </div>
             )}
-            {needsReady && needs.length === 0 && (
+            <GatewayApprovals gateway={gateway} className={needs.length ? 'mb-4' : ''} />
+            {needsReady && needs.length === 0 && gateway.approvals.length === 0 && (
               <div className="py-8 text-center">
                 <p className="font-semibold">You're clear</p>
                 <p className="text-sm text-muted">Nothing waits on you. The AI keeps working in the background.</p>
@@ -2688,6 +2694,8 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
               </div>
             )}
           </Section>
+
+          <OutsideAgents gateway={gateway} Section={Section} Drawer={Drawer} mobileTab={tab} showToast={showToast} />
 
           <Section id="weekly" title="Weekly" pane="week" mobileTab={tab}>
             <div className={CARD_GRID}>

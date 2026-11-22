@@ -128,6 +128,12 @@ def create_app():
     # Load simple access control configuration (open vs restricted)
     _load_access_control_config(app)
 
+    from bigas.gateway.service import gateway_enabled, validate_gateway_config
+
+    validate_gateway_config(app.config["BIGAS_ACCESS_MODE"])
+    if gateway_enabled():
+        logger.info("Agent gateway is on: outside agents are checked against their access level.")
+
     with app.app_context():
         # Import and register blueprints from each resource
         from bigas.resources.marketing.endpoints import marketing_bp, get_manifest as get_marketing_manifest
@@ -172,6 +178,10 @@ def create_app():
             logger.info("Registered outbound email blueprint.")
         else:
             get_outbound_email_manifest = None
+
+        from bigas.gateway.endpoints import gateway_bp
+
+        app.register_blueprint(gateway_bp)
 
         from bigas.eval.endpoints import eval_bp
 
@@ -242,6 +252,8 @@ def create_app():
             or path == "/api/projects"
             or path.startswith("/api/projects/")
             or path.startswith("/api/agents")
+            or path == "/api/gateway"
+            or path.startswith("/api/gateway/")
             or path.startswith("/api/feed")
             or path.startswith("/api/auth/")
             or path.startswith("/assets/")
@@ -277,6 +289,15 @@ def create_app():
         mode = app.config.get("BIGAS_ACCESS_MODE", "open")
         if mode != "restricted":
             return
+
+        # Outside-agent tokens only work on POST /mcp, where the gateway checks them.
+        # This keeps agents off the direct /mcp/tools/* endpoints.
+        from bigas.gateway.service import is_agent_token
+
+        if request.path.rstrip("/") != "/mcp" and is_agent_token(provided_mcp_credential()):
+            response = jsonify({"detail": "Agent tokens only work on /mcp."})
+            response.status_code = 403
+            return response
 
         # Allow health checks, manifest, and MCP discovery without a key
         if _is_public_path(request.path):
@@ -371,6 +392,52 @@ def create_app():
     return app
 
 
+def _gateway_result(payload, is_error: bool) -> dict:
+    if is_error and isinstance(payload, dict) and isinstance(payload.get("error"), str):
+        text = payload["error"]
+    elif isinstance(payload, dict) and payload.get("status") == "pending_approval":
+        text = payload.get("message") or json.dumps(payload, ensure_ascii=False)
+    else:
+        text = json.dumps(payload, ensure_ascii=False)
+    return {
+        "content": [{"type": "text", "text": text}],
+        "isError": bool(is_error),
+        "structuredContent": payload,
+    }
+
+
+def _gateway_call(app: Flask, agent: dict, selected: dict, arguments: dict) -> dict:
+    """An outside agent's tool call: check, then run, hold or refuse it."""
+    import time as _time
+
+    from bigas.gateway import service as gateway
+    from bigas.gateway.policy import ALLOW, HOLD
+
+    tool_name = selected.get("name") or ""
+    args, intent = gateway.split_intent(arguments)
+    decision = gateway.check(agent, tool_name)
+    if decision.outcome == HOLD:
+        approval = gateway.create_approval(agent, selected, args, intent=intent, decision=decision)
+        gateway.audit(agent, tool_name, "held", tier=decision.tier, code=decision.code,
+                      approval_id=approval["id"], arguments=args)
+        return _gateway_result(gateway.pending_reply(approval), False)
+    if decision.outcome != ALLOW:
+        gateway.audit(agent, tool_name, "denied", tier=decision.tier, code=decision.code, arguments=args)
+        return _gateway_result({"error": decision.reason, "code": decision.code}, True)
+
+    started = _time.time()
+    status_code, body, text = gateway.dispatch_with_owner_key(app)(
+        selected.get("path") or "", (selected.get("method") or "POST").upper(), args
+    )
+    gateway.count_usage(agent, decision.counters)
+    gateway.audit(agent, tool_name, "allowed", tier=decision.tier, status=status_code,
+                  ms=int((_time.time() - started) * 1000), arguments=args)
+    result = {"content": [{"type": "text", "text": text}], "isError": status_code >= 400}
+    if body is not None:
+        result["structuredContent"] = body
+    return result
+
+
 def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
     """
     Streamable HTTP MCP: POST handles JSON-RPC. GET returns 405 so clients do not
@@ -387,9 +454,20 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
             response.headers["Allow"] = "POST"
             return response
 
+        from bigas.gateway import service as gateway
+
         mode = app.config.get("BIGAS_ACCESS_MODE", "open")
         provided_key = provided_mcp_credential()
-        if mode == "restricted" and not is_valid_mcp_credential(provided_key):
+        agent = None
+        if gateway.gateway_enabled():
+            if gateway.is_agent_token(request.args.get("access_key")):
+                return unauthorized_response(
+                    {"error": "Send the agent token in the Authorization header, not the URL."}
+                )
+            agent = gateway.resolve_agent(provided_key)
+            if agent is None:
+                return unauthorized_response({"error": "Invalid or missing access key for /mcp"})
+        elif mode == "restricted" and not is_valid_mcp_credential(provided_key):
             return unauthorized_response({"error": "Invalid or missing access key for /mcp"})
 
         payload = request.get_json(silent=True)
@@ -421,7 +499,14 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
         if method == "tools/list":
             manifest = get_manifest_json() or {}
             tools = []
-            for tool in manifest.get("tools", []):
+            manifest_tools = list(manifest.get("tools", []))
+            if agent is not None:
+                from bigas.gateway.policy import tool_visible
+
+                manifest_tools = [
+                    t for t in manifest_tools if isinstance(t, dict) and tool_visible(agent, t.get("name") or "")
+                ] + list(gateway.GATEWAY_TOOLS)
+            for tool in manifest_tools:
                 if not isinstance(tool, dict):
                     continue
                 tools.append(
@@ -442,6 +527,12 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
 
             manifest = get_manifest_json() or {}
             manifest_tools = manifest.get("tools", [])
+
+            if agent is not None and tool_name in gateway.GATEWAY_TOOL_NAMES:
+                names = [t.get("name") for t in manifest_tools if isinstance(t, dict) and t.get("name")]
+                payload, is_error = gateway.handle_gateway_tool(agent, tool_name, arguments, names)
+                return jsonify(_jsonrpc_result(request_id, _gateway_result(payload, is_error)))
+
             selected = next((t for t in manifest_tools if isinstance(t, dict) and t.get("name") == tool_name), None)
             if not selected:
                 return jsonify(_jsonrpc_error(request_id, -32601, f"Tool not found: {tool_name}"))
@@ -450,6 +541,11 @@ def register_mcp_jsonrpc_routes(app: Flask, get_manifest_json):
             tool_method = (selected.get("method") or "POST").upper()
             if not tool_path:
                 return jsonify(_jsonrpc_error(request_id, -32603, f"Tool path missing for: {tool_name}"))
+
+            if agent is not None and agent.get("kind") != "owner":
+                return jsonify(
+                    _jsonrpc_result(request_id, _gateway_call(app, agent, selected, arguments))
+                )
 
             headers = {}
             if mode == "restricted" and provided_key:
