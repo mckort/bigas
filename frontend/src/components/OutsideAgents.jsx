@@ -310,6 +310,87 @@ function ToolGroup({ title, tools, open = false }) {
   )
 }
 
+function AgentLimits({ limits, busy, onSave }) {
+  const [draft, setDraft] = useState(() =>
+    Object.fromEntries((limits || []).map((l) => [l.key, String(l.max)]))
+  )
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    setDraft(Object.fromEntries((limits || []).map((l) => [l.key, String(l.max)])))
+    setDirty(false)
+  }, [limits])
+
+  if (!limits?.length) return null
+
+  const setValue = (key, value) => {
+    setDraft((prev) => ({ ...prev, [key]: value }))
+    setDirty(true)
+  }
+
+  const save = () => {
+    const payload = {}
+    for (const row of limits) {
+      const raw = (draft[row.key] ?? '').trim()
+      if (raw === '') continue
+      const n = Number(raw)
+      if (!Number.isInteger(n) || n < 0) return
+      // Only send overrides that differ from the level default; omit = use default.
+      if (n !== row.default) payload[row.key] = n
+    }
+    onSave(payload)
+  }
+
+  return (
+    <div>
+      <h4 className="text-sm font-medium mb-1">Today&apos;s limits</h4>
+      <p className="text-xs text-muted mb-2">
+        Defaults follow the access level. Change a max to override for this agent only.
+      </p>
+      <ul className="text-sm space-y-2">
+        {limits.map((l) => (
+          <li key={l.key} className="flex flex-wrap items-center gap-2 justify-between">
+            <span className="text-muted min-w-[10rem]">
+              {l.label}
+              {l.overridden ? (
+                <span className="ml-1 text-[11px] text-amber-700 dark:text-amber-300">(custom)</span>
+              ) : null}
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="tabular-nums text-muted">{l.used} /</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                inputMode="numeric"
+                aria-label={`Max ${l.label}`}
+                className="w-20 rounded-lg border border-border bg-bg px-2 py-1 text-sm tabular-nums"
+                value={draft[l.key] ?? ''}
+                disabled={busy}
+                onChange={(e) => setValue(l.key, e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn-ghost text-xs px-1.5 py-1"
+                disabled={busy || Number(draft[l.key]) === l.default}
+                title={`Reset to level default (${l.default})`}
+                onClick={() => setValue(l.key, String(l.default))}
+              >
+                Default {l.default}
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {dirty ? (
+        <button type="button" className="btn-secondary text-sm mt-2" disabled={busy} onClick={save}>
+          Save limits
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 function AgentManager({ agentId, levels, onChanged, onRemoved, showToast }) {
   const [detail, setDetail] = useState(null)
   const [error, setError] = useState('')
@@ -359,19 +440,11 @@ function AgentManager({ agentId, levels, onChanged, onRemoved, showToast }) {
         onChange={(lvl) => change({ level: lvl }, `${agent.name} now has ${lvl} access`)}
       />
 
-      <div>
-        <h4 className="text-sm font-medium mb-1">Today's limits</h4>
-        <ul className="text-sm space-y-0.5">
-          {agent.limits.map((l) => (
-            <li key={l.label} className="flex justify-between">
-              <span className="text-muted">{l.label}</span>
-              <span>
-                {l.used} / {l.max}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <AgentLimits
+        limits={agent.limits || []}
+        busy={busy}
+        onSave={(limits) => change({ limits }, `Limits updated for ${agent.name}`)}
+      />
 
       <div>
         <h4 className="text-sm font-medium mb-1">What it can do</h4>

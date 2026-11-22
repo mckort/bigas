@@ -14,6 +14,7 @@ Let Grok, a script, or any other MCP client use Bigas with limits you choose. Yo
 
 2. In the cockpit, find **Outside agents** and press **Connect**. Name the agent (`grok-growth`), pick a level, press **Connect**.
 3. Copy the token and the setup for your client (Grok API, Grok Build, Claude Code, Cursor or curl). Then ask the agent to call `gateway_whoami`. It answers with what it may do.
+4. Open the agent in Outside agents to raise a limit (for example proposals per day) without changing the level defaults for everyone.
 
 Prefer the terminal? `python -m bigas.gateway connect grok-growth --level propose` prints the same.
 
@@ -24,8 +25,8 @@ Pick one level per agent. Start low; you can change the level later without a ne
 | Level | The agent can | Needs you for | Limits |
 |---|---|---|---|
 | **Look** | Read reports, analytics, tickets, deploy status | nothing | 300 calls/hour |
-| **Propose** | Look, plus create tickets, PRs, drafts, PR reviews | nothing (all reviewable or reversible) | + 20 proposals/day |
-| **Operate** | Propose, plus ask to deploy, release, cherry-pick | each of those, one by one | + 10 approval requests/day |
+| **Propose** | Look, plus create tickets, PRs, drafts, PR reviews | nothing (all reviewable or reversible) | + 20 proposals/day (default; editable per agent) |
+| **Operate** | Propose, plus ask to deploy, release, cherry-pick | each of those, one by one | + 10 approval requests/day (defaults; editable per agent) |
 
 Every tool has a tier: **Look**, **Propose**, **Act** or **Never** (`bigas/gateway/tiers.py`). A new tool that is not classified counts as **Act**, so it waits for you until someone gives it a tier. **Never** tools (cleanup jobs, OAuth code exchange, webhooks) are off for every outside agent.
 
@@ -59,6 +60,7 @@ python -m bigas.gateway connect NAME --level look|propose|operate
 python -m bigas.gateway list
 python -m bigas.gateway explain NAME          # what it runs directly and what needs you
 python -m bigas.gateway level NAME operate
+python -m bigas.gateway limit NAME proposals_per_day 40   # omit the number to clear the override
 python -m bigas.gateway pause NAME | resume NAME | remove NAME | new-token NAME
 python -m bigas.gateway pause-all | resume-all
 python -m bigas.gateway approvals | approve ID | deny ID --note "why"
