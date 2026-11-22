@@ -1258,6 +1258,8 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "gpw_ci.sh" in prompt
     assert "omitted count of 0" in prompt
     assert "Required PR base is `main`" in prompt
+    assert "Leave it on that base." in prompt
+    assert "labeled hotfix that must target production" not in prompt
     assert "Versioned production (required)" not in prompt
 
     staging_prompt = build_implement_prompt(
@@ -1277,6 +1279,31 @@ def test_build_implement_prompt_forbids_confirmation():
     assert "baseRefName" in staging_prompt
     assert "Never leave a feature PR targeting production" in staging_prompt
     assert "Do not finish while the base is wrong" in staging_prompt
+
+    master_prompt = build_implement_prompt(
+        issue_key="VFA-14",
+        summary="Brand reports",
+        brief="logo",
+        research="research",
+        plan="plan",
+        comments_text="(none)",
+        repo="mckort/vcfieldassistant",
+        base_branch="master",
+    )
+    assert "Required PR base is `master`" in master_prompt
+    assert "labeled hotfix that must target production" not in master_prompt
+
+    develop_prompt = build_implement_prompt(
+        issue_key="VFA-14",
+        summary="Brand reports",
+        brief="logo",
+        research="research",
+        plan="plan",
+        comments_text="(none)",
+        repo="mckort/vcfieldassistant",
+        base_branch="develop",
+    )
+    assert "labeled hotfix that must target production" in develop_prompt
 
 
 def test_can_launch_implement_allows_simple_ticket():

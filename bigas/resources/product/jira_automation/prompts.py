@@ -337,18 +337,24 @@ Required PR base is always `{base_branch}` for this ticket. Cursor `autoCreatePR
 def _implement_pr_base_instructions(*, issue_key: str, base_branch: str) -> str:
     base_branch = base_branch or "main"
     versioned = _is_versioned_release_base(base_branch)
-    never_main = (
-        f"11. Never leave a feature PR targeting production (`main` / `master`) when "
-        f"the required base is `{base_branch}`. Production is allowed only for a "
-        f"labeled hotfix. Do not squash-merge this feature PR onto production yourself."
-        if versioned
-        else (
+    # main/master is already production, so a "hotfix may target production" exception
+    # would tell the agent to leave a base it is already required to use.
+    production_base = base_branch.strip().lower() in {"main", "master"}
+    if versioned:
+        step_11 = (
+            f"11. Never leave a feature PR targeting production (`main` / `master`) when "
+            f"the required base is `{base_branch}`. Production is allowed only for a "
+            f"labeled hotfix. Do not squash-merge this feature PR onto production yourself."
+        )
+    elif production_base:
+        step_11 = f"11. Required PR base is `{base_branch}`. Leave it on that base."
+    else:
+        step_11 = (
             f"11. Required PR base is `{base_branch}`. Leave it on that base unless the "
             f"ticket is a labeled hotfix that must target production."
         )
-    )
     return f"""10. Open a pull request when done (autoCreatePR is enabled). Cursor often opens that PR against the repo default branch (production). Required PR base is `{base_branch}`. After the PR exists, verify the base with `gh pr view --json baseRefName -q .baseRefName`. If it is not `{base_branch}`, immediately run `gh pr edit --base {base_branch}` and verify again. Do not finish while the base is wrong.
-{never_main}
+{step_11}
 12. PR title MUST start with `{issue_key}:` followed by a short summary.
 13. PR body MUST include a line exactly: `Jira: {issue_key}` and a short summary of what changed.
 14. Do not merge the PR.
