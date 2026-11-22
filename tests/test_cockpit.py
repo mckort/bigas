@@ -1060,6 +1060,35 @@ def test_ship_rows_carry_their_step():
     assert payload["ship"][0]["step"] == 1
 
 
+def test_preparing_prepare_poll_shows_on_ship_and_ai_working():
+    payload = build_cockpit(
+        boards=[BOARD],
+        tickets_by_board={"b1": []},
+        threads=[
+            {
+                "thread_id": "t-prep",
+                "agent_id": "devops",
+                "pending_prepare_poll": {
+                    "project_key": "AURA",
+                    "phase": "preparing",
+                    "version": "0.7.0",
+                },
+            },
+        ],
+        projects=[{"key": "AURA", "name": "AuraLearn"}],
+        releases_by_project={"AURA": [{"name": "0.7.0", "is_default": True}]},
+        now=datetime(2026, 11, 22, tzinfo=timezone.utc),
+    )
+    ship = {row["key"]: row for row in payload["ship"]}
+    assert ship["AURA"]["state"] == "running"
+    assert ship["AURA"]["detail"] == "Preparing the release"
+    assert ship["AURA"]["step"] == 0
+    assert ship["AURA"]["thread_id"] == "t-prep"
+    working = [item for item in payload["working"] if item.get("type") == "pipeline"]
+    assert working and working[0]["project_key"] == "AURA"
+    assert working[0]["stage"] == "Preparing the release"
+
+
 def test_money_summary_reports_each_source_and_caches(monkeypatch):
     from bigas import cockpit_money
 
