@@ -181,6 +181,26 @@ def instance_checks() -> List[Check]:
             )
         )
 
+    from bigas.gateway.service import gateway_enabled
+
+    if gateway_enabled():
+        mode = (os.environ.get("BIGAS_ACCESS_MODE") or "open").strip().lower()
+        if mode != "restricted" or not _set("BIGAS_ACCESS_KEYS"):
+            checks.append(
+                Check(
+                    "agent_gateway",
+                    "fail",
+                    "BIGAS_AGENT_GATEWAY is on, but access is not restricted. Bigas will not start like this.",
+                    "Set BIGAS_ACCESS_MODE=restricted and BIGAS_ACCESS_KEYS, or turn the gateway off (docs/agent-gateway.md).",
+                )
+            )
+        else:
+            checks.append(Check("agent_gateway", "ok", "Agent gateway on: outside agents connect from the cockpit"))
+    else:
+        checks.append(
+            Check("agent_gateway", "info", "Agent gateway off (BIGAS_AGENT_GATEWAY). Outside agents need your full access key.")
+        )
+
     on = sorted(enabled_features())
     checks.append(
         Check(
