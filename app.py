@@ -29,7 +29,7 @@ def _mcp_server_card(app: Flask):
     restricted = app.config.get("BIGAS_ACCESS_MODE") == "restricted"
     return {
         "name": "Bigas Modular AI Agent",
-        "description": "Marketing and product analytics tools for GA4, ad platforms, Jira, and Discord.",
+        "description": "Open-source virtual HQ for solo founders: board to reviewed PRs and releases, analytics, ads and DevOps tools; outside agents get Look, Propose or Operate access.",
         "schemaVersion": "1.0",
         "transport": {
             "type": "http",
@@ -42,8 +42,17 @@ def _mcp_server_card(app: Flask):
             "location": "header",
             "header": header_name,
             "optional": not restricted,
+            "alternatives": ["Authorization: Bearer <key or agent token>"],
         },
-        "tags": ["marketing", "product", "analytics"],
+        "tags": [
+            "solo-founder",
+            "devops",
+            "pull-requests",
+            "marketing",
+            "analytics",
+            "agent-governance",
+            "human-in-the-loop",
+        ],
     }
 
 

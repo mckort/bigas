@@ -1,21 +1,84 @@
-# Bigas — Virtual HQ for Solo Founders
-
 <div align="center">
-  <img src="assets/images/bigas-ready-to-serve.png" alt="Bigas Logo" width="200"/>
-  <br/>
-  <strong>You and your AI team, working side by side toward the same goals.</strong>
+  <img src="assets/images/bigas-ready-to-serve.png" width="160" alt="Bigas logo"/>
+  <h1>Bigas</h1>
+  <p><strong>Open-source virtual HQ for solo founders.</strong><br/>
+  AI turns board cards into reviewed pull requests and releases. Outside agents work inside limits you set.</p>
+
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/mckort/bigas" alt="License: AGPL-3.0"/></a>
+  <a href="https://github.com/mckort/bigas/stargazers"><img src="https://img.shields.io/github/stars/mckort/bigas?style=social" alt="GitHub stars"/></a>
+  <img src="https://img.shields.io/github/last-commit/mckort/bigas" alt="Last commit"/>
+  <a href="https://youtu.be/vlT4wrpa11M"><img src="https://img.shields.io/badge/demo-watch%20the%20walkthrough-73cdfb?logo=youtube" alt="Demo video"/></a>
+  <a href="https://x.com/bigasmyaiteam"><img src="https://img.shields.io/badge/follow-@bigasmyaiteam-black?logo=x" alt="Follow on X"/></a>
   <br/><br/>
-  <a href="https://github.com/mckort/bigas/fork">
-    <img src="https://img.shields.io/badge/Fork%20%26%20Run%20Locally-Start%20building-73cdfb?style=for-the-badge&logo=github&logoColor=black" alt="Fork & Run Locally"/>
-  </a>
+  <a href="https://github.com/mckort/bigas/fork"><img src="https://img.shields.io/badge/Fork%20%26%20Run%20Locally-Start%20building-73cdfb?style=for-the-badge&logo=github&logoColor=black" alt="Fork & Run Locally"/></a>
 </div>
 
-Follow us on X: **[@bigasmyaiteam](https://x.com/bigasmyaiteam)** · Live instance: **[bigas.me](https://bigas.me)**
+<!-- TODO: add a 15–20 s GIF of the loop (card → plan → PR → Needs you → deploy) here, e.g. assets/images/bigas-loop.gif, once it is recorded. -->
+
+**Bigas** (Latin for *team*) gives a solo founder one place to run several products: drop a card on the built-in board, the AI researches, plans and opens a reviewed pull request, and you approve each step and ship — straight from `main` while you build, as versioned releases once you have users. Live instance: **[bigas.me](https://bigas.me)** · [Product walkthrough video](https://youtu.be/vlT4wrpa11M)
+
+## Try it in 5 minutes (only an LLM key)
+
+```bash
+git clone https://github.com/mckort/bigas.git && cd bigas
+python scripts/setup.py          # wizard writes .env (Gemini or OpenAI key)
+docker compose up --build        # open http://localhost:8080, dev token: bigas-dev-token
+```
+
+No Google Cloud, Firebase or Discord needed to try it. Details: [MVP Quickstart](#mvp-quickstart-under-5-minutes).
+
+## Let your agent in, safely
+
+Turn on the agent gateway (`BIGAS_AGENT_GATEWAY=on` with `BIGAS_ACCESS_MODE=restricted`) and give each outside agent — Grok, Claude Code, Cursor, a script — its own token and one level:
+
+| Level | The agent can | Needs you for |
+|---|---|---|
+| **Look** | Read reports, analytics, tickets, deploy status | nothing |
+| **Propose** | Look, plus create tickets, PRs, drafts, PR reviews | nothing (all reviewable or reversible) |
+| **Operate** | Propose, plus ask to deploy, release, cherry-pick | each of those, one by one, in **Needs you** |
+
+Every tool has a tier; a tool that is not classified yet waits for your approval. Approvals run the exact call that was stored, expire after 24 hours (2 hours for deploys and hotfixes), and **Pause all** stops every outside agent at once. Full details: [docs/agent-gateway.md](docs/agent-gateway.md).
+
+```bash
+python -m bigas.gateway connect grok-growth --level propose   # prints the token and client setup
+```
+
+### Connect an MCP client
+
+Bigas speaks MCP over Streamable HTTP at `POST /mcp`. Agent tokens go in the `Authorization` header.
+
+**Cursor** (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "bigas": {
+      "type": "http",
+      "url": "https://YOUR-BIGAS/mcp",
+      "headers": { "Authorization": "Bearer <agent-token>" }
+    }
+  }
+}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport http bigas https://YOUR-BIGAS/mcp --header "Authorization: Bearer <agent-token>"
+```
+
+**Grok Bot:** add a remote MCP server named `bigas` with URL `https://YOUR-BIGAS/mcp` and header `Authorization: Bearer <agent-token>`.
+
+**Claude.ai / Claude Desktop** (owner sign-in): add a custom connector pointing at `https://YOUR-BIGAS/mcp` and leave the OAuth Client ID empty — Bigas supports Dynamic Client Registration. See [MCP endpoint](#mcp-endpoint).
+
+Then ask your agent: *"Call gateway_whoami on bigas."* It answers with its level, what it may run directly, and what needs your approval.
 
 ---
 
 ## Table of contents
 
+- [Try it in 5 minutes](#try-it-in-5-minutes-only-an-llm-key)
+- [Let your agent in, safely](#let-your-agent-in-safely)
 - [What is Bigas?](#what-is-bigas)
 - [Getting started: from first card to production](#getting-started-from-first-card-to-production)
 - [MVP Quickstart (under 5 minutes)](#mvp-quickstart-under-5-minutes)
@@ -1297,7 +1360,7 @@ For security issues, contact the maintainer directly rather than opening a publi
 
 ## License
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE) for details.
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE) for the full text and [NOTICE](NOTICE) for the copyright notice.
 
 ---
 
