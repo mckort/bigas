@@ -31,20 +31,30 @@ def _project_id() -> str:
     )
 
 
+# Extra GCP projects scanned when ``BIGAS_LLM_USAGE_PROJECTS`` is unset.
+# Runtime SA needs logging.viewer (and BigQuery read for billing) on each.
+_DEFAULT_EXTRA_USAGE_PROJECTS = (
+    "vcfieldassistant",
+    "auralearn-491309",
+    "multiple-websites-491407",
+)
+
+
 def _usage_project_ids(home_project: str) -> List[str]:
-    """Projects whose Cloud Logging llm_usage lines we scan.
+    """Projects whose Cloud Logging llm_usage / GCP billing rows we scan.
 
     ``BIGAS_LLM_USAGE_PROJECTS`` is a comma-separated override. Default is the
-    home GCP project plus ``vcfieldassistant`` so Gemini COGS on the shared
-    billing account is visible to fetch_ai_usage / CFO.
+    home GCP project plus VFA, AURA, and the shared multi-site VM so
+    ``fetch_ai_usage`` / CFO can attribute board-project cost.
     """
     raw = (os.environ.get("BIGAS_LLM_USAGE_PROJECTS") or "").strip()
     if raw:
         ids = [p.strip() for p in raw.split(",") if p.strip()]
     else:
         ids = [home_project] if home_project else []
-        if home_project != "vcfieldassistant":
-            ids.append("vcfieldassistant")
+        for extra in _DEFAULT_EXTRA_USAGE_PROJECTS:
+            if extra and extra != home_project:
+                ids.append(extra)
     seen = set()
     out: List[str] = []
     for pid in ids:
@@ -188,9 +198,15 @@ class CloudRunLlmUsageProvider(UsageProvider):
                     e,
                 )
                 failures.append(f"{project}: {e}")
-        if failures:
+        if failures and not events:
             raise RuntimeError(
                 "Cloud Logging llm_usage failed: " + "; ".join(failures)
+            )
+        if failures:
+            logger.warning(
+                "Cloud Logging llm_usage partial failure (kept %s events): %s",
+                len(events),
+                "; ".join(failures),
             )
         return events
 
