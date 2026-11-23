@@ -16,8 +16,27 @@ const NAV_LINKS = [
   { href: '#modes', label: 'Dev → prod' },
   { href: '#surfaces', label: 'Surfaces' },
   { href: '#team', label: 'Team' },
+  { href: '#outside-agents', label: 'Outside agents' },
   { href: '#quickstart', label: 'Quickstart' },
   { href: '#faq', label: 'FAQ' },
+]
+
+const OUTSIDE_AGENT_LEVELS = [
+  {
+    id: 'look',
+    title: 'Look',
+    body: 'Reads reports, analytics, tickets and deploy status. Changes nothing.',
+  },
+  {
+    id: 'propose',
+    title: 'Propose',
+    body: 'Look, plus creates tickets, PRs and drafts you can review. Never deploys, sends or publishes.',
+  },
+  {
+    id: 'operate',
+    title: 'Operate',
+    body: 'Propose, plus can ask to deploy, release or send. Each of those waits for your approval.',
+  },
 ]
 
 const HOW_IT_WORKS = [
@@ -143,6 +162,10 @@ const FAQ = [
   {
     q: 'Do agents auto-start work?',
     a: 'No. You drag cards and approve each step. Nothing reaches production without your yes.',
+  },
+  {
+    q: 'What are outside agents?',
+    a: 'Grok, Claude Code, Cursor, or any other MCP client you connect with a limited token. Policies (Look, Propose, Operate), rate limits and tool allowlists are set in the cockpit and enforced on every MCP call. Your own Cursor and Claude keep full access; pause or remove an outside agent without touching them.',
   },
 ]
 
@@ -462,6 +485,64 @@ export default function Landing({ onSignIn }) {
                 </li>
               ))}
             </ul>
+          </div>
+        </section>
+
+        {/* Outside agents */}
+        <section className="py-12 sm:py-16 border-b border-border" aria-labelledby="outside-agents-heading">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6">
+            <SectionHeading
+              id="outside-agents"
+              headingId="outside-agents-heading"
+              eyebrow="Outside agents"
+              title="Hand work to agents, not the keys"
+              lead="Connect Grok, Claude Code, Cursor, or any MCP client with a limited token. Policies are set in the cockpit and enforced on every tool call — so an outside agent never gets your full access by accident."
+            />
+            <div className="mt-10 grid lg:grid-cols-2 gap-8 lg:gap-12 items-start">
+              <div className="space-y-6">
+                <div className="card p-5 sm:p-6">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-accent">Works via MCP</p>
+                  <p className="mt-2 text-sm sm:text-base text-text/90 leading-relaxed">
+                    Outside agents talk to Bigas over the standard{' '}
+                    <strong className="font-semibold text-text">Model Context Protocol</strong> endpoint
+                    (<code className="text-[0.85em] bg-surface px-1 rounded">POST /mcp</code>). The same tools
+                    your chat team uses — tickets, PRs, analytics, deploys — with a token that only that
+                    agent holds. Your own Cursor and Claude keep full owner access.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold mb-3">Policies you set and Bigas enforces</h3>
+                  <ul className="space-y-3">
+                    {OUTSIDE_AGENT_LEVELS.map(({ id, title, body }) => (
+                      <li key={id} className="card p-4 sm:p-5 flex gap-3">
+                        <span className="shrink-0 mt-0.5 flex h-7 min-w-[4.5rem] items-center justify-center rounded-md bg-accent-muted text-accent text-xs font-semibold border border-accent/20">
+                          {title}
+                        </span>
+                        <p className="text-sm text-muted leading-relaxed">{body}</p>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-4 text-sm text-muted leading-relaxed">
+                    Raise daily proposal caps, pause one agent or all of them, and revoke a leaked token —
+                    without touching your own sessions. Operate asks land in Needs you until you approve.
+                  </p>
+                </div>
+              </div>
+              <figure>
+                <img
+                  src="/marketing/outside-agents.png"
+                  alt="Outside agents policy panel: Look, Propose and Operate levels, daily limits, and which MCP tools run without asking"
+                  className="w-full h-auto rounded-xl border border-border shadow-soft"
+                  width={1024}
+                  height={728}
+                  loading="lazy"
+                  decoding="async"
+                />
+                <figcaption className="mt-3 text-xs text-muted">
+                  Per-agent level, limits and an audit of every MCP call — allowed or refused.
+                </figcaption>
+              </figure>
+            </div>
           </div>
         </section>
 
