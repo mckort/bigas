@@ -407,10 +407,8 @@ class GoogleAdsService:
     _RECOMMENDATION_DETAIL_FIELDS = (
         "recommendation.campaign_budget_recommendation",
         "recommendation.keyword_recommendation",
-        "recommendation.text_ad_recommendation",
         "recommendation.target_cpa_opt_in_recommendation",
         "recommendation.maximize_conversions_opt_in_recommendation",
-        "recommendation.enhanced_cpc_opt_in_recommendation",
         "recommendation.maximize_clicks_opt_in_recommendation",
         "recommendation.optimize_ad_rotation_recommendation",
         "recommendation.move_unused_budget_recommendation",
@@ -484,8 +482,7 @@ class GoogleAdsService:
     def build_optimization_score_uplift_query() -> str:
         return (
             "SELECT segments.recommendation_type, "
-            "metrics.optimization_score_uplift, "
-            "metrics.optimization_score_url "
+            "metrics.optimization_score_uplift "
             "FROM customer"
         )
 
@@ -668,7 +665,6 @@ class GoogleAdsService:
                     metrics = (row or {}).get("metrics") or {}
                     rtype = segments.get("recommendationType") or segments.get("recommendation_type")
                     uplift = metrics.get("optimizationScoreUplift", metrics.get("optimization_score_uplift"))
-                    url = metrics.get("optimizationScoreUrl", metrics.get("optimization_score_url"))
                     if rtype is None and uplift is None:
                         continue
                     uplift_list.append(
@@ -677,7 +673,6 @@ class GoogleAdsService:
                             "optimization_score_uplift": (
                                 round(_safe_float(uplift), 4) if uplift is not None else None
                             ),
-                            "optimization_score_url": url,
                         }
                     )
                 uplift_list.sort(

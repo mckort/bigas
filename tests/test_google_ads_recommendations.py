@@ -29,6 +29,8 @@ def test_build_recommendations_query_filters():
     assert "FROM recommendation" in q
     assert "recommendation.dismissed = FALSE" in q
     assert "recommendation.impact" in q
+    assert "recommendation.text_ad_recommendation" not in q
+    assert "recommendation.enhanced_cpc_opt_in_recommendation" not in q
 
     q2 = GoogleAdsService.build_recommendations_query(
         include_dismissed=True,
@@ -344,7 +346,6 @@ def test_fetch_recommendations_service_calls_search_stream(monkeypatch):
                         "segments": {"recommendationType": "KEYWORD"},
                         "metrics": {
                             "optimizationScoreUplift": 0.05,
-                            "optimizationScoreUrl": "https://ads.google.com/example",
                         },
                     }
                 ],
@@ -359,7 +360,12 @@ def test_fetch_recommendations_service_calls_search_stream(monkeypatch):
     assert out["count"] == 1
     assert out["recommendations"][0]["type"] == "KEYWORD"
     assert out["optimization"]["score"] == 0.81
-    assert out["optimization"]["uplift_by_type"][0]["recommendation_type"] == "KEYWORD"
+    uplift = out["optimization"]["uplift_by_type"][0]
+    assert uplift["recommendation_type"] == "KEYWORD"
+    assert uplift["optimization_score_uplift"] == 0.05
+    assert "optimization_score_url" not in uplift
+    uplift_q = next(q for q in calls if "optimization_score_uplift" in q)
+    assert "optimization_score_url" not in uplift_q
     assert any("FROM recommendation" in q for q in calls)
 
 
