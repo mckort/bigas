@@ -116,26 +116,29 @@ def _post(
     *,
     role: str = "assistant",
     status: Optional[str] = None,
+    project_key: Optional[str] = None,
 ) -> None:
     if not thread_id or not (content or "").strip():
         return
-    meta: Dict[str, Any] = {"agent_id": "devops", "pipeline": True}
-    if status:
-        meta["status"] = status
-    _store().add_message(thread_id, role=role, content=content.strip(), metadata=meta)
+    from bigas.resources.devops.progress_messages import pipeline_metadata
+
+    _store().add_message(
+        thread_id,
+        role=role,
+        content=content.strip(),
+        metadata=pipeline_metadata(status=status, project_key=project_key),
+    )
 
 
-def _complete_pipeline_progress(thread_id: Optional[str]) -> None:
+def _complete_pipeline_progress(
+    thread_id: Optional[str], *, project_key: Optional[str] = None
+) -> None:
     """Mark pipeline progress messages complete so the UI can stop spinners."""
     if not thread_id:
         return
-    store = _store()
-    if not hasattr(store, "patch_message"):
-        return
-    for message in store.list_messages(thread_id):
-        meta = message.get("metadata") or {}
-        if meta.get("pipeline") and meta.get("status") == "in_progress":
-            store.patch_message(message["message_id"], metadata={"status": "complete"})
+    from bigas.resources.devops.progress_messages import complete_pipeline_progress
+
+    complete_pipeline_progress(_store(), thread_id, project_key=project_key)
 
 
 def _project_key_of(payload: Optional[Dict[str, Any]], fallback: str = "") -> str:
@@ -753,7 +756,10 @@ def _finalize_deploy_postcheck(
                             )
             except Exception:
                 logger.exception("Board release close after deploy failed")
-        _complete_pipeline_progress(thread_id)
+        _complete_pipeline_progress(
+            thread_id,
+            project_key=poll.get("project_key") or poll.get("release_project_key"),
+        )
 
 
 def _poll_activity(thread_id: str) -> Dict[str, Any]:
@@ -765,6 +771,14 @@ def _poll_activity(thread_id: str) -> Dict[str, Any]:
 
 def _advance_deploy_poll(thread_id: str, poll: Dict[str, Any]) -> None:
     """Advance one product deploy poll. Other polls on the thread stay put."""
+    from bigas.resources.devops.progress_messages import pipeline_project
+
+    poll_project = poll.get("project_key")
+    with pipeline_project(poll_project):
+        _advance_deploy_poll_body(thread_id, poll)
+
+
+def _advance_deploy_poll_body(thread_id: str, poll: Dict[str, Any]) -> None:
     repo = poll.get("repo") or ""
     triggered = poll.get("triggered") or []
     poll_project = poll.get("project_key")
@@ -772,8 +786,9 @@ def _advance_deploy_poll(thread_id: str, poll: Dict[str, Any]) -> None:
         _post(
             thread_id,
             "I didn't get a GitHub Actions run ID back. Check the Actions tab manually.",
+            project_key=poll_project,
         )
-        _complete_pipeline_progress(thread_id)
+        _complete_pipeline_progress(thread_id, project_key=poll_project)
         _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
         return
 
@@ -1017,8 +1032,9 @@ def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, 
                 run_id,
             )
             for poll in matched:
-                _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
-            _complete_pipeline_progress(thread_id)
+                slot = _deploy_poll_slot(poll)
+                _set_deploy_poll(thread_id, None, project_key=slot)
+                _complete_pipeline_progress(thread_id, project_key=slot)
     return {"resumed": len(resumed), "thread_ids": resumed}
 
 
@@ -1032,17 +1048,38 @@ def start_confirmed_deploy(
 ) -> Dict[str, Any]:
     """Trigger GitHub Actions and start client-driven post-check polling."""
     from bigas.resources.devops.prepare import clear_pending_release_notes
+    from bigas.resources.devops.progress_messages import pipeline_project
 
+    with pipeline_project(project_key):
+        return _start_confirmed_deploy_body(
+            thread_id=thread_id,
+            project_key=project_key,
+            risk=risk,
+            release_version=release_version,
+            ref=ref,
+            clear_pending_release_notes=clear_pending_release_notes,
+        )
+
+
+def _start_confirmed_deploy_body(
+    *,
+    thread_id: Optional[str],
+    project_key: str,
+    risk: Optional[Dict[str, Any]],
+    release_version: Optional[str],
+    ref: Optional[str],
+    clear_pending_release_notes,
+) -> Dict[str, Any]:
     _set_pending(thread_id, None, project_key=project_key)
     clear_pending_release_notes(thread_id)
     planned = (risk or {}).get("workflows_to_run")
     planned_skips = (risk or {}).get("skipped_workflows") or []
     if isinstance(planned, list) and not planned and planned_skips:
-        _complete_pipeline_progress(thread_id)
+        _complete_pipeline_progress(thread_id, project_key=project_key)
         summary = (risk or {}).get("summary") or "Nothing to deploy — already up to date."
         if "already up to date" not in summary.lower():
             summary = f"{summary}\n\nNothing to deploy — already up to date."
-        _post(thread_id, summary)
+        _post(thread_id, summary, project_key=project_key)
         return {"status": "complete", "summary": summary}
     version = (release_version or "").strip()
     heading = (
@@ -1055,28 +1092,33 @@ def start_confirmed_deploy(
         heading,
         role="system",
         status="in_progress",
+        project_key=project_key,
     )
     deploy_ref = (ref or (risk or {}).get("head_ref") or "main").strip() or "main"
     try:
         result = trigger_deployment(project_key=project_key, ref=deploy_ref, risk=risk)
     except DevOpsError as e:
-        _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Could not start deploy: {e}")
+        _complete_pipeline_progress(thread_id, project_key=project_key)
+        _post(thread_id, f"Could not start deploy: {e}", project_key=project_key)
         return {"status": "complete", "summary": str(e)}
     except Exception as e:
         logger.exception("trigger_deployment failed")
-        _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Could not start deploy: {e}")
+        _complete_pipeline_progress(thread_id, project_key=project_key)
+        _post(thread_id, f"Could not start deploy: {e}", project_key=project_key)
         return {"status": "complete", "summary": str(e)}
 
-    _post(thread_id, result.get("summary") or "Deploy triggered.")
+    _post(thread_id, result.get("summary") or "Deploy triggered.", project_key=project_key)
     triggered = result.get("triggered") or []
     skipped = result.get("skipped_workflows") or []
     if not triggered:
         errors = result.get("errors") or []
-        _complete_pipeline_progress(thread_id)
+        _complete_pipeline_progress(thread_id, project_key=project_key)
         if skipped and not errors:
-            _post(thread_id, "Nothing to deploy — already up to date.")
+            _post(
+                thread_id,
+                "Nothing to deploy — already up to date.",
+                project_key=project_key,
+            )
             return {
                 "status": "complete",
                 "summary": result.get("summary") or "Already up to date.",
@@ -1085,6 +1127,7 @@ def start_confirmed_deploy(
             thread_id,
             "No workflow started."
             + ((" " + "; ".join(errors)) if errors else ""),
+            project_key=project_key,
         )
         return {"status": "complete", "summary": result.get("summary") or ""}
 
@@ -1099,6 +1142,7 @@ def start_confirmed_deploy(
         "\n".join(wait_lines),
         role="system",
         status="in_progress",
+        project_key=project_key,
     )
     if thread_id:
         _set_deploy_poll(
@@ -1221,46 +1265,51 @@ def run_chat_deploy_pipeline(
         )
         return {"status": "complete", "summary": "Project not specified."}
 
-    _post(
-        thread_id,
-        "🔎 **Pre-check:** comparing the code about to ship against what's running in prod…",
-        role="system",
-        status="in_progress",
-    )
-    try:
-        risk = check_deployment_risk(project_key=key)
-    except DevOpsError as e:
-        _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Pre-check failed: {e}")
-        return {"status": "complete", "summary": str(e)}
-    except Exception as e:
-        logger.exception("Pre-check failed")
-        _complete_pipeline_progress(thread_id)
-        _post(thread_id, f"Pre-check failed: {e}")
-        return {"status": "complete", "summary": str(e)}
+    from bigas.resources.devops.progress_messages import pipeline_project
 
-    _post(thread_id, _format_risk_for_chat(risk))
-
-    risk_level = (risk.get("risk_level") or "low").lower()
-    needs_confirm = risk_level in ("high", "medium")
-    if needs_confirm and not confirmed:
-        _complete_pipeline_progress(thread_id)
-        _set_pending(
-            thread_id,
-            {"project_key": key, "risk_level": risk_level, "repo": risk.get("repo")},
-        )
-        other = [k for k in _all_pendings(thread_id) if k != key]
-        yes_hint = f"**yes {key}**" if other else "**yes**"
-        no_hint = f"**no {key}**" if other else "**no**"
+    with pipeline_project(key):
         _post(
             thread_id,
-            f"Risk level is **{risk_level}**{plain_risk_clause(risk)}. "
-            f"Reply {yes_hint} to deploy anyway, or {no_hint} to cancel.",
+            "🔎 **Pre-check:** comparing the code about to ship against what's running in prod…",
+            role="system",
+            status="in_progress",
+            project_key=key,
         )
-        return {"status": "complete", "summary": risk.get("summary") or ""}
+        try:
+            risk = check_deployment_risk(project_key=key)
+        except DevOpsError as e:
+            _complete_pipeline_progress(thread_id, project_key=key)
+            _post(thread_id, f"Pre-check failed: {e}", project_key=key)
+            return {"status": "complete", "summary": str(e)}
+        except Exception as e:
+            logger.exception("Pre-check failed")
+            _complete_pipeline_progress(thread_id, project_key=key)
+            _post(thread_id, f"Pre-check failed: {e}", project_key=key)
+            return {"status": "complete", "summary": str(e)}
 
-    return start_confirmed_deploy(
-        thread_id=thread_id,
-        project_key=key,
-        risk=risk,
-    )
+        _post(thread_id, _format_risk_for_chat(risk), project_key=key)
+
+        risk_level = (risk.get("risk_level") or "low").lower()
+        needs_confirm = risk_level in ("high", "medium")
+        if needs_confirm and not confirmed:
+            _complete_pipeline_progress(thread_id, project_key=key)
+            _set_pending(
+                thread_id,
+                {"project_key": key, "risk_level": risk_level, "repo": risk.get("repo")},
+            )
+            other = [k for k in _all_pendings(thread_id) if k != key]
+            yes_hint = f"**yes {key}**" if other else "**yes**"
+            no_hint = f"**no {key}**" if other else "**no**"
+            _post(
+                thread_id,
+                f"Risk level is **{risk_level}**{plain_risk_clause(risk)}. "
+                f"Reply {yes_hint} to deploy anyway, or {no_hint} to cancel.",
+                project_key=key,
+            )
+            return {"status": "complete", "summary": risk.get("summary") or ""}
+
+        return start_confirmed_deploy(
+            thread_id=thread_id,
+            project_key=key,
+            risk=risk,
+        )

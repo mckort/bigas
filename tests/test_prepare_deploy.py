@@ -74,6 +74,55 @@ def teardown_function():
     reset_release_store_for_tests()
 
 
+def test_prepare_validation_keeps_other_project_progress():
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    other = store.add_message(
+        thread_id,
+        role="assistant",
+        content="⏳ Autofix agent running...",
+        metadata={
+            "agent_id": "devops",
+            "pipeline": True,
+            "status": "in_progress",
+            "project_key": "BIG",
+        },
+    )
+
+    missing = run_prepare_deploy(thread_id=thread_id, user_message="prepare deploy VFA")
+    assert missing["status"] == "complete"
+    assert "Version not specified" in missing["summary"]
+    asked = [
+        message
+        for message in store.list_messages(thread_id)
+        if "Which release" in (message.get("content") or "")
+    ]
+    assert asked and asked[-1]["metadata"].get("project_key") == "VFA"
+
+    invalid = run_prepare_deploy(
+        thread_id=thread_id,
+        user_message="prepare deploy VFA",
+        version="latest",
+    )
+    assert invalid["status"] == "complete"
+    assert "Invalid version" in invalid["summary"]
+    noted = [
+        message
+        for message in store.list_messages(thread_id)
+        if "Invalid version" in (message.get("content") or "")
+    ]
+    assert noted and noted[-1]["metadata"].get("project_key") == "VFA"
+
+    kept = next(
+        message
+        for message in store.list_messages(thread_id)
+        if message["message_id"] == other["message_id"]
+    )
+    assert kept["metadata"]["status"] == "in_progress"
+    assert kept["metadata"]["project_key"] == "BIG"
+
+
 def test_branch_pair_uses_versioned_staging():
     feature, production = _branch_pair("VFA", "mckort/vcfieldassistant", "0.2.3")
     assert feature == "staging-0.2.3"

@@ -101,6 +101,47 @@ def test_teardown_waits_for_yes_then_dispatches(monkeypatch):
     assert dispatched["inputs"] == {"confirm": "yes"}
 
 
+def test_teardown_accepts_yes_and_no_with_project_key(monkeypatch):
+    """Ship cards reply ``yes GPW-PROD`` / ``no GPW-PROD`` on the shared thread."""
+    dispatched = {}
+
+    def _dispatch(phase, inputs=None, **_kwargs):
+        dispatched["phase"] = phase
+        dispatched["inputs"] = inputs
+        return {"workflow": "teardown-staging.yml", "run_id": 42, "html_url": "https://example.test/42"}
+
+    monkeypatch.setattr(
+        "bigas.resources.devops.gpw_pipeline.dispatch_gpw_workflow",
+        _dispatch,
+    )
+    chat = get_chat_store()
+    cancelled = chat.create_thread("user-1", "devops")
+    run_chat_deploy_pipeline(
+        thread_id=cancelled["thread_id"],
+        user_message="teardown staging GPW-PROD",
+    )
+    stopped = run_chat_deploy_pipeline(
+        thread_id=cancelled["thread_id"],
+        user_message="no GPW-PROD",
+    )
+    assert stopped["status"] == "complete"
+    assert "phase" not in dispatched
+    assert "cancelled" in _texts(cancelled["thread_id"]).lower()
+
+    confirmed = chat.create_thread("user-1", "devops")
+    run_chat_deploy_pipeline(
+        thread_id=confirmed["thread_id"],
+        user_message="teardown staging GPW-PROD",
+    )
+    started = run_chat_deploy_pipeline(
+        thread_id=confirmed["thread_id"],
+        user_message="yes GPW-PROD",
+    )
+    assert started.get("deploy_poll_active") is True
+    assert dispatched["phase"] == "teardown"
+    assert dispatched["inputs"] == {"confirm": "yes"}
+
+
 def _gpw_staging_status_client():
     from app import create_app
 

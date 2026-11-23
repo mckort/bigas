@@ -1,5 +1,68 @@
 const CONFIRM_RE = /reply\s+\*{0,2}yes\*{0,2}/i
 
+/** owner/repo (lowercase) → project key — keep in sync with portfolio DEFAULT_PROJECT_REPOS. */
+const REPO_TO_PROJECT = {
+  'mckort/vcfieldassistant': 'VFA',
+  'mckort/roadpal': 'WAYW',
+  'mckort/bigas': 'BIG',
+  'mckort/remotebrief': 'REM',
+  'green-promo-wear-global/greenpromowear-website': 'GPWW',
+  'green-promo-wear-global/gpw': 'GPW-PROD',
+  'mckort/multlyourdreamadventure': 'FYDA',
+  'mckort/mylifesdeed': 'MYL',
+  'mckort/frimaninvestments': 'FRI',
+  'mckort/auralearn': 'AURA',
+  'mckort/pass-or-fund': 'POF',
+}
+
+const DEPLOY_HEADER_RE =
+  /\*\*Deploy\s+([A-Z][A-Z0-9-]+?)(?:\s+[\d.]+)?\*\*|^🚀\s*\*\*Deploy\s+([A-Z][A-Z0-9-]+?)(?:\s+[\d.]+)?:/im
+/** ``Prepare AuraLearn 0.7.0`` / ``Prepare VFA 0.1.0:`` inside bold markers. */
+const PREPARE_HEADER_RE = /\*\*Prepare\s+(.+?)\s+[\d.]+:?\*\*/i
+const USER_COMMAND_RE =
+  /^(?:prepare\s+deploy|deploy)\s+([A-Z][A-Z0-9-]+)\b|^(?:yes|no)\s+([A-Z][A-Z0-9-]+)\s*$/i
+const REPO_MENTION_RE = /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/g
+
+const BRAND_TO_PROJECT = {
+  auralearn: 'AURA',
+  'aura learn': 'AURA',
+  bigas: 'BIG',
+  'vc field assistant': 'VFA',
+  vcfieldassistant: 'VFA',
+  roadpal: 'WAYW',
+  remotebrief: 'REM',
+  greenpromowear: 'GPWW',
+  'green promo wear': 'GPWW',
+  'green promo wear store': 'GPW-PROD',
+  'pass or fund': 'POF',
+  'pass-or-fund': 'POF',
+  'friman investments': 'FRI',
+  "my life's deed": 'MYL',
+  'fulfill your dream adventure': 'FYDA',
+}
+
+const KNOWN_PROJECT_KEYS = new Set([
+  ...Object.values(REPO_TO_PROJECT),
+  ...Object.values(BRAND_TO_PROJECT),
+])
+
+function normalizeProjectLabel(label) {
+  return String(label || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/** One lookup for project keys and multi-word brand names. */
+const LABEL_TO_PROJECT = new Map()
+for (const key of KNOWN_PROJECT_KEYS) {
+  LABEL_TO_PROJECT.set(normalizeProjectLabel(key), key)
+}
+for (const [label, key] of Object.entries(BRAND_TO_PROJECT)) {
+  LABEL_TO_PROJECT.set(normalizeProjectLabel(label), key)
+}
+
+function projectKeyFromLabel(label) {
+  return LABEL_TO_PROJECT.get(normalizeProjectLabel(label)) || ''
+}
+
 function at(value) {
   const time = new Date(value || 0).getTime()
   return Number.isNaN(time) ? 0 : time
@@ -29,6 +92,75 @@ export function messagesForDeploy(incoming, { since, prompt } = {}) {
     }
   }
   return messagesSince(list, since)
+}
+
+function metaProjectKey(message) {
+  return String(message?.metadata?.project_key || '')
+    .trim()
+    .toUpperCase()
+}
+
+/** Infer a project key from message text when metadata is missing (legacy posts). */
+export function inferProjectKeyFromMessage(message) {
+  const meta = metaProjectKey(message)
+  if (meta) return meta
+
+  const text = String(message?.content || '')
+  if (!text.trim()) return ''
+
+  if (message?.role === 'user') {
+    const userMatch = text.trim().match(USER_COMMAND_RE)
+    if (userMatch) return String(userMatch[1] || userMatch[2] || '').toUpperCase()
+  }
+
+  const deploy = text.match(DEPLOY_HEADER_RE)
+  if (deploy) {
+    const key = String(deploy[1] || deploy[2] || '').toUpperCase()
+    if (KNOWN_PROJECT_KEYS.has(key)) return key
+  }
+
+  const prepare = text.match(PREPARE_HEADER_RE)
+  if (prepare) {
+    const key = projectKeyFromLabel(prepare[1])
+    if (key) return key
+  }
+
+  let found = ''
+  for (const match of text.matchAll(REPO_MENTION_RE)) {
+    const repo = String(match[1] || '').toLowerCase()
+    const key = REPO_TO_PROJECT[repo]
+    if (key) {
+      // Prefer product repos over shared infra (gcp-single-vm-webstack is not mapped).
+      found = key
+      break
+    }
+  }
+  return found
+}
+
+/**
+ * Shared DevOps thread can interleave projects. Keep only this ship's run.
+ * Prefers metadata.project_key; falls back to content cues and active-segment tracking.
+ */
+export function filterMessagesForProject(messages, projectKey) {
+  const key = String(projectKey || '')
+    .trim()
+    .toUpperCase()
+  if (!key) return messages || []
+
+  let active = ''
+  const out = []
+  for (const message of messages || []) {
+    if (!message) continue
+    const inferred = inferProjectKeyFromMessage(message)
+    if (inferred) {
+      active = inferred
+      if (inferred === key) out.push(message)
+      continue
+    }
+    if (active === key) out.push(message)
+  }
+  return out
 }
 
 export function mergeDeployMessages(previous, incoming) {
@@ -83,9 +215,11 @@ export function deployRunPhase({ pendingSend = false, error = '', messages = [],
 }
 
 export function applyDeployUpdate(run, incoming, { pendingSend = false, error = '', deployPoll = false } = {}) {
-  const messages = mergeDeployMessages(
-    run?.messages,
-    messagesForDeploy(incoming, { since: run?.since, prompt: run?.prompt }),
+  const projectKey = String(run?.projectKey || '').trim().toUpperCase()
+  const windowed = messagesForDeploy(incoming, { since: run?.since, prompt: run?.prompt })
+  const messages = filterMessagesForProject(
+    mergeDeployMessages(run?.messages, windowed),
+    projectKey,
   )
   return {
     phase: deployRunPhase({ pendingSend, error, messages, deployPoll }),
@@ -93,7 +227,7 @@ export function applyDeployUpdate(run, incoming, { pendingSend = false, error = 
     threadId: run?.threadId || '',
     since: run?.since || '',
     prompt: run?.prompt || '',
-    projectKey: String(run?.projectKey || '').trim().toUpperCase(),
+    projectKey,
     messages,
     error: error || '',
     deployPoll: Boolean(deployPoll) && !error,
@@ -154,4 +288,13 @@ export function isTrackedShipRun(run, projectKey) {
   if (!run || !key) return false
   if (String(run.projectKey || '').trim().toUpperCase() !== key) return false
   return run.phase === 'working' || run.phase === 'confirm'
+}
+
+/** Confirm/cancel from a ship card always names the project (shared DevOps thread). */
+export function shipConfirmPrompt(projectKey, yes) {
+  const key = String(projectKey || '')
+    .trim()
+    .toUpperCase()
+  const verb = yes ? 'yes' : 'no'
+  return key ? `${verb} ${key}` : verb
 }
