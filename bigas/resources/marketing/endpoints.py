@@ -2039,11 +2039,9 @@ def fetch_google_ads_recommendations():
         )
 
         data = request.get_json(silent=True) or {}
-        customer_id = (
-            (data.get("customer_id") or os.environ.get("GOOGLE_ADS_CUSTOMER_ID") or "")
-            .replace("-", "")
-            .strip()
-        )
+        customer_id = str(
+            data.get("customer_id") or os.environ.get("GOOGLE_ADS_CUSTOMER_ID") or ""
+        ).replace("-", "").strip()
         if not customer_id:
             return jsonify(
                 {
@@ -2053,22 +2051,37 @@ def fetch_google_ads_recommendations():
                     )
                 }
             ), 400
+        if not customer_id.isdigit():
+            return jsonify({"error": "customer_id must be digits."}), 400
 
-        login_customer_id = (
-            (data.get("login_customer_id") or os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "")
-            .replace("-", "")
-            .strip()
-            or None
-        )
+        login_customer_id = str(
+            data.get("login_customer_id")
+            or os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID")
+            or ""
+        ).replace("-", "").strip() or None
         include_dismissed = bool(data.get("include_dismissed", False))
         include_optimization_score = bool(data.get("include_optimization_score", True))
         raw_types = data.get("recommendation_types") or []
         if isinstance(raw_types, str):
-            recommendation_types = [raw_types]
+            raw_type_list = [raw_types]
         elif isinstance(raw_types, list):
-            recommendation_types = [str(t) for t in raw_types if str(t).strip()]
+            raw_type_list = list(raw_types)
         else:
             return jsonify({"error": "recommendation_types must be a string or array of strings"}), 400
+        recommendation_types: List[str] = []
+        for raw in raw_type_list:
+            token = str(raw).strip().upper()
+            if not token:
+                continue
+            if re.fullmatch(r"[A-Z0-9_]+", token) is None:
+                return jsonify(
+                    {
+                        "error": (
+                            "recommendation_types must be enum names like KEYWORD or CAMPAIGN_BUDGET"
+                        )
+                    }
+                ), 400
+            recommendation_types.append(token)
 
         svc = GoogleAdsService(login_customer_id=login_customer_id)
         result = svc.fetch_recommendations(

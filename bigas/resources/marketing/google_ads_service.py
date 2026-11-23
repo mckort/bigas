@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
@@ -456,8 +457,13 @@ class GoogleAdsService:
         if not include_dismissed:
             where_parts.append("recommendation.dismissed = FALSE")
         types = [str(t).strip().upper() for t in (recommendation_types or []) if str(t).strip()]
+        # Enum literals in GAQL are unquoted identifiers, so reject anything
+        # that is not a bare enum name before it is interpolated.
+        if any(re.fullmatch(r"[A-Z0-9_]+", t) is None for t in types):
+            raise ValueError(
+                "recommendation_types must be enum names like KEYWORD or CAMPAIGN_BUDGET"
+            )
         if types:
-            # Enum literals in GAQL are unquoted identifiers.
             type_list = ", ".join(types)
             where_parts.append(f"recommendation.type IN ({type_list})")
 

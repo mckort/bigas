@@ -38,6 +38,15 @@ def test_build_recommendations_query_filters():
     assert "recommendation.type IN (KEYWORD, CAMPAIGN_BUDGET)" in q2
 
 
+def test_build_recommendations_query_rejects_non_identifiers():
+    from bigas.resources.marketing.google_ads_service import GoogleAdsService
+
+    with pytest.raises(ValueError, match="recommendation_types"):
+        GoogleAdsService.build_recommendations_query(
+            recommendation_types=["KEYWORD) OR (1=1"]
+        )
+
+
 def test_normalize_recommendation_row_impact_and_details():
     from bigas.resources.marketing.google_ads_service import GoogleAdsService
 
@@ -179,6 +188,91 @@ def test_fetch_google_ads_recommendations_requires_customer(monkeypatch):
     resp = client.post("/mcp/tools/fetch_google_ads_recommendations", json={})
     assert resp.status_code == 400
     assert "customer_id" in resp.get_json()["error"]
+
+
+def test_fetch_google_ads_recommendations_accepts_integer_ids(monkeypatch):
+    from flask import Flask
+
+    from bigas.resources.marketing import google_ads_service as gas
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    seen = {}
+
+    class _FakeSvc:
+        def __init__(self, *a, **k):
+            seen["login_customer_id"] = k.get("login_customer_id")
+
+        def fetch_recommendations(self, customer_id, **kwargs):
+            seen["customer_id"] = customer_id
+            seen["recommendation_types"] = kwargs.get("recommendation_types")
+            return {
+                "customer_id": customer_id,
+                "include_dismissed": False,
+                "recommendation_types": kwargs.get("recommendation_types") or [],
+                "optimization": None,
+                "recommendations": [],
+                "count": 0,
+                "by_type": {},
+            }
+
+    monkeypatch.setenv("GOOGLE_ADS_DEVELOPER_TOKEN", "test-token")
+    monkeypatch.delenv("GOOGLE_ADS_CUSTOMER_ID", raising=False)
+    monkeypatch.setattr(gas, "GoogleAdsService", _FakeSvc)
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    client = app.test_client()
+    resp = client.post(
+        "/mcp/tools/fetch_google_ads_recommendations",
+        json={
+            "customer_id": 1234567890,
+            "login_customer_id": 9988776655,
+            "recommendation_types": ["keyword"],
+        },
+    )
+    assert resp.status_code == 200
+    assert seen["customer_id"] == "1234567890"
+    assert seen["login_customer_id"] == "9988776655"
+    assert seen["recommendation_types"] == ["KEYWORD"]
+
+
+def test_fetch_google_ads_recommendations_rejects_non_digit_customer(monkeypatch):
+    from flask import Flask
+
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    monkeypatch.delenv("GOOGLE_ADS_CUSTOMER_ID", raising=False)
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    client = app.test_client()
+    resp = client.post(
+        "/mcp/tools/fetch_google_ads_recommendations",
+        json={"customer_id": "abc-123"},
+    )
+    assert resp.status_code == 400
+    assert "digits" in resp.get_json()["error"]
+
+
+def test_fetch_google_ads_recommendations_rejects_injected_types(monkeypatch):
+    from flask import Flask
+
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    monkeypatch.delenv("GOOGLE_ADS_CUSTOMER_ID", raising=False)
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    client = app.test_client()
+    resp = client.post(
+        "/mcp/tools/fetch_google_ads_recommendations",
+        json={
+            "customer_id": "1234567890",
+            "recommendation_types": ["KEYWORD) OR (1=1"],
+        },
+    )
+    assert resp.status_code == 400
+    assert "recommendation_types" in resp.get_json()["error"]
 
 
 def test_fetch_google_ads_recommendations_uses_env_customer(monkeypatch):
