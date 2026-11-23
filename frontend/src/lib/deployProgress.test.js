@@ -274,6 +274,30 @@ test('inferProjectKeyFromMessage reads metadata, deploy headers, and repos', () 
     ),
     'AURA',
   )
+  assert.equal(
+    inferProjectKeyFromMessage(
+      message({
+        content: '📦 **Prepare AuraLearn 0.7.0:** getting this cut onto main…',
+        metadata: {},
+      }),
+    ),
+    'AURA',
+  )
+  assert.equal(
+    inferProjectKeyFromMessage(
+      message({ content: '**Prepare VFA 0.1.0**', metadata: {} }),
+    ),
+    'VFA',
+  )
+  assert.equal(
+    inferProjectKeyFromMessage(
+      message({
+        content: '**Prepare VC Field Assistant 0.3.0:** staging the cut',
+        metadata: {},
+      }),
+    ),
+    'VFA',
+  )
 })
 
 test('filterMessagesForProject drops other projects in the shared thread', () => {
@@ -319,6 +343,38 @@ test('filterMessagesForProject drops other projects in the shared thread', () =>
   assert.deepEqual(
     lines.map((m) => m.message_id),
     ['u1', 'a1', 'a2'],
+  )
+})
+
+test('filterMessagesForProject ignores leading messages with no project', () => {
+  const lines = filterMessagesForProject(
+    [
+      message({
+        message_id: 'lead',
+        content: '⏳ Autofix agent running...',
+        metadata: { pipeline: true, status: 'in_progress' },
+      }),
+      message({
+        message_id: 'a',
+        content: '📦 **Prepare AuraLearn 0.7.0:** getting this cut onto main',
+        metadata: {},
+      }),
+      message({
+        message_id: 'follow',
+        content: 'Still working on the cut',
+        metadata: { pipeline: true, status: 'in_progress' },
+      }),
+      message({
+        message_id: 'other',
+        content: '🚀 **Deploy BIG:** starting GitHub Actions…',
+        metadata: {},
+      }),
+    ],
+    'AURA',
+  )
+  assert.deepEqual(
+    lines.map((m) => m.message_id),
+    ['a', 'follow'],
   )
 })
 

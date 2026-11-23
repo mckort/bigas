@@ -17,8 +17,8 @@ const REPO_TO_PROJECT = {
 
 const DEPLOY_HEADER_RE =
   /\*\*Deploy\s+([A-Z][A-Z0-9-]+?)(?:\s+[\d.]+)?\*\*|^🚀\s*\*\*Deploy\s+([A-Z][A-Z0-9-]+?)(?:\s+[\d.]+)?:/im
-/** ``Prepare AuraLearn 0.7.0`` / ``Prepare VFA 0.1.0`` inside bold markers. */
-const PREPARE_HEADER_RE = /\*\*Prepare\s+(.+?)\s+[\d.]+\*\*/i
+/** ``Prepare AuraLearn 0.7.0`` / ``Prepare VFA 0.1.0:`` inside bold markers. */
+const PREPARE_HEADER_RE = /\*\*Prepare\s+(.+?)\s+[\d.]+:?\*\*/i
 const USER_COMMAND_RE =
   /^(?:prepare\s+deploy|deploy)\s+([A-Z][A-Z0-9-]+)\b|^(?:yes|no)\s+([A-Z][A-Z0-9-]+)\s*$/i
 const REPO_MENTION_RE = /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/g
@@ -46,13 +46,21 @@ const KNOWN_PROJECT_KEYS = new Set([
   ...Object.values(BRAND_TO_PROJECT),
 ])
 
+function normalizeProjectLabel(label) {
+  return String(label || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/** One lookup for project keys and multi-word brand names. */
+const LABEL_TO_PROJECT = new Map()
+for (const key of KNOWN_PROJECT_KEYS) {
+  LABEL_TO_PROJECT.set(normalizeProjectLabel(key), key)
+}
+for (const [label, key] of Object.entries(BRAND_TO_PROJECT)) {
+  LABEL_TO_PROJECT.set(normalizeProjectLabel(label), key)
+}
+
 function projectKeyFromLabel(label) {
-  const raw = String(label || '').trim()
-  if (!raw) return ''
-  const upper = raw.toUpperCase()
-  if (KNOWN_PROJECT_KEYS.has(upper)) return upper
-  const brand = BRAND_TO_PROJECT[raw.toLowerCase()]
-  return brand || ''
+  return LABEL_TO_PROJECT.get(normalizeProjectLabel(label)) || ''
 }
 
 function at(value) {
@@ -140,7 +148,7 @@ export function filterMessagesForProject(messages, projectKey) {
     .toUpperCase()
   if (!key) return messages || []
 
-  let active = key
+  let active = ''
   const out = []
   for (const message of messages || []) {
     if (!message) continue
