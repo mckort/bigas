@@ -1507,6 +1507,7 @@ def get_manifest():
             {"name": "cleanup_old_reports", "description": "Cleans up old weekly reports to manage storage costs.", "path": "/mcp/tools/cleanup_old_reports", "method": "POST"},
             {"name": "linkedin_ads_health_check", "description": "Smoke test LinkedIn Ads API access by listing ad accounts.", "path": "/mcp/tools/linkedin_ads_health_check", "method": "GET"},
             {"name": "google_ads_health_check", "description": "Smoke test Google Ads API access via ADC + developer token; lists accessible customer IDs.", "path": "/mcp/tools/google_ads_health_check", "method": "GET"},
+            {"name": "fetch_google_ads_recommendations", "description": "Read-only Google Ads Recommendations (Optimization Score suggestions): active recommendations with type, campaign, impact, and optimization score/uplift. Does not apply or dismiss.", "path": "/mcp/tools/fetch_google_ads_recommendations", "method": "POST", "parameters": {"type": "object", "properties": {"customer_id": {"type": "string"}, "login_customer_id": {"type": "string"}, "include_dismissed": {"type": "boolean", "default": False}, "recommendation_types": {"type": "array", "items": {"type": "string"}, "description": "Optional GAQL enum names, e.g. KEYWORD, CAMPAIGN_BUDGET"}, "include_optimization_score": {"type": "boolean", "default": True}}}},
             {"name": "fetch_linkedin_ad_analytics_report", "description": "Fetch LinkedIn adAnalytics and store raw data in GCS. Supports explicit date range via start_date/end_date or relative_range.", "path": "/mcp/tools/fetch_linkedin_ad_analytics_report", "method": "POST", "parameters": {"type": "object", "properties": {"account_urn": {"type": "string"}, "start_date": {"type": "string", "description": "YYYY-MM-DD"}, "end_date": {"type": "string", "description": "YYYY-MM-DD"}, "relative_range": {"type": "string", "enum": ["LAST_DAY", "LAST_7_DAYS", "LAST_30_DAYS"]}, "time_granularity": {"type": "string", "enum": ["DAILY", "MONTHLY", "ALL"], "default": "DAILY"}, "pivot": {"type": "string", "default": "ACCOUNT"}, "pivots": {"type": "array", "items": {"type": "string"}}, "store_raw": {"type": "boolean", "default": True}, "force_refresh": {"type": "boolean", "default": False}, "include_entity_names": {"type": "boolean", "default": False}}}},
             {"name": "linkedin_exchange_code", "description": "Exchange a LinkedIn OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/linkedin_exchange_code", "method": "POST"},
             {"name": "reddit_exchange_code", "description": "Exchange a Reddit OAuth authorization code for refresh token (does not log the code).", "path": "/mcp/tools/reddit_exchange_code", "method": "POST"},
@@ -2013,6 +2014,87 @@ def google_ads_health_check():
         return jsonify(body), 502 if (e.status_code or 500) >= 500 else 400
     except Exception as e:
         logger.error("Error in google_ads_health_check: %s", traceback.format_exc())
+        return jsonify({"error": sanitize_error_message(str(e))}), 500
+
+
+@marketing_bp.route('/mcp/tools/fetch_google_ads_recommendations', methods=['POST'])
+def fetch_google_ads_recommendations():
+    """
+    Read-only Google Ads Recommendations (Optimization Score suggestions).
+
+    Request JSON:
+      - customer_id: optional override for GOOGLE_ADS_CUSTOMER_ID
+      - login_customer_id: optional MCC override for GOOGLE_ADS_LOGIN_CUSTOMER_ID
+      - include_dismissed: include dismissed recommendations (default false)
+      - recommendation_types: optional list of type enums (e.g. KEYWORD, CAMPAIGN_BUDGET)
+      - include_optimization_score: include score + uplift-by-type (default true)
+
+    Does not apply or dismiss recommendations.
+    """
+    try:
+        from bigas.resources.marketing.google_ads_service import (
+            GoogleAdsApiError,
+            GoogleAdsAuthError,
+            GoogleAdsService,
+        )
+
+        data = request.get_json(silent=True) or {}
+        customer_id = (
+            (data.get("customer_id") or os.environ.get("GOOGLE_ADS_CUSTOMER_ID") or "")
+            .replace("-", "")
+            .strip()
+        )
+        if not customer_id:
+            return jsonify(
+                {
+                    "error": (
+                        "customer_id is required. Pass it in the request or set "
+                        "GOOGLE_ADS_CUSTOMER_ID."
+                    )
+                }
+            ), 400
+
+        login_customer_id = (
+            (data.get("login_customer_id") or os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "")
+            .replace("-", "")
+            .strip()
+            or None
+        )
+        include_dismissed = bool(data.get("include_dismissed", False))
+        include_optimization_score = bool(data.get("include_optimization_score", True))
+        raw_types = data.get("recommendation_types") or []
+        if isinstance(raw_types, str):
+            recommendation_types = [raw_types]
+        elif isinstance(raw_types, list):
+            recommendation_types = [str(t) for t in raw_types if str(t).strip()]
+        else:
+            return jsonify({"error": "recommendation_types must be a string or array of strings"}), 400
+
+        svc = GoogleAdsService(login_customer_id=login_customer_id)
+        result = svc.fetch_recommendations(
+            customer_id,
+            include_dismissed=include_dismissed,
+            recommendation_types=recommendation_types or None,
+            include_optimization_score=include_optimization_score,
+        )
+        return jsonify({"status": "success", **result})
+    except ValueError as e:
+        return jsonify({"error": sanitize_error_message(str(e))}), 400
+    except GoogleAdsAuthError as e:
+        logger.error("Google Ads auth error in fetch_google_ads_recommendations: %s", e)
+        return jsonify({"error": sanitize_error_message(str(e))}), 401
+    except GoogleAdsApiError as e:
+        logger.error(
+            "Google Ads API error in fetch_google_ads_recommendations: status=%s body=%s",
+            e.status_code,
+            (e.response_text or "")[:500],
+        )
+        body: Dict[str, Any] = {"error": sanitize_error_message(str(e))}
+        if e.status_code is not None:
+            body["google_ads_status"] = e.status_code
+        return jsonify(body), 502 if (e.status_code or 500) >= 500 else 400
+    except Exception as e:
+        logger.error("Error in fetch_google_ads_recommendations: %s", traceback.format_exc())
         return jsonify({"error": sanitize_error_message(str(e))}), 500
 
 

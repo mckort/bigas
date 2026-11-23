@@ -32,6 +32,7 @@ TOOL_TIERS: Dict[str, str] = {
     "check_deployment_risk": LOOK,
     "check_website_health": LOOK,
     "fetch_ai_usage": LOOK,
+    "fetch_google_ads_recommendations": LOOK,
     "get_deployment_status": LOOK,
     "get_job_result": LOOK,
     "get_job_status": LOOK,

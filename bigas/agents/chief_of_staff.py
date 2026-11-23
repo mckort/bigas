@@ -286,6 +286,7 @@ MUST_DELEGATE_TOOLS = {
     "run_linkedin_portfolio_report_async": "marketing",
     "run_google_ads_portfolio_report": "marketing",
     "run_google_ads_portfolio_report_async": "marketing",
+    "fetch_google_ads_recommendations": "marketing",
     "run_meta_portfolio_report": "marketing",
     "run_meta_portfolio_report_async": "marketing",
     "run_cross_platform_marketing_analysis": "marketing",

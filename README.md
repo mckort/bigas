@@ -357,7 +357,7 @@ Details: [from quarterly Objective to shipped work](#walkthrough-from-quarterly-
 
 **Optional:** `DISCORD_WEBHOOK_URL_MARKETING`. Ad platforms for cross-platform spend (see below). `TARGET_KEYWORDS` for SEO. `X_ACCOUNTS` + credentials for approve/decline drafts.
 
-**Google Ads (optional):** set `GOOGLE_ADS_DEVELOPER_TOKEN` and `GOOGLE_ADS_CUSTOMER_ID`. Auth is ADC — the Cloud Run service account (or your local `gcloud` user) must be invited into the Ads account or MCC. If you query a client account under a manager, also set `GOOGLE_ADS_LOGIN_CUSTOMER_ID`. Smoke-test with `GET /mcp/tools/google_ads_health_check` (lists accessible customer IDs). Then ask Marketing: *"Run a Google Ads portfolio report"*.
+**Google Ads (optional):** set `GOOGLE_ADS_DEVELOPER_TOKEN` and `GOOGLE_ADS_CUSTOMER_ID`. Auth is ADC — the Cloud Run service account (or your local `gcloud` user) must be invited into the Ads account or MCC. If you query a client account under a manager, also set `GOOGLE_ADS_LOGIN_CUSTOMER_ID`. Smoke-test with `GET /mcp/tools/google_ads_health_check` (lists accessible customer IDs). Then ask Marketing: *"Run a Google Ads portfolio report"* or *"Show Google Ads recommendations"*.
 
 **Try:** in the Marketing thread: *"How did the site do last week?"* Then: *"Run a cross-platform marketing analysis"* once ads are connected.
 
@@ -1003,6 +1003,7 @@ Requires `GOOGLE_ADS_DEVELOPER_TOKEN` plus ADC (Cloud Run SA or local ADC). Gran
 | Endpoint | Description |
 |---|---|
 | `GET google_ads_health_check` | Verify ADC + developer token; list accessible customer IDs |
+| `POST fetch_google_ads_recommendations` | Read-only Optimization Score recommendations (type, campaign, impact) + score/uplift — does not apply or dismiss |
 | `POST run_google_ads_portfolio_report` | Campaign/ad/audience performance report → Discord and Marketing Analyst chat |
 | `POST run_google_ads_portfolio_report_async` | Async variant — returns a `job_id` immediately |
 
