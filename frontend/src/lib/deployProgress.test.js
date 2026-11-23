@@ -6,8 +6,11 @@ import {
   deployProgressLines,
   deployRunPhase,
   emptyDeployRun,
+  filterMessagesForProject,
+  inferProjectKeyFromMessage,
   isTrackedShipRun,
   pipelineForProject,
+  shipConfirmPrompt,
 } from './deployProgress.js'
 
 const since = '2026-11-13T14:00:00.000Z'
@@ -238,4 +241,123 @@ test('emptyDeployRun keeps a blank since so a resume can load the whole thread',
   assert.equal(run.since, '')
   assert.equal(run.phase, 'working')
   assert.equal(run.error, '')
+})
+
+test('inferProjectKeyFromMessage reads metadata, deploy headers, and repos', () => {
+  assert.equal(
+    inferProjectKeyFromMessage(message({ metadata: { project_key: 'aura' } })),
+    'AURA',
+  )
+  assert.equal(
+    inferProjectKeyFromMessage(
+      message({ content: '🚀 **Deploy BIG:** starting GitHub Actions…' }),
+    ),
+    'BIG',
+  )
+  assert.equal(
+    inferProjectKeyFromMessage(
+      message({ content: '🚀 **Deploy POF 0.4.0:** starting GitHub Actions…' }),
+    ),
+    'POF',
+  )
+  assert.equal(
+    inferProjectKeyFromMessage(
+      message({
+        content: 'Compared tag -> **main on mckort/bigas**. 2 file(s) changed.',
+      }),
+    ),
+    'BIG',
+  )
+  assert.equal(
+    inferProjectKeyFromMessage(
+      message({ role: 'user', content: 'prepare deploy AURA 0.7.0' }),
+    ),
+    'AURA',
+  )
+})
+
+test('filterMessagesForProject drops other projects in the shared thread', () => {
+  const lines = filterMessagesForProject(
+    [
+      message({
+        message_id: 'u1',
+        role: 'user',
+        content: 'prepare deploy AURA 0.7.0',
+        created_at: '2026-11-13T14:00:01.000Z',
+      }),
+      message({
+        message_id: 'a1',
+        content: '📦 **Prepare AuraLearn 0.7.0:** getting this cut onto `main`',
+        metadata: { pipeline: true, project_key: 'AURA' },
+        created_at: '2026-11-13T14:00:02.000Z',
+      }),
+      message({
+        message_id: 'b1',
+        content: '🔎 Pre-check: comparing…',
+        metadata: { pipeline: true, project_key: 'BIG' },
+        created_at: '2026-11-13T14:00:03.000Z',
+      }),
+      message({
+        message_id: 'b2',
+        content: '🚀 **Deploy BIG:** starting GitHub Actions…',
+        created_at: '2026-11-13T14:00:04.000Z',
+      }),
+      message({
+        message_id: 'p1',
+        content: '🚀 **Deploy POF 0.4.0:** starting GitHub Actions…',
+        created_at: '2026-11-13T14:00:05.000Z',
+      }),
+      message({
+        message_id: 'a2',
+        content: 'AuraLearn risk check done.',
+        metadata: { pipeline: true, project_key: 'AURA' },
+        created_at: '2026-11-13T14:00:06.000Z',
+      }),
+    ],
+    'AURA',
+  )
+  assert.deepEqual(
+    lines.map((m) => m.message_id),
+    ['u1', 'a1', 'a2'],
+  )
+})
+
+test('applyDeployUpdate scopes progress to the ship project key', () => {
+  const run = applyDeployUpdate(
+    {
+      since,
+      prompt: 'prepare deploy AURA 0.7.0',
+      projectKey: 'AURA',
+      messages: [],
+    },
+    [
+      message({
+        message_id: 'u1',
+        role: 'user',
+        content: 'prepare deploy AURA 0.7.0',
+        created_at: '2026-11-13T14:00:01.000Z',
+      }),
+      message({
+        message_id: 'a1',
+        content: 'Prepare AuraLearn started',
+        metadata: { pipeline: true, project_key: 'AURA' },
+        created_at: '2026-11-13T14:00:02.000Z',
+      }),
+      message({
+        message_id: 'b1',
+        content: '🚀 **Deploy BIG:** starting GitHub Actions…',
+        created_at: '2026-11-13T14:00:03.000Z',
+      }),
+    ],
+  )
+  assert.deepEqual(
+    deployProgressLines(run.messages).map((line) => line.text),
+    ['Prepare AuraLearn started'],
+  )
+})
+
+test('shipConfirmPrompt names the project for the shared DevOps thread', () => {
+  assert.equal(shipConfirmPrompt('aura', true), 'yes AURA')
+  assert.equal(shipConfirmPrompt('VFA', false), 'no VFA')
+  assert.equal(shipConfirmPrompt('', true), 'yes')
 })

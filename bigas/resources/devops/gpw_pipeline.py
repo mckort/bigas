@@ -258,25 +258,37 @@ def post_staging_status(message: str) -> None:
     post_to_discord(url, text, chat_agent_id="devops", mirror_thread=False)
 
 
-def _post(thread_id: Optional[str], content: str, *, status: Optional[str] = None) -> None:
+def _post(
+    thread_id: Optional[str],
+    content: str,
+    *,
+    status: Optional[str] = None,
+    project_key: Optional[str] = None,
+) -> None:
     if not thread_id or not (content or "").strip():
         return
-    meta: Dict[str, Any] = {"agent_id": "devops", "pipeline": True}
-    if status:
-        meta["status"] = status
-    _store().add_message(thread_id, role="assistant", content=content.strip(), metadata=meta)
+    from bigas.resources.devops.progress_messages import pipeline_metadata
+
+    _store().add_message(
+        thread_id,
+        role="assistant",
+        content=content.strip(),
+        metadata=pipeline_metadata(
+            status=status, project_key=project_key or "GPW-PROD"
+        ),
+    )
 
 
-def _complete_progress(thread_id: Optional[str]) -> None:
+def _complete_progress(
+    thread_id: Optional[str], *, project_key: Optional[str] = None
+) -> None:
     if not thread_id:
         return
-    store = _store()
-    if not hasattr(store, "patch_message"):
-        return
-    for message in store.list_messages(thread_id):
-        meta = message.get("metadata") or {}
-        if meta.get("pipeline") and meta.get("status") == "in_progress":
-            store.patch_message(message["message_id"], metadata={"status": "complete"})
+    from bigas.resources.devops.progress_messages import complete_pipeline_progress
+
+    complete_pipeline_progress(
+        _store(), thread_id, project_key=project_key or "GPW-PROD"
+    )
 
 
 def _thread(thread_id: Optional[str]) -> Dict[str, Any]:

@@ -141,25 +141,28 @@ def _post(
     *,
     role: str = "assistant",
     status: Optional[str] = None,
+    project_key: Optional[str] = None,
 ) -> None:
     if not thread_id or not (content or "").strip():
         return
-    meta: Dict[str, Any] = {"agent_id": "devops", "pipeline": True}
-    if status:
-        meta["status"] = status
-    _store().add_message(thread_id, role=role, content=content.strip(), metadata=meta)
+    from bigas.resources.devops.progress_messages import pipeline_metadata
+
+    _store().add_message(
+        thread_id,
+        role=role,
+        content=content.strip(),
+        metadata=pipeline_metadata(status=status, project_key=project_key),
+    )
 
 
-def _complete_pipeline_progress(thread_id: Optional[str]) -> None:
+def _complete_pipeline_progress(
+    thread_id: Optional[str], *, project_key: Optional[str] = None
+) -> None:
     if not thread_id:
         return
-    store = _store()
-    if not hasattr(store, "patch_message"):
-        return
-    for message in store.list_messages(thread_id):
-        meta = message.get("metadata") or {}
-        if meta.get("pipeline") and meta.get("status") == "in_progress":
-            store.patch_message(message["message_id"], metadata={"status": "complete"})
+    from bigas.resources.devops.progress_messages import complete_pipeline_progress
+
+    complete_pipeline_progress(_store(), thread_id, project_key=project_key)
 
 
 def _thread_get(thread_id: Optional[str], key: str) -> Optional[Dict[str, Any]]:
@@ -1610,27 +1613,37 @@ def poll_prepare_followup(
     if not poll:
         return {"status": "complete", "active": False}
 
+    from bigas.resources.devops.progress_messages import pipeline_project
+
+    with pipeline_project(poll.get("project_key") or project_key):
+        return _poll_prepare_followup_body(thread_id, poll)
+
+
+def _poll_prepare_followup_body(thread_id: str, poll: Dict[str, Any]) -> Dict[str, Any]:
     started = poll.get("started_at") or datetime.now(timezone.utc).isoformat()
     try:
         started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
     except ValueError:
         started_dt = datetime.now(timezone.utc)
     phase = poll.get("phase") or "autofix"
+    prep_key = poll.get("project_key")
     if datetime.now(timezone.utc) >= started_dt + timedelta(seconds=_POLL_TIMEOUT_SEC):
-        clear_prepare_poll(thread_id, project_key=poll.get("project_key"))
-        _complete_pipeline_progress(thread_id)
+        clear_prepare_poll(thread_id, project_key=prep_key)
+        _complete_pipeline_progress(thread_id, project_key=prep_key)
         if phase == "preparing":
             # The release PR does not exist yet, so don't suggest merging it.
             _post(
                 thread_id,
                 "⏳ Prepare timed out before the release PR was opened. "
                 "Ask me to prepare deploy again.",
+                project_key=prep_key,
             )
         else:
             _post(
                 thread_id,
                 "⏳ Prepare timed out waiting for the release PR. "
                 "Ask me to prepare deploy again, or merge the PR by hand.",
+                project_key=prep_key,
             )
         return {"status": "complete", "active": False}
     # Early cockpit marker while the sync prepare request opens/reviews the PR.
@@ -2028,13 +2041,30 @@ def run_prepare_deploy(
     from bigas.tickets.release_store import get_release_store
 
     if not get_release_store().get_release_by_name(key, ver):
-        _complete_pipeline_progress(thread_id)
+        _complete_pipeline_progress(thread_id, project_key=key)
         _post(
             thread_id,
             f"No board release **{ver}** for {key}. Create it on `/board` → Releases first.",
+            project_key=key,
         )
         return {"status": "complete", "summary": f"Release {ver} not found."}
 
+    from bigas.resources.devops.pipeline import _set_pending
+    from bigas.resources.devops.progress_messages import pipeline_project
+
+    with pipeline_project(key):
+        return _run_prepare_deploy_body(
+            thread_id=thread_id, key=key, ver=ver, user_message=user_message
+        )
+
+
+def _run_prepare_deploy_body(
+    *,
+    thread_id: Optional[str],
+    key: str,
+    ver: str,
+    user_message: str,
+) -> Dict[str, Any]:
     from bigas.resources.devops.pipeline import _set_pending
 
     _set_pending(thread_id, None, project_key=key)

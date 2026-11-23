@@ -22,6 +22,7 @@ import {
   emptyDeployRun,
   isTrackedShipRun,
   pipelineForProject,
+  shipConfirmPrompt,
 } from '../lib/deployProgress'
 import { WEEKLY_ACTIONS, cursorPrompt, openAgentThread, sendToAgent, timeAgo } from '../lib/cockpit'
 import { featureEnabled } from '../lib/features'
@@ -2320,7 +2321,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
             <button
               type="button"
               disabled={busyIds.has(busyId)}
-              onClick={() => beginCommand(row, cmd, 'no')}
+              onClick={() => beginCommand(row, cmd, shipConfirmPrompt(row.key, false))}
               className="btn-secondary text-sm px-3"
             >
               Stop
@@ -2328,7 +2329,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
             <button
               type="button"
               disabled={busyIds.has(busyId)}
-              onClick={() => beginCommand(row, cmd, 'yes')}
+              onClick={() => beginCommand(row, cmd, shipConfirmPrompt(row.key, true))}
               className="btn-accent text-sm px-3"
             >
               {/teardown/i.test(cmd.prompt) ? 'Confirm' : 'Deploy'}
