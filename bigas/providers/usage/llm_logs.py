@@ -181,7 +181,8 @@ class CloudRunLlmUsageProvider(UsageProvider):
 
         events: List[UsageEvent] = []
         failures: List[str] = []
-        for project in _usage_project_ids(self._project):
+        projects = _usage_project_ids(self._project)
+        for project in projects:
             try:
                 events.extend(
                     self._fetch_project_events(
@@ -198,7 +199,9 @@ class CloudRunLlmUsageProvider(UsageProvider):
                     e,
                 )
                 failures.append(f"{project}: {e}")
-        if failures and not events:
+        # Zero events from a project that answered is success. Raise only when
+        # every scanned project failed, so one error cannot drop the others.
+        if projects and len(failures) >= len(projects):
             raise RuntimeError(
                 "Cloud Logging llm_usage failed: " + "; ".join(failures)
             )

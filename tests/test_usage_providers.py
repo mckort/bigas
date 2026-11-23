@@ -823,6 +823,30 @@ class LlmLogsParseTests(unittest.TestCase):
         "os.environ",
         {
             "GOOGLE_CLOUD_PROJECT": "bigas-503008",
+            "BIGAS_LLM_USAGE_PROJECTS": "bigas-503008,auralearn-491309,vcfieldassistant",
+        },
+        clear=False,
+    )
+    def test_fetch_succeeds_when_peers_have_no_events(self):
+        provider = CloudRunLlmUsageProvider()
+
+        def list_entries(body):
+            project = body["resourceNames"][0]
+            if project == "projects/vcfieldassistant":
+                raise RuntimeError("403 forbidden")
+            return {"entries": []}
+
+        with patch.object(provider, "_list_entries", side_effect=list_entries):
+            events = provider.fetch_usage(
+                start=datetime(2026, 8, 17, tzinfo=timezone.utc),
+                end=datetime(2026, 8, 24, tzinfo=timezone.utc),
+            )
+        self.assertEqual(events, [])
+
+    @patch.dict(
+        "os.environ",
+        {
+            "GOOGLE_CLOUD_PROJECT": "bigas-503008",
             "BIGAS_LLM_USAGE_PROJECTS": "vcfieldassistant",
         },
         clear=False,
