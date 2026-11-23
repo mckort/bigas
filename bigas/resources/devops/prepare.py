@@ -2016,8 +2016,8 @@ def run_prepare_deploy(
         try:
             ver = normalize_version_name(ver)
         except SemverError as exc:
-            _complete_pipeline_progress(thread_id)
-            _post(thread_id, str(exc))
+            _complete_pipeline_progress(thread_id, project_key=key or None)
+            _post(thread_id, str(exc), project_key=key or None)
             return {"status": "complete", "summary": str(exc)}
 
     if not key:
@@ -2030,11 +2030,12 @@ def run_prepare_deploy(
         )
         return {"status": "complete", "summary": "Project not specified."}
     if not ver:
-        _complete_pipeline_progress(thread_id)
+        _complete_pipeline_progress(thread_id, project_key=key)
         _post(
             thread_id,
             f"Which release of **{key}**? Use **prepare deploy {key} 0.1.0** "
             "(semver X.Y.Z).",
+            project_key=key,
         )
         return {"status": "complete", "summary": "Version not specified."}
 

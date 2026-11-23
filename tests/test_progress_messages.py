@@ -45,6 +45,7 @@ def test_complete_pipeline_progress_scopes_by_project():
             {
                 "message_id": "a",
                 "metadata": {
+                    "agent_id": "devops",
                     "pipeline": True,
                     "status": "in_progress",
                     "project_key": "AURA",
@@ -67,3 +68,10 @@ def test_complete_pipeline_progress_scopes_by_project():
     complete_pipeline_progress(store, "t1", project_key="AURA")
     ids = [item[0] for item in store.patched]
     assert ids == ["a", "c"]
+    by_id = {item[0]: item[1]["metadata"] for item in store.patched}
+    assert by_id["a"]["status"] == "complete"
+    assert by_id["a"]["project_key"] == "AURA"
+    assert by_id["a"]["pipeline"] is True
+    assert by_id["a"]["agent_id"] == "devops"
+    assert by_id["c"]["status"] == "complete"
+    assert by_id["c"]["pipeline"] is True

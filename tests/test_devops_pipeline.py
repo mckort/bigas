@@ -972,6 +972,95 @@ def test_resume_workflow_polls_the_matching_project(monkeypatch):
     assert store.get_thread(thread_id).get("has_pending_deploy_poll") is True
 
 
+def _progress_message(store, thread_id, project_key, content):
+    return store.add_message(
+        thread_id,
+        role="assistant",
+        content=content,
+        metadata={
+            "agent_id": "devops",
+            "pipeline": True,
+            "status": "in_progress",
+            "project_key": project_key,
+        },
+    )
+
+
+def test_finalize_postcheck_keeps_other_project_spinners(monkeypatch):
+    from bigas.resources.devops.pipeline import _finalize_deploy_postcheck
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    vfa = _progress_message(store, thread_id, "VFA", "⏳ Post-check: GitHub Actions is running...")
+    big = _progress_message(store, thread_id, "BIG", "⏳ Autofix agent running...")
+    monkeypatch.setattr(
+        "bigas.tickets.releases.close_release_from_deploy_ref",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "bigas.resources.devops.pipeline.check_website_health",
+        lambda url: {"summary": f"{url} ok", "is_healthy": True},
+    )
+
+    _finalize_deploy_postcheck(
+        thread_id,
+        {
+            "repo": "mckort/vcfieldassistant",
+            "project_key": "VFA",
+            "triggered": [],
+            "site_urls": [],
+            "finished_lines": ["done"],
+            "failed_runs": [],
+            "done_run_ids": [],
+            "ref": "main",
+        },
+    )
+    by_id = {m["message_id"]: m for m in store.list_messages(thread_id)}
+    vfa_meta = by_id[vfa["message_id"]]["metadata"]
+    big_meta = by_id[big["message_id"]]["metadata"]
+    assert vfa_meta["status"] == "complete"
+    assert vfa_meta["project_key"] == "VFA"
+    assert vfa_meta["pipeline"] is True
+    assert vfa_meta["agent_id"] == "devops"
+    assert big_meta["status"] == "in_progress"
+    assert big_meta["project_key"] == "BIG"
+
+
+def test_resume_failure_clears_only_the_matched_project(monkeypatch):
+    from bigas.resources.devops.pipeline import _set_deploy_poll
+
+    store = get_chat_store()
+    thread = store.create_thread("user-1", "devops")
+    thread_id = thread["thread_id"]
+    _set_deploy_poll(thread_id, _running_poll("VFA", 11, "mckort/vcfieldassistant"))
+    _set_deploy_poll(thread_id, _running_poll("BIG", 22, "mckort/bigas"))
+    vfa = _progress_message(store, thread_id, "VFA", "⏳ Post-check: GitHub Actions is running...")
+    big = _progress_message(store, thread_id, "BIG", "⏳ Autofix agent running...")
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("resume failed")
+
+    monkeypatch.setattr("bigas.resources.devops.pipeline.poll_deploy_postcheck", _boom)
+
+    result = resume_deploy_postcheck_from_workflow(
+        {
+            "action": "completed",
+            "workflow_run": {"id": 22, "conclusion": "success"},
+            "repository": {"name": "bigas", "owner": {"login": "mckort"}},
+        }
+    )
+    assert result["resumed"] == 0
+    polls = store.get_thread(thread_id).get("pending_deploy_polls") or {}
+    assert "BIG" not in polls
+    assert "VFA" in polls
+    by_id = {m["message_id"]: m for m in store.list_messages(thread_id)}
+    assert by_id[big["message_id"]]["metadata"]["status"] == "complete"
+    assert by_id[big["message_id"]]["metadata"]["project_key"] == "BIG"
+    assert by_id[vfa["message_id"]]["metadata"]["status"] == "in_progress"
+    assert by_id[vfa["message_id"]]["metadata"]["project_key"] == "VFA"
+
+
 def test_prepare_poll_does_not_block_other_project_deploy(monkeypatch):
     from bigas.resources.devops.pipeline import _set_deploy_poll
 

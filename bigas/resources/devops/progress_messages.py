@@ -64,12 +64,15 @@ def complete_pipeline_progress(
         tagged = normalize_project_key(meta.get("project_key"))
         if wanted and tagged and tagged != wanted:
             continue
+        # Spread the existing record. A status-only patch would drop
+        # project_key, pipeline, and agent_id if a store replaces metadata.
+        completed = {**meta, "status": "complete"}
         if wanted and tagged and tagged == wanted:
-            store.patch_message(message["message_id"], metadata={"status": "complete"})
+            store.patch_message(message["message_id"], metadata=completed)
             continue
         if wanted and not tagged:
             # Pre-tagging messages: clear only when finishing this project.
-            store.patch_message(message["message_id"], metadata={"status": "complete"})
+            store.patch_message(message["message_id"], metadata=completed)
             continue
         if not wanted:
-            store.patch_message(message["message_id"], metadata={"status": "complete"})
+            store.patch_message(message["message_id"], metadata=completed)

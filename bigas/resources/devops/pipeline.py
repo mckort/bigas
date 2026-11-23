@@ -756,7 +756,10 @@ def _finalize_deploy_postcheck(
                             )
             except Exception:
                 logger.exception("Board release close after deploy failed")
-        _complete_pipeline_progress(thread_id)
+        _complete_pipeline_progress(
+            thread_id,
+            project_key=poll.get("project_key") or poll.get("release_project_key"),
+        )
 
 
 def _poll_activity(thread_id: str) -> Dict[str, Any]:
@@ -1029,8 +1032,9 @@ def resume_deploy_postcheck_from_workflow(payload: Dict[str, Any]) -> Dict[str, 
                 run_id,
             )
             for poll in matched:
-                _set_deploy_poll(thread_id, None, project_key=_deploy_poll_slot(poll))
-            _complete_pipeline_progress(thread_id)
+                slot = _deploy_poll_slot(poll)
+                _set_deploy_poll(thread_id, None, project_key=slot)
+                _complete_pipeline_progress(thread_id, project_key=slot)
     return {"resumed": len(resumed), "thread_ids": resumed}
 
 
