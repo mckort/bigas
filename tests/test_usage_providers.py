@@ -285,13 +285,96 @@ class FetchAiUsageTests(unittest.TestCase):
         self.assertIn("judgment", msg)
 
     @patch.dict("os.environ", {"BIGAS_LLM_USAGE_PROJECTS": ""}, clear=False)
-    def test_default_usage_projects_include_vcfa(self):
+    def test_default_usage_projects_include_portfolio(self):
         ids = _usage_project_ids("bigas-503008")
-        self.assertEqual(ids, ["bigas-503008", "vcfieldassistant"])
+        self.assertEqual(
+            ids,
+            [
+                "bigas-503008",
+                "vcfieldassistant",
+                "auralearn-491309",
+                "multiple-websites-491407",
+            ],
+        )
 
     @patch.dict("os.environ", {"BIGAS_LLM_USAGE_PROJECTS": "a, b"}, clear=False)
     def test_usage_projects_env_override(self):
         self.assertEqual(_usage_project_ids("ignored"), ["a", "b"])
+
+    def test_aggregates_by_board_project(self):
+        class FakeProvider:
+            name = "mixed"
+            display_name = "Fake"
+
+            def fetch_usage(self, *, start, end, feature_prefix=None):
+                return [
+                    UsageEvent(
+                        provider="cursor",
+                        source_id="c1",
+                        started_at=start.isoformat(),
+                        feature="cto_autofix",
+                        est_cost_usd=2.0,
+                        meta={
+                            "repo": "mckort/auralearn",
+                            "pr_url": "https://github.com/mckort/auralearn/pull/1",
+                        },
+                    ),
+                    UsageEvent(
+                        provider="gcp_billing",
+                        source_id="g1",
+                        started_at=start.isoformat(),
+                        feature="gcp.cloud_run",
+                        est_cost_usd=3.0,
+                        cost_estimate=False,
+                        meta={
+                            "app": "vcfieldassistant",
+                            "gcp_project": "vcfieldassistant",
+                            "cost_kind": "invoice",
+                        },
+                    ),
+                    UsageEvent(
+                        provider="llm_logs",
+                        source_id="l1",
+                        started_at=start.isoformat(),
+                        feature="cto_pr_review",
+                        est_cost_usd=1.5,
+                        meta={"app": "bigas", "gcp_project": "bigas-503008"},
+                    ),
+                    UsageEvent(
+                        provider="tavily",
+                        source_id="t1",
+                        started_at=start.isoformat(),
+                        feature="tavily_search",
+                        est_cost_usd=0.4,
+                        meta={"app": "vcfieldassistant", "gcp_project": "vcfieldassistant"},
+                    ),
+                    UsageEvent(
+                        provider="cursor",
+                        source_id="c2",
+                        started_at=start.isoformat(),
+                        feature="cto_autofix",
+                        est_cost_usd=None,
+                        meta={"repo": "mckort/vcfieldassistant"},
+                    ),
+                ]
+
+        now = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+        report = fetch_ai_usage(
+            days=7,
+            provider="all",
+            providers=[FakeProvider()],
+            now=now,
+        )
+        by_project = report["totals"]["by_project"]
+        self.assertEqual(by_project["AURA"], 2.0)
+        self.assertEqual(by_project["VFA"], 3.4)
+        self.assertEqual(by_project["BIG"], 1.5)
+        self.assertEqual(report["totals"]["activity_by_project"]["VFA"], 3)
+        self.assertEqual(report["totals"]["activity_by_project"]["AURA"], 1)
+        msg = format_weekly_cto_ai_report(report)
+        self.assertIn("By board project", msg)
+        self.assertIn("AURA:", msg)
+        self.assertIn("SHARED_VM", msg)  # legend in heading
 
     def test_weekly_report_uses_totals_not_truncated_events(self):
         report = {
@@ -707,7 +790,7 @@ class LlmLogsParseTests(unittest.TestCase):
         },
         clear=False,
     )
-    def test_fetch_raises_when_any_project_fails(self):
+    def test_fetch_keeps_events_when_one_project_fails(self):
         provider = CloudRunLlmUsageProvider()
         good_entry = {
             "timestamp": "2026-08-21T12:00:00Z",
@@ -727,6 +810,52 @@ class LlmLogsParseTests(unittest.TestCase):
             if project == "projects/vcfieldassistant":
                 raise RuntimeError("403 forbidden")
             return {"entries": [good_entry]}
+
+        with patch.object(provider, "_list_entries", side_effect=list_entries):
+            events = provider.fetch_usage(
+                start=datetime(2026, 8, 17, tzinfo=timezone.utc),
+                end=datetime(2026, 8, 24, tzinfo=timezone.utc),
+            )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].feature, "chat")
+
+    @patch.dict(
+        "os.environ",
+        {
+            "GOOGLE_CLOUD_PROJECT": "bigas-503008",
+            "BIGAS_LLM_USAGE_PROJECTS": "bigas-503008,auralearn-491309,vcfieldassistant",
+        },
+        clear=False,
+    )
+    def test_fetch_succeeds_when_peers_have_no_events(self):
+        provider = CloudRunLlmUsageProvider()
+
+        def list_entries(body):
+            project = body["resourceNames"][0]
+            if project == "projects/vcfieldassistant":
+                raise RuntimeError("403 forbidden")
+            return {"entries": []}
+
+        with patch.object(provider, "_list_entries", side_effect=list_entries):
+            events = provider.fetch_usage(
+                start=datetime(2026, 8, 17, tzinfo=timezone.utc),
+                end=datetime(2026, 8, 24, tzinfo=timezone.utc),
+            )
+        self.assertEqual(events, [])
+
+    @patch.dict(
+        "os.environ",
+        {
+            "GOOGLE_CLOUD_PROJECT": "bigas-503008",
+            "BIGAS_LLM_USAGE_PROJECTS": "vcfieldassistant",
+        },
+        clear=False,
+    )
+    def test_fetch_raises_when_all_projects_fail(self):
+        provider = CloudRunLlmUsageProvider()
+
+        def list_entries(_body):
+            raise RuntimeError("403 forbidden")
 
         with patch.object(provider, "_list_entries", side_effect=list_entries):
             with self.assertRaises(RuntimeError) as ctx:

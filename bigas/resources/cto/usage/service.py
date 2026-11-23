@@ -23,6 +23,11 @@ from bigas.resources.cto.usage.pricing import (
     estimate_cursor_cost_usd,
     resolve_cursor_price_usd_per_mtok,
 )
+from bigas.resources.cto.usage.project_attribution import (
+    board_project_for_event,
+    gcp_project_to_board_map,
+    repo_to_board_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -231,15 +236,21 @@ def fetch_ai_usage(
     by_provider: Dict[str, float] = defaultdict(float)
     by_feature: Dict[str, float] = defaultdict(float)
     by_app: Dict[str, float] = defaultdict(float)
+    by_project: Dict[str, float] = defaultdict(float)
     by_model_tier: Dict[str, float] = defaultdict(float)
     activity_by_feature: Dict[str, int] = defaultdict(int)
+    activity_by_project: Dict[str, int] = defaultdict(int)
     list_price_total = 0.0
     invoice_total = 0.0
     cost_known = 0
     empty_fallback_events = 0
     empty_response_events = 0
+    repos = repo_to_board_map()
+    gcp_projects = gcp_project_to_board_map()
     for ev in events:
         activity_by_feature[ev.feature or "unknown"] += 1
+        board = board_project_for_event(ev, repos=repos, gcp_projects=gcp_projects)
+        activity_by_project[board] += 1
         meta = ev.meta if isinstance(ev.meta, dict) else {}
         if meta.get("empty_fallback") in (True, "true", 1):
             empty_fallback_events += 1
@@ -251,6 +262,7 @@ def fetch_ai_usage(
         cost_known += 1
         by_provider[ev.provider] += usd
         by_feature[ev.feature] += usd
+        by_project[board] += usd
         app = str(meta.get("app") or "").strip() or (
             "vcfieldassistant" if str(meta.get("gcp_project") or "") == "vcfieldassistant" else "bigas"
         )
@@ -290,8 +302,10 @@ def fetch_ai_usage(
             "by_provider": {k: round(v, 6) for k, v in sorted(by_provider.items())},
             "by_feature": {k: round(v, 6) for k, v in sorted(by_feature.items())},
             "by_app": {k: round(v, 6) for k, v in sorted(by_app.items())},
+            "by_project": {k: round(v, 6) for k, v in sorted(by_project.items())},
             "by_model_tier": {k: round(v, 6) for k, v in sorted(by_model_tier.items())},
             "activity_by_feature": dict(sorted(activity_by_feature.items())),
+            "activity_by_project": dict(sorted(activity_by_project.items())),
             "empty_fallback_events": empty_fallback_events,
             "empty_response_events": empty_response_events,
         },
@@ -554,6 +568,14 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
     }
     by_provider = totals.get("by_provider") or {}
     by_app = totals.get("by_app") or {}
+    by_project = {
+        str(k): float(v)
+        for k, v in (totals.get("by_project") or {}).items()
+    }
+    activity_by_project = {
+        str(k): int(v)
+        for k, v in (totals.get("activity_by_project") or {}).items()
+    }
     by_model_tier = totals.get("by_model_tier") or {}
 
     gcp_line, _gcp_blocker = _gcp_invoice_status(report)
@@ -588,6 +610,21 @@ def format_weekly_cto_ai_report(report: Dict[str, Any]) -> str:
             for name, cost in sorted(by_app.items(), key=lambda kv: kv[1], reverse=True)
         )
         lines.append(f"Apps: {apps}")
+
+    if by_project or activity_by_project:
+        lines.append("")
+        lines.append(
+            "By board project (repo/GCP map; BIG = shared ops; SHARED_VM = multi-site VM):"
+        )
+        keys = sorted(
+            set(by_project) | set(activity_by_project),
+            key=lambda k: (-by_project.get(k, 0.0), -activity_by_project.get(k, 0), k),
+        )
+        for key in keys:
+            cost = by_project.get(key)
+            n = activity_by_project.get(key) or 0
+            cost_txt = _approx_money(cost) if cost is not None and cost > 0 else "n/a"
+            lines.append(f"- {key}: {cost_txt} · {n} events")
 
     buckets = _bucket_costs(by_feature)
     if buckets:
