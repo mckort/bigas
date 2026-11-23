@@ -23,7 +23,11 @@ from bigas.resources.cto.usage.pricing import (
     estimate_cursor_cost_usd,
     resolve_cursor_price_usd_per_mtok,
 )
-from bigas.resources.cto.usage.project_attribution import board_project_for_event
+from bigas.resources.cto.usage.project_attribution import (
+    board_project_for_event,
+    gcp_project_to_board_map,
+    repo_to_board_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -241,9 +245,11 @@ def fetch_ai_usage(
     cost_known = 0
     empty_fallback_events = 0
     empty_response_events = 0
+    repos = repo_to_board_map()
+    gcp_projects = gcp_project_to_board_map()
     for ev in events:
         activity_by_feature[ev.feature or "unknown"] += 1
-        board = board_project_for_event(ev)
+        board = board_project_for_event(ev, repos=repos, gcp_projects=gcp_projects)
         activity_by_project[board] += 1
         meta = ev.meta if isinstance(ev.meta, dict) else {}
         if meta.get("empty_fallback") in (True, "true", 1):

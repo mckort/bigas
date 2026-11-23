@@ -91,8 +91,52 @@ class ProjectAttributionTests(unittest.TestCase):
             "VFA",
         )
         self.assertEqual(
+            board_project_for_event(_ev(feature="deal_memo", meta={})),
+            "VFA",
+        )
+        self.assertEqual(
             board_project_for_event(_ev(feature="cto_pr_review", meta={})),
             "BIG",
+        )
+
+    def test_vfa_feature_logged_under_bigas_stays_vfa(self):
+        self.assertEqual(
+            board_project_for_event(
+                _ev(
+                    feature="llm.living_analysis",
+                    meta={"gcp_project": "bigas-503008"},
+                )
+            ),
+            "VFA",
+        )
+        self.assertEqual(
+            board_project_for_event(
+                _ev(feature="tavily", meta={"gcp_project": "bigas-503008"})
+            ),
+            "VFA",
+        )
+        self.assertEqual(
+            board_project_for_event(
+                _ev(
+                    feature="cto_pr_review",
+                    meta={"gcp_project": "bigas-503008"},
+                )
+            ),
+            "BIG",
+        )
+
+    def test_repo_wins_over_vfa_feature(self):
+        self.assertEqual(
+            board_project_for_event(
+                _ev(
+                    feature="deal_memo",
+                    meta={
+                        "repo": "mckort/auralearn",
+                        "gcp_project": "bigas-503008",
+                    },
+                )
+            ),
+            "AURA",
         )
 
     @patch.dict(

@@ -96,23 +96,33 @@ def _feature_board(feature: str) -> Optional[str]:
     if not f:
         return None
     for prefix in _VFA_FEATURE_PREFIXES:
-        if f == prefix or f.startswith(prefix):
+        if f.startswith(prefix):
             return "VFA"
     return None
 
 
-def board_project_for_event(ev: UsageEvent) -> str:
+def board_project_for_event(
+    ev: UsageEvent,
+    *,
+    repos: Optional[Mapping[str, str]] = None,
+    gcp_projects: Optional[Mapping[str, str]] = None,
+) -> str:
     """Best-effort board key for one usage event.
 
     Resolution order:
     1. GitHub repo (Cursor autofix / PR meta) via portfolio repo map
-    2. GCP project id via ``BIGAS_USAGE_GCP_PROJECT_MAP`` / defaults
-    3. Known VFA product features (Tavily, living analysis, …)
+    2. Known VFA product features (Tavily, living analysis, …), including
+       when the event was logged under the home Bigas GCP project
+    3. GCP project id via ``BIGAS_USAGE_GCP_PROJECT_MAP`` / defaults
     4. ``app=vcfieldassistant`` → VFA
     5. Else BIG (shared board ops: PR review, chat, marketing, …)
+
+    Pass ``repos`` and ``gcp_projects`` from a batch caller so each event does
+    not rebuild the env maps.
     """
     meta = ev.meta if isinstance(ev.meta, dict) else {}
-    repos = repo_to_board_map()
+    if repos is None:
+        repos = repo_to_board_map()
 
     repo = _repo_from_meta(meta)
     if repo:
@@ -120,15 +130,17 @@ def board_project_for_event(ev: UsageEvent) -> str:
         if key:
             return key
 
-    gcp = str(meta.get("gcp_project") or "").strip()
-    if gcp:
-        mapped = gcp_project_to_board_map().get(gcp)
-        if mapped:
-            return mapped
-
     feature_key = _feature_board(str(ev.feature or ""))
     if feature_key:
         return feature_key
+
+    gcp = str(meta.get("gcp_project") or "").strip()
+    if gcp:
+        if gcp_projects is None:
+            gcp_projects = gcp_project_to_board_map()
+        mapped = gcp_projects.get(gcp)
+        if mapped:
+            return mapped
 
     app = str(meta.get("app") or "").strip().lower()
     if app in {"vcfieldassistant", "vfa"}:

@@ -36,8 +36,8 @@ Adding Claude (or any LLM) later usually needs **no new history provider** if ca
 Each event is mapped to a board key (or `SHARED_VM`):
 
 1. GitHub `repo` / PR URL / autofix agent name → `BIGAS_JIRA_PROJECT_REPO_MAP` (infra repo `mckort/gcp-single-vm-webstack` → `SHARED_VM`)
-2. GCP project id → `BIGAS_USAGE_GCP_PROJECT_MAP` (defaults: `vcfieldassistant`→VFA, `bigas-503008`→BIG, `auralearn-491309`→AURA, `multiple-websites-491407`→SHARED_VM)
-3. Product features (Tavily, living analysis, deal memo, …) → VFA
+2. Product features (Tavily, living analysis, deal memo, …) → VFA, including when the event was logged under the home Bigas GCP project
+3. GCP project id → `BIGAS_USAGE_GCP_PROJECT_MAP` (defaults: `vcfieldassistant`→VFA, `bigas-503008`→BIG, `auralearn-491309`→AURA, `multiple-websites-491407`→SHARED_VM)
 4. Else → **BIG** (shared PR review, chat, marketing, OKR, …)
 
 Weekly CFO text lists cost + event counts per key. Cursor rows with missing token metering still count toward `activity_by_project`.
