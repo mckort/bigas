@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
@@ -400,4 +401,297 @@ class GoogleAdsService:
             summary["breakdowns"] = [str(b).strip() for b in breakdowns if str(b).strip()]
 
         return {"rows": out_rows, "summary": summary}
+
+    # Long-standing type-specific detail fields. Keep this list conservative so
+    # GAQL stays valid across Google Ads API versions we pin (currently v23).
+    _RECOMMENDATION_DETAIL_FIELDS = (
+        "recommendation.campaign_budget_recommendation",
+        "recommendation.keyword_recommendation",
+        "recommendation.target_cpa_opt_in_recommendation",
+        "recommendation.maximize_conversions_opt_in_recommendation",
+        "recommendation.maximize_clicks_opt_in_recommendation",
+        "recommendation.optimize_ad_rotation_recommendation",
+        "recommendation.move_unused_budget_recommendation",
+        "recommendation.target_roas_opt_in_recommendation",
+        "recommendation.forecasting_campaign_budget_recommendation",
+        "recommendation.responsive_search_ad_recommendation",
+        "recommendation.marginal_roi_campaign_budget_recommendation",
+        "recommendation.use_broad_match_keyword_recommendation",
+        "recommendation.responsive_search_ad_asset_recommendation",
+        "recommendation.responsive_search_ad_improve_ad_strength_recommendation",
+        "recommendation.raise_target_cpa_bid_too_low_recommendation",
+        "recommendation.callout_asset_recommendation",
+        "recommendation.sitelink_asset_recommendation",
+    )
+
+    @classmethod
+    def build_recommendations_query(
+        cls,
+        *,
+        include_dismissed: bool = False,
+        recommendation_types: Optional[List[str]] = None,
+        include_details: bool = True,
+    ) -> str:
+        """
+        GAQL for Google Ads Recommendations (Optimization Score recommendations).
+
+        Read-only: list type, campaign, impact, and common type-specific details.
+        Apply/dismiss is out of scope for this client.
+        """
+        select_fields = [
+            "recommendation.resource_name",
+            "recommendation.type",
+            "recommendation.dismissed",
+            "recommendation.campaign",
+            "recommendation.ad_group",
+            "recommendation.impact",
+            "campaign.id",
+            "campaign.name",
+            "customer.descriptive_name",
+        ]
+        if include_details:
+            select_fields.extend(cls._RECOMMENDATION_DETAIL_FIELDS)
+        where_parts: List[str] = []
+        if not include_dismissed:
+            where_parts.append("recommendation.dismissed = FALSE")
+        types = [str(t).strip().upper() for t in (recommendation_types or []) if str(t).strip()]
+        # Enum literals in GAQL are unquoted identifiers, so reject anything
+        # that is not a bare enum name before it is interpolated.
+        if any(re.fullmatch(r"[A-Z0-9_]+", t) is None for t in types):
+            raise ValueError(
+                "recommendation_types must be enum names like KEYWORD or CAMPAIGN_BUDGET"
+            )
+        if types:
+            type_list = ", ".join(types)
+            where_parts.append(f"recommendation.type IN ({type_list})")
+
+        query = f"SELECT {', '.join(select_fields)} FROM recommendation"
+        if where_parts:
+            query += " WHERE " + " AND ".join(where_parts)
+        return query
+
+    @staticmethod
+    def build_optimization_score_query() -> str:
+        return (
+            "SELECT customer.id, customer.descriptive_name, customer.optimization_score "
+            "FROM customer "
+            "LIMIT 1"
+        )
+
+    @staticmethod
+    def build_optimization_score_uplift_query() -> str:
+        return (
+            "SELECT segments.recommendation_type, "
+            "metrics.optimization_score_uplift "
+            "FROM customer"
+        )
+
+    @staticmethod
+    def _normalize_impact_metrics(metrics: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not isinstance(metrics, dict) or not metrics:
+            return None
+        impressions = int(_safe_float(metrics.get("impressions")))
+        clicks = int(_safe_float(metrics.get("clicks")))
+        cost_micros = _safe_float(metrics.get("costMicros", metrics.get("cost_micros")))
+        conversions = _safe_float(metrics.get("conversions"))
+        all_conversions = _safe_float(metrics.get("allConversions", metrics.get("all_conversions")))
+        video_views = int(_safe_float(metrics.get("videoViews", metrics.get("video_views"))))
+        return {
+            "impressions": impressions,
+            "clicks": clicks,
+            "cost": round(cost_micros / 1_000_000.0, 4) if cost_micros else 0.0,
+            "conversions": round(conversions, 4),
+            "all_conversions": round(all_conversions, 4),
+            "video_views": video_views,
+        }
+
+    @classmethod
+    def _extract_recommendation_details(cls, recommendation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Pick the first non-empty *Recommendation payload from the REST row."""
+        if not isinstance(recommendation, dict):
+            return None
+        for key, value in recommendation.items():
+            if not key.endswith("Recommendation") and not key.endswith("_recommendation"):
+                continue
+            if value in (None, {}, []):
+                continue
+            detail_type = key
+            if detail_type.endswith("Recommendation"):
+                # keywordRecommendation -> keyword
+                detail_type = detail_type[: -len("Recommendation")]
+            elif detail_type.endswith("_recommendation"):
+                detail_type = detail_type[: -len("_recommendation")]
+            return {"kind": detail_type, "payload": value}
+        return None
+
+    @classmethod
+    def normalize_recommendation_row(cls, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(row, dict):
+            return None
+        recommendation = row.get("recommendation") or {}
+        if not isinstance(recommendation, dict) or not recommendation:
+            return None
+        campaign = row.get("campaign") or {}
+        customer = row.get("customer") or {}
+        impact = recommendation.get("impact") or {}
+        base_metrics = cls._normalize_impact_metrics(
+            impact.get("baseMetrics") or impact.get("base_metrics")
+        )
+        potential_metrics = cls._normalize_impact_metrics(
+            impact.get("potentialMetrics") or impact.get("potential_metrics")
+        )
+        impact_out = None
+        if base_metrics or potential_metrics:
+            impact_out = {
+                "base_metrics": base_metrics,
+                "potential_metrics": potential_metrics,
+            }
+            if base_metrics and potential_metrics:
+                impact_out["delta"] = {
+                    "impressions": (potential_metrics["impressions"] - base_metrics["impressions"]),
+                    "clicks": (potential_metrics["clicks"] - base_metrics["clicks"]),
+                    "cost": round(potential_metrics["cost"] - base_metrics["cost"], 4),
+                    "conversions": round(
+                        potential_metrics["conversions"] - base_metrics["conversions"], 4
+                    ),
+                }
+
+        campaign_resource = recommendation.get("campaign")
+        campaign_id = campaign.get("id")
+        if not campaign_id and isinstance(campaign_resource, str) and "/" in campaign_resource:
+            campaign_id = campaign_resource.split("/")[-1]
+
+        return {
+            "resource_name": recommendation.get("resourceName") or recommendation.get("resource_name"),
+            "type": recommendation.get("type"),
+            "dismissed": bool(recommendation.get("dismissed")),
+            "campaign_id": str(campaign_id) if campaign_id is not None else None,
+            "campaign_name": campaign.get("name"),
+            "campaign_resource": campaign_resource,
+            "ad_group_resource": recommendation.get("adGroup") or recommendation.get("ad_group"),
+            "account_name": customer.get("descriptiveName") or customer.get("descriptive_name"),
+            "impact": impact_out,
+            "details": cls._extract_recommendation_details(recommendation),
+        }
+
+    @classmethod
+    def normalize_recommendation_rows(cls, raw_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        recommendations: List[Dict[str, Any]] = []
+        by_type: Dict[str, int] = {}
+        for row in raw_rows or []:
+            flat = cls.normalize_recommendation_row(row)
+            if not flat:
+                continue
+            recommendations.append(flat)
+            rtype = str(flat.get("type") or "UNKNOWN")
+            by_type[rtype] = by_type.get(rtype, 0) + 1
+
+        recommendations.sort(
+            key=lambda r: (
+                -_safe_float(((r.get("impact") or {}).get("delta") or {}).get("conversions")),
+                -_safe_float(((r.get("impact") or {}).get("delta") or {}).get("clicks")),
+                str(r.get("type") or ""),
+            )
+        )
+        return {
+            "recommendations": recommendations,
+            "count": len(recommendations),
+            "by_type": dict(sorted(by_type.items(), key=lambda kv: (-kv[1], kv[0]))),
+        }
+
+    def fetch_recommendations(
+        self,
+        customer_id: str,
+        *,
+        include_dismissed: bool = False,
+        recommendation_types: Optional[List[str]] = None,
+        include_optimization_score: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Fetch active Google Ads recommendations + optional optimization score/uplift.
+        """
+        customer_id = (customer_id or "").replace("-", "").strip()
+        if not customer_id:
+            raise ValueError("customer_id is required (GOOGLE_ADS_CUSTOMER_ID or request payload).")
+
+        query = self.build_recommendations_query(
+            include_dismissed=include_dismissed,
+            recommendation_types=recommendation_types,
+            include_details=True,
+        )
+        try:
+            raw_rows, _chunks = self.search_stream(customer_id, query)
+        except GoogleAdsApiError:
+            # Fall back to core fields if a detail column is unavailable on this API version.
+            query = self.build_recommendations_query(
+                include_dismissed=include_dismissed,
+                recommendation_types=recommendation_types,
+                include_details=False,
+            )
+            raw_rows, _chunks = self.search_stream(customer_id, query)
+        normalized = self.normalize_recommendation_rows(raw_rows)
+
+        optimization: Optional[Dict[str, Any]] = None
+        if include_optimization_score:
+            optimization = {"score": None, "account_name": None, "uplift_by_type": []}
+            try:
+                score_rows, _ = self.search_stream(
+                    customer_id, self.build_optimization_score_query()
+                )
+                if score_rows:
+                    customer = (score_rows[0] or {}).get("customer") or {}
+                    score_raw = customer.get("optimizationScore", customer.get("optimization_score"))
+                    optimization["score"] = (
+                        round(_safe_float(score_raw), 4) if score_raw is not None else None
+                    )
+                    optimization["account_name"] = (
+                        customer.get("descriptiveName") or customer.get("descriptive_name")
+                    )
+            except GoogleAdsApiError as e:
+                logger.warning(
+                    "Google Ads optimization score query failed (continuing): status=%s body=%s",
+                    e.status_code,
+                    (e.response_text or "")[:500],
+                )
+                optimization["score_error"] = str(e)
+
+            try:
+                uplift_rows, _ = self.search_stream(
+                    customer_id, self.build_optimization_score_uplift_query()
+                )
+                uplift_list: List[Dict[str, Any]] = []
+                for row in uplift_rows or []:
+                    segments = (row or {}).get("segments") or {}
+                    metrics = (row or {}).get("metrics") or {}
+                    rtype = segments.get("recommendationType") or segments.get("recommendation_type")
+                    uplift = metrics.get("optimizationScoreUplift", metrics.get("optimization_score_uplift"))
+                    if rtype is None and uplift is None:
+                        continue
+                    uplift_list.append(
+                        {
+                            "recommendation_type": rtype,
+                            "optimization_score_uplift": (
+                                round(_safe_float(uplift), 4) if uplift is not None else None
+                            ),
+                        }
+                    )
+                uplift_list.sort(
+                    key=lambda u: (-_safe_float(u.get("optimization_score_uplift")), str(u.get("recommendation_type") or ""))
+                )
+                optimization["uplift_by_type"] = uplift_list
+            except GoogleAdsApiError as e:
+                logger.warning(
+                    "Google Ads optimization score uplift query failed (continuing): status=%s body=%s",
+                    e.status_code,
+                    (e.response_text or "")[:500],
+                )
+                optimization["uplift_error"] = str(e)
+
+        return {
+            "customer_id": customer_id,
+            "include_dismissed": include_dismissed,
+            "recommendation_types": recommendation_types or [],
+            "optimization": optimization,
+            **normalized,
+        }
 
