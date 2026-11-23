@@ -1892,12 +1892,23 @@ def test_cockpit_landing_image_bypasses_restricted_access(client, monkeypatch):
     monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_KEYS", {"secret-key"})
     monkeypatch.setitem(client.application.config, "BIGAS_ACCESS_HEADER", "X-Bigas-Access-Key")
 
-    for path in ("/marketing/cockpit.png", "/marketing/outside-agents.png"):
+    for path in (
+        "/marketing/cockpit.png",
+        "/marketing/outside-agents.png",
+        "/marketing/outside-agents.PNG",
+        "/marketing/hero.jpg",
+        "/marketing/hero.jpeg",
+        "/marketing/hero.webp",
+        "/marketing/hero.svg",
+    ):
         image = client.get(path)
         assert image.status_code != 401, path
         body = image.get_json(silent=True) or {}
         detail = body.get("detail", "") if isinstance(body, dict) else ""
         assert "access key" not in str(detail).lower(), path
+
+    notes = client.get("/marketing/notes.txt")
+    assert notes.status_code == 401
 
     blocked = client.get("/mcp/tools/fetch_analytics_report")
     assert blocked.status_code == 401

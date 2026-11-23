@@ -267,7 +267,10 @@ def create_app():
             or path.startswith("/api/auth/")
             or path.startswith("/assets/")
             # Landing screenshots in frontend/public/marketing (cockpit, outside-agents, …)
-            or (path.startswith("/marketing/") and path.endswith(".png"))
+            or (
+                path.startswith("/marketing/")
+                and path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".svg"))
+            )
             or path.startswith("/.well-known/")
             or path.startswith("/oauth")
             or path.lstrip("/") in BRAND_ICON_FILES
