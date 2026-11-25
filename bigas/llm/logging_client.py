@@ -91,6 +91,27 @@ class LoggingLLMClient(LLMClient):
         self._log_usage(getattr(result, "usage", None))
         return result
 
+    def complete_multimodal(
+        self,
+        parts: List[Any],
+        *,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        **kwargs: Any,
+    ) -> LLMCompletion:
+        """Delegate multimodal vision calls and emit ``llm_usage`` when counts exist."""
+        multimodal = getattr(self._inner, "complete_multimodal", None)
+        if not callable(multimodal):
+            raise AttributeError("complete_multimodal")
+        result = multimodal(
+            parts,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            **kwargs,
+        )
+        self._log_usage(getattr(result, "usage", None))
+        return result
+
     def record_openai_response(self, response: Any) -> None:
         """Log usage from an OpenAI Chat Completions response (tool-calling loop)."""
         usage_obj = getattr(response, "usage", None)

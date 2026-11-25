@@ -200,3 +200,30 @@ def test_attachments_reach_ai_adapter():
     text = format_ticket_attachments(items)
     assert "Primary button overflows" in text
     assert "mobile.png" in text
+
+
+def test_openai_screenshot_skips_wrapper_complete_multimodal(monkeypatch):
+    """LoggingLLMClient.complete_multimodal exists even when OpenAI has no vision method."""
+    from unittest.mock import MagicMock
+
+    from bigas.llm.logging_client import LoggingLLMClient
+    from bigas.llm.openai_client import OpenAILLMClient
+    from bigas.tickets.attachments import _describe_image_with_llm
+
+    inner = OpenAILLMClient.__new__(OpenAILLMClient)
+    inner._model = "gpt-4o"
+    completion = MagicMock()
+    completion.choices[0].message.content = "Error toast on checkout"
+    completion.usage = None
+    inner._client = MagicMock()
+    inner._client.chat.completions.create.return_value = completion
+    wrapped = LoggingLLMClient(inner, feature="ticket_attachments", model="gpt-4o")
+
+    monkeypatch.setattr(
+        "bigas.llm.factory.get_llm_client",
+        lambda **_kwargs: (wrapped, "gpt-4o"),
+    )
+
+    text = _describe_image_with_llm(b"\x89PNG", "image/png", "shot.png")
+    assert text == "Error toast on checkout"
+    inner._client.chat.completions.create.assert_called_once()

@@ -312,7 +312,14 @@ def fetch_ai_usage(
         "top_prs": [{"pr_url": u, "est_cost_usd": round(c, 6)} for u, c in top_prs],
         "events": [e.as_dict() for e in events],
         "errors": errors,
+        "gemini_reconciliation": _gemini_reconciliation_summary(events),
     }
+
+
+def _gemini_reconciliation_summary(events: List[UsageEvent]) -> Dict[str, Any]:
+    from bigas.resources.cto.usage.gemini_reconcile import summarize_gemini_gap
+
+    return summarize_gemini_gap({"events": [e.as_dict() for e in events]})
 
 
 # Feature → cost bucket for the executive rollup (unlisted → Ops / other).
@@ -379,42 +386,9 @@ def _invoice_sku_lines(report: Dict[str, Any]) -> List[str]:
 
 def _gemini_invoice_gap_line(report: Dict[str, Any]) -> str:
     """Invoice Gemini dollars next to llm_logs list-price and token volume."""
-    invoice = 0.0
-    list_price = 0.0
-    in_tok = 0
-    out_tok = 0
-    saw_invoice = False
-    saw_logs = False
-    for ev in report.get("events") or []:
-        if not isinstance(ev, dict):
-            continue
-        feature = str(ev.get("feature") or "")
-        model = str(ev.get("model") or "")
-        try:
-            cost = float(ev.get("est_cost_usd") or 0)
-        except (TypeError, ValueError):
-            cost = 0.0
-        if feature == "gcp.gemini_invoice":
-            invoice += cost
-            saw_invoice = True
-        if ev.get("provider") == "llm_logs" and "gemini" in model.lower():
-            list_price += cost
-            saw_logs = True
-            try:
-                in_tok += int(ev.get("input_tokens") or 0)
-                out_tok += int(ev.get("output_tokens") or 0)
-            except (TypeError, ValueError):
-                pass
-    if not saw_invoice and not saw_logs:
-        return ""
-    token_bit = ""
-    if in_tok or out_tok:
-        token_bit = f" llm_logs tokens: in {in_tok:,} / out {out_tok:,}."
-    return (
-        "Gemini invoice vs list-price (do not add them): "
-        f"invoice {_approx_money(invoice)} · llm_logs {_approx_money(list_price)}."
-        f"{token_bit}"
-    )
+    from bigas.resources.cto.usage.gemini_reconcile import format_gemini_reconciliation_block
+
+    return format_gemini_reconciliation_block(report)
 
 
 def _billing_export_console_url() -> str:
@@ -1034,14 +1008,21 @@ def build_weekly_cfo_ai_report(
     books = format_accounted_books_section()
     if books:
         parts.append(books)
+    from bigas.resources.cto.usage.gemini_reconcile import reconcile_gemini_saving_action
+
     analysis = analyze_weekly_ai_spend(enriched)
+    prose = ""
+    actions: List[Dict[str, Any]] = []
     if analysis:
         prose, actions = split_cfo_actions(analysis)
         if prose:
             parts.append(f"**CFO analysis**\n{prose}")
-        tickets = savings_tickets_section(actions, opener=open_cfo_savings_ticket)
-        if tickets:
-            parts.append(tickets)
+    gap_action = reconcile_gemini_saving_action(enriched)
+    if gap_action and not any(a.get("id") == gap_action["id"] for a in actions):
+        actions.append(gap_action)
+    tickets = savings_tickets_section(actions, opener=open_cfo_savings_ticket)
+    if tickets:
+        parts.append(tickets)
     return "\n\n".join(parts)
 
 

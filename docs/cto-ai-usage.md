@@ -29,7 +29,7 @@ Adding Claude (or any LLM) later usually needs **no new history provider** if ca
 - `analysis_pass` (e.g. `derived`, `competitor_proposal`)
 - `empty_response` / `empty_fallback` / `thinking_budget`
 
-`fetch_ai_usage` totals include `by_app`, `by_project`, `activity_by_project`, `by_model_tier`, `empty_response_events`, and `empty_fallback_events`. The **CFO** chat agent reads these and proposes savings.
+`fetch_ai_usage` totals include `by_app`, `by_project`, `activity_by_project`, `by_model_tier`, `empty_response_events`, and `empty_fallback_events`. The weekly report also includes `gemini_reconciliation`: invoice vs `llm_logs` list-price, top invoice SKUs, logged features, and likely drivers (non-token SKUs such as context-cache storage, untracked SDK calls, or price-table drift). When the gap is ≥ $10/week, the CFO briefing ensures a `reconcile-gemini-gap` savings card stays on the board (`cfo-saving-id: reconcile-gemini-gap`). Ticket attachment vision and other paths must use `get_llm_client()` (or `LoggingLLMClient.complete_multimodal`) so multimodal Gemini calls emit `llm_usage`. The **CFO** chat agent reads these and proposes savings.
 
 ### Board project attribution (`by_project`)
 

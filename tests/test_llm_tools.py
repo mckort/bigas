@@ -300,6 +300,34 @@ def _fake_gemini_text_response(text: str = "ok"):
     return SimpleNamespace(candidates=[candidate], usage_metadata=None)
 
 
+def test_complete_multimodal_blocked_text_returns_empty():
+    from unittest.mock import MagicMock, patch
+
+    from bigas.llm.gemini_client import GeminiLLMClient
+
+    class _Blocked:
+        usage_metadata = None
+        candidates = [SimpleNamespace(finish_reason="SAFETY")]
+
+        @property
+        def text(self):
+            raise ValueError("The Candidate was blocked due to SAFETY")
+
+    model = MagicMock()
+    model.generate_content.return_value = _Blocked()
+
+    with patch("bigas.llm.gemini_client.genai") as genai:
+        genai.GenerativeModel.return_value = model
+        client = GeminiLLMClient(api_key="test-key", model="gemini-test")
+
+    result = client.complete_multimodal(
+        ["describe", {"mime_type": "image/png", "data": b"png"}],
+        max_tokens=200,
+    )
+    assert result.text == ""
+    assert result.finish_reason == "SAFETY"
+
+
 def test_gemini_maps_timeout_to_request_options():
     from unittest.mock import MagicMock, patch
 
