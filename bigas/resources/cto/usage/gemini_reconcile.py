@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 _GEMINI_INVOICE_FEATURE = "gcp.gemini_invoice"
 _RECONCILE_SAVING_ID = "reconcile-gemini-gap"
@@ -39,6 +39,12 @@ def _sku_kind(sku: str) -> str:
     low = (sku or "").strip().lower()
     if not low:
         return "unknown"
+    tokenish = any(hint in low for hint in _TOKEN_SKU_HINTS)
+    # Context-cache input/output token SKUs include "cache" but are still
+    # token charges. Only storage-style cache SKUs (no token keywords) are
+    # non-token.
+    if ("cache" in low or "caching" in low) and tokenish:
+        return "token"
     if any(hint in low for hint in _NON_TOKEN_SKU_HINTS):
         if "cache" in low or "caching" in low or "storage" in low:
             return "context_cache"
@@ -47,7 +53,7 @@ def _sku_kind(sku: str) -> str:
         if "embedding" in low:
             return "embedding"
         return "non_token"
-    if any(hint in low for hint in _TOKEN_SKU_HINTS):
+    if tokenish:
         return "token"
     return "other"
 

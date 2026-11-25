@@ -62,6 +62,26 @@ class GeminiReconcileTests(unittest.TestCase):
         self.assertGreaterEqual(summary["non_token_invoice_usd"], 20.0)
         self.assertTrue(summary["hypotheses"])
 
+    def test_cache_read_token_skus_are_not_non_token(self):
+        report = {
+            "events": [
+                {
+                    "provider": "gcp_billing",
+                    "feature": "gcp.gemini_invoice",
+                    "est_cost_usd": 12.0,
+                    "meta": {"gcp_sku": "Gemini 2.5 Flash Cached Input Tokens"},
+                },
+                {
+                    "provider": "gcp_billing",
+                    "feature": "gcp.gemini_invoice",
+                    "est_cost_usd": 3.0,
+                    "meta": {"gcp_sku": "Context Cache Storage Time"},
+                },
+            ]
+        }
+        summary = summarize_gemini_gap(report)
+        self.assertEqual(summary["non_token_invoice_usd"], 3.0)
+
     def test_format_block_shows_gap_and_skus(self):
         block = format_gemini_reconciliation_block(self._sample_report())
         self.assertIn("gap", block.lower())
