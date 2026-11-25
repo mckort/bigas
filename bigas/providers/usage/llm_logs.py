@@ -111,6 +111,7 @@ def _reestimated_cost_usd(
     candidates: Optional[int],
     thoughts: Optional[int],
     total: Optional[int],
+    cached: Optional[int],
     logged: Optional[float],
 ) -> Optional[float]:
     """Prefer a live list-price from token counts so old logs that omitted thinking get corrected."""
@@ -122,6 +123,7 @@ def _reestimated_cost_usd(
                 candidates_tokens=candidates,
                 thoughts_tokens=thoughts,
                 total_tokens=total,
+                cached_content_tokens=cached,
             ),
         )
         if recomputed is not None:
@@ -267,6 +269,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
                 candidates = _optional_int(data, "candidates_tokens")
                 thoughts = _optional_int(data, "thoughts_tokens")
                 total = _optional_int(data, "total_tokens")
+                cached = _optional_int(data, "cached_content_tokens")
                 logged_est: Optional[float] = None
                 raw_est = data.get("est_cost_usd")
                 if raw_est is not None:
@@ -280,6 +283,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
                     candidates_tokens=candidates,
                     thoughts_tokens=thoughts,
                     total_tokens=total,
+                    cached_content_tokens=cached,
                 )
                 est_f = _reestimated_cost_usd(
                     model=model,
@@ -287,6 +291,7 @@ class CloudRunLlmUsageProvider(UsageProvider):
                     candidates=candidates,
                     thoughts=thoughts,
                     total=total,
+                    cached=cached,
                     logged=logged_est,
                 )
                 billed_out = billed_output_tokens(usage)

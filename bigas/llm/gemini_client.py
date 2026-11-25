@@ -53,6 +53,8 @@ def _usage_from_gemini_response(response: Any) -> TokenUsage:
         "candidatesTokenCount": getattr(meta, "candidatesTokenCount", None),
         "thoughtsTokenCount": getattr(meta, "thoughtsTokenCount", None),
         "totalTokenCount": getattr(meta, "totalTokenCount", None),
+        "cached_content_token_count": getattr(meta, "cached_content_token_count", None),
+        "cachedContentTokenCount": getattr(meta, "cachedContentTokenCount", None),
     }
     return usage_from_mapping(raw)
 
@@ -531,3 +533,35 @@ class GeminiLLMClient(LLMClient):
             safety_ratings,
         )
         return LLMCompletion(text="", finish_reason=finish_reason, usage=usage)
+
+    def complete_multimodal(
+        self,
+        parts: List[Any],
+        *,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        **kwargs: Any,
+    ) -> LLMCompletion:
+        """Vision / mixed-media completion with usage metadata for cost logging."""
+        generation_config: Dict[str, Any] = {}
+        if max_tokens is not None:
+            generation_config["max_output_tokens"] = max_tokens
+        if temperature is not None and supports_temperature(self._model_name):
+            generation_config["temperature"] = temperature
+        gen_cfg = generation_config if generation_config else None
+        response = self._model.generate_content(
+            parts,
+            generation_config=gen_cfg,
+            safety_settings=_SAFETY_BLOCK_NONE if _SAFETY_BLOCK_NONE else None,
+            **kwargs,
+        )
+        usage = _usage_from_gemini_response(response)
+        text = (getattr(response, "text", None) or "").strip()
+        finish_reason = None
+        try:
+            cands = getattr(response, "candidates", None) or []
+            if cands:
+                finish_reason = _finish_reason_str(getattr(cands[0], "finish_reason", None))
+        except Exception:
+            pass
+        return LLMCompletion(text=text, finish_reason=finish_reason, usage=usage)

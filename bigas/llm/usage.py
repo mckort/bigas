@@ -19,6 +19,7 @@ class TokenUsage:
     candidates_tokens: Optional[int] = None
     thoughts_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    cached_content_tokens: Optional[int] = None
 
     def merge(self, other: "TokenUsage") -> "TokenUsage":
         """Sum numeric fields; missing values stay missing unless the other side has them."""
@@ -33,6 +34,9 @@ class TokenUsage:
             candidates_tokens=_add(self.candidates_tokens, other.candidates_tokens),
             thoughts_tokens=_add(self.thoughts_tokens, other.thoughts_tokens),
             total_tokens=_add(self.total_tokens, other.total_tokens),
+            cached_content_tokens=_add(
+                self.cached_content_tokens, other.cached_content_tokens
+            ),
         )
 
     def as_dict(self) -> Dict[str, Optional[int]]:
@@ -177,7 +181,17 @@ def estimate_cost_usd(model: str, usage: TokenUsage) -> Optional[float]:
     if output is None:
         return None
 
-    cost = (prompt / 1_000_000.0) * input_rate + (output / 1_000_000.0) * output_rate
+    cached = max(0, int(usage.cached_content_tokens or 0))
+    if cached > prompt:
+        cached = prompt
+    uncached = max(0, prompt - cached)
+    # Context-cache reads bill at ~10% of standard input list price; storage is on the invoice.
+    cached_read_rate = input_rate * 0.10
+    cost = (
+        (uncached / 1_000_000.0) * input_rate
+        + (cached / 1_000_000.0) * cached_read_rate
+        + (output / 1_000_000.0) * output_rate
+    )
     return round(cost, 6)
 
 
@@ -211,11 +225,20 @@ def usage_from_mapping(raw: Optional[Mapping[str, Any]]) -> TokenUsage:
     )
     thoughts = _int(("thoughts_token_count", "thoughtsTokenCount", "thoughts_tokens"))
     total = _int(("total_token_count", "totalTokenCount", "total_tokens"))
+    cached = _int(
+        (
+            "cached_content_token_count",
+            "cachedContentTokenCount",
+            "cached_content_tokens",
+            "cached_tokens",
+        )
+    )
     return TokenUsage(
         prompt_tokens=prompt,
         candidates_tokens=candidates,
         thoughts_tokens=thoughts,
         total_tokens=total,
+        cached_content_tokens=cached,
     )
 
 
