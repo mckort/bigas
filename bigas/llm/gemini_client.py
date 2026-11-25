@@ -556,7 +556,12 @@ class GeminiLLMClient(LLMClient):
             **kwargs,
         )
         usage = _usage_from_gemini_response(response)
-        text = (getattr(response, "text", None) or "").strip()
+        try:
+            # response.text raises ValueError when the candidate is blocked or
+            # has no text parts. getattr only suppresses AttributeError.
+            text = (getattr(response, "text", None) or "").strip()
+        except (ValueError, AttributeError):
+            text = ""
         finish_reason = None
         try:
             cands = getattr(response, "candidates", None) or []
