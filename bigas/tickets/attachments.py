@@ -346,15 +346,18 @@ def _describe_image_with_llm(
     prompt: Optional[str] = None,
 ) -> str:
     from bigas.llm.factory import get_llm_client
-    from bigas.llm.gemini_client import GeminiLLMClient
     from bigas.llm.openai_client import OpenAILLMClient
 
     client, _model = get_llm_client(feature="ticket_attachments")
     body = (prompt or SCREENSHOT_PROMPT).strip() or SCREENSHOT_PROMPT
     full_prompt = f"{body}\n\nFilename: {sanitize_filename(filename)}"
 
+    # LoggingLLMClient always defines complete_multimodal and raises
+    # AttributeError when the wrapped client does not. Check the inner client
+    # so OpenAI falls through to the Chat Completions image path.
+    inner = getattr(client, "_inner", client)
     multimodal = getattr(client, "complete_multimodal", None)
-    if callable(multimodal):
+    if callable(multimodal) and callable(getattr(inner, "complete_multimodal", None)):
         result = multimodal(
             [full_prompt, {"mime_type": content_type, "data": data}],
             max_tokens=1500,
@@ -364,10 +367,6 @@ def _describe_image_with_llm(
         if text:
             return text
         raise RuntimeError("Vision model returned empty screenshot description")
-
-    inner = getattr(client, "_inner", client)
-    if isinstance(inner, GeminiLLMClient):
-        raise RuntimeError("Gemini vision requires LoggingLLMClient.complete_multimodal")
 
     if isinstance(inner, OpenAILLMClient):
         encoded = base64.b64encode(data).decode("ascii")
