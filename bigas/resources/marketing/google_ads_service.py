@@ -356,8 +356,8 @@ class GoogleAdsService:
             },
         }
         if clicks > 0 and cost_micros == 0:
-            # Free clicks and other zero-cost interactions are valid. Keep this
-            # at debug so large account syncs do not flood warning logs.
+            # Free clicks and zero-cost interactions are valid.
+            # Debug only, so large syncs do not flood warnings.
             logger.debug(
                 "Google Ads row has clicks=%s but cost_micros=0 (campaign_id=%s, date=%s)",
                 clicks,
