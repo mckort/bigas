@@ -61,6 +61,35 @@ def _safe_float(val: Any) -> float:
         return 0.0
 
 
+def _pick(mapping: Any, *keys: str) -> Any:
+    """Return the first present key from a dict (REST rows use camelCase or snake_case)."""
+    if not isinstance(mapping, dict):
+        return None
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def _resolve_ad_display_name(ad: Any) -> Optional[str]:
+    if not isinstance(ad, dict):
+        return None
+    name = str(_pick(ad, "name") or "").strip()
+    if name:
+        return name
+    rsa = _pick(ad, "responsiveSearchAd", "responsive_search_ad")
+    if isinstance(rsa, dict):
+        for headline in rsa.get("headlines") or []:
+            if isinstance(headline, dict):
+                text = str(_pick(headline, "text") or "").strip()
+                if text:
+                    return text
+    ad_id = _pick(ad, "id")
+    if ad_id is not None:
+        return f"Ad {ad_id}"
+    return None
+
+
 class GoogleAdsService:
     """
     Minimal Google Ads REST client for reporting via GAQL SearchStream.
@@ -174,6 +203,7 @@ class GoogleAdsService:
                 "ad_group.name",
                 "ad_group_ad.ad.id",
                 "ad_group_ad.ad.name",
+                "ad_group_ad.ad.responsive_search_ad.headlines",
             ]
         elif level == "audience_breakdown":
             breakdown_map = {
@@ -267,26 +297,32 @@ class GoogleAdsService:
             return {}
 
         report_level = (report_level or "campaign").strip().lower()
-        segments = row.get("segments") or {}
-        campaign = row.get("campaign") or {}
-        ad_group = row.get("ad_group") or {}
-        ad_group_ad = row.get("ad_group_ad") or {}
-        ad = ad_group_ad.get("ad") if isinstance(ad_group_ad, dict) else {}
-        customer = row.get("customer") or {}
-        metrics = row.get("metrics") or {}
+        segments = _pick(row, "segments") or {}
+        campaign = _pick(row, "campaign") or {}
+        ad_group = _pick(row, "ad_group", "adGroup") or {}
+        ad_group_ad = _pick(row, "ad_group_ad", "adGroupAd") or {}
+        ad = _pick(ad_group_ad, "ad") if isinstance(ad_group_ad, dict) else {}
+        customer = _pick(row, "customer") or {}
+        metrics = _pick(row, "metrics") or {}
 
-        date_s = segments.get("date")
-        cid = campaign.get("id")
-        cname = campaign.get("name")
-        currency_code = (customer.get("currency_code") or "").strip().upper()
+        date_s = _pick(segments, "date")
+        cid = _pick(campaign, "id")
+        cname = _pick(campaign, "name")
+        currency_raw = _pick(customer, "currencyCode", "currency_code")
+        currency_code = str(currency_raw or "").strip().upper()
 
-        impressions = int(_safe_float(metrics.get("impressions")))
-        clicks = int(_safe_float(metrics.get("clicks")))
-        cost_micros = _safe_float(metrics.get("cost_micros"))
-        conversions = _safe_float(metrics.get("conversions"))
-        conv_value = _safe_float(metrics.get("conversions_value"))
-        unique_users = int(_safe_float(metrics.get("unique_users"))) if metrics.get("unique_users") is not None else None
-        avg_freq = _safe_float(metrics.get("average_impression_frequency_per_user"))
+        impressions = int(_safe_float(_pick(metrics, "impressions")))
+        clicks = int(_safe_float(_pick(metrics, "clicks")))
+        cost_micros = _safe_float(_pick(metrics, "costMicros", "cost_micros"))
+        conversions = _safe_float(_pick(metrics, "conversions"))
+        conv_value = _safe_float(_pick(metrics, "conversionsValue", "conversions_value"))
+        unique_users_raw = _pick(metrics, "uniqueUsers", "unique_users")
+        unique_users = (
+            int(_safe_float(unique_users_raw)) if unique_users_raw is not None else None
+        )
+        avg_freq = _safe_float(
+            _pick(metrics, "averageImpressionFrequencyPerUser", "average_impression_frequency_per_user")
+        )
 
         cost = cost_micros / 1_000_000.0 if cost_micros else 0.0
 
@@ -319,21 +355,30 @@ class GoogleAdsService:
                 "roas": round(roas, 4),
             },
         }
+        if clicks > 0 and cost_micros == 0:
+            # Free clicks and zero-cost interactions are valid.
+            # Debug only, so large syncs do not flood warnings.
+            logger.debug(
+                "Google Ads row has clicks=%s but cost_micros=0 (campaign_id=%s, date=%s)",
+                clicks,
+                cid,
+                date_s,
+            )
         if report_level == "ad":
-            out["ad_group_id"] = ad_group.get("id")
-            out["ad_group_name"] = ad_group.get("name")
-            out["ad_id"] = ad.get("id") if isinstance(ad, dict) else None
-            out["ad_name"] = ad.get("name") if isinstance(ad, dict) else None
+            out["ad_group_id"] = _pick(ad_group, "id")
+            out["ad_group_name"] = _pick(ad_group, "name")
+            out["ad_id"] = _pick(ad, "id") if isinstance(ad, dict) else None
+            out["ad_name"] = _resolve_ad_display_name(ad)
         if report_level == "audience_breakdown":
             segments_out: Dict[str, Any] = {}
             for b in (breakdowns or []):
                 bk = str(b).strip().lower()
-                if bk == "device" and segments.get("device") is not None:
-                    segments_out["device"] = segments.get("device")
-                elif bk == "network" and segments.get("ad_network_type") is not None:
-                    segments_out["network"] = segments.get("ad_network_type")
-                elif bk == "day_of_week" and segments.get("day_of_week") is not None:
-                    segments_out["day_of_week"] = segments.get("day_of_week")
+                if bk == "device" and _pick(segments, "device") is not None:
+                    segments_out["device"] = _pick(segments, "device")
+                elif bk == "network" and _pick(segments, "adNetworkType", "ad_network_type") is not None:
+                    segments_out["network"] = _pick(segments, "adNetworkType", "ad_network_type")
+                elif bk == "day_of_week" and _pick(segments, "dayOfWeek", "day_of_week") is not None:
+                    segments_out["day_of_week"] = _pick(segments, "dayOfWeek", "day_of_week")
             if segments_out:
                 out["segments"] = segments_out
         return out
