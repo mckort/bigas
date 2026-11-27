@@ -1882,8 +1882,9 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       commandRunToken.current = token
       commandPollErrors.current = 0
       const previous = commandRun.current
-      // Keep prompt/messages/since only when continuing the same ship (e.g. yes/no).
-      // Another card on the shared DevOps thread must start a fresh scoped run.
+      // Prefer this ship's row or pipeline thread. Reuse the in-flight thread
+      // only when continuing the same ship (e.g. yes/no). Prompt, messages, and
+      // since stay scoped the same way so another card cannot inherit them.
       const sameShip =
         Boolean(previous) &&
         String(previous.projectKey || '')
@@ -1891,10 +1892,16 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
           .toUpperCase() === projectKey
       const since =
         (sameShip && previous.since) || new Date(Date.now() - 5000).toISOString()
+      const pipeline = pipelineForProject(data?.working, projectKey)
       const base = {
         phase: 'working',
         pendingSend: true,
-        threadId: previous?.threadId || '',
+        threadId: String(
+          row?.thread_id ||
+            pipeline?.thread_id ||
+            (sameShip ? previous?.threadId : '') ||
+            '',
+        ).trim(),
         since,
         prompt: (sameShip && previous.prompt) || prompt,
         projectKey,
@@ -1936,7 +1943,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         setBusy(`ship:${row.key}`, false)
       }
     },
-    [load, publishCommandRun],
+    [data?.working, load, publishCommandRun],
   )
 
   useEffect(() => {
