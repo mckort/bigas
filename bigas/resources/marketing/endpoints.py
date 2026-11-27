@@ -1479,6 +1479,10 @@ def publish_passorfund_case_blog_endpoint():
     if not is_valid:
         return jsonify({"ok": False, "error": error_msg}), 400
     try:
+        every_n_weeks = int(data.get("every_n_weeks") or 2)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "every_n_weeks must be an integer"}), 400
+    try:
         from bigas.resources.marketing.passorfund_case_blog import (
             PassOrFundBlogError,
             publish_passorfund_case_blog,
@@ -1487,7 +1491,7 @@ def publish_passorfund_case_blog_endpoint():
         result = publish_passorfund_case_blog(
             dry_run=request_flag(data, "dry_run", False),
             force=request_flag(data, "force", False),
-            every_n_weeks=int(data.get("every_n_weeks") or 2),
+            every_n_weeks=every_n_weeks,
             slug=(str(data.get("slug") or "").strip() or None),
             post_to_discord_flag=request_flag(data, "post_to_discord", True),
             update_pof_allowlist=request_flag(data, "update_pof_allowlist", True),

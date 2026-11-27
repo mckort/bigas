@@ -90,7 +90,10 @@ def list_published_case_slugs(html: Optional[str] = None) -> List[str]:
     """Ordered unique article slugs from the homepage (newest first)."""
     page = html if html is not None else _http_get(f"{POF_SITE}/")
     seen: List[str] = []
-    for href in re.findall(r'href="(/article/[^"#?]+)"', page):
+    for href in re.findall(
+        r"""href=['"](?:https?://[^'"/]+)?(/article/[^'"#?]+)['"]""",
+        page,
+    ):
         slug = _slug_from_article_href(href)
         if slug and slug not in seen:
             seen.append(slug)
@@ -113,10 +116,24 @@ def _company_from_html(html: str, title: str) -> str:
         name = _strip_tags(pill.group(1))
         if name:
             return name
-    # "Treat raises …" → Treat
-    words = (title or "").strip().split()
+    # "Treat raises …" / "Magic Vision raised …" → company name
+    title_text = (title or "").strip()
+    lead = re.match(r"^(.+?)\s+rais(?:e|es|ed)\b", title_text, flags=re.I)
+    if lead:
+        name = lead.group(1).strip().rstrip(".,:;!")
+        if name:
+            return name
+    words = title_text.split()
     if words:
-        return words[0].rstrip(".,:;!")
+        kept = [words[0].rstrip(".,:;!")]
+        for word in words[1:]:
+            token = word.rstrip(".,:;!")
+            if not token or not token[:1].isupper():
+                break
+            kept.append(token)
+        name = " ".join(part for part in kept if part)
+        if name:
+            return name
     raise PassOrFundBlogError("Could not parse company name from Pass or Fund article")
 
 
@@ -366,7 +383,10 @@ def _iter_top_level_objects(array_body: str) -> List[Tuple[str, int, int]]:
         if text[i] != "{":
             i += 1
             continue
+        # Keep the indent on this line so existing objects are not flushed left.
         start = i
+        while start > 0 and text[start - 1] in " \t":
+            start -= 1
         depth = 0
         in_str = False
         quote = ""
@@ -399,7 +419,7 @@ def _iter_top_level_objects(array_body: str) -> List[Tuple[str, int, int]]:
                     if end < n and text[end] == ",":
                         end += 1
                     block = text[start:end]
-                    slug_m = re.search(r"slug:\s*'([^']+)'", block)
+                    slug_m = re.search(r"""slug:\s*['"]([^'"]+)['"]""", block)
                     slug = slug_m.group(1) if slug_m else ""
                     out.append((slug, start, end))
                     i = end
@@ -430,10 +450,6 @@ def upsert_pass_or_fund_cases_ts(existing: str, meta: PofCaseMeta, sections: Seq
         kept.insert(0, entry)
     new_body = "\n" + "\n".join(kept) + "\n"
     return existing[: match.start(2)] + new_body + existing[match.end(2) :]
-
-
-def case_already_published(existing: str, slug: str) -> bool:
-    return f"slug: '{slug}'" in (existing or "")
 
 
 def update_case_page_copy(existing: str) -> str:
@@ -476,7 +492,7 @@ def upsert_pof_allowlist(existing: str, slug: str, utm_campaign: str) -> str:
         if trimmed and not trimmed.endswith(","):
             # last entry may already have a trailing comma; keep body intact
             pass
-        new_body = body.rstrip() + "\n" + new_line + "\n"
+        new_body = body.rstrip() + "\n" + new_line
     return existing[: match.start(2)] + new_body + existing[match.end(2) :]
 
 

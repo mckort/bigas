@@ -9,7 +9,6 @@ from bigas.resources.marketing.passorfund_case_blog import (
     POF_BLOG_CADENCE_EPOCH,
     MemoSection,
     PofCaseMeta,
-    case_already_published,
     fetch_case_meta,
     list_published_case_slugs,
     memo_sections_from_payload,
@@ -96,6 +95,20 @@ def test_list_published_case_slugs_orders_newest_first():
     assert "2026-11-03-magic" in slugs[1]
 
 
+def test_list_published_case_slugs_accepts_quotes_and_absolute_urls():
+    html = """
+    <a href='/article/2026-11-18-treat-raised-3m'>Treat</a>
+    <a href="https://passorfund.com/article/2026-11-03-magic-vision">Magic</a>
+    <a href='https://www.passorfund.com/article/2026-10-01-other-case'>Other</a>
+    """
+    slugs = list_published_case_slugs(html)
+    assert slugs == [
+        "2026-11-18-treat-raised-3m",
+        "2026-11-03-magic-vision",
+        "2026-10-01-other-case",
+    ]
+
+
 def test_fetch_case_meta_parses_company_and_utm():
     meta = fetch_case_meta(
         "2026-11-18-treat-raised-3m-to-replace-the-gp-appointment-in-a-country-t",
@@ -105,6 +118,24 @@ def test_fetch_case_meta_parses_company_and_utm():
     assert meta.published_on == "2026-11-18"
     assert meta.utm_campaign == "pof-treat-2026-11-18"
     assert "Swappie" in meta.summary
+
+
+def test_fetch_case_meta_keeps_multi_word_company_without_tag_pill():
+    html = """
+    <html><head>
+    <meta property="og:title" content="Magic Vision raised €600K to put computer vision into care homes">
+    <meta name="description" content="Italian startup monitors care home residents.">
+    </head><body><h1>Magic Vision raised €600K</h1></body></html>
+    """
+    meta = fetch_case_meta("2026-11-03-magic-vision", html=html)
+    assert meta.company == "Magic Vision"
+    bare = """
+    <html><head>
+    <meta property="og:title" content="Magic Vision">
+    <meta name="description" content="Italian startup monitors care home residents.">
+    </head><body><h1>Magic Vision</h1></body></html>
+    """
+    assert fetch_case_meta("2026-11-03-magic-vision", html=bare).company == "Magic Vision"
 
 
 def test_memo_sections_from_payload_keeps_filled_only():
@@ -140,9 +171,10 @@ def test_upsert_pass_or_fund_cases_ts_prepends_new_case():
     assert "slug: '2026-11-18-treat" in updated
     assert updated.index("2026-11-18-treat") < updated.index("2026-11-03-magic")
     assert "Full memo body with \\'quotes\\'." in updated
-    assert case_already_published(updated, meta.slug)
-    # Existing Magic Vision case preserved
+    # Existing Magic Vision case preserved, including its opening indent
     assert "Magic Vision" in updated
+    assert "\n  {\n    slug: '2026-11-03-magic" in updated
+    assert "\n{\n    slug: '2026-11-03-magic" not in updated
 
 
 def test_upsert_pass_or_fund_cases_ts_replaces_existing_slug():
@@ -165,10 +197,36 @@ def test_upsert_pass_or_fund_cases_ts_replaces_existing_slug():
     assert "Early progress." not in updated
 
 
+def test_upsert_pass_or_fund_cases_ts_replaces_double_quoted_slug():
+    existing = SAMPLE_CASES_TS.replace(
+        "slug: '2026-11-03-magic-vision-raised-600k-to-put-computer-vision-into-care-ho',",
+        'slug: "2026-11-03-magic-vision-raised-600k-to-put-computer-vision-into-care-ho",',
+    )
+    meta = PofCaseMeta(
+        slug="2026-11-03-magic-vision-raised-600k-to-put-computer-vision-into-care-ho",
+        company="Magic Vision",
+        title="Magic Vision updated title",
+        summary="New summary",
+        published_on="2026-11-03",
+        source_url="https://passorfund.com/article/2026-11-03-magic-vision-raised-600k-to-put-computer-vision-into-care-ho",
+        utm_campaign="pof-magic-vision-2026-11-03",
+    )
+    updated = upsert_pass_or_fund_cases_ts(
+        existing,
+        meta,
+        [MemoSection(heading="Full", body="Entire deal memo.")],
+    )
+    assert 'slug: "2026-11-03-magic' not in updated
+    assert updated.count("slug: '2026-11-03-magic") == 1
+    assert "Entire deal memo." in updated
+    assert "Early progress." not in updated
+
+
 def test_upsert_pof_allowlist_adds_and_updates():
     slug = "2026-11-18-treat-raised-3m-to-replace-the-gp-appointment-in-a-country-t"
     once = upsert_pof_allowlist(SAMPLE_ALLOWLIST, slug, "pof-treat-2026-11-18")
     assert f'"{slug}": "pof-treat-2026-11-18"' in once
+    assert "\n\n}" not in once
     twice = upsert_pof_allowlist(once, slug, "pof-treat-2026-11-18-b")
     assert twice.count(slug) == 1
     assert "pof-treat-2026-11-18-b" in twice
@@ -223,3 +281,20 @@ def test_publish_skips_off_cadence(monkeypatch):
     )
     assert result["status"] == "skipped_cadence"
     assert result["ok"] is True
+
+
+def test_publish_endpoint_rejects_non_numeric_every_n_weeks():
+    from flask import Flask
+
+    from bigas.resources.marketing.endpoints import marketing_bp
+
+    app = Flask(__name__)
+    app.register_blueprint(marketing_bp)
+    resp = app.test_client().post(
+        "/mcp/tools/publish_passorfund_case_blog",
+        json={"every_n_weeks": "two"},
+    )
+    assert resp.status_code == 400
+    body = resp.get_json() or {}
+    assert body.get("ok") is False
+    assert "every_n_weeks" in (body.get("error") or "")
