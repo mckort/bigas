@@ -69,6 +69,7 @@ TOOL_TIERS: Dict[str, str] = {
     "notify_pr_merged": PROPOSE,
     "preview_marketing_email": PROPOSE,
     "progress_updates": PROPOSE,
+    "publish_passorfund_case_blog": PROPOSE,  # opens reviewable VFA + PoF content PRs; Discord notify
     "review_and_comment_pr": PROPOSE,
     "run_qa": PROPOSE,
     "update_ticket": PROPOSE,

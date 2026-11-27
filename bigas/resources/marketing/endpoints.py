@@ -1463,6 +1463,51 @@ def lookup_board_releases():
     return jsonify({"ok": True, **result})
 
 
+@marketing_bp.route('/mcp/tools/publish_passorfund_case_blog', methods=['POST'])
+def publish_passorfund_case_blog_endpoint():
+    """
+    Biweekly job: latest Pass or Fund case + full VFA deal memo → content PRs.
+
+    Cloud Scheduler: Fridays 09:00 Europe/Stockholm with body
+    ``{"every_n_weeks": 2}`` (epoch 2026-12-04). Auth: X-Bigas-Access-Key.
+
+    Optional body:
+      dry_run, force, slug, every_n_weeks, post_to_discord, update_pof_allowlist
+    """
+    data = request.get_json(silent=True) or {}
+    is_valid, error_msg = validate_request_data(data if isinstance(data, dict) else {})
+    if not is_valid:
+        return jsonify({"ok": False, "error": error_msg}), 400
+    try:
+        every_n_weeks = int(data.get("every_n_weeks") or 2)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "every_n_weeks must be an integer"}), 400
+    try:
+        from bigas.resources.marketing.passorfund_case_blog import (
+            PassOrFundBlogError,
+            publish_passorfund_case_blog,
+        )
+
+        result = publish_passorfund_case_blog(
+            dry_run=request_flag(data, "dry_run", False),
+            force=request_flag(data, "force", False),
+            every_n_weeks=every_n_weeks,
+            slug=(str(data.get("slug") or "").strip() or None),
+            post_to_discord_flag=request_flag(data, "post_to_discord", True),
+            update_pof_allowlist=request_flag(data, "update_pof_allowlist", True),
+        )
+        status = 200
+        if result.get("status") == "skipped_cadence":
+            status = 200
+        return jsonify(result), status
+    except PassOrFundBlogError as exc:
+        logger.warning("publish_passorfund_case_blog: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        logger.error("publish_passorfund_case_blog failed: %s", traceback.format_exc())
+        return jsonify({"ok": False, "error": sanitize_error_message(str(exc))}), 500
+
+
 def get_manifest():
     """Returns the manifest for the marketing tools."""
     return {
@@ -1493,6 +1538,52 @@ def get_manifest():
                         },
                     },
                     "required": ["project_key"],
+                },
+            },
+            {
+                "name": "publish_passorfund_case_blog",
+                "description": (
+                    "Biweekly Cloud Scheduler job: take the latest published Pass or Fund "
+                    "case, load the full deal memo via authenticated VFA MCP (Pass or Fund "
+                    "workspace), open a VFA content PR updating /passorfund + /blog, open a "
+                    "companion PoF allowlist PR, and Discord-notify for deploy. No public API. "
+                    "Body every_n_weeks=2 (epoch 2026-12-04). force=true bypasses cadence; "
+                    "dry_run=true previews without opening PRs."
+                ),
+                "path": "/mcp/tools/publish_passorfund_case_blog",
+                "method": "POST",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "every_n_weeks": {
+                            "type": "integer",
+                            "default": 2,
+                            "description": "Run only every N weeks from 2026-12-04 (Stockholm).",
+                        },
+                        "force": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Ignore cadence gate and run now.",
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Fetch + build preview without opening PRs.",
+                        },
+                        "slug": {
+                            "type": "string",
+                            "description": "Optional Pass or Fund article slug override.",
+                        },
+                        "post_to_discord": {
+                            "type": "boolean",
+                            "default": True,
+                        },
+                        "update_pof_allowlist": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "Also open the companion pass-or-fund allowlist PR.",
+                        },
+                    },
                 },
             },
             {"name": "fetch_analytics_report", "description": "Fetches a standard Google Analytics report.", "path": "/mcp/tools/fetch_analytics_report", "method": "POST"},
