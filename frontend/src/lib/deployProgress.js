@@ -290,6 +290,16 @@ export function isTrackedShipRun(run, projectKey) {
   return run.phase === 'working' || run.phase === 'confirm'
 }
 
+/**
+ * Show progress may reopen the in-memory run only for the same ship on the
+ * same DevOps thread. A shared thread alone is not enough — otherwise another
+ * card would show VFA (etc.) steps under its own title.
+ */
+export function canReuseShipProgressRun(run, projectKey, threadId) {
+  if (!threadId || !isTrackedShipRun(run, projectKey)) return false
+  return String(run?.threadId || '') === String(threadId)
+}
+
 /** Confirm/cancel from a ship card always names the project (shared DevOps thread). */
 export function shipConfirmPrompt(projectKey, yes) {
   const key = String(projectKey || '')

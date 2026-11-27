@@ -17,6 +17,7 @@ import {
 } from '../lib/api'
 import {
   applyDeployUpdate,
+  canReuseShipProgressRun,
   commandForShipRow,
   deployProgressLines,
   emptyDeployRun,
@@ -1784,23 +1785,20 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         onOpenChat?.('devops')
         return
       }
-      const sameThread = current?.threadId === threadId
+      const sameShip = canReuseShipProgressRun(current, row.key, threadId)
       const cmd =
         commandForShipRow(row) ||
         ({
           label: row.detail || 'Deploy',
-          prompt: (sameThread ? current?.prompt : '') || '',
+          prompt: (sameShip ? current?.prompt : '') || '',
         })
-      if (
-        sameThread &&
-        (current.phase === 'working' || current.phase === 'confirm')
-      ) {
+      if (sameShip) {
         if (open) setDrawer({ type: 'command', row, cmd, run: current })
         return
       }
-      // Pipeline or row start time, and only this thread's cursor. With no
+      // Pipeline or row start time, and only this ship's cursor. With no
       // start time, omit since so the fetch includes the whole deploy.
-      const since = pipeline?.since || row?.since || (sameThread ? current?.since : '') || ''
+      const since = pipeline?.since || row?.since || ''
       const token = commandRunToken.current + 1
       commandRunToken.current = token
       commandPollErrors.current = 0
@@ -1884,15 +1882,23 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       commandRunToken.current = token
       commandPollErrors.current = 0
       const previous = commandRun.current
-      const since = previous?.since || new Date(Date.now() - 5000).toISOString()
+      // Keep prompt/messages/since only when continuing the same ship (e.g. yes/no).
+      // Another card on the shared DevOps thread must start a fresh scoped run.
+      const sameShip =
+        Boolean(previous) &&
+        String(previous.projectKey || '')
+          .trim()
+          .toUpperCase() === projectKey
+      const since =
+        (sameShip && previous.since) || new Date(Date.now() - 5000).toISOString()
       const base = {
         phase: 'working',
         pendingSend: true,
         threadId: previous?.threadId || '',
         since,
-        prompt: previous?.prompt || prompt,
+        prompt: (sameShip && previous.prompt) || prompt,
         projectKey,
-        messages: previous?.messages || [],
+        messages: sameShip ? previous.messages || [] : [],
         error: '',
         deployPoll: false,
         token,

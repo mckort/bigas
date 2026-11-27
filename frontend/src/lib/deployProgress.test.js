@@ -5,6 +5,7 @@ import {
   commandForShipRow,
   deployProgressLines,
   deployRunPhase,
+  canReuseShipProgressRun,
   emptyDeployRun,
   filterMessagesForProject,
   inferProjectKeyFromMessage,
@@ -234,6 +235,15 @@ test('isTrackedShipRun stays true while working or confirming for that ship', ()
   assert.equal(isTrackedShipRun({ ...run, phase: 'confirm' }, 'AURA'), true)
   assert.equal(isTrackedShipRun({ ...run, phase: 'done' }, 'AURA'), false)
   assert.equal(isTrackedShipRun(run, 'VFA'), false)
+})
+
+test('canReuseShipProgressRun requires the same ship, not only the shared thread', () => {
+  const run = emptyDeployRun({ threadId: 'devops', projectKey: 'VFA', token: 1 })
+  assert.equal(canReuseShipProgressRun(run, 'VFA', 'devops'), true)
+  assert.equal(canReuseShipProgressRun(run, 'BIG', 'devops'), false)
+  assert.equal(canReuseShipProgressRun(run, 'AURA', 'devops'), false)
+  assert.equal(canReuseShipProgressRun(run, 'VFA', 'other'), false)
+  assert.equal(canReuseShipProgressRun({ ...run, phase: 'done' }, 'VFA', 'devops'), false)
 })
 
 test('emptyDeployRun keeps a blank since so a resume can load the whole thread', () => {
