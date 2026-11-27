@@ -1066,6 +1066,7 @@ Set up scheduled jobs in [Google Cloud Scheduler](https://console.cloud.google.c
 | Page analysis | `0 10 * * 2` | `.../analyze_underperforming_pages` |
 | LinkedIn portfolio | `0 9 * * 1` | `.../run_linkedin_portfolio_report` |
 | Weekly X post draft | `0 9 * * 1` | `.../generate_weekly_x_post` |
+| Pass or Fund → VFA case blog | `0 9 * * 5` (Fri; in-app every other week from 2026-12-04) | `.../publish_passorfund_case_blog` |
 | Cleanup old reports | `0 2 1 * *` | `.../cleanup_old_reports` |
 | Cleanup chat activity | `0 2 * * 1` | `.../cleanup_old_activity` |
 | Website monitoring | `0 8 * * *` | `.../website_monitor` |
@@ -1175,6 +1176,28 @@ gcloud scheduler jobs create http bigas-monday-okr-pulse \
 ```
 
 `0 9 * * 1` = Monday 09:00 Europe/Stockholm.
+
+### Pass or Fund → VFA case blog (Cloud Scheduler)
+
+`publish_passorfund_case_blog` republishes the latest Pass or Fund case onto VC Field Assistant (`/passorfund` + `/blog`) with the **full** guest deal memo. No public VFA API: Bigas calls the Pass or Fund workspace MCP with `VFA_PASSORFUND_MCP_URL` + `VFA_PASSORFUND_MCP_TOKEN`, opens a content PR on `mckort/vcfieldassistant` against the current board `pr_base`, opens a companion allowlist PR on `mckort/pass-or-fund`, and posts Discord (marketing webhook) so you can review → merge staging → deploy VFA → then merge the PoF CTA allowlist before the newsletter.
+
+Cadence: Cloud Scheduler every **Friday 09:00 Europe/Stockholm**; body `every_n_weeks: 2` with epoch **2026-12-04** (first run before the 2026-12-07 newsletter, then every other Friday). Off-weeks return `skipped_cadence`. Use `force: true` for a one-off.
+
+Secrets: `VFA_PASSORFUND_MCP_URL`, `VFA_PASSORFUND_MCP_TOKEN`, `GITHUB_TOKEN`, `DISCORD_WEBHOOK_URL_MARKETING`. Standing tickets: BIG-220 (job), VFA-359 (VFA PRs), POF-52 (allowlist PRs).
+
+```bash
+gcloud scheduler jobs create http bigas-pof-case-blog \
+  --location=europe-west1 \
+  --schedule="0 9 * * 5" \
+  --time-zone="Europe/Stockholm" \
+  --uri="https://YOUR-SERVICE-URL.a.run.app/mcp/tools/publish_passorfund_case_blog" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,X-Bigas-Access-Key=YOUR_ACCESS_KEY" \
+  --message-body='{"every_n_weeks": 2, "post_to_discord": true}' \
+  --attempt-deadline=320s
+```
+
+`0 9 * * 5` = Friday 09:00 Europe/Stockholm. Dry-run: `{"dry_run": true, "force": true}`.
 
 ### Email ingest with Cloud Scheduler
 
