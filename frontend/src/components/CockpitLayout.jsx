@@ -17,6 +17,7 @@ import {
 } from '../lib/api'
 import {
   applyDeployUpdate,
+  canReuseShipProgressRun,
   commandForShipRow,
   deployProgressLines,
   emptyDeployRun,
@@ -1784,23 +1785,20 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         onOpenChat?.('devops')
         return
       }
-      const sameThread = current?.threadId === threadId
+      const sameShip = canReuseShipProgressRun(current, row.key, threadId)
       const cmd =
         commandForShipRow(row) ||
         ({
           label: row.detail || 'Deploy',
-          prompt: (sameThread ? current?.prompt : '') || '',
+          prompt: (sameShip ? current?.prompt : '') || '',
         })
-      if (
-        sameThread &&
-        (current.phase === 'working' || current.phase === 'confirm')
-      ) {
+      if (sameShip) {
         if (open) setDrawer({ type: 'command', row, cmd, run: current })
         return
       }
-      // Pipeline or row start time, and only this thread's cursor. With no
+      // Pipeline or row start time, and only this ship's cursor. With no
       // start time, omit since so the fetch includes the whole deploy.
-      const since = pipeline?.since || row?.since || (sameThread ? current?.since : '') || ''
+      const since = pipeline?.since || row?.since || ''
       const token = commandRunToken.current + 1
       commandRunToken.current = token
       commandPollErrors.current = 0
@@ -1884,15 +1882,30 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
       commandRunToken.current = token
       commandPollErrors.current = 0
       const previous = commandRun.current
-      const since = previous?.since || new Date(Date.now() - 5000).toISOString()
+      // Prefer this ship's row or pipeline thread. Reuse the in-flight thread
+      // only when continuing the same ship (e.g. yes/no). Prompt, messages, and
+      // since stay scoped the same way so another card cannot inherit them.
+      const sameShip =
+        Boolean(previous) &&
+        String(previous.projectKey || '')
+          .trim()
+          .toUpperCase() === projectKey
+      const since =
+        (sameShip && previous.since) || new Date(Date.now() - 5000).toISOString()
+      const pipeline = pipelineForProject(data?.working, projectKey)
       const base = {
         phase: 'working',
         pendingSend: true,
-        threadId: previous?.threadId || '',
+        threadId: String(
+          row?.thread_id ||
+            pipeline?.thread_id ||
+            (sameShip ? previous?.threadId : '') ||
+            '',
+        ).trim(),
         since,
-        prompt: previous?.prompt || prompt,
+        prompt: (sameShip && previous.prompt) || prompt,
         projectKey,
-        messages: previous?.messages || [],
+        messages: sameShip ? previous.messages || [] : [],
         error: '',
         deployPoll: false,
         token,
@@ -1930,7 +1943,7 @@ export default function CockpitLayout({ user, onSwitchView, onOpenSettings, onOp
         setBusy(`ship:${row.key}`, false)
       }
     },
-    [load, publishCommandRun],
+    [data?.working, load, publishCommandRun],
   )
 
   useEffect(() => {
